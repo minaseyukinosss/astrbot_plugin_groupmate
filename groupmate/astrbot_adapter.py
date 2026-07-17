@@ -1,0 +1,457 @@
+"""AstrBot/OneBot edge adapters.
+
+The module keeps OneBot parsing usable in offline tests and imports AstrBot only
+inside concrete integration methods so the domain remains framework-free.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+
+from .guardrails import AemeathOutputGuard
+from .memory import SQLiteMemoryStore
+from .models import (
+    ChatMessage,
+    Decision,
+    GroupPolicy,
+    TopicSnapshot,
+    TriggerKind,
+    Urgency,
+)
+from .persona import BundledPersonaProvider
+from .rate_limit import SlidingWindowRateLimiter
+from .runtime import GroupRuntimeManager
+from .workflow import CognitiveWorkflow
+
+
+class OneBotTranslator:
+    @classmethod
+    def from_history(cls, raw: Dict[str, Any], bot_id: str) -> ChatMessage:
+        segments = raw.get("message") or raw.get("content") or []
+        if isinstance(segments, str):
+            segments = [{"type": "text", "data": {"text": segments}}]
+        text_parts: List[str] = []
+        image_urls: List[str] = []
+        segment_types: List[str] = []
+        reply_id: Optional[str] = None
+        mentions_bot = False
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            kind = str(segment.get("type", "")).lower()
+            data = segment.get("data") or {}
+            segment_types.append(kind)
+            if kind in ("text", "plain"):
+                text = data.get("text") or segment.get("text") or ""
+                if text:
+                    text_parts.append(str(text))
+            elif kind == "at":
+                qq = str(data.get("qq", data.get("user_id", "")))
+                if qq == str(bot_id):
+                    mentions_bot = True
+                name = data.get("name") or data.get("display_name")
+                if name:
+                    text_parts.append("@" + str(name))
+            elif kind == "reply":
+                reply_id = str(data.get("id", data.get("message_id", ""))) or None
+            elif kind == "image":
+                url = data.get("url") or data.get("file")
+                if url:
+                    image_urls.append(str(url))
+            elif kind in ("record", "video", "file"):
+                text_parts.append("[{}]".format(kind))
+
+        sender = raw.get("sender") or {}
+        sender_id = str(raw.get("user_id", sender.get("user_id", "")))
+        group_id = str(raw.get("group_id", ""))
+        timestamp = int(raw.get("time", raw.get("timestamp", 0)) or 0)
+        reply_to_bot = bool(raw.get("reply_to_bot", False))
+        if reply_id and str(raw.get("reply_sender_id", "")) == str(bot_id):
+            reply_to_bot = True
+        return ChatMessage(
+            message_id=str(raw.get("message_id", raw.get("id", ""))),
+            group_id=group_id,
+            sender_id=sender_id,
+            sender_name=str(
+                sender.get("card") or sender.get("nickname") or sender_id
+            ),
+            text="".join(text_parts).strip(),
+            timestamp=timestamp,
+            reply_to_message_id=reply_id,
+            reply_to_bot=reply_to_bot,
+            mentions_bot=mentions_bot,
+            is_bot=sender_id == str(bot_id),
+            image_urls=tuple(dict.fromkeys(image_urls)),
+            segment_types=tuple(segment_types),
+            metadata={"raw": raw},
+        )
+
+    @classmethod
+    def from_event(
+        cls,
+        event: Any,
+        bot_id: str,
+        is_command: bool = False,
+    ) -> ChatMessage:
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if isinstance(raw, dict):
+            message = cls.from_history(raw, bot_id)
+        else:
+            message = ChatMessage(
+                message_id=str(getattr(event.message_obj, "message_id", "")),
+                group_id=str(event.get_group_id()),
+                sender_id=str(event.get_sender_id()),
+                sender_name=str(event.get_sender_name()),
+                text=str(event.message_str or ""),
+                timestamp=int(getattr(event.message_obj, "timestamp", 0) or 0),
+                is_bot=str(event.get_sender_id()) == str(bot_id),
+            )
+        native_direct = bool(getattr(event, "is_at_or_wake_command", False))
+        return replace(
+            message,
+            is_command=is_command,
+            mentions_bot=message.mentions_bot or native_direct,
+            metadata=dict(message.metadata, native_direct=native_direct),
+        )
+
+
+def parse_decision_response(raw: str, trigger: TriggerKind) -> Decision:
+    text = (raw or "").strip()
+    fenced = re.search(r"\{.*\}", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(0)
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return Decision.ignore("invalid_decision_schema", trigger)
+    if not isinstance(data, dict):
+        return Decision.ignore("invalid_decision_schema", trigger)
+    action = str(data.get("action", "ignore")).lower()
+    reason = str(data.get("reason_code", "model_decision"))
+    if action != "respond":
+        return Decision.ignore(reason, trigger)
+    contribution = str(data.get("contribution", "")).strip()
+    if not contribution:
+        return Decision.ignore("invalid_decision_schema", trigger)
+    try:
+        urgency = Urgency(str(data.get("urgency", Urgency.NORMAL.value)).lower())
+    except ValueError:
+        urgency = Urgency.NORMAL
+    return Decision.respond(
+        contribution=contribution,
+        confidence=float(data.get("confidence", 0.0)),
+        trigger=trigger,
+        reason_code=reason,
+        target_message_id=(
+            str(data["target_message_id"])
+            if data.get("target_message_id") is not None
+            else None
+        ),
+        needs_vision=bool(data.get("needs_vision", False)),
+        urgency=urgency,
+    )
+
+
+class NapCatHistoryPort:
+    def __init__(self, bot: Any, bot_id: str) -> None:
+        self.bot = bot
+        self.bot_id = str(bot_id)
+
+    async def fetch_recent(self, group_id: str, count: int) -> Sequence[ChatMessage]:
+        response = await self.bot.call_action(
+            "get_group_msg_history",
+            group_id=int(group_id),
+            count=int(count),
+            reverseOrder=True,
+        )
+        rows = response.get("messages", []) if isinstance(response, dict) else response
+        return [
+            OneBotTranslator.from_history(row, self.bot_id)
+            for row in (rows or [])
+            if isinstance(row, dict)
+        ]
+
+
+class AstrBotDecisionModel:
+    def __init__(self, context: Any, provider_getter: Callable[[str], str]) -> None:
+        self.context = context
+        self.provider_getter = provider_getter
+
+    async def decide(self, topic: TopicSnapshot, policy: GroupPolicy, memories):
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id:
+            return Decision.ignore("decision_provider_missing", TriggerKind.CANDIDATE)
+        prompt = self._prompt(topic, policy, memories)
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=(
+                "你是群聊发言门卫，只输出 JSON。判断是否值得让群聊伙伴加入。"
+                "action 只能是 respond 或 ignore；不要生成最终回复。"
+            ),
+        )
+        return parse_decision_response(
+            getattr(response, "completion_text", "") or "", TriggerKind.CANDIDATE
+        )
+
+    @staticmethod
+    def _prompt(topic, policy, memories) -> str:
+        lines = [
+            "<topic>",
+            "\n".join(
+                "{}: {}".format(message.sender_name, message.text or "[媒体]")
+                for message in topic.messages[-20:]
+            ),
+            "</topic>",
+            "<policy>最多每小时 {} 条自主回复；门槛 {:.2f}</policy>".format(
+                policy.spontaneous_hourly_limit, policy.decision_threshold
+            ),
+        ]
+        if memories:
+            lines.extend(["<memory>", "\n".join(item.text for item in memories), "</memory>"])
+        lines.append(
+            "输出字段：action, confidence, reason_code, target_message_id, "
+            "contribution, needs_vision, urgency"
+        )
+        return "\n".join(lines)
+
+
+class AstrBotGenerationModel:
+    def __init__(
+        self,
+        context: Any,
+        provider_getter: Callable[[str], str],
+        persona: BundledPersonaProvider,
+    ) -> None:
+        self.context = context
+        self.provider_getter = provider_getter
+        self.persona = persona
+
+    async def generate(self, plan, topic, memories) -> str:
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id:
+            raise RuntimeError("generation provider missing")
+        prompt = "\n".join(
+            [
+                self.persona.build_user_context(topic, memories),
+                "<reply_task>",
+                "你可以补充：" + plan.contribution,
+                "只输出最终群聊回复，不要解释过程。",
+                "</reply_task>",
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=plan.persona_prompt,
+            image_urls=list(plan.image_urls) or None,
+        )
+        return getattr(response, "completion_text", "") or ""
+
+    async def repair(self, text: str, violations: Sequence[str]) -> str:
+        del violations
+        return text
+
+
+class AstrBotVisionPort:
+    def __init__(self, context: Any, provider_getter: Callable[[str], str]) -> None:
+        self.context = context
+        self.provider_getter = provider_getter
+
+    async def describe(self, image_urls: Sequence[str]) -> str:
+        provider_id = self.provider_getter("")
+        if not provider_id:
+            return ""
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt="用一句中文描述图片中与当前群聊有关的内容。",
+            image_urls=list(image_urls),
+        )
+        return getattr(response, "completion_text", "") or ""
+
+
+class AstrBotPlatformPort:
+    def __init__(self, context: Any, umo_getter: Callable[[str], str]) -> None:
+        self.context = context
+        self.umo_getter = umo_getter
+
+    async def send_text(self, group_id: str, text: str, decision_id: str) -> None:
+        del decision_id
+        from astrbot.api.message_components import MessageChain, Plain
+
+        await self.context.send_message(
+            self.umo_getter(group_id), MessageChain([Plain(text)])
+        )
+
+
+class AstrBotPersonaProvider(BundledPersonaProvider):
+    def __init__(self, context: Any, persona_id: str = "", override_prompt: str = "") -> None:
+        super().__init__(override_prompt)
+        self.context = context
+        self.persona_id = persona_id.strip()
+
+    async def system_prompt(self, group_id: str) -> str:
+        del group_id
+        if self.persona_id:
+            manager = getattr(self.context, "persona_manager", None)
+            resolver = getattr(manager, "get_persona_v3_by_id", None)
+            if resolver:
+                persona = resolver(self.persona_id)
+                if isinstance(persona, dict) and persona.get("prompt"):
+                    return str(persona["prompt"])
+                if isinstance(persona, dict) and persona.get("system_prompt"):
+                    return str(persona["system_prompt"])
+        return await super().system_prompt("")
+
+
+class AstrBotBridge:
+    """Connects AstrBot events to the framework-free group runtime."""
+
+    def __init__(self, context: Any, settings: Any, data_dir: Path) -> None:
+        self.context = context
+        self.settings = settings
+        self.data_dir = Path(data_dir)
+        self.memory = SQLiteMemoryStore(self.data_dir / "groupmate.db")
+        self._umo_by_group: Dict[str, str] = {}
+        self._provider_by_group: Dict[str, str] = {}
+        self._bootstrapped = set()
+        self.paused = False
+        self.runtime = GroupRuntimeManager(self._workflow_for, self._policy_for)
+
+    async def handle_event(self, event: Any) -> None:
+        if self.paused:
+            return
+        group_id = str(event.get_group_id())
+        if not self._group_enabled(group_id):
+            return
+        umo = str(event.unified_msg_origin)
+        self._umo_by_group[group_id] = umo
+        try:
+            self._provider_by_group[group_id] = await self.context.get_current_chat_provider_id(umo)
+        except Exception:
+            self._provider_by_group.setdefault(group_id, self._setting("generation_provider", ""))
+        actor = await self.runtime.actor_for(group_id)
+        if group_id not in self._bootstrapped:
+            bot = getattr(event, "bot", None)
+            if bot is not None:
+                try:
+                    history = await NapCatHistoryPort(bot, event.get_self_id()).fetch_recent(
+                        group_id, self._policy_for(group_id).history_limit
+                    )
+                    for message in history:
+                        await actor.preload(message)
+                    await actor.drain()
+                except Exception:
+                    pass
+            self._bootstrapped.add(group_id)
+        await actor.submit(
+            OneBotTranslator.from_event(
+                event,
+                bot_id=str(event.get_self_id()),
+                is_command=self._is_command_event(event),
+            )
+        )
+
+    async def enrich_request(self, event: Any, req: Any) -> None:
+        group_id = str(event.get_group_id())
+        if self.paused or not group_id or self._is_command_event(event):
+            return
+        actor = await self.runtime.actor_for(group_id)
+        topic = actor.window.snapshot()
+        memories = self.memory.search_memories(
+            group_id,
+            " ".join(message.text for message in topic.messages[-8:]),
+            now=max((message.timestamp for message in topic.messages), default=0),
+            limit=8,
+        )
+        prompt = BundledPersonaProvider().build_user_context(topic, memories)
+        try:
+            from astrbot.core.agent.message import TextPart
+
+            req.extra_user_content_parts.append(TextPart(text=prompt).mark_as_temp())
+        except Exception:
+            return
+
+    async def close(self) -> None:
+        await self.runtime.close()
+        self.memory.close()
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "paused": self.paused,
+            "groups": self.runtime.snapshots(),
+            "bootstrapped": sorted(self._bootstrapped),
+        }
+
+    def _workflow_for(self, group_id: str) -> CognitiveWorkflow:
+        persona = AstrBotPersonaProvider(
+            self.context,
+            persona_id=self._setting("persona_id", ""),
+            override_prompt=self._setting("persona_prompt", ""),
+        )
+        getter = lambda gid: self._provider_by_group.get(
+            gid,
+            self._setting("generation_provider", "")
+            or self._setting("decision_provider", ""),
+        )
+        return CognitiveWorkflow(
+            decision_model=AstrBotDecisionModel(
+                self.context,
+                lambda gid: self._setting("decision_provider", "") or getter(gid),
+            ),
+            generation_model=AstrBotGenerationModel(self.context, getter, persona),
+            vision=AstrBotVisionPort(self.context, getter),
+            platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
+            memory=self.memory,
+            persona=persona,
+            output_guard=AemeathOutputGuard(self._policy_for(group_id).max_reply_chars),
+            rate_limiter=SlidingWindowRateLimiter(
+                self._policy_for(group_id).spontaneous_hourly_limit,
+                self._policy_for(group_id).spontaneous_cooldown_seconds,
+            ),
+            clock=_SystemClock(),
+        )
+
+    def _policy_for(self, group_id: str) -> GroupPolicy:
+        aliases = tuple(self._setting("aliases", ("爱弥斯", "小爱", "飞行雪绒")))
+        return GroupPolicy(
+            aliases=aliases,
+            history_limit=int(self._setting("history_limit", 100)),
+            decision_threshold=float(self._setting("decision_threshold", 0.72)),
+            spontaneous_hourly_limit=int(self._setting("spontaneous_hourly_limit", 6)),
+            spontaneous_cooldown_seconds=int(
+                self._setting("spontaneous_cooldown_seconds", 600)
+            ),
+            debounce_min_seconds=float(self._setting("debounce_min_seconds", 4.0)),
+            debounce_max_seconds=float(self._setting("debounce_max_seconds", 8.0)),
+            vision_enabled=bool(self._setting("vision_enabled", True)),
+        )
+
+    def _group_enabled(self, group_id: str) -> bool:
+        groups = tuple(self._setting("enabled_groups", ()))
+        return not groups or group_id in {str(item) for item in groups}
+
+    def _setting(self, name: str, default: Any) -> Any:
+        if isinstance(self.settings, dict):
+            return self.settings.get(name, default)
+        return getattr(self.settings, name, default)
+
+    @staticmethod
+    def _is_command_event(event: Any) -> bool:
+        for handler in event.get_extra("activated_handlers", []) or []:
+            for event_filter in getattr(handler, "event_filters", []):
+                if "command" in type(event_filter).__name__.lower():
+                    return True
+        return False
+
+
+class _SystemClock:
+    def now(self) -> int:
+        import time
+
+        return int(time.time())
+
