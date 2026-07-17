@@ -1,0 +1,11 @@
+name: astrbot_plugin_groupmate
+display_name: 群聊伙伴 Groupmate
+desc: 让 AstrBot 观察群聊、判断合适的参与时机，并以当前人格自然回应。
+short_desc: 可控、可记忆、不过度打扰的群聊伙伴。
+version: 0.1.0
+author: Minase
+repo: ""
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.24,<5"
+
