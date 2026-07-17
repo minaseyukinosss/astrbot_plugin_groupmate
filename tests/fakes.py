@@ -82,3 +82,11 @@ class NullVision:
     async def describe(self, image_urls):
         return ""
 
+
+class RecordingWorkflow:
+    def __init__(self):
+        self.evaluations = []
+
+    async def evaluate(self, topic, trigger, policy):
+        self.evaluations.append((topic, trigger, policy))
+        return None
