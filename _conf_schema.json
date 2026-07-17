@@ -1,0 +1,84 @@
+{
+  "enabled_groups": {
+    "description": "允许观察的 QQ 群号；留空表示所有群。",
+    "type": "list",
+    "default": []
+  },
+  "aliases": {
+    "description": "Bot 的昵称和直接称呼。",
+    "type": "list",
+    "default": ["爱弥斯", "小爱", "飞行雪绒"]
+  },
+  "decision_provider": {
+    "description": "自主插话判断模型。建议选择快速、便宜的模型。",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "generation_provider": {
+    "description": "自主回复模型；留空时使用当前群聊天模型。",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "vision_provider": {
+    "description": "按需图片理解模型；留空时复用回复模型。",
+    "type": "string",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "persona_id": {
+    "description": "AstrBot 人格 ID；留空时使用插件内置爱弥斯预设。",
+    "type": "string",
+    "_special": "select_persona",
+    "default": ""
+  },
+  "persona_prompt": {
+    "description": "可选的插件本地人格覆盖文本。",
+    "type": "text",
+    "default": "",
+    "editor_mode": true,
+    "editor_language": "markdown"
+  },
+  "history_limit": {
+    "description": "每群工作记忆和启动补拉的消息数量。",
+    "type": "int",
+    "default": 100
+  },
+  "decision_threshold": {
+    "description": "自主插话决策的最低置信度。",
+    "type": "float",
+    "default": 0.72
+  },
+  "spontaneous_hourly_limit": {
+    "description": "每群每小时最多自主发言次数。",
+    "type": "int",
+    "default": 6
+  },
+  "spontaneous_cooldown_seconds": {
+    "description": "两次自主发言之间的最短间隔。",
+    "type": "int",
+    "default": 600
+  },
+  "debounce_min_seconds": {
+    "description": "话题聚合等待下限。",
+    "type": "float",
+    "default": 4.0
+  },
+  "debounce_max_seconds": {
+    "description": "话题聚合等待上限。",
+    "type": "float",
+    "default": 8.0
+  },
+  "vision_enabled": {
+    "description": "是否允许在被询问或上下文需要时理解图片。",
+    "type": "bool",
+    "default": true
+  },
+  "memory_retention_days": {
+    "description": "近期事件记忆的默认保留天数。",
+    "type": "int",
+    "default": 30
+  }
+}
+
