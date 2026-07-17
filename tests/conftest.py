@@ -1,6 +1,6 @@
 import pytest
 
-from groupmate.models import ChatMessage, GroupPolicy
+from groupmate.models import ChatMessage, GroupPolicy, TopicSnapshot
 
 
 @pytest.fixture
@@ -29,3 +29,23 @@ def balanced_policy():
         spontaneous_cooldown_seconds=0,
     )
 
+
+@pytest.fixture
+def topic_snapshot(message_factory):
+    messages = (
+        message_factory(message_id="m1", sender_name="Alice", text="今天也太热了"),
+        message_factory(
+            message_id="m2",
+            sender_id="u2",
+            sender_name="Bob",
+            text="确实，空调都顶不住",
+            timestamp=101,
+        ),
+    )
+    return TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=messages,
+        created_at=100,
+        updated_at=101,
+    )
