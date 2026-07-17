@@ -404,7 +404,10 @@ class AstrBotBridge:
                 lambda gid: self._setting("decision_provider", "") or getter(gid),
             ),
             generation_model=AstrBotGenerationModel(self.context, getter, persona),
-            vision=AstrBotVisionPort(self.context, getter),
+            vision=AstrBotVisionPort(
+                self.context,
+                lambda gid: self._setting("vision_provider", "") or getter(gid),
+            ),
             platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
             memory=self.memory,
             persona=persona,
@@ -454,4 +457,3 @@ class _SystemClock:
         import time
 
         return int(time.time())
-
