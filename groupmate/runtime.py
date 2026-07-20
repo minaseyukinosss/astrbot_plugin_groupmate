@@ -125,10 +125,12 @@ class GroupActor:
         result = self.router.classify(message)
         self.last_trigger = result.kind
         if result.kind in (TriggerKind.IGNORE, TriggerKind.COMMAND):
+            await self._observe_bypass(result.kind)
             return
         if result.kind is TriggerKind.NATIVE_DIRECT:
             self._generation += 1
             self._cancel_debounce()
+            await self._observe_bypass(result.kind)
             self.window.reset_topic()
             return
         if result.kind is TriggerKind.ALIAS_DIRECT:
@@ -176,6 +178,15 @@ class GroupActor:
             self._debounce_task.cancel()
         self._debounce_task = None
 
+    async def _observe_bypass(self, trigger: TriggerKind) -> None:
+        observer = getattr(self.workflow, "observe_bypass", None)
+        if observer is None:
+            return
+        try:
+            await observer(self.window.snapshot(), trigger, self.policy)
+        except Exception:
+            return
+
 
 class GroupRuntimeManager:
     def __init__(
@@ -220,4 +231,3 @@ class GroupRuntimeManager:
 
     def snapshots(self) -> Dict[str, dict]:
         return {group_id: actor.snapshot() for group_id, actor in self._actors.items()}
-

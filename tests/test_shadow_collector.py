@@ -42,10 +42,13 @@ def test_text_collection_uses_pseudonyms_and_drops_raw_metadata():
     assert "https://" not in encoded
     assert "metadata" not in encoded
     assert "[图片]" in encoded
+    assert "message_id" not in encoded
+    assert "m1" not in encoded
 
 
 def test_collection_keeps_at_most_twenty_messages_and_five_minutes():
     messages = [message(index, timestamp=index * 20) for index in range(1, 31)]
     sample = ShadowCollector(store_text=True).collect(topic(messages))
     assert len(sample.context) == 16
-    assert sample.context[0]["message_id"] == "m15"
+    assert sample.context[0]["text"] == "消息15"
+    assert sample.context[0]["seconds_from_start"] == 0

@@ -46,6 +46,7 @@ class ShadowCollector:
     def _context(messages: List[ChatMessage]):
         aliases: Dict[str, str] = {}
         rows = []
+        start = messages[0].timestamp if messages else 0
         for message in messages:
             if message.sender_id not in aliases:
                 aliases[message.sender_id] = "成员{}".format(len(aliases) + 1)
@@ -54,10 +55,10 @@ class ShadowCollector:
                 text = (text + " [图片]").strip()
             rows.append(
                 {
-                    "message_id": message.message_id,
+                    "index": len(rows) + 1,
                     "sender": aliases[message.sender_id],
                     "text": text,
-                    "timestamp": message.timestamp,
+                    "seconds_from_start": max(0, message.timestamp - start),
                     "reply": bool(message.reply_to_message_id),
                 }
             )
