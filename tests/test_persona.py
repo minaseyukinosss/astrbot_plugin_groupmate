@@ -294,6 +294,7 @@ def test_bundled_persona_aligns_with_output_guard_length_limit():
     prompt = BundledPersonaProvider().bundled_system_prompt()
 
     assert "最终回复不超过 60 个字符" in prompt
+    assert "最多两句" in prompt
 
 
 def test_bundled_persona_uses_abstract_high_frequency_reply_directions():
@@ -309,4 +310,7 @@ def test_bundled_persona_uses_abstract_high_frequency_reply_directions():
     ]
     for direction in directions:
         assert direction in prompt
+    assert "措辞适当变化" in prompt
+    assert "“在呀”" not in prompt
+    assert "“听着呢”" not in prompt
     assert "| 普通群友：小爱 | 在呀。 / 听着呢。 |" not in prompt
