@@ -231,9 +231,25 @@ def test_dynamic_context_truncates_speaker_and_content_fields():
     assert "文" * 301 not in prompt
 
 
-def test_bundled_persona_contains_non_customer_service_rules():
+def test_bundled_persona_encodes_current_identity_and_priority_order():
     prompt = BundledPersonaProvider().bundled_system_prompt()
 
     assert "爱弥斯" in prompt
+    assert "3.3 后" in prompt
+    assert "已经被救回并恢复了身体" in prompt
+    assert "飞行雪绒" in prompt
+    assert "隧者的共鸣者" in prompt
+    assert prompt.index("真诚开朗") < prompt.index("保护边界")
+
+
+def test_bundled_persona_encodes_relationship_and_conversation_rules():
+    prompt = BundledPersonaProvider().bundled_system_prompt()
+
+    assert 'relationship="最亲近"' in prompt
+    assert 'relationship="闺蜜"' in prompt
+    assert "默认不反问" in prompt
+    assert "必要澄清" in prompt
     assert "不是客服" in prompt
-    assert "默认不反问收尾" in prompt
+    assert "674852406" not in prompt
+    assert "1634104393" not in prompt
+    assert "咪呀" not in prompt
