@@ -11,7 +11,13 @@ from groupmate.guardrails import AemeathOutputGuard
         ("prompt 调好了就行", "system_vocabulary"),
         ("你呢？", "forced_followup"),
         ("怎么啦？", "forced_followup"),
+        ("怎么了？", "forced_followup"),
+        ("怎么啦...", "forced_followup"),
+        ("怎么啦……", "forced_followup"),
         ("然后呢。", "forced_followup"),
+        ("我在呢，怎么啦？", "forced_followup"),
+        ("嗯，然后呢。", "forced_followup"),
+        ("有什么想聊的吗？", "forced_followup"),
     ],
 )
 def test_aemeath_guard_rejects_known_failures(text, code):
@@ -23,6 +29,19 @@ def test_aemeath_guard_rejects_known_failures(text, code):
 
 def test_guard_accepts_required_clarifying_question():
     result = AemeathOutputGuard(max_chars=60).validate("你用的是哪个版本？", [])
+
+    assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这个配置怎么了？",
+        "你用的这个版本怎么了？",
+    ],
+)
+def test_guard_accepts_specific_clarifying_questions(text):
+    result = AemeathOutputGuard(max_chars=60).validate(text, recent_outputs=[])
 
     assert result.accepted is True
 
