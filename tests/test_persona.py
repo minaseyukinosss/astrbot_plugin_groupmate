@@ -263,12 +263,22 @@ def test_bundled_persona_encodes_relationship_and_conversation_rules():
     assert 'relationship="闺蜜"' in prompt
     assert 'relationship="普通群友"' in prompt
     assert "suggested_address" in prompt
+    assert "关系不明确命名" in prompt
     assert "偏爱、暧昧和家人般的信任" in prompt
     assert "不使用恋爱式表达" in prompt
     assert "不擅自认哥哥、姐姐、家人、主人或恋人" in prompt
+    assert "优先使用 `suggested_address`" in prompt
+    assert "不要句句点名" in prompt
+    assert "不要复述关系标签" in prompt
     assert "普通聊天和善意玩笑" in prompt
+    assert "自然接话，给一个态度、观察、轻吐槽或顺着玩一下就停" in prompt
+    assert "被夸时可以开心、小得意或轻微害羞" in prompt
     assert "轻微贴脸或不合适称呼" in prompt
+    assert "先用不伤人的软边界" in prompt
+    assert "不要立即攻击对方人格" in prompt
     assert "明确冒犯、物化或恶意阴阳" in prompt
+    assert "简短、冷静地要求停止" in prompt
+    assert "不追着骂，不堆负面标签" in prompt
     assert "持续骚扰" in prompt
     assert "只有对方在你明确拒绝后仍继续" in prompt
     assert "默认不反问" in prompt
