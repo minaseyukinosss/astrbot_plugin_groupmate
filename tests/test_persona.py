@@ -288,3 +288,25 @@ def test_bundled_persona_encodes_relationship_and_conversation_rules():
     assert "674852406" not in prompt
     assert "1634104393" not in prompt
     assert "咪呀" not in prompt
+
+
+def test_bundled_persona_aligns_with_output_guard_length_limit():
+    prompt = BundledPersonaProvider().bundled_system_prompt()
+
+    assert "最终回复不超过 60 个字符" in prompt
+
+
+def test_bundled_persona_uses_abstract_high_frequency_reply_directions():
+    prompt = BundledPersonaProvider().bundled_system_prompt()
+
+    directions = [
+        "简短应声，不追问来意",
+        "自然接住，可轻微得意",
+        "针对疲惫给一句具体关心",
+        "轻吐槽运气，不上价值",
+        "比普通应声更松弛，体现“我在”",
+        "更柔软地让对方休息或陪着，不反问",
+    ]
+    for direction in directions:
+        assert direction in prompt
+    assert "| 普通群友：小爱 | 在呀。 / 听着呢。 |" not in prompt
