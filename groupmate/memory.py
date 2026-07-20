@@ -454,7 +454,13 @@ class SQLiteMemoryStore:
         return int(row["count"])
 
     def shadow_stats(self) -> Dict[str, Any]:
-        result = {"total": self.shadow_count(), "actions": {}, "labels": {}, "reasons": {}}
+        result = {
+            "total": self.shadow_count(),
+            "actions": {},
+            "labels": {},
+            "reasons": {},
+            "recent": [],
+        }
         for field, target in (
             ("action", "actions"),
             ("label", "labels"),
@@ -466,7 +472,24 @@ class SQLiteMemoryStore:
                 )
             ).fetchall()
             result[target] = {str(row["value"]): int(row["count"]) for row in rows}
+        recent = self._db.execute(
+            """
+            SELECT decision_id, action, reason_code, label, created_at
+            FROM shadow_decisions ORDER BY created_at DESC, id DESC LIMIT 10
+            """
+        ).fetchall()
+        result["recent"] = [dict(row) for row in recent]
         return result
+
+    def labeled_shadow_records(self) -> List[Dict[str, Any]]:
+        rows = self._db.execute(
+            """
+            SELECT * FROM shadow_decisions
+            WHERE label IN ('must_respond', 'may_respond', 'must_silence')
+            ORDER BY created_at ASC, id ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self._db.close()

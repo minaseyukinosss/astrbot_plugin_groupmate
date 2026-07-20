@@ -103,8 +103,15 @@ class ShadowWorkflow:
         elif would_rate_limit:
             reason = "rate_limited"
         else:
+            query = " ".join(message.text for message in topic.messages[-8:] if message.text)
             try:
-                decision = await self.decision_model.decide(topic, policy, ())
+                memories = self.memory.search_memories(
+                    topic.group_id, query, now=now, limit=8
+                )
+            except Exception:
+                memories = ()
+            try:
+                decision = await self.decision_model.decide(topic, policy, memories)
             except Exception:
                 decision = Decision.ignore("decision_error", trigger)
                 error_code = "decision_error"

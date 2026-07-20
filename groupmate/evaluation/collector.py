@@ -60,6 +60,11 @@ class ShadowCollector:
                     "text": text,
                     "seconds_from_start": max(0, message.timestamp - start),
                     "reply": bool(message.reply_to_message_id),
+                    "mentions_bot": message.mentions_bot,
+                    "reply_to_bot": message.reply_to_bot,
+                    "is_command": message.is_command,
+                    "is_bot": message.is_bot,
+                    "segment_types": list(message.segment_types),
                 }
             )
         return rows

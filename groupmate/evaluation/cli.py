@@ -13,6 +13,7 @@ from .dataset import DatasetValidationError, load_dataset
 from .evaluator import DecisionEvaluator
 from .metrics import calculate_metrics
 from .report import write_comparison, write_run_report
+from .shadow_export import export_labeled_shadow_dataset
 
 
 class SafeSilenceDecisionModel:
@@ -34,6 +35,11 @@ def build_parser():
     compare.add_argument("--baseline", required=True)
     compare.add_argument("--candidate", required=True)
     compare.add_argument("--output", required=True)
+    export = commands.add_parser(
+        "export-shadow", help="把插件自行采集并标注的记录生成评测集"
+    )
+    export.add_argument("--database", required=True)
+    export.add_argument("--output", required=True)
     return parser
 
 
@@ -46,6 +52,8 @@ def main(argv=None):
             return 0
         if args.command == "run":
             return _run(args)
+        if args.command == "export-shadow":
+            return _export_shadow(args)
         return _compare(args)
     except (DatasetValidationError, OSError, ValueError, KeyError) as exc:
         print("评测失败：{}".format(exc), file=sys.stderr)
@@ -73,6 +81,18 @@ def _compare(args):
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
     candidate = json.loads(Path(args.candidate).read_text(encoding="utf-8"))
     write_comparison(baseline, candidate, Path(args.output))
+    return 0
+
+
+def _export_shadow(args):
+    from ..memory import SQLiteMemoryStore
+
+    store = SQLiteMemoryStore(Path(args.database))
+    try:
+        count = export_labeled_shadow_dataset(store, Path(args.output))
+    finally:
+        store.close()
+    print("已生成 {} 个本地影子评测场景".format(count))
     return 0
 
 

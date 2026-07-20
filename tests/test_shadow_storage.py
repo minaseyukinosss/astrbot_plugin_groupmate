@@ -78,5 +78,6 @@ def test_shadow_stats_do_not_return_context(tmp_path):
     stats = store.shadow_stats()
     assert stats["total"] == 1
     assert stats["actions"] == {"ignore": 1}
+    assert stats["recent"][0]["decision_id"] == "d1"
     assert "context" not in str(stats)
     store.close()

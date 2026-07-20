@@ -3,7 +3,15 @@ import asyncio
 from groupmate.evaluation.collector import ShadowCollector
 from groupmate.evaluation.shadow import HmacIdentityHasher, ShadowWorkflow
 from groupmate.memory import SQLiteMemoryStore
-from groupmate.models import ChatMessage, Decision, GroupPolicy, TopicSnapshot, TriggerKind
+from groupmate.models import (
+    ChatMessage,
+    Decision,
+    GroupPolicy,
+    MemoryItem,
+    MemoryKind,
+    TopicSnapshot,
+    TriggerKind,
+)
 from groupmate.runtime import GroupActor
 from tests.fakes import FakeClock, FailingDecisionModel, StaticDecisionModel
 
@@ -74,6 +82,35 @@ def test_shadow_model_error_is_recorded_as_safe_silence(tmp_path):
     row = memory.get_shadow_decision(outcome.decision_id)
     assert row["action"] == "ignore"
     assert row["error_code"] == "decision_error"
+    memory.close()
+
+
+def test_shadow_decision_receives_same_relevant_memory_context(tmp_path):
+    class CapturingModel:
+        def __init__(self):
+            self.memories = ()
+
+        async def decide(self, topic, policy, memories):
+            self.memories = tuple(memories)
+            return Decision.ignore("not_useful")
+
+    model = CapturingModel()
+    workflow, memory = build_workflow(tmp_path, model)
+    memory.add_memory(
+        MemoryItem(
+            "mem1",
+            "real-group",
+            "group",
+            MemoryKind.EPISODIC,
+            "天气很热",
+            90,
+            expires_at=200,
+        )
+    )
+    asyncio.run(
+        workflow.evaluate(topic("天气怎么样"), TriggerKind.CANDIDATE, GroupPolicy())
+    )
+    assert [item.memory_id for item in model.memories] == ["mem1"]
     memory.close()
 
 
