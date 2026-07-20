@@ -41,3 +41,18 @@ class EvaluationCase:
 class EvaluationDataset:
     cases: Tuple[EvaluationCase, ...]
     content_hash: str
+
+
+@dataclass(frozen=True)
+class PredictionRecord:
+    case_id: str
+    expected_label: EvaluationLabel
+    trigger: TriggerKind
+    action: str
+    confidence: float
+    reason_code: str
+    target_message_id: Optional[str]
+    decision_model_called: bool
+    latency_ms: float
+    error_code: Optional[str]
+    matched: bool
