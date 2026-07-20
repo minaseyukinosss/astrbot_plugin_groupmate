@@ -1,269 +1,209 @@
-# AstrBot Groupmate Agent Design
-
-Date: 2026-07-17
-Status: Approved for implementation
-Target: AstrBot 4.24+ with QQ through NapCat/OneBot v11
-
-## 1. Purpose
-
-Build a reusable AstrBot plugin that acts as a group-chat companion rather than
-a command bot. It observes group conversation, maintains bounded context,
-reliably wakes when addressed, decides when a spontaneous contribution is
-appropriate, and responds through the configured persona without flooding the
-group.
-
-The plugin ships with an Aemeath-oriented default preset, but its domain logic
-must not hard-code Aemeath names, relationships, or phrasing.
-
-## 2. Confirmed Product Decisions
-
-- Platform: QQ through NapCat/OneBot v11.
-- Context recovery: fetch the latest 100 messages at first contact or after a
-  reconnect when the platform API is available, then continue with live events.
-- Participation mode: balanced.
-- Spontaneous contribution target: roughly 3-6 messages per active group per
-  hour. Direct wake events do not consume this quota.
-- Vision: analyze images only when the bot is addressed about an image or the
-  active topic clearly depends on it.
-- Reuse: generic engine with an Aemeath default configuration.
-- Memory: lightweight persistent social memory, not a complete permanent chat
-  archive.
-- Commands: existing AstrBot and third-party plugin commands always take
-  precedence. Groupmate observes but never duplicates or intercepts their
-  output.
-- Models: a small, independently configurable decision model gates spontaneous
-  participation; the current group chat model produces user-visible replies.
-
-## 3. Architecture Decision
-
-Use an event-driven, single-agent cognitive workflow implemented as a modular
-monolith with ports and adapters. Do not introduce a nested agent framework or
-multi-agent orchestration in the first version.
-
-This decision combines the useful parts of mature agent architectures:
+# AstrBot Groupmate 智能体设计规格
 
-- deterministic routing and composable workflows for predictable control;
-- observation, retrieval, reflection, and planning for believable behavior;
-- explicit graph state and checkpoints for replay and fault analysis;
-- tiered memory for bounded prompts and long-term coherence;
-- structured model outputs, guardrails, hooks, and tracing;
-- an internal candidate-thought queue for proactive turn-taking.
+日期：2026-07-17
+状态：已批准实施
+目标环境：AstrBot 4.24+，通过 NapCat/OneBot v11 接入 QQ
 
-The LLM does not own the runtime loop. Code owns scheduling, state transitions,
-quotas, idempotency, and persistence. Models only perform bounded semantic
-tasks behind typed interfaces.
-
-## 4. System Boundaries
-
-### 4.1 Platform Shell
-
-The AstrBot plugin shell contains all required handlers and hooks:
-
-- a group-message observer for AIOCQHTTP events;
-- an `on_llm_request` hook that enriches native direct-wake requests;
-- administrator commands for status, pause/resume, context reset, memory
-  inspection, and decision diagnostics;
-- startup and termination lifecycle handling.
+## 1. 目标
 
-The shell translates AstrBot objects into internal domain events. Domain
-services must not import AstrBot types.
-
-### 4.2 Per-Group Actor Runtime
+构建一个可复用的 AstrBot 插件，使机器人表现为群聊伙伴，而不是只会响应指令的机器人。插件持续观察群聊、维护有边界的上下文、在被叫到时可靠唤醒、判断何时适合主动参与，并根据所选人格回复，同时避免刷屏。
 
-Each group has a logical actor with a serialized mailbox. It owns:
+插件默认提供适配爱弥斯的预设，但领域逻辑不得写死爱弥斯的名字、关系或语言表达。
 
-- ordered message ingestion;
-- the working context window;
-- topic segmentation and debounce state;
-- pending candidate thoughts;
-- rate-limit state;
-- a single in-flight decision or response;
-- reliable outbound scheduling.
+## 2. 已确认的产品决策
 
-Groups run independently. Within one group, state mutations are serialized to
-prevent duplicate decisions, out-of-order context, and quota races.
+- 平台：QQ + NapCat/OneBot v11。
+- 上下文恢复：首次接触某个群或连接恢复后，尽力补拉最近 100 条消息，之后持续接收实时事件。
+- 参与模式：均衡模式。
+- 主动发言目标：活跃群每小时约 3～6 条；直接唤醒不占用该额度。
+- 图片理解：仅在机器人被要求查看图片，或当前话题明确依赖图片时调用视觉模型。
+- 可复用性：通用引擎，内置爱弥斯默认配置。
+- 记忆：持久化轻量社交记忆，不永久保存完整群聊档案。
+- 指令兼容：AstrBot 和第三方插件的既有指令始终优先；Groupmate 只观察，不重复回复、不拦截结果。
+- 模型分工：使用独立配置的小模型决定是否主动参与，使用当前群聊模型生成用户可见回复。
 
-### 4.3 Cognitive Workflow
+## 3. 架构决策
 
-The explicit state sequence is:
+采用事件驱动的单智能体认知工作流，以模块化单体形式实现，并使用端口与适配器隔离外部依赖。首版不引入嵌套 Agent 框架或多智能体编排。
 
-1. `OBSERVE`: normalize and validate an incoming event.
-2. `SEGMENT`: attach it to an active topic or start a new one.
-3. `RECALL`: retrieve only relevant working and social memory.
-4. `THINK`: create a concise candidate contribution, not hidden chain of
-   thought.
-5. `GATE`: apply deterministic policies and, when eligible, the decision model.
-6. `PLAN`: select target message, conversational angle, modality, and timing.
-7. `GENERATE`: call the response model with persona and bounded context.
-8. `GUARD`: validate content and optionally perform one repair pass.
-9. `SCHEDULE`: add a human-like delay and verify the contribution is still
-   timely.
-10. `SEND`: enqueue and deliver an idempotent outbound message.
-11. `LEARN`: update approved social or episodic memory candidates.
+设计吸收成熟智能体架构中的有效部分：
 
-Every transition emits a trace record with a stable `decision_id` and reason
-codes. Raw model reasoning is never stored.
+- 使用确定性路由与可组合工作流保证控制过程可预测；
+- 使用观察、检索、反思和计划提高行为可信度；
+- 使用显式状态与检查点支持回放和故障分析；
+- 使用分层记忆控制提示词长度并维持长期一致性；
+- 使用结构化模型输出、Guardrail、生命周期钩子和追踪；
+- 使用内部候选想法队列处理主动发言时机。
 
-## 5. Trigger Routing
+LLM 不拥有运行循环。调度、状态迁移、额度、幂等和持久化由代码控制；模型只通过强类型接口完成边界明确的语义任务。
 
-### 5.1 Native Direct Wake
+## 4. 系统边界
 
-AstrBot continues to own `@bot`, replies to a bot message, and configured wake
-prefixes. The observer records the event but does not generate independently.
-The `on_llm_request` hook adds bounded group context and relevant memories to
-the existing request, so only one reply is produced.
+### 4.1 平台外壳
 
-### 5.2 Plugin Direct Wake
+AstrBot 插件外壳包含框架要求的 Handler 和 Hook：
 
-Configured aliases used as direct address or an explicit discussion about the
-bot trigger the plugin response path immediately. Alias presence alone is not
-sufficient: the router distinguishes direct address from unrelated homonyms.
+- 面向 AIOCQHTTP 群消息的观察器；
+- `on_llm_request` Hook，用于为原生直接唤醒请求补充上下文；
+- 管理员命令，包括状态查看、暂停/恢复、上下文重置和决策诊断；
+- 启动与终止生命周期处理。
 
-### 5.3 Spontaneous Participation
+外壳负责把 AstrBot 对象翻译为内部领域事件。领域服务不得导入 AstrBot 类型。
 
-Ordinary messages are accumulated into a topic window. Deterministic policies
-first reject commands, bot messages, stale topics, cooldown violations,
-duplicate content, empty media, and low-information noise.
+### 4.2 每群 Actor 运行时
 
-Eligible topics are sent to the decision model. The response must validate
-against this conceptual schema:
+每个群拥有一个逻辑 Actor 和串行邮箱，负责：
 
-- `action`: `respond` or `ignore`;
-- `confidence`: 0.0-1.0;
-- `target_message_id`: optional message to answer;
-- `reason_code`: closed enum;
-- `contribution`: one-sentence description of what the bot can add;
-- `needs_vision`: boolean;
-- `urgency`: low, normal, or high.
+- 按顺序接收消息；
+- 管理工作上下文窗口；
+- 管理话题切分与防抖状态；
+- 管理等待发送的候选想法；
+- 管理频率限制状态；
+- 保证同一时间只有一个决策或回复在执行；
+- 可靠调度待发送消息。
 
-Only a validated `respond` decision above the configured threshold advances.
-Model failure or invalid output fails closed to silence.
+不同群之间可以并行。同一群内的状态修改必须串行执行，防止重复决策、上下文乱序和额度竞争。
 
-### 5.4 Command Bypass
+### 4.3 认知工作流
 
-Messages recognized as wake-prefix commands or matching activated command
-handlers never enter Groupmate generation. They remain visible in the event
-log so later conversation can refer to the result, but Groupmate does not send
-a second personality response.
+显式状态序列如下：
 
-## 6. Topic and Timing Model
+1. `OBSERVE`：规范化并校验输入事件。
+2. `SEGMENT`：把消息加入现有话题或创建新话题。
+3. `RECALL`：只检索相关的工作记忆与社交记忆。
+4. `THINK`：形成简短的候选贡献意图，不保存隐式思维链。
+5. `GATE`：执行确定性策略，必要时调用决策模型。
+6. `PLAN`：选择目标消息、回复角度、媒体和发送时机。
+7. `GENERATE`：使用人格与有限上下文调用回复模型。
+8. `GUARD`：校验输出，必要时最多修复一次。
+9. `SCHEDULE`：加入拟人延迟，并确认回复仍然及时。
+10. `SEND`：通过幂等 Outbox 入队并投递消息。
+11. `LEARN`：更新允许写入的社交或情景记忆候选。
 
-- Default debounce: randomized 4-8 seconds.
-- Maximum topic collection window: 12 seconds.
-- Candidate thought TTL: 20 seconds by default.
-- A newer direct wake supersedes any pending spontaneous contribution.
-- A candidate is discarded if the topic changes, another participant already
-  supplies the same answer, the target message is recalled, or its TTL expires.
-- Human-like delay is based on output length and urgency, with a strict upper
-  bound so direct replies do not feel unresponsive.
-- At most one spontaneous response may be in flight per group.
+每次状态迁移都记录稳定的 `decision_id` 和原因码，但不保存模型的原始推理过程。
 
-## 7. Memory Model
+## 5. 触发路由
 
-Memory is a first-class subsystem behind a repository interface.
+### 5.1 AstrBot 原生直接唤醒
 
-### 7.1 Event Log
+`@机器人`、回复机器人消息以及配置的唤醒前缀继续由 AstrBot 处理。观察器记录事件，但不独立生成回复。`on_llm_request` Hook 为原请求补充有限群聊上下文和相关记忆，从而保证只生成一次回复。
 
-Stores normalized recent events for audit, replay, and context recovery. It has
-a configurable retention period and is not treated as permanent character
-memory.
+### 5.2 插件直接唤醒
 
-### 7.2 Working Memory
+配置的别名被用于直接称呼，或消息明确讨论机器人自身时，由插件立即进入回复路径。仅出现同名词语并不足以触发；路由器应区分直接称呼与无关同名内容。
 
-An in-memory ring of the latest 100 group messages. It is used for topic
-understanding and direct request enrichment. It is reconstructed from the
-event log and optional NapCat history.
+### 5.3 主动参与
 
-### 7.3 Social Profiles
+普通消息先被聚合为话题窗口。确定性规则优先排除指令、Bot 自身消息、过期话题、冷却违规、重复内容、空媒体和低信息噪声。
 
-Stores stable, scoped facts such as QQ ID, current display name, configured
-address, relationship label, and explicitly approved preferences. Manual
-configuration has higher authority than learned data.
+通过规则的候选话题交给决策模型，结果必须符合以下结构：
 
-### 7.4 Episodic Memory
+- `action`：`respond` 或 `ignore`；
+- `confidence`：0.0～1.0；
+- `target_message_id`：可选的目标消息；
+- `reason_code`：封闭枚举原因码；
+- `contribution`：一句话描述机器人能补充什么；
+- `needs_vision`：是否需要理解图片；
+- `urgency`：`low`、`normal` 或 `high`。
 
-Stores a small number of recent events with source message IDs, confidence,
-importance, creation time, and expiry time. Examples include a recently
-mentioned exam or a game the member is currently playing.
+只有通过结构校验、`action` 为 `respond` 且置信度达到阈值的结果才能继续。模型失败或结构无效时默认保持沉默。
 
-### 7.5 Reflections
+### 5.4 指令旁路
 
-Periodic background consolidation may infer a higher-level summary only from
-multiple consistent memories. Reflections cannot change protected identity or
-relationship fields. Version one exposes the interface and conservative
-consolidation rules; it does not run an unconstrained autonomous reflection
-loop.
+被识别为唤醒前缀指令或已激活指令 Handler 的消息不得进入 Groupmate 生成流程。它仍会出现在事件日志中，以便后续对话引用执行结果，但 Groupmate 不发送第二条人格回复。
 
-Retrieval combines namespace, relevance, recency, importance, confidence, and
-authority. It returns a small token-bounded set, never the complete store.
+## 6. 话题与时机模型
 
-## 8. Persona and Response Generation
+- 默认防抖等待：随机 4～8 秒。
+- 单个话题的最长收集窗口：12 秒。
+- 候选想法默认存活时间：20 秒。
+- 新的直接唤醒会覆盖等待中的主动插话。
+- 如果话题已改变、其他群友已经给出相同答案、目标消息被撤回或候选超时，则丢弃候选。
+- 拟人延迟由输出长度与紧急度决定，但必须设置严格上限，避免直接回复显得迟钝。
+- 每个群同一时间最多执行一条主动回复。
 
-Persona input is composed from four separately managed layers:
+## 7. 记忆模型
 
-1. stable identity and world facts;
-2. relationship and boundary policies;
-3. language style and examples;
-4. output constraints.
+记忆是一级子系统，并通过 Repository 接口访问。
 
-The plugin accepts an AstrBot persona selection when available and supports a
-plugin-local persona text fallback. Dynamic context is passed as temporary
-request content rather than appended to the stable system prompt.
+### 7.1 事件日志
 
-The Aemeath preset derives its constraints from the supplied persona document:
+保存近期规范化事件，用于审计、回放和上下文恢复。保留时间可配置，不视为永久人格记忆。
 
-- casual replies normally no longer than 30 Chinese characters;
-- one sentence by default, two at most;
-- no customer-service opening or forced follow-up question;
-- no decision narration, stage directions, prompt discussion, or developer
-  impersonation;
-- direct boundaries instead of flirtation or self-deprecating appeasement;
-- sparse world-building references;
-- configured relationship-specific forms of address.
+### 7.2 工作记忆
 
-Training exports are retrieval examples only. They do not override persona
-rules and are filtered to remove system messages, command output, duplicates,
-long tool summaries, and known anti-examples.
+内存中的最近 100 条群消息环形窗口，用于话题理解和直接请求增强。它可以从事件日志与 NapCat 历史记录中重建。
 
-## 9. Output Guardrails
+### 7.3 社交档案
 
-Before sending, deterministic validators check:
+保存 QQ ID、当前显示名、配置称呼、关系标签和明确允许记录的稳定偏好。人工配置的权威级别高于模型学习数据。
 
-- non-empty text and maximum length;
-- sentence count and split-message count;
-- forbidden narration and system vocabulary;
-- customer-service templates and unwanted follow-up questions;
-- duplicate or near-duplicate recent bot output;
-- incorrect forms of address;
-- accidental command or internal-ID leakage;
-- stale topic and rate-limit state.
+### 7.4 情景记忆
 
-One bounded repair call is allowed for style-only violations. Safety, stale
-context, duplicate, invalid target, or quota violations fail closed without a
-reply.
+保存少量近期事件，并记录来源消息 ID、置信度、重要性、创建时间和过期时间。例如近期提到的考试或正在玩的游戏。
 
-## 10. Persistence and Reliability
+### 7.5 反思摘要
 
-SQLite is the default backend because the plugin is local, single-process, and
-write volume is modest. Repositories isolate storage so PostgreSQL or another
-backend can be introduced later.
+后台整理任务只有在多条记忆相互一致时，才可以生成更高层摘要。反思不得修改受保护的身份或关系字段。首版保留接口和保守合并规则，不运行无约束的自主反思循环。
 
-Primary records are:
+检索综合考虑命名空间、相关性、时效性、重要性、置信度和权威级别，只返回受 Token 预算限制的少量结果，绝不把完整记忆库塞入提示词。
 
-- normalized messages;
-- group runtime snapshots;
-- decisions and state transitions;
-- social profiles;
-- episodic memories and reflections;
-- outbound messages.
+## 8. 人格与回复生成
 
-Outbound messages use an outbox with a unique `decision_id`. Delivery is
-idempotent. Stale chat replies are cancelled after reconnect rather than sent
-late. Schema migrations are explicit and versioned.
+人格输入分为四个独立层级：
 
-## 11. Ports and Extension Points
+1. 稳定身份与世界事实；
+2. 关系和边界策略；
+3. 语言风格与示例；
+4. 输出硬约束。
 
-The domain layer depends on protocols rather than implementations:
+插件优先使用选定的 AstrBot 人格，也支持插件内本地人格文本作为回退。动态上下文以临时请求内容传入，不追加到稳定的系统提示词。
+
+爱弥斯预设从现有人格文档提取以下规则：
+
+- 普通闲聊通常不超过 30 个汉字；
+- 默认一句，最多两句；
+- 禁止客服开场和强行反问；
+- 禁止决策旁白、舞台动作、Prompt 讨论和假装开发者；
+- 面对冒犯时保护边界，不反撩、不自我贬低讨好；
+- 世界观元素低频出现；
+- 根据配置关系使用不同称呼。
+
+聊天导出仅作为风格检索示例，不能覆盖人格规则。导入前需要过滤系统消息、指令输出、重复内容、长工具摘要和已知反例。
+
+## 9. 输出 Guardrail
+
+发送前执行确定性校验：
+
+- 非空与最大长度；
+- 句数和拆分消息数量；
+- 禁止决策旁白和系统词汇；
+- 禁止客服模板和无意义反问；
+- 与机器人近期输出重复或高度相似；
+- 称呼与关系不匹配；
+- 意外泄露指令或内部 ID；
+- 话题是否过期、额度是否仍有效。
+
+只有风格问题允许最多调用一次修复。安全、过期、重复、目标无效或额度违规必须直接放弃发送。
+
+## 10. 持久化与可靠性
+
+默认使用 SQLite，因为插件本地运行、单进程且写入量有限。Repository 隔离存储实现，后续可替换为 PostgreSQL 或其他后端。
+
+主要记录包括：
+
+- 规范化消息；
+- 群运行时快照；
+- 决策和状态迁移；
+- 社交档案；
+- 情景记忆与反思；
+- 待发送消息。
+
+Outbox 以 `decision_id` 唯一约束保证投递幂等。NapCat 断线后应取消已过期回复，不能在恢复连接后补发几分钟前的闲聊。数据库结构迁移必须显式且带版本号。
+
+## 11. 端口与扩展点
+
+领域层只依赖以下协议：
 
 - `PlatformPort`
 - `HistoryPort`
@@ -278,103 +218,82 @@ The domain layer depends on protocols rather than implementations:
 - `TraceSink`
 - `Clock`
 
-Extension registries allow additional trigger policies, memory rankers,
-guardrails, media analyzers, and output transforms without editing the
-orchestrator. Multi-agent delegation may later be added as a specialized tool,
-but it is not part of the core chat loop.
+扩展注册表允许新增触发策略、记忆排序器、Guardrail、媒体分析器和输出转换器，而不修改编排器主体。未来可以把多智能体委派作为专用工具接入，但它不属于核心群聊循环。
 
-## 12. Configuration Surface
+## 12. 配置界面
 
-The AstrBot WebUI schema exposes:
+AstrBot WebUI 配置包含：
 
-- enabled groups and bot aliases;
-- decision and generation provider selections;
-- persona selection or fallback persona text;
-- participation mode, thresholds, quotas, cooldown, debounce, and quiet hours;
-- history size and retention;
-- vision enablement and provider;
-- social relationship entries;
-- memory retention and reflection controls;
-- diagnostics and privacy-sensitive trace settings.
+- 启用的群和 Bot 别名；
+- 决策模型、回复模型和视觉模型；
+- AstrBot 人格或本地人格回退文本；
+- 参与模式、阈值、额度、冷却、防抖和静默时间；
+- 历史窗口大小与保留时间；
+- 图片理解开关；
+- 社交关系配置；
+- 记忆保留和反思控制；
+- 诊断与隐私敏感追踪选项。
 
-Defaults are conservative and usable. Secrets are not stored by this plugin;
-provider credentials remain managed by AstrBot.
+默认值应保守且可直接使用。插件不自行保存 Provider 密钥，凭据继续由 AstrBot 管理。
 
-## 13. Failure Handling
+## 13. 故障处理
 
-- NapCat history unavailable: continue with live events and retry later.
-- Decision model timeout or invalid schema: remain silent.
-- Generation model failure on native direct wake: allow AstrBot's normal error
-  behavior; plugin-direct wake logs the failure without a synthetic persona
-  reply.
-- Vision failure: continue only if text context is sufficient; otherwise remain
-  silent.
-- Database busy or transient write failure: retry boundedly and preserve
-  in-memory operation; never duplicate send.
-- Plugin reload or shutdown: cancel debounce tasks, flush snapshots, and close
-  storage cleanly.
+- NapCat 历史接口不可用：继续处理实时事件，后续再重试。
+- 决策模型超时或结构无效：保持沉默。
+- 原生直接唤醒的回复模型失败：沿用 AstrBot 错误处理；插件直接唤醒失败只记录错误，不生成伪人格提示。
+- 图片理解失败：文字上下文足够时继续，否则保持沉默。
+- 数据库忙或瞬时写入失败：有限重试并维持内存运行，不能重复发送。
+- 插件重载或关闭：取消防抖任务、保存快照并正确关闭存储。
 
-## 14. Observability and Evaluation
+## 14. 可观测性与评估
 
-Every candidate receives traceable reason codes through the workflow. Admins
-can inspect why the bot replied or stayed silent without exposing private model
-reasoning.
+每个候选话题都记录带原因码的工作流轨迹。管理员可以查看机器人为何回复或沉默，但不能看到模型私有推理内容。
 
-Offline evaluation replays labeled group-message windows and measures:
+离线评估通过回放已标注群聊窗口，统计：
 
-- hard-trigger recall;
-- spontaneous-response precision;
-- inappropriate interruption rate;
-- duplicate response rate;
-- command interference rate;
-- persona constraint pass rate;
-- average decision and reply latency;
-- model calls and estimated cost per 1,000 messages.
+- 硬触发召回率；
+- 主动回复准确率；
+- 不恰当插话率；
+- 重复回复率；
+- 指令干扰率；
+- 人格约束通过率；
+- 平均决策和回复延迟；
+- 每千条群消息的模型调用量与估算成本。
 
-The supplied bot-only exports can evaluate style but cannot evaluate trigger
-accuracy. Trigger evaluation requires paired or full-group conversation logs.
+现有仅包含机器人发言的导出可以评估语言风格，但无法评估触发准确率。触发评估需要成对消息或完整群聊记录。
 
-## 15. Testing Strategy
+## 15. 测试策略
 
-- Unit tests cover normalization, trigger classification, topic segmentation,
-  quota calculations, memory ranking, guardrails, and state transitions.
-- Contract tests use fake model, history, vision, storage, and platform ports.
-- Integration tests exercise AstrBot event translation and native/direct wake
-  coexistence without a live QQ account.
-- Replay tests cover message bursts, topic changes, duplicate events, command
-  bypass, reconnect history, recalls, model failures, and plugin shutdown.
-- Persona regression tests use curated positive and negative examples from the
-  supplied material.
+- 单元测试覆盖规范化、触发分类、话题切分、额度计算、记忆排序、Guardrail 和状态迁移。
+- 契约测试使用假的模型、历史、视觉、存储和平台端口。
+- 集成测试验证 AstrBot 事件转换以及原生/插件唤醒共存，不要求真实 QQ 账号。
+- 回放测试覆盖消息爆发、话题切换、重复事件、指令旁路、重连补历史、撤回、模型失败和插件关闭。
+- 人格回归测试使用学习素材中整理出的正例与反例。
 
-## 16. First-Version Scope
+## 16. 首版范围
 
-Version one includes:
+首版包含：
 
-- AIOCQHTTP group observation;
-- per-group actor runtime;
-- latest-100 working context and best-effort NapCat backfill;
-- native and alias wake routing;
-- topic batching and structured decision gating;
-- on-demand image analysis interface;
-- response generation and Aemeath guardrails;
-- SQLite social and episodic memory;
-- reliable outbound delivery;
-- WebUI configuration, admin diagnostics, and automated tests.
+- AIOCQHTTP 群消息观察；
+- 每群独立 Actor 运行时；
+- 最近 100 条工作上下文与尽力补拉 NapCat 历史；
+- 原生唤醒和别名唤醒路由；
+- 话题聚合与结构化决策门控；
+- 按需图片理解接口；
+- 回复生成和爱弥斯 Guardrail；
+- SQLite 社交与情景记忆；
+- 可靠消息投递；
+- WebUI 配置、管理员诊断和自动化测试。
 
-Version one excludes speech/video understanding, a vector database, scheduled
-unsolicited check-ins, autonomous tool-use loops, multi-bot coordination, and
-multi-agent orchestration.
+首版不包含语音/视频理解、向量数据库、定时主动问候、自主工具循环、多 Bot 协调和多智能体编排。
 
-## 17. Success Criteria
+## 17. 成功标准
 
-- Existing commands behave exactly as before and never receive a duplicate
-  Groupmate response.
-- `@`, reply-to-bot, and explicit aliases reliably wake the bot.
-- In balanced mode, active groups receive approximately 3-6 spontaneous
-  contributions per hour without consecutive flooding.
-- Decision or vision outages do not cause unsolicited fallback chatter.
-- Duplicate and out-of-order OneBot events do not produce duplicate replies.
-- Restart restores bounded context and persistent social memory.
-- The Aemeath preset passes its deterministic persona constraints.
-- Core workflow tests run without AstrBot, NapCat, or network access.
-
+- 既有指令行为保持不变，绝不产生第二条 Groupmate 回复。
+- `@`、回复 Bot 和明确别名能够可靠唤醒。
+- 均衡模式下，活跃群每小时约有 3～6 次主动参与且不会连续刷屏。
+- 决策模型或视觉模型故障时不会产生无请求的降级闲聊。
+- 重复和乱序 OneBot 事件不会造成重复回复。
+- 重启后能够恢复有限上下文和持久化社交记忆。
+- 爱弥斯预设通过确定性人格约束。
+- 核心工作流测试不依赖 AstrBot、NapCat 或网络。
