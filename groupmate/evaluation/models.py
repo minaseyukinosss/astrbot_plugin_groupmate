@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from ..models import ChatMessage, TriggerKind
 
@@ -56,3 +56,30 @@ class PredictionRecord:
     latency_ms: float
     error_code: Optional[str]
     matched: bool
+
+
+@dataclass(frozen=True)
+class ShadowSample:
+    features: Dict[str, Any]
+    context: Optional[Sequence[Dict[str, Any]]]
+    sender_id: str
+
+
+@dataclass(frozen=True)
+class ShadowRecord:
+    decision_id: str
+    group_hash: str
+    sender_hash: str
+    trigger: str
+    action: str
+    confidence: float
+    reason_code: str
+    would_rate_limit: bool
+    features: Dict[str, Any]
+    context: Optional[Sequence[Dict[str, Any]]]
+    model_id: str
+    policy_version: str
+    latency_ms: float
+    error_code: Optional[str]
+    created_at: int
+    expires_at: int

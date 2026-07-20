@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .models import ChatMessage, MemoryItem, MemoryKind
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SQLiteMemoryStore:
@@ -98,12 +98,44 @@ class SQLiteMemoryStore:
                     expires_at INTEGER,
                     sent_at INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS shadow_decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    decision_id TEXT NOT NULL UNIQUE,
+                    group_hash TEXT NOT NULL,
+                    sender_hash TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    reason_code TEXT NOT NULL,
+                    would_rate_limit INTEGER NOT NULL,
+                    features_json TEXT NOT NULL,
+                    context_json TEXT,
+                    label TEXT NOT NULL DEFAULT 'unlabeled',
+                    labeled_at INTEGER,
+                    model_id TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    latency_ms REAL NOT NULL,
+                    error_code TEXT,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_shadow_created
+                    ON shadow_decisions(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_shadow_expires
+                    ON shadow_decisions(expires_at);
                 """
             )
             self._db.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+
+    def schema_version(self) -> int:
+        row = self._db.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'"
+        ).fetchone()
+        return int(row["value"]) if row else 0
 
     def save_message(self, message: ChatMessage) -> bool:
         with self._db:
@@ -353,6 +385,88 @@ class SQLiteMemoryStore:
                 (int(sent_at), decision_id),
             )
 
+    def save_shadow_decision(self, record) -> bool:
+        context_json = (
+            json.dumps(record.context, ensure_ascii=False, sort_keys=True)
+            if record.context is not None
+            else None
+        )
+        with self._db:
+            cursor = self._db.execute(
+                """
+                INSERT OR IGNORE INTO shadow_decisions(
+                    decision_id, group_hash, sender_hash, trigger, action,
+                    confidence, reason_code, would_rate_limit, features_json,
+                    context_json, label, labeled_at, model_id, policy_version,
+                    latency_ms, error_code, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unlabeled', NULL, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.decision_id,
+                    record.group_hash,
+                    record.sender_hash,
+                    record.trigger,
+                    record.action,
+                    float(record.confidence),
+                    record.reason_code,
+                    int(record.would_rate_limit),
+                    json.dumps(record.features, ensure_ascii=False, sort_keys=True),
+                    context_json,
+                    record.model_id,
+                    record.policy_version,
+                    float(record.latency_ms),
+                    record.error_code,
+                    int(record.created_at),
+                    int(record.expires_at),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def get_shadow_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        row = self._db.execute(
+            "SELECT * FROM shadow_decisions WHERE decision_id = ?", (str(decision_id),)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def label_shadow_decision(self, decision_id: str, label: str, labeled_at: int) -> bool:
+        allowed = {"must_respond", "may_respond", "must_silence", "skipped"}
+        if label not in allowed:
+            return False
+        with self._db:
+            cursor = self._db.execute(
+                """
+                UPDATE shadow_decisions SET label = ?, labeled_at = ?
+                WHERE decision_id = ?
+                """,
+                (label, int(labeled_at), str(decision_id)),
+            )
+        return cursor.rowcount == 1
+
+    def purge_expired_shadow(self, now: int) -> int:
+        with self._db:
+            cursor = self._db.execute(
+                "DELETE FROM shadow_decisions WHERE expires_at <= ?", (int(now),)
+            )
+        return cursor.rowcount
+
+    def shadow_count(self) -> int:
+        row = self._db.execute("SELECT COUNT(*) AS count FROM shadow_decisions").fetchone()
+        return int(row["count"])
+
+    def shadow_stats(self) -> Dict[str, Any]:
+        result = {"total": self.shadow_count(), "actions": {}, "labels": {}, "reasons": {}}
+        for field, target in (
+            ("action", "actions"),
+            ("label", "labels"),
+            ("reason_code", "reasons"),
+        ):
+            rows = self._db.execute(
+                "SELECT {} AS value, COUNT(*) AS count FROM shadow_decisions GROUP BY {}".format(
+                    field, field
+                )
+            ).fetchall()
+            result[target] = {str(row["value"]): int(row["count"]) for row in rows}
+        return result
+
     def close(self) -> None:
         self._db.close()
-
