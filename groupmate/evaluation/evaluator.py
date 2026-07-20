@@ -12,12 +12,15 @@ from .models import EvaluationCase, EvaluationLabel, PredictionRecord
 
 
 class DecisionEvaluator:
-    def __init__(self, decision_model, policy: GroupPolicy) -> None:
+    def __init__(
+        self, decision_model, policy: GroupPolicy, measure_latency: bool = False
+    ) -> None:
         self.decision_model = decision_model
         self.policy = policy
+        self.measure_latency = bool(measure_latency)
 
     async def evaluate(self, case: EvaluationCase) -> PredictionRecord:
-        started = time.perf_counter_ns()
+        started = time.perf_counter_ns() if self.measure_latency else 0
         window = TopicWindow(case.messages[0].group_id, self.policy.history_limit)
         for message in case.messages:
             window.append(message)
@@ -57,7 +60,11 @@ class DecisionEvaluator:
                     action = "ignore"
                     reason_code = "below_threshold"
 
-        latency_ms = (time.perf_counter_ns() - started) / 1_000_000.0
+        latency_ms = (
+            (time.perf_counter_ns() - started) / 1_000_000.0
+            if self.measure_latency
+            else 0.0
+        )
         preliminary = PredictionRecord(
             case_id=case.case_id,
             expected_label=case.expected.label,

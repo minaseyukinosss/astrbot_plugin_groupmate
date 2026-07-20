@@ -103,6 +103,16 @@ astrbot_plugin_groupmate/
 
 插件不要求用户提供聊天导出。它会从每群实时事件自行构造最多 20 条、跨度不超过 5 分钟的有限窗口。默认只保存消息数、参与人数、长度和媒体类型等特征；只有显式开启 `shadow_store_message_text` 时，才会在本地保存使用“成员1、成员2”替代身份的脱敏文本，供管理员标注。
 
+完成标注后，可以从插件自己的数据库生成评测集：
+
+```bash
+python -m groupmate.evaluation.cli export-shadow \
+  --database AstrBot/data/plugin_data/astrbot_plugin_groupmate/groupmate.db \
+  --output shadow_reviewed.jsonl
+```
+
+生成文件只包含脱敏有限窗口，不包含 QQ 号、群号、昵称、OneBot 原始事件、资源 URL 或文件路径。它由插件自行产生，不需要额外提供历史聊天导出。
+
 ## 数据存储与隐私
 
 运行数据默认保存在：

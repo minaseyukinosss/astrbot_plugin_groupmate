@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional, Sequence
 
@@ -28,6 +29,8 @@ class MetricReport:
     silence_accuracy: Optional[float]
     decision_model_call_rate: Optional[float]
     decision_structure_success_rate: Optional[float]
+    predicted_spontaneous_reply_count: int
+    max_spontaneous_replies_per_group_hour: int
     p50_latency_ms: Optional[float]
     p95_latency_ms: Optional[float]
 
@@ -88,6 +91,15 @@ def calculate_metrics(
         for _, prediction in paired
         if prediction.error_code not in ("invalid_decision", "invalid_decision_schema")
     )
+    spontaneous_buckets = defaultdict(int)
+    for case, prediction in paired:
+        if prediction.action != "respond" or prediction.trigger not in (
+            TriggerKind.CANDIDATE,
+            TriggerKind.ALIAS_MENTION,
+        ):
+            continue
+        latest = case.messages[-1]
+        spontaneous_buckets[(latest.group_id, latest.timestamp // 3600)] += 1
 
     return MetricReport(
         total_sample_count=len(paired),
@@ -109,6 +121,10 @@ def calculate_metrics(
         silence_accuracy=_ratio(true_negative, len(silent_required)),
         decision_model_call_rate=_ratio(model_calls, len(paired)),
         decision_structure_success_rate=_ratio(structure_success, len(paired)),
+        predicted_spontaneous_reply_count=sum(spontaneous_buckets.values()),
+        max_spontaneous_replies_per_group_hour=max(
+            spontaneous_buckets.values(), default=0
+        ),
         p50_latency_ms=statistics.median(latencies) if latencies else None,
         p95_latency_ms=_percentile(latencies, 0.95),
     )

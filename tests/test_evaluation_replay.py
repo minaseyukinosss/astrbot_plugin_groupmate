@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from groupmate.evaluation.evaluator import DecisionEvaluator
+from groupmate.evaluation.replay import OfflineReplayRunner, VirtualClock
 from groupmate.evaluation.models import EvaluationCase, EvaluationLabel, ExpectedOutcome
 from groupmate.models import ChatMessage, Decision, GroupPolicy, TriggerKind
 from tests.fakes import FailingDecisionModel, StaticDecisionModel
@@ -97,3 +98,39 @@ def test_deterministic_routes_do_not_call_model(message_overrides, trigger, acti
     assert result.trigger is trigger
     assert result.action == action
     assert model.calls == 0
+
+
+def test_offline_runner_uses_virtual_time_without_sleep(monkeypatch):
+    async def forbidden_sleep(delay):
+        raise AssertionError("离线回放不能调用真实 sleep")
+
+    monkeypatch.setattr(asyncio, "sleep", forbidden_sleep)
+    first = make_case()
+    second = EvaluationCase(
+        schema_version=1,
+        case_id="case-2",
+        description="第二个场景",
+        messages=(
+            ChatMessage("m2", "eval-group", "u2", "群友乙", "普通消息", 2000),
+        ),
+        expected=ExpectedOutcome(EvaluationLabel.MUST_SILENCE),
+    )
+    clock = VirtualClock()
+    runner = OfflineReplayRunner(
+        DecisionEvaluator(StaticDecisionModel(Decision.ignore("safe")), GroupPolicy()),
+        clock,
+    )
+    predictions = run(runner.run((first, second)))
+    assert len(predictions) == 2
+    assert clock.now() == 2000
+    assert all(item.latency_ms == 0 for item in predictions)
+
+
+def test_offline_prediction_is_reproducible():
+    case = make_case()
+    evaluator = DecisionEvaluator(
+        StaticDecisionModel(Decision.ignore("safe")), GroupPolicy()
+    )
+    first = run(evaluator.evaluate(case))
+    second = run(evaluator.evaluate(case))
+    assert first == second

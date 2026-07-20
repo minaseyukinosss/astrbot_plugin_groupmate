@@ -82,6 +82,12 @@ def write_run_report(
         [
             "| P50 决策耗时 | {} ms |".format(_format_number(metrics.p50_latency_ms)),
             "| P95 决策耗时 | {} ms |".format(_format_number(metrics.p95_latency_ms)),
+            "| 预测主动回复总数 | {} |".format(
+                metrics.predicted_spontaneous_reply_count
+            ),
+            "| 单群单小时预测主动回复峰值 | {} |".format(
+                metrics.max_spontaneous_replies_per_group_hour
+            ),
             "",
         ]
     )

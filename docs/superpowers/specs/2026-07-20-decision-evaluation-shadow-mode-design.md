@@ -389,6 +389,16 @@ python -m groupmate.evaluation.cli validate \
   --dataset tests/fixtures/evaluation/golden.jsonl
 ```
 
+把插件自行采集并由管理员标注的本地记录生成评测集：
+
+```bash
+python -m groupmate.evaluation.cli export-shadow \
+  --database AstrBot/data/plugin_data/astrbot_plugin_groupmate/groupmate.db \
+  --output shadow_reviewed.jsonl
+```
+
+该命令只导出已标注且保存了脱敏审阅上下文的记录，不包含 QQ 号、群号、原始昵称、OneBot metadata、资源 URL 或文件路径。
+
 AstrBot 管理命令扩展：
 
 - `/groupmate_status`：显示影子模式、记录数量和最近错误；

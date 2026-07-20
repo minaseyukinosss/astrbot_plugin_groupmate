@@ -33,7 +33,7 @@
 - 创建 `groupmate/evaluation/dataset.py`
 - 创建 `tests/test_evaluation_dataset.py`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 测试必须覆盖正常读取、重复 `case_id`、跨群消息、时间倒序、未知标签和稳定内容哈希：
 
@@ -53,13 +53,13 @@ def test_duplicate_case_id_is_rejected(tmp_path):
         load_dataset(path)
 ```
 
-- [ ] **步骤 2：确认测试按预期失败**
+- [x] **步骤 2：确认测试按预期失败**
 
 运行：`python3 -m pytest tests/test_evaluation_dataset.py -q`
 
 预期：因 `groupmate.evaluation` 不存在而失败。
 
-- [ ] **步骤 3：实现最小数据类型和校验器**
+- [x] **步骤 3：实现最小数据类型和校验器**
 
 定义以下稳定接口：
 
@@ -94,7 +94,7 @@ class EvaluationCase:
 
 `load_dataset(path)` 返回包含 `cases` 和 SHA-256 `content_hash` 的不可变对象。哈希基于规范化内容，不包含文件路径。
 
-- [ ] **步骤 4：运行测试并提交**
+- [x] **步骤 4：运行测试并提交**
 
 运行：`python3 -m pytest tests/test_evaluation_dataset.py -q`
 
@@ -107,7 +107,7 @@ class EvaluationCase:
 - 创建 `groupmate/evaluation/evaluator.py`
 - 创建 `tests/test_evaluation_replay.py`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 ```python
 @pytest.mark.asyncio
@@ -128,13 +128,13 @@ async def test_model_error_defaults_to_silence():
     assert result.error_code == "decision_error"
 ```
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`python3 -m pytest tests/test_evaluation_replay.py -q`
 
 预期：因 `DecisionEvaluator` 不存在而失败。
 
-- [ ] **步骤 3：实现回放**
+- [x] **步骤 3：实现回放**
 
 `DecisionEvaluator` 必须：
 
@@ -147,7 +147,7 @@ async def test_model_error_defaults_to_silence():
 - 使用 `time.perf_counter_ns()` 记录耗时；
 - 不导入 AstrBot，不调用生成、视觉或平台发送。
 
-- [ ] **步骤 4：运行测试并提交**
+- [x] **步骤 4：运行测试并提交**
 
 运行：`python3 -m pytest tests/test_evaluation_replay.py -q`
 
@@ -163,7 +163,7 @@ async def test_model_error_defaults_to_silence():
 - 创建 `tests/test_evaluation_metrics.py`
 - 创建 `tests/test_evaluation_cli.py`
 
-- [ ] **步骤 1：编写指标失败测试**
+- [x] **步骤 1：编写指标失败测试**
 
 使用固定混淆矩阵验证：
 
@@ -179,25 +179,25 @@ def test_small_dataset_is_marked_insufficient():
     assert report.sample_sufficient is False
 ```
 
-- [ ] **步骤 2：确认指标测试失败**
+- [x] **步骤 2：确认指标测试失败**
 
 运行：`python3 -m pytest tests/test_evaluation_metrics.py -q`
 
-- [ ] **步骤 3：实现指标与稳定报告**
+- [x] **步骤 3：实现指标与稳定报告**
 
 计算直接唤醒召回率、原生唤醒旁路率、指令旁路率、主动介入精确率、主动介入召回率、错误插话率、沉默准确率、结构成功率和 P50/P95 耗时。分母为零时返回 `null`，不得伪造 100%。严格样本少于 100 时 `sample_sufficient=false`。
 
 JSON 使用 `ensure_ascii=False, sort_keys=True, indent=2`；Markdown 使用中文标题并明确展示“样本不足”。
 
-- [ ] **步骤 4：编写 CLI 失败测试**
+- [x] **步骤 4：编写 CLI 失败测试**
 
 `validate` 校验数据集；`run` 使用安全沉默基线模型生成 `result.json` 和 `report.md`；`compare` 仅在数据集哈希相同时生成差异报告，否则返回非零。
 
-- [ ] **步骤 5：确认 CLI 测试失败**
+- [x] **步骤 5：确认 CLI 测试失败**
 
 运行：`python3 -m pytest tests/test_evaluation_cli.py -q`
 
-- [ ] **步骤 6：实现 CLI 并运行测试**
+- [x] **步骤 6：实现 CLI 并运行测试**
 
 运行：
 
@@ -207,6 +207,10 @@ python3 -m pytest tests/test_evaluation_metrics.py tests/test_evaluation_cli.py 
 
 提交：`feat: report decision evaluation metrics`
 
+- [x] **步骤 7：增加插件自采集数据导出入口**
+
+实现 `export-shadow --database <groupmate.db> --output <reviewed.jsonl>`，只转换已标注且包含脱敏审阅上下文的影子记录。输出必须通过同一个 `load_dataset()` 校验器，且不得包含群哈希、发送者哈希、OneBot metadata、资源 URL 或文件路径。
+
 ## 任务 4：内置黄金场景
 
 **文件：**
@@ -215,7 +219,7 @@ python3 -m pytest tests/test_evaluation_metrics.py tests/test_evaluation_cli.py 
 - 创建 `tests/fixtures/evaluation/default.json`
 - 创建 `tests/test_evaluation_golden.py`
 
-- [ ] **步骤 1：先编写场景数量和覆盖失败测试**
+- [x] **步骤 1：先编写场景数量和覆盖失败测试**
 
 ```python
 def test_golden_dataset_has_required_coverage():
@@ -225,11 +229,11 @@ def test_golden_dataset_has_required_coverage():
     assert {"wake", "command", "silence", "ordinary"} <= tags
 ```
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`python3 -m pytest tests/test_evaluation_golden.py -q`
 
-- [ ] **步骤 3：创建 30 个虚构身份场景**
+- [x] **步骤 3：创建 30 个虚构身份场景**
 
 场景分布：
 
@@ -242,7 +246,7 @@ def test_golden_dataset_has_required_coverage():
 
 禁止使用真实 QQ 号、群号、昵称或学习素材原文。
 
-- [ ] **步骤 4：验证 CLI 并提交**
+- [x] **步骤 4：验证 CLI 并提交**
 
 运行：
 
@@ -262,7 +266,7 @@ python3 -m groupmate.evaluation.cli validate --dataset tests/fixtures/evaluation
 - 创建 `tests/test_shadow_storage.py`
 - 创建 `tests/test_shadow_collector.py`
 
-- [ ] **步骤 1：编写迁移和隐私失败测试**
+- [x] **步骤 1：编写迁移和隐私失败测试**
 
 验证数据库升级到版本 2、迁移可重复、记录幂等、默认上下文为空、过期清理和独立人工标签。
 
@@ -275,17 +279,17 @@ def test_label_does_not_change_prediction(store):
     assert row["label"] == "must_respond"
 ```
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`python3 -m pytest tests/test_shadow_storage.py tests/test_shadow_collector.py -q`
 
-- [ ] **步骤 3：实现存储和采集器**
+- [x] **步骤 3：实现存储和采集器**
 
 `ShadowCollector` 只保留最近 20 条、最多 5 分钟窗口。非文本特征包含消息数、参与人数、文本长度、图片数、是否存在回复链。启用文本时使用“成员1、成员2”替代昵称和 ID，并丢弃 `metadata`、URL 与文件路径。
 
 身份散列使用本地 32 字节随机盐和 `HMAC-SHA256`。盐通过原子创建保存在插件数据目录，权限允许时设置为 `0600`。
 
-- [ ] **步骤 4：运行测试并提交**
+- [x] **步骤 4：运行测试并提交**
 
 运行：`python3 -m pytest tests/test_shadow_storage.py tests/test_shadow_collector.py -q`
 
@@ -299,7 +303,7 @@ def test_label_does_not_change_prediction(store):
 - 修改 `groupmate/runtime.py`
 - 创建 `tests/test_shadow_workflow.py`
 
-- [ ] **步骤 1：编写零副作用失败测试**
+- [x] **步骤 1：编写零副作用失败测试**
 
 ```python
 @pytest.mark.asyncio
@@ -315,17 +319,17 @@ async def test_shadow_workflow_never_generates_or_sends():
 
 同时验证 `COMMAND` 和 `NATIVE_DIRECT` 通过 Actor 的可选 `observe_bypass()` 被记录，而正式工作流行为不变。
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`python3 -m pytest tests/test_shadow_workflow.py tests/test_runtime.py -q`
 
-- [ ] **步骤 3：实现 `ShadowWorkflow`**
+- [x] **步骤 3：实现 `ShadowWorkflow`**
 
 `ShadowWorkflow` 只拥有决策模型、记忆、策略、采集器和时钟，不接受生成、视觉或平台端口。`evaluate()` 返回 `WorkflowOutcome(sent=False, reason="shadow_recorded")`。模型错误记录错误码并安全沉默。
 
 `GroupActor` 只增加一个鸭子类型扩展：若工作流实现 `observe_bypass(topic, trigger, policy)`，则在 `IGNORE`、`COMMAND` 和 `NATIVE_DIRECT` 结束前调用；正式 `CognitiveWorkflow` 不实现该方法。
 
-- [ ] **步骤 4：运行测试并提交**
+- [x] **步骤 4：运行测试并提交**
 
 运行：`python3 -m pytest tests/test_shadow_workflow.py tests/test_runtime.py -q`
 
@@ -343,19 +347,19 @@ async def test_shadow_workflow_never_generates_or_sends():
 - 修改 `tests/test_config.py`
 - 创建 `tests/test_shadow_bridge.py`
 
-- [ ] **步骤 1：编写配置失败测试**
+- [x] **步骤 1：编写配置失败测试**
 
 验证 `shadow_mode`、采样率、保留天数和文本保存配置的默认值与边界。
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`python3 -m pytest tests/test_config.py tests/test_shadow_bridge.py -q`
 
-- [ ] **步骤 3：接入 Bridge**
+- [x] **步骤 3：接入 Bridge**
 
 `AstrBotBridge._workflow_for()` 在 `shadow_mode=true` 时构造 `ShadowWorkflow`，否则保持 `CognitiveWorkflow`。`status()` 返回影子模式和聚合数量。采样使用消息身份与群标识的稳定哈希，不使用全局随机状态。
 
-- [ ] **步骤 4：增加管理员命令**
+- [x] **步骤 4：增加管理员命令**
 
 新增：
 
@@ -364,7 +368,7 @@ async def test_shadow_workflow_never_generates_or_sends():
 
 README 用中文说明影子模式零发送、默认不存正文，以及开启正文后用于本地人工标注。
 
-- [ ] **步骤 5：运行测试并提交**
+- [x] **步骤 5：运行测试并提交**
 
 运行：
 
@@ -381,7 +385,7 @@ python3 -m json.tool _conf_schema.json >/dev/null
 
 - 修改 `docs/superpowers/plans/2026-07-20-decision-evaluation-shadow-mode.md`，勾选完成项
 
-- [ ] **步骤 1：运行全量测试**
+- [x] **步骤 1：运行全量测试**
 
 ```bash
 python3 -m pytest -q
@@ -389,7 +393,7 @@ python3 -m pytest -q
 
 预期：全部通过，无残留异步任务警告。
 
-- [ ] **步骤 2：运行编译与配置检查**
+- [x] **步骤 2：运行编译与配置检查**
 
 ```bash
 python3 -m compileall -q main.py groupmate tests
@@ -397,7 +401,7 @@ python3 -m json.tool _conf_schema.json >/dev/null
 git diff --check
 ```
 
-- [ ] **步骤 3：运行黄金数据端到端验证**
+- [x] **步骤 3：运行黄金数据端到端验证**
 
 ```bash
 python3 -m groupmate.evaluation.cli validate \
@@ -410,10 +414,10 @@ test -f /tmp/groupmate-evaluation/result.json
 test -f /tmp/groupmate-evaluation/report.md
 ```
 
-- [ ] **步骤 4：检查隐私边界**
+- [x] **步骤 4：检查隐私边界**
 
 测试生成的影子记录与报告中不存在测试用原始 ID、OneBot metadata、资源 URL 或文件路径。
 
-- [ ] **步骤 5：提交收尾**
+- [x] **步骤 5：提交收尾**
 
 提交：`docs: complete shadow evaluation rollout`

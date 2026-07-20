@@ -13,6 +13,7 @@ from .dataset import DatasetValidationError, load_dataset
 from .evaluator import DecisionEvaluator
 from .metrics import calculate_metrics
 from .report import write_comparison, write_run_report
+from .replay import OfflineReplayRunner
 from .shadow_export import export_labeled_shadow_dataset
 
 
@@ -69,9 +70,7 @@ def _run(args):
         history_limit=int(config.get("history_limit", 100)),
     )
     evaluator = DecisionEvaluator(SafeSilenceDecisionModel(), policy)
-    predictions = tuple(
-        asyncio.run(evaluator.evaluate(case)) for case in dataset.cases
-    )
+    predictions = asyncio.run(OfflineReplayRunner(evaluator).run(dataset.cases))
     metrics = calculate_metrics(dataset.cases, predictions)
     write_run_report(Path(args.output), dataset.content_hash, config, predictions, metrics)
     return 0

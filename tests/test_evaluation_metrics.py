@@ -95,3 +95,24 @@ def test_latency_percentiles_are_reported():
     report = calculate_metrics(cases, predictions)
     assert report.p50_latency_ms == 2.5
     assert report.p95_latency_ms == 100.0
+
+
+def test_spontaneous_reply_frequency_excludes_direct_wakes():
+    cases = (
+        case("a", EvaluationLabel.MUST_RESPOND),
+        case("b", EvaluationLabel.MUST_RESPOND),
+        case("wake", EvaluationLabel.MUST_RESPOND, tags=("wake",)),
+    )
+    predictions = (
+        prediction("a", EvaluationLabel.MUST_RESPOND, "respond"),
+        prediction("b", EvaluationLabel.MUST_RESPOND, "respond"),
+        prediction(
+            "wake",
+            EvaluationLabel.MUST_RESPOND,
+            "respond",
+            trigger=TriggerKind.ALIAS_DIRECT,
+        ),
+    )
+    report = calculate_metrics(cases, predictions)
+    assert report.predicted_spontaneous_reply_count == 2
+    assert report.max_spontaneous_replies_per_group_hour == 2
