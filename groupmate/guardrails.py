@@ -30,8 +30,9 @@ class AemeathOutputGuard:
         re.IGNORECASE,
     )
     _FORCED_FOLLOWUP = re.compile(
-        r"(?:(?:^|[，,。！？!?；;：:\s])(?:你呢|那你呢|怎么啦|怎么了|然后呢)"
-        r"[？?。！!~～.…]*$|有什么想聊)",
+        r"(?:(?:你呢|那你呢|然后呢)[\s？?。！!~～.…]*$"
+        r"|(?:^|[，,。！？!?；;：:\r\n])(?:怎么啦|怎么了)[\s？?。！!~～.…]*$"
+        r"|有什么想聊)",
         re.IGNORECASE,
     )
     _INTERNAL_ID = re.compile(r"(?:sender_id|user_id|internal_id|内部ID)", re.IGNORECASE)

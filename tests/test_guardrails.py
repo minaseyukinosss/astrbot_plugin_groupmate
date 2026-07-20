@@ -10,11 +10,16 @@ from groupmate.guardrails import AemeathOutputGuard
         ("有什么可以帮你的吗？", "customer_service_template"),
         ("prompt 调好了就行", "system_vocabulary"),
         ("你呢？", "forced_followup"),
+        ("这周末你呢？", "forced_followup"),
+        ("工作上你呢？", "forced_followup"),
         ("怎么啦？", "forced_followup"),
+        ("怎么啦 ？", "forced_followup"),
+        ("怎么啦？ ！", "forced_followup"),
         ("怎么了？", "forced_followup"),
         ("怎么啦...", "forced_followup"),
         ("怎么啦……", "forced_followup"),
         ("然后呢。", "forced_followup"),
+        ("那然后呢？", "forced_followup"),
         ("我在呢，怎么啦？", "forced_followup"),
         ("嗯，然后呢。", "forced_followup"),
         ("有什么想聊的吗？", "forced_followup"),
@@ -38,6 +43,8 @@ def test_guard_accepts_required_clarifying_question():
     [
         "这个配置怎么了？",
         "你用的这个版本怎么了？",
+        "Python 怎么了？",
+        "v2 怎么了？",
     ],
 )
 def test_guard_accepts_specific_clarifying_questions(text):
