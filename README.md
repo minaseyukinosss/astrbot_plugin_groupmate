@@ -67,6 +67,10 @@ astrbot_plugin_groupmate/
 | `debounce_max_seconds` | 话题聚合等待上限 | `8` 秒 |
 | `vision_enabled` | 是否允许按需理解图片 | `true` |
 | `memory_retention_days` | 近期事件默认保留时间 | `30` 天 |
+| `shadow_mode` | 只判断并记录，Groupmate 不生成也不发送 | `false` |
+| `shadow_sample_rate` | 影子候选采样比例 | `1.0` |
+| `shadow_retention_days` | 影子记录本地保留时间 | `7` 天 |
+| `shadow_store_message_text` | 保存脱敏有限窗口以供人工标注 | `false` |
 
 如果没有配置 `decision_provider`，插件不会为了主动插话强行调用未知模型；直接 `@`、回复 Bot 和 AstrBot 原生唤醒仍由 AstrBot 正常处理。
 
@@ -90,6 +94,14 @@ astrbot_plugin_groupmate/
 | `/groupmate_pause` | 暂停观察和自主回复 |
 | `/groupmate_resume` | 恢复运行 |
 | `/groupmate_reset` | 清空当前群的短期工作上下文 |
+| `/groupmate_shadow_stats` | 查看不含正文的影子判断统计 |
+| `/groupmate_shadow_label <决策ID> <标签>` | 标注必须回复、可以回复、必须沉默或跳过 |
+
+## 影子模式与自采集评测
+
+影子模式用于上线前观察“Bot 本来会不会说话”。启用后，Groupmate 会继续读取 AstrBot/NapCat 实时群消息并执行触发与决策，但不会调用回复生成模型、视觉模型或消息发送接口。AstrBot 原生 `@Bot` 和既有指令仍按平台原逻辑工作。
+
+插件不要求用户提供聊天导出。它会从每群实时事件自行构造最多 20 条、跨度不超过 5 分钟的有限窗口。默认只保存消息数、参与人数、长度和媒体类型等特征；只有显式开启 `shadow_store_message_text` 时，才会在本地保存使用“成员1、成员2”替代身份的脱敏文本，供管理员标注。
 
 ## 数据存储与隐私
 
@@ -149,4 +161,3 @@ python -m json.tool _conf_schema.json >/dev/null
 - 不包含向量数据库和无约束长期记忆。
 - 不执行自主工具循环或多智能体协作。
 - 现有学习素材只有 Bot 自身发言，能够评估语言风格，但无法评估真实触发准确率；后续需要完整群聊窗口做回放标注。
-

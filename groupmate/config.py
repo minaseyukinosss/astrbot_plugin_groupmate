@@ -35,6 +35,20 @@ def _string_tuple(value: Any, default: Tuple[str, ...] = ()) -> Tuple[str, ...]:
     return tuple(result)
 
 
+def _boolean(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off", ""):
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
 @dataclass(frozen=True)
 class PluginSettings:
     enabled_groups: Tuple[str, ...] = ()
@@ -52,6 +66,10 @@ class PluginSettings:
     debounce_max_seconds: float = 8.0
     vision_enabled: bool = True
     memory_retention_days: int = 30
+    shadow_mode: bool = False
+    shadow_sample_rate: float = 1.0
+    shadow_retention_days: int = 7
+    shadow_store_message_text: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
@@ -86,5 +104,14 @@ class PluginSettings:
             memory_retention_days=_bounded_int(
                 raw.get("memory_retention_days", 30), 30, 1, 365
             ),
+            shadow_mode=_boolean(raw.get("shadow_mode", False), False),
+            shadow_sample_rate=_bounded_float(
+                raw.get("shadow_sample_rate", 1.0), 1.0, 0.0, 1.0
+            ),
+            shadow_retention_days=_bounded_int(
+                raw.get("shadow_retention_days", 7), 7, 1, 30
+            ),
+            shadow_store_message_text=_boolean(
+                raw.get("shadow_store_message_text", False), False
+            ),
         )
-

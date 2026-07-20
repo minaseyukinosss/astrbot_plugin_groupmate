@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from .guardrails import AemeathOutputGuard
+from .evaluation.collector import ShadowCollector
+from .evaluation.shadow import HmacIdentityHasher, ShadowWorkflow
 from .memory import SQLiteMemoryStore
 from .models import (
     ChatMessage,
@@ -320,6 +322,11 @@ class AstrBotBridge:
         self._provider_by_group: Dict[str, str] = {}
         self._bootstrapped = set()
         self.paused = False
+        self._shadow_hasher = (
+            HmacIdentityHasher(self.data_dir / "shadow_hmac.key")
+            if bool(self._setting("shadow_mode", False))
+            else None
+        )
         self.runtime = GroupRuntimeManager(self._workflow_for, self._policy_for)
 
     async def handle_event(self, event: Any) -> None:
@@ -383,11 +390,13 @@ class AstrBotBridge:
     def status(self) -> Dict[str, Any]:
         return {
             "paused": self.paused,
+            "shadow_mode": bool(self._setting("shadow_mode", False)),
+            "shadow": self.memory.shadow_stats(),
             "groups": self.runtime.snapshots(),
             "bootstrapped": sorted(self._bootstrapped),
         }
 
-    def _workflow_for(self, group_id: str) -> CognitiveWorkflow:
+    def _workflow_for(self, group_id: str):
         persona = AstrBotPersonaProvider(
             self.context,
             persona_id=self._setting("persona_id", ""),
@@ -398,11 +407,35 @@ class AstrBotBridge:
             self._setting("generation_provider", "")
             or self._setting("decision_provider", ""),
         )
+        policy = self._policy_for(group_id)
+        decision_model = AstrBotDecisionModel(
+            self.context,
+            lambda gid: self._setting("decision_provider", "") or getter(gid),
+        )
+        if bool(self._setting("shadow_mode", False)):
+            hasher = self._shadow_hasher or HmacIdentityHasher(
+                self.data_dir / "shadow_hmac.key"
+            )
+            return ShadowWorkflow(
+                decision_model=decision_model,
+                memory=self.memory,
+                collector=ShadowCollector(
+                    store_text=bool(
+                        self._setting("shadow_store_message_text", False)
+                    )
+                ),
+                hasher=hasher,
+                clock=_SystemClock(),
+                model_id=str(self._setting("decision_provider", "")),
+                retention_days=int(self._setting("shadow_retention_days", 7)),
+                sample_rate=float(self._setting("shadow_sample_rate", 1.0)),
+                rate_limiter=SlidingWindowRateLimiter(
+                    policy.spontaneous_hourly_limit,
+                    policy.spontaneous_cooldown_seconds,
+                ),
+            )
         return CognitiveWorkflow(
-            decision_model=AstrBotDecisionModel(
-                self.context,
-                lambda gid: self._setting("decision_provider", "") or getter(gid),
-            ),
+            decision_model=decision_model,
             generation_model=AstrBotGenerationModel(self.context, getter, persona),
             vision=AstrBotVisionPort(
                 self.context,
@@ -411,12 +444,33 @@ class AstrBotBridge:
             platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
             memory=self.memory,
             persona=persona,
-            output_guard=AemeathOutputGuard(self._policy_for(group_id).max_reply_chars),
+            output_guard=AemeathOutputGuard(policy.max_reply_chars),
             rate_limiter=SlidingWindowRateLimiter(
-                self._policy_for(group_id).spontaneous_hourly_limit,
-                self._policy_for(group_id).spontaneous_cooldown_seconds,
+                policy.spontaneous_hourly_limit,
+                policy.spontaneous_cooldown_seconds,
             ),
             clock=_SystemClock(),
+        )
+
+    @staticmethod
+    def normalize_shadow_label(label: str) -> Optional[str]:
+        return {
+            "必须回复": "must_respond",
+            "可以回复": "may_respond",
+            "必须沉默": "must_silence",
+            "跳过": "skipped",
+            "must_respond": "must_respond",
+            "may_respond": "may_respond",
+            "must_silence": "must_silence",
+            "skipped": "skipped",
+        }.get(str(label).strip())
+
+    def label_shadow_decision(self, decision_id: str, label: str) -> bool:
+        normalized = self.normalize_shadow_label(label)
+        if normalized is None:
+            return False
+        return self.memory.label_shadow_decision(
+            str(decision_id), normalized, _SystemClock().now()
         )
 
     def _policy_for(self, group_id: str) -> GroupPolicy:

@@ -79,6 +79,25 @@
     "description": "近期事件记忆的默认保留天数。",
     "type": "int",
     "default": 30
+  },
+  "shadow_mode": {
+    "description": "影子模式：只观察和判断，Groupmate 绝不生成或发送回复。",
+    "type": "bool",
+    "default": false
+  },
+  "shadow_sample_rate": {
+    "description": "影子模式采样比例，1.0 表示记录所有候选。",
+    "type": "float",
+    "default": 1.0
+  },
+  "shadow_retention_days": {
+    "description": "影子决策记录的本地保留天数。",
+    "type": "int",
+    "default": 7
+  },
+  "shadow_store_message_text": {
+    "description": "是否保存脱敏后的有限上下文供本地人工标注；默认只保存统计特征。",
+    "type": "bool",
+    "default": false
   }
 }
-

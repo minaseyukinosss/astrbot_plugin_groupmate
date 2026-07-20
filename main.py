@@ -68,5 +68,27 @@ class GroupmatePlugin(Star):
         )
         yield event.plain_result("这群刚才的上下文清掉了。")
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("groupmate_shadow_stats")
+    async def groupmate_shadow_stats(self, event: AstrMessageEvent):
+        """查看不包含消息正文的影子模式统计。"""
+        yield event.plain_result(
+            json.dumps(self.bridge.memory.shadow_stats(), ensure_ascii=False, sort_keys=True)
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("groupmate_shadow_label")
+    async def groupmate_shadow_label(
+        self, event: AstrMessageEvent, decision_id: str, label: str
+    ):
+        """为本地影子决策添加人工标签，不修改原始预测。"""
+        if self.bridge.normalize_shadow_label(label) is None:
+            yield event.plain_result("标签只能是：必须回复、可以回复、必须沉默、跳过。")
+            return
+        if not self.bridge.label_shadow_decision(decision_id, label):
+            yield event.plain_result("没有找到这条影子决策。")
+            return
+        yield event.plain_result("影子决策已标注。")
+
     async def terminate(self):
         await self.bridge.close()
