@@ -9,6 +9,9 @@ from groupmate.guardrails import AemeathOutputGuard
         ("(没人叫我，不回复)", "decision_narration"),
         ("有什么可以帮你的吗？", "customer_service_template"),
         ("prompt 调好了就行", "system_vocabulary"),
+        ("你呢？", "forced_followup"),
+        ("怎么啦？", "forced_followup"),
+        ("然后呢。", "forced_followup"),
     ],
 )
 def test_aemeath_guard_rejects_known_failures(text, code):
@@ -16,6 +19,26 @@ def test_aemeath_guard_rejects_known_failures(text, code):
 
     assert result.accepted is False
     assert code in result.codes
+
+
+def test_guard_accepts_required_clarifying_question():
+    result = AemeathOutputGuard(max_chars=60).validate("你用的是哪个版本？", [])
+
+    assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "眼光不错哦。",
+        "今天早点休息，别硬撑啦。",
+        "才不是你老婆呢，少乱叫呀。",
+    ],
+)
+def test_guard_accepts_natural_persona_replies(text):
+    result = AemeathOutputGuard(max_chars=60).validate(text, recent_outputs=[])
+
+    assert result.accepted is True
 
 
 def test_guard_accepts_short_natural_reply():
@@ -34,4 +57,3 @@ def test_guard_rejects_recent_duplicate():
 
     assert "duplicate_output" in result.codes
     assert result.repairable is False
-

@@ -29,7 +29,10 @@ class AemeathOutputGuard:
         r"(?:prompt|system\s*prompt|模型输出|插件配置|人格调参|系统决定)",
         re.IGNORECASE,
     )
-    _FORCED_FOLLOWUP = re.compile(r"(?:你呢|那你呢)[？?。]?$|有什么想聊", re.IGNORECASE)
+    _FORCED_FOLLOWUP = re.compile(
+        r"(?:(?:你呢|那你呢|怎么啦|怎么了|然后呢)[？?。！!~～]*$|有什么想聊)",
+        re.IGNORECASE,
+    )
     _INTERNAL_ID = re.compile(r"(?:sender_id|user_id|internal_id|内部ID)", re.IGNORECASE)
 
     def __init__(self, max_chars: int = 60, max_sentences: int = 2) -> None:
@@ -89,4 +92,3 @@ class AemeathOutputGuard:
     @staticmethod
     def _normalize(text: str) -> str:
         return re.sub(r"[\s，,。.!！?？~～]+", "", (text or "").lower())
-
