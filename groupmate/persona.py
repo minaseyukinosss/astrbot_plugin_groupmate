@@ -10,8 +10,24 @@ from .models import MemoryItem, TopicSnapshot
 
 
 class BundledPersonaProvider:
+    _RELATIONSHIPS = {
+        "674852406": ("最亲近", "Minase"),
+        "1634104393": ("闺蜜", ""),
+    }
+
     def __init__(self, override_prompt: str = "") -> None:
         self.override_prompt = override_prompt.strip()
+
+    @classmethod
+    def _speaker_context(
+        cls, sender_id: str, sender_name: str
+    ) -> tuple[str, str, str]:
+        speaker = (sender_name or "群友")[:80]
+        relationship, fixed_address = cls._RELATIONSHIPS.get(
+            str(sender_id), ("普通群友", "")
+        )
+        suggested_address = fixed_address or speaker
+        return speaker, relationship, suggested_address
 
     def bundled_system_prompt(self) -> str:
         path = Path(__file__).resolve().parent.parent / "resources" / "aemeath_persona.md"
@@ -31,9 +47,15 @@ class BundledPersonaProvider:
             content = message.text or "[图片]"
             if message.image_urls and message.text:
                 content += " [图片]"
+            speaker, relationship, suggested_address = self._speaker_context(
+                message.sender_id, message.sender_name
+            )
             message_lines.append(
-                "{}: {}".format(
-                    html.escape(message.sender_name or message.sender_id),
+                '<message speaker="{}" relationship="{}" '
+                'suggested_address="{}">{}</message>'.format(
+                    html.escape(speaker),
+                    html.escape(relationship),
+                    html.escape(suggested_address),
                     html.escape(content[:300]),
                 )
             )
@@ -56,4 +78,3 @@ class BundledPersonaProvider:
             ]
         )
         return "\n".join(sections)
-
