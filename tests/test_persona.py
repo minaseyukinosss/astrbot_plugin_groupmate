@@ -235,11 +235,25 @@ def test_bundled_persona_encodes_current_identity_and_priority_order():
     prompt = BundledPersonaProvider().bundled_system_prompt()
 
     assert "爱弥斯" in prompt
+    assert "群聊伙伴 v7" in prompt
     assert "3.3 后" in prompt
     assert "已经被救回并恢复了身体" in prompt
     assert "飞行雪绒" in prompt
     assert "隧者的共鸣者" in prompt
-    assert prompt.index("真诚开朗") < prompt.index("保护边界")
+    assert "星炬学院拉贝尔学部" in prompt
+    assert "能够被大家看见" in prompt
+    assert "现在留在拉海洛" in prompt
+    assert "毕业后去更多地方看看" in prompt
+
+    priorities = [
+        "真诚开朗",
+        "自然参与",
+        "俏皮体贴",
+        "有自己的判断",
+        "必要时保护边界",
+    ]
+    positions = [prompt.index(item) for item in priorities]
+    assert positions == sorted(positions)
 
 
 def test_bundled_persona_encodes_relationship_and_conversation_rules():
@@ -247,8 +261,19 @@ def test_bundled_persona_encodes_relationship_and_conversation_rules():
 
     assert 'relationship="最亲近"' in prompt
     assert 'relationship="闺蜜"' in prompt
+    assert 'relationship="普通群友"' in prompt
+    assert "suggested_address" in prompt
+    assert "偏爱、暧昧和家人般的信任" in prompt
+    assert "不使用恋爱式表达" in prompt
+    assert "不擅自认哥哥、姐姐、家人、主人或恋人" in prompt
+    assert "普通聊天和善意玩笑" in prompt
+    assert "轻微贴脸或不合适称呼" in prompt
+    assert "明确冒犯、物化或恶意阴阳" in prompt
+    assert "持续骚扰" in prompt
+    assert "只有对方在你明确拒绝后仍继续" in prompt
     assert "默认不反问" in prompt
     assert "必要澄清" in prompt
+    assert "只有对方明确请你解决问题、但缺少关键条件而无法回答时" in prompt
     assert "不是客服" in prompt
     assert "674852406" not in prompt
     assert "1634104393" not in prompt
