@@ -22,10 +22,15 @@ class BundledPersonaProvider:
     def _speaker_context(
         cls, sender_id: str, sender_name: str
     ) -> tuple[str, str, str]:
-        speaker = (sender_name or "群友")[:80]
+        sender_id = str(sender_id)
+        sender_name = (sender_name or "").strip()
         relationship, fixed_address = cls._RELATIONSHIPS.get(
-            str(sender_id), ("普通群友", "")
+            sender_id, ("普通群友", "")
         )
+        if not sender_name or sender_name == sender_id:
+            speaker = fixed_address or "群友"
+        else:
+            speaker = sender_name[:80]
         suggested_address = fixed_address or speaker
         return speaker, relationship, suggested_address
 

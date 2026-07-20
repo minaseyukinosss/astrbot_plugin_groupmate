@@ -93,6 +93,144 @@ def test_dynamic_context_falls_back_when_sender_identity_is_missing():
     )
 
 
+def test_dynamic_context_hides_adapter_fallback_sender_id():
+    message = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="999123",
+        sender_name="999123",
+        text="在吗",
+        timestamp=100,
+    )
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    assert (
+        '<message speaker="群友" relationship="普通群友" '
+        'suggested_address="群友">在吗</message>' in prompt
+    )
+    assert "999123" not in prompt
+
+
+def test_dynamic_context_hides_special_relationship_ids_used_as_names():
+    minase = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="674852406",
+        sender_name="674852406",
+        text="小爱",
+        timestamp=100,
+    )
+    friend = ChatMessage(
+        message_id="m2",
+        group_id="g1",
+        sender_id="1634104393",
+        sender_name="1634104393",
+        text="看看这个",
+        timestamp=101,
+    )
+    topic = TopicSnapshot("t1", "g1", (minase, friend), 100, 101)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    assert (
+        '<message speaker="Minase" relationship="最亲近" '
+        'suggested_address="Minase">小爱</message>' in prompt
+    )
+    assert (
+        '<message speaker="群友" relationship="闺蜜" '
+        'suggested_address="群友">看看这个</message>' in prompt
+    )
+    assert "674852406" not in prompt
+    assert "1634104393" not in prompt
+
+
+def test_dynamic_context_escapes_message_attributes_and_content():
+    message = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name='Alice "<admin>&',
+        text='危险 "<tag>&正文',
+        timestamp=100,
+    )
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    assert (
+        '<message speaker="Alice &quot;&lt;admin&gt;&amp;" '
+        'relationship="普通群友" '
+        'suggested_address="Alice &quot;&lt;admin&gt;&amp;">'
+        '危险 &quot;&lt;tag&gt;&amp;正文</message>' in prompt
+    )
+    assert 'Alice "<admin>&' not in prompt
+    assert '危险 "<tag>&正文' not in prompt
+
+
+def test_dynamic_context_limits_recent_messages_and_memories():
+    messages = [
+        ChatMessage("m0", "g1", "u0", "群友", "oldest-excluded", 100)
+    ]
+    messages.extend(
+        ChatMessage(
+            f"m{index + 1}",
+            "g1",
+            f"u{index + 1}",
+            "群友",
+            f"recent-{index}",
+            101 + index,
+        )
+        for index in range(20)
+    )
+    topic = TopicSnapshot("t1", "g1", tuple(messages), 100, 120)
+    memories = [
+        MemoryItem(
+            memory_id=f"mem{index}",
+            group_id="g1",
+            subject_id="u1",
+            kind=MemoryKind.EPISODIC,
+            text=f"memory-{index}-sentinel",
+            created_at=90 + index,
+        )
+        for index in range(9)
+    ]
+
+    prompt = BundledPersonaProvider().build_user_context(topic, memories)
+
+    assert prompt.count("<message ") == 20
+    assert "oldest-excluded" not in prompt
+    assert "recent-0" in prompt
+    assert "recent-19" in prompt
+    assert "memory-0-sentinel" in prompt
+    assert "memory-7-sentinel" in prompt
+    assert "memory-8-sentinel" not in prompt
+
+
+def test_dynamic_context_truncates_speaker_and_content_fields():
+    message = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="名" * 81,
+        text="文" * 301,
+        timestamp=100,
+    )
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    expected_name = "名" * 80
+    expected_content = "文" * 300
+    assert (
+        f'<message speaker="{expected_name}" relationship="普通群友" '
+        f'suggested_address="{expected_name}">{expected_content}</message>' in prompt
+    )
+    assert "名" * 81 not in prompt
+    assert "文" * 301 not in prompt
+
+
 def test_bundled_persona_contains_non_customer_service_rules():
     prompt = BundledPersonaProvider().bundled_system_prompt()
 
