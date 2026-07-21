@@ -95,6 +95,7 @@ astrbot_plugin_groupmate/
 | `/groupmate_resume` | 恢复运行 |
 | `/groupmate_reset` | 清空当前群的短期工作上下文 |
 | `/groupmate_shadow_stats` | 查看不含正文的影子判断统计 |
+| `/groupmate_shadow_recent [数量]` | 查看当前群最近 1 至 10 条影子决策，默认 5 条 |
 | `/groupmate_shadow_label <决策ID> <标签>` | 标注必须回复、可以回复、必须沉默或跳过 |
 
 ## 影子模式与自采集评测

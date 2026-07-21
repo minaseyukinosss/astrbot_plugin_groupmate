@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from groupmate.evaluation.collector import ShadowCollector
 from groupmate.evaluation.shadow import HmacIdentityHasher, ShadowWorkflow
 from groupmate.memory import SQLiteMemoryStore
@@ -52,6 +54,27 @@ def test_hmac_hasher_is_stable_and_does_not_expose_identity(tmp_path):
     assert first == second
     assert "123456" not in first
     assert len(first) == 64
+
+
+def test_hmac_hasher_loads_existing_key_without_creating_one(tmp_path):
+    missing_path = tmp_path / "missing.key"
+    assert HmacIdentityHasher.load_existing(missing_path) is None
+    assert not missing_path.exists()
+
+    existing_path = tmp_path / "existing.key"
+    original = HmacIdentityHasher(existing_path)
+    loaded = HmacIdentityHasher.load_existing(existing_path)
+
+    assert loaded is not None
+    assert loaded.digest("group-1") == original.digest("group-1")
+
+
+def test_hmac_hasher_rejects_malformed_existing_key(tmp_path):
+    path = tmp_path / "broken.key"
+    path.write_bytes(b"short")
+
+    with pytest.raises(ValueError, match="HMAC 密钥长度无效"):
+        HmacIdentityHasher.load_existing(path)
 
 
 def test_shadow_workflow_records_decision_without_generation_or_send(tmp_path):

@@ -25,6 +25,20 @@ class HmacIdentityHasher:
             self._key, str(value).encode("utf-8"), hashlib.sha256
         ).hexdigest()
 
+    @classmethod
+    def load_existing(cls, key_path: Path):
+        path = Path(key_path)
+        try:
+            key = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        if len(key) != 32:
+            raise ValueError("影子模式 HMAC 密钥长度无效")
+        hasher = cls.__new__(cls)
+        hasher.key_path = path
+        hasher._key = key
+        return hasher
+
     def _load_or_create(self) -> bytes:
         try:
             descriptor = os.open(

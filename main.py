@@ -11,6 +11,7 @@ from astrbot.api.star import Context, Star
 
 from groupmate.astrbot_adapter import AstrBotBridge
 from groupmate.config import PluginSettings
+from groupmate.shadow_admin import shadow_recent_response
 
 
 class GroupmatePlugin(Star):
@@ -89,6 +90,24 @@ class GroupmatePlugin(Star):
             yield event.plain_result("没有找到这条影子决策。")
             return
         yield event.plain_result("影子决策已标注。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("groupmate_shadow_recent")
+    async def groupmate_shadow_recent(
+        self, event: AstrMessageEvent, limit: int = 5
+    ):
+        """查看当前群近期影子决策和可用于标注的完整 ID。"""
+
+        def lookup(group_id: str, bounded_limit: int):
+            try:
+                return self.bridge.recent_shadow_decisions(group_id, bounded_limit)
+            except Exception:
+                logger.exception("Failed to read recent Groupmate shadow decisions")
+                raise
+
+        yield event.plain_result(
+            shadow_recent_response(event.get_group_id(), limit, lookup)
+        )
 
     async def terminate(self):
         await self.bridge.close()

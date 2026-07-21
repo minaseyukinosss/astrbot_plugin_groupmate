@@ -481,6 +481,46 @@ class SQLiteMemoryStore:
         result["recent"] = [dict(row) for row in recent]
         return result
 
+    def recent_shadow_decisions(
+        self, group_hash: str, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(10, int(limit)))
+        rows = self._db.execute(
+            """
+            SELECT decision_id, trigger, action, confidence, reason_code,
+                   would_rate_limit, label, created_at, context_json
+            FROM shadow_decisions
+            WHERE group_hash = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (str(group_hash), bounded_limit),
+        ).fetchall()
+        decisions = []
+        for row in rows:
+            decision = dict(row)
+            raw_context = decision.pop("context_json")
+            latest_message = None
+            if raw_context:
+                try:
+                    context = json.loads(raw_context)
+                except (RecursionError, TypeError, ValueError):
+                    context = None
+                if isinstance(context, list):
+                    for message in reversed(context):
+                        if not isinstance(message, dict):
+                            continue
+                        text = message.get("text")
+                        if isinstance(text, str) and text.strip():
+                            latest_message = {
+                                "sender": message.get("sender"),
+                                "text": text,
+                            }
+                            break
+            decision["latest_message"] = latest_message
+            decisions.append(decision)
+        return decisions
+
     def labeled_shadow_records(self) -> List[Dict[str, Any]]:
         rows = self._db.execute(
             """

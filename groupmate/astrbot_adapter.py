@@ -396,6 +396,16 @@ class AstrBotBridge:
             "bootstrapped": sorted(self._bootstrapped),
         }
 
+    def recent_shadow_decisions(
+        self, group_id: str, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        hasher = self._shadow_hasher or HmacIdentityHasher.load_existing(
+            self.data_dir / "shadow_hmac.key"
+        )
+        if hasher is None:
+            return []
+        return self.memory.recent_shadow_decisions(hasher.digest(group_id), limit)
+
     def _workflow_for(self, group_id: str):
         persona = AstrBotPersonaProvider(
             self.context,
