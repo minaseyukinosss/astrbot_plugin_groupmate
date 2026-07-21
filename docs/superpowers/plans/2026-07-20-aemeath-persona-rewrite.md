@@ -241,6 +241,8 @@ Expected: FAIL；“怎么啦？”和“然后呢。”当前不会产生 `forc
 
 - [ ] **Step 3：扩展句末空洞回球正则**
 
+> 注意：以下是最初实施片段，最终边界规则以文档末尾“实施期质量修正”为准。
+
 将 `_FORCED_FOLLOWUP` 替换为：
 
 ```python
@@ -307,6 +309,8 @@ Run: `python3 -m pytest tests/test_persona.py -q`
 Expected: FAIL；旧人格缺少 3.3 时间线、关系标签解释和新的优先级文字。
 
 - [ ] **Step 3：用确认后的完整人格替换运行时资源**
+
+> 注意：以下是最初实施片段，最终人格措辞与示例以文档末尾“实施期质量修正”为准。
 
 将 `resources/aemeath_persona.md` 完整替换为：
 
@@ -552,9 +556,25 @@ Minase 特殊互动、闺蜜互动、认真答疑和必要澄清场景。
 
 - [ ] **Step 2：验证展开版与运行时规则一致**
 
-Run: `rg -n "3.3 后|真诚开朗|Minase|默认不反问|必要澄清|真实越界|60 字" ../爱弥斯人格v5.md resources/aemeath_persona.md`
+Run: `rg -n "3.3 后|真诚开朗|默认不反问|必要澄清" ../爱弥斯人格v5.md resources/aemeath_persona.md`
 
-Expected: 两个文件均命中时间线、人格优先级、反问限制和必要澄清；只有人工审阅版出现原始关系 ID。
+Expected: 两个文件均命中时间线、人格优先级、反问限制和必要澄清。
+
+Run: `rg -n "Minase|真实越界|最终回复不超过 60 个字符" ../爱弥斯人格v5.md`
+
+Expected: 人工审阅版命中建议称呼、边界升级说明和 60 字符限制。
+
+Run: `rg -n "suggested_address|真实越界|最终回复不超过 60 个字符" resources/aemeath_persona.md`
+
+Expected: 运行时人格命中安全称呼字段、边界升级说明和 60 字符限制。
+
+Run: `rg -n '674852406|1634104393' ../爱弥斯人格v5.md`
+
+Expected: 人工审阅版必须同时包含两个内部关系 ID。
+
+Run: `! rg -n '674852406|1634104393' resources/aemeath_persona.md`
+
+Expected: 运行时人格不得包含任何原始关系 ID，命令退出码为 0。
 
 该文件位于插件仓库外，不执行 Git 提交。最终交付中明确说明它已同步但不属于插件提交。
 
