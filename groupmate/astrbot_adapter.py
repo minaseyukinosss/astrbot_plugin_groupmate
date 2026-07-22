@@ -396,6 +396,40 @@ class AstrBotBridge:
             "bootstrapped": sorted(self._bootstrapped),
         }
 
+    def web_overview(self) -> Dict[str, Any]:
+        from .web_api import build_overview_payload
+
+        return build_overview_payload(self)
+
+    def web_shadow_decisions(
+        self,
+        label: str = "unlabeled",
+        action: str = "all",
+        limit: int = 20,
+        cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from .web_api import serialize_shadow_decision
+
+        page = self.memory.shadow_decision_page(
+            label=label, action=action, limit=limit, cursor=cursor
+        )
+        include_context = bool(self._setting("shadow_store_message_text", False))
+        return {
+            "items": [
+                serialize_shadow_decision(row, include_context=include_context)
+                for row in page["items"]
+            ],
+            "next_cursor": page["next_cursor"],
+            "has_more": page["has_more"],
+        }
+
+    def web_label_shadow_decision(
+        self, decision_id: str, label: str, labeled_at: int
+    ) -> Optional[Dict[str, Any]]:
+        from .web_api import label_shadow_decision
+
+        return label_shadow_decision(self, decision_id, label, labeled_at)
+
     def recent_shadow_decisions(
         self, group_id: str, limit: int = 5
     ) -> List[Dict[str, Any]]:
