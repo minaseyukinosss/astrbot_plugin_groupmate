@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 from .guardrails import AemeathOutputGuard
-from .evaluation.collector import ShadowCollector
-from .evaluation.shadow import HmacIdentityHasher, ShadowWorkflow
 from .memory import SQLiteMemoryStore
 from .models import (
     ChatMessage,
@@ -27,10 +25,23 @@ from .models import (
 from .persona import BundledPersonaProvider
 from .rate_limit import SlidingWindowRateLimiter
 from .runtime import GroupRuntimeManager
+from .triggers import TriggerRouter
 from .workflow import CognitiveWorkflow
 
 
 class OneBotTranslator:
+    @staticmethod
+    def _coerce_timestamp(value: Any) -> int:
+        try:
+            timestamp = int(value or 0)
+        except (TypeError, ValueError):
+            timestamp = 0
+        if timestamp <= 0:
+            import time
+
+            return int(time.time())
+        return timestamp
+
     @classmethod
     def from_history(cls, raw: Dict[str, Any], bot_id: str) -> ChatMessage:
         segments = raw.get("message") or raw.get("content") or []
@@ -70,7 +81,7 @@ class OneBotTranslator:
         sender = raw.get("sender") or {}
         sender_id = str(raw.get("user_id", sender.get("user_id", "")))
         group_id = str(raw.get("group_id", ""))
-        timestamp = int(raw.get("time", raw.get("timestamp", 0)) or 0)
+        timestamp = cls._coerce_timestamp(raw.get("time", raw.get("timestamp", 0)))
         reply_to_bot = bool(raw.get("reply_to_bot", False))
         if reply_id and str(raw.get("reply_sender_id", "")) == str(bot_id):
             reply_to_bot = True
@@ -109,7 +120,9 @@ class OneBotTranslator:
                 sender_id=str(event.get_sender_id()),
                 sender_name=str(event.get_sender_name()),
                 text=str(event.message_str or ""),
-                timestamp=int(getattr(event.message_obj, "timestamp", 0) or 0),
+                timestamp=cls._coerce_timestamp(
+                    getattr(event.message_obj, "timestamp", 0)
+                ),
                 is_bot=str(event.get_sender_id()) == str(bot_id),
             )
         native_direct = bool(getattr(event, "is_at_or_wake_command", False))
@@ -233,6 +246,28 @@ class AstrBotGenerationModel:
         self.provider_getter = provider_getter
         self.persona = persona
 
+    async def repair(self, text: str, violations: Sequence[str]) -> str:
+        provider_id = self.provider_getter("")
+        if not provider_id:
+            return text
+        codes = "、".join(str(item) for item in violations) or "style"
+        prompt = "\n".join(
+            [
+                "把下面的群聊回复改短、改自然，去掉客服腔、旁白和系统词。",
+                "违规项：" + codes,
+                "只输出修改后的最终回复，不要解释。",
+                "原文：",
+                (text or "").strip(),
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt="你在帮群聊伙伴润色一句很短的回复。",
+        )
+        repaired = getattr(response, "completion_text", "") or ""
+        return repaired.strip() or text
+
     async def generate(self, plan, topic, memories) -> str:
         provider_id = self.provider_getter(topic.group_id)
         if not provider_id:
@@ -253,10 +288,6 @@ class AstrBotGenerationModel:
             image_urls=list(plan.image_urls) or None,
         )
         return getattr(response, "completion_text", "") or ""
-
-    async def repair(self, text: str, violations: Sequence[str]) -> str:
-        del violations
-        return text
 
 
 class AstrBotVisionPort:
@@ -283,16 +314,46 @@ class AstrBotPlatformPort:
 
     async def send_text(self, group_id: str, text: str, decision_id: str) -> None:
         del decision_id
-        from astrbot.api.message_components import MessageChain, Plain
+        from astrbot.api.event import MessageChain
 
-        await self.context.send_message(
-            self.umo_getter(group_id), MessageChain([Plain(text)])
+        chain = MessageChain().message(text)
+        umo = self.umo_getter(group_id)
+        sent = await self.context.send_message(umo, chain)
+        if sent:
+            return
+
+        from astrbot.api.star import StarTools
+
+        await StarTools.send_message_by_id(
+            "GroupMessage",
+            str(group_id),
+            chain,
+            platform="aiocqhttp",
         )
+
+    async def send_segments(
+        self,
+        group_id: str,
+        segments: Sequence[str],
+        decision_id: str,
+        quote_message_id: Optional[str] = None,
+    ) -> None:
+        del quote_message_id
+        for segment in segments:
+            text = str(segment or "").strip()
+            if text:
+                await self.send_text(group_id, text, decision_id)
 
 
 class AstrBotPersonaProvider(BundledPersonaProvider):
-    def __init__(self, context: Any, persona_id: str = "", override_prompt: str = "") -> None:
-        super().__init__(override_prompt)
+    def __init__(
+        self,
+        context: Any,
+        persona_id: str = "",
+        override_prompt: str = "",
+        relationships: Optional[Sequence] = None,
+    ) -> None:
+        super().__init__(override_prompt, relationships=relationships)
         self.context = context
         self.persona_id = persona_id.strip()
 
@@ -322,11 +383,6 @@ class AstrBotBridge:
         self._provider_by_group: Dict[str, str] = {}
         self._bootstrapped = set()
         self.paused = False
-        self._shadow_hasher = (
-            HmacIdentityHasher(self.data_dir / "shadow_hmac.key")
-            if bool(self._setting("shadow_mode", False))
-            else None
-        )
         self.runtime = GroupRuntimeManager(self._workflow_for, self._policy_for)
 
     async def handle_event(self, event: Any) -> None:
@@ -364,6 +420,8 @@ class AstrBotBridge:
         )
 
     async def enrich_request(self, event: Any, req: Any) -> None:
+        if bool(self._setting("handle_native_wake", True)):
+            return
         group_id = str(event.get_group_id())
         if self.paused or not group_id or self._is_command_event(event):
             return
@@ -375,7 +433,9 @@ class AstrBotBridge:
             now=max((message.timestamp for message in topic.messages), default=0),
             limit=8,
         )
-        prompt = BundledPersonaProvider().build_user_context(topic, memories)
+        prompt = BundledPersonaProvider(
+            relationships=self._relationships()
+        ).build_user_context(topic, memories)
         try:
             from astrbot.core.agent.message import TextPart
 
@@ -383,68 +443,46 @@ class AstrBotBridge:
         except Exception:
             return
 
+    def should_take_native_wake(self, event: Any) -> bool:
+        if not bool(self._setting("handle_native_wake", True)):
+            return False
+        if self.paused:
+            return False
+        group_id = str(event.get_group_id())
+        if not group_id or not self._group_enabled(group_id):
+            return False
+        message = OneBotTranslator.from_event(
+            event,
+            bot_id=str(event.get_self_id()),
+            is_command=self._is_command_event(event),
+        )
+        return (
+            TriggerRouter(self._policy_for(group_id)).classify(message).kind
+            is TriggerKind.NATIVE_DIRECT
+        )
+
     async def close(self) -> None:
         await self.runtime.close()
         self.memory.close()
 
     def status(self) -> Dict[str, Any]:
+        groups: Dict[str, Any] = {}
+        for group_id, snapshot in self.runtime.snapshots().items():
+            enriched = dict(snapshot)
+            enriched["recent_ends"] = self.memory.recent_decision_ends(group_id, limit=3)
+            groups[group_id] = enriched
         return {
             "paused": self.paused,
-            "shadow_mode": bool(self._setting("shadow_mode", False)),
-            "shadow": self.memory.shadow_stats(),
-            "groups": self.runtime.snapshots(),
+            "groups": groups,
             "bootstrapped": sorted(self._bootstrapped),
         }
-
-    def web_overview(self) -> Dict[str, Any]:
-        from .web_api import build_overview_payload
-
-        return build_overview_payload(self)
-
-    def web_shadow_decisions(
-        self,
-        label: str = "unlabeled",
-        action: str = "all",
-        limit: int = 20,
-        cursor: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        from .web_api import serialize_shadow_decision
-
-        page = self.memory.shadow_decision_page(
-            label=label, action=action, limit=limit, cursor=cursor
-        )
-        include_context = bool(self._setting("shadow_store_message_text", False))
-        return {
-            "items": [
-                serialize_shadow_decision(row, include_context=include_context)
-                for row in page["items"]
-            ],
-            "next_cursor": page["next_cursor"],
-            "has_more": page["has_more"],
-        }
-
-    def web_label_shadow_decision(
-        self, decision_id: str, label: str, labeled_at: int
-    ) -> Optional[Dict[str, Any]]:
-        from .web_api import label_shadow_decision
-
-        return label_shadow_decision(self, decision_id, label, labeled_at)
-
-    def recent_shadow_decisions(
-        self, group_id: str, limit: int = 5
-    ) -> List[Dict[str, Any]]:
-        hasher = self._shadow_hasher or HmacIdentityHasher.load_existing(
-            self.data_dir / "shadow_hmac.key"
-        )
-        if hasher is None:
-            return []
-        return self.memory.recent_shadow_decisions(hasher.digest(group_id), limit)
 
     def _workflow_for(self, group_id: str):
         persona = AstrBotPersonaProvider(
             self.context,
             persona_id=self._setting("persona_id", ""),
             override_prompt=self._setting("persona_prompt", ""),
+            relationships=self._relationships(),
         )
         getter = lambda gid: self._provider_by_group.get(
             gid,
@@ -452,34 +490,11 @@ class AstrBotBridge:
             or self._setting("decision_provider", ""),
         )
         policy = self._policy_for(group_id)
-        decision_model = AstrBotDecisionModel(
-            self.context,
-            lambda gid: self._setting("decision_provider", "") or getter(gid),
-        )
-        if bool(self._setting("shadow_mode", False)):
-            hasher = self._shadow_hasher or HmacIdentityHasher(
-                self.data_dir / "shadow_hmac.key"
-            )
-            return ShadowWorkflow(
-                decision_model=decision_model,
-                memory=self.memory,
-                collector=ShadowCollector(
-                    store_text=bool(
-                        self._setting("shadow_store_message_text", False)
-                    )
-                ),
-                hasher=hasher,
-                clock=_SystemClock(),
-                model_id=str(self._setting("decision_provider", "")),
-                retention_days=int(self._setting("shadow_retention_days", 7)),
-                sample_rate=float(self._setting("shadow_sample_rate", 1.0)),
-                rate_limiter=SlidingWindowRateLimiter(
-                    policy.spontaneous_hourly_limit,
-                    policy.spontaneous_cooldown_seconds,
-                ),
-            )
         return CognitiveWorkflow(
-            decision_model=decision_model,
+            decision_model=AstrBotDecisionModel(
+                self.context,
+                lambda gid: self._setting("decision_provider", "") or getter(gid),
+            ),
             generation_model=AstrBotGenerationModel(self.context, getter, persona),
             vision=AstrBotVisionPort(
                 self.context,
@@ -496,31 +511,23 @@ class AstrBotBridge:
             clock=_SystemClock(),
         )
 
-    @staticmethod
-    def normalize_shadow_label(label: str) -> Optional[str]:
-        return {
-            "必须回复": "must_respond",
-            "可以回复": "may_respond",
-            "必须沉默": "must_silence",
-            "跳过": "skipped",
-            "must_respond": "must_respond",
-            "may_respond": "may_respond",
-            "must_silence": "must_silence",
-            "skipped": "skipped",
-        }.get(str(label).strip())
+    def _relationships(self):
+        from .relationships import DEFAULT_RELATIONSHIPS, parse_relationships
 
-    def label_shadow_decision(self, decision_id: str, label: str) -> bool:
-        normalized = self.normalize_shadow_label(label)
-        if normalized is None:
-            return False
-        return self.memory.label_shadow_decision(
-            str(decision_id), normalized, _SystemClock().now()
-        )
+        raw = self._setting("relationships", None)
+        if raw is None or raw == () or raw == []:
+            if hasattr(self.settings, "relationships") and self.settings.relationships:
+                return self.settings.relationships
+            return DEFAULT_RELATIONSHIPS
+        if isinstance(raw, tuple) and raw and hasattr(raw[0], "sender_id"):
+            return raw
+        return parse_relationships(raw)
 
     def _policy_for(self, group_id: str) -> GroupPolicy:
         aliases = tuple(self._setting("aliases", ("爱弥斯", "小爱", "飞行雪绒")))
         return GroupPolicy(
             aliases=aliases,
+            handle_native_wake=bool(self._setting("handle_native_wake", True)),
             history_limit=int(self._setting("history_limit", 100)),
             decision_threshold=float(self._setting("decision_threshold", 0.72)),
             spontaneous_hourly_limit=int(self._setting("spontaneous_hourly_limit", 6)),
@@ -529,7 +536,13 @@ class AstrBotBridge:
             ),
             debounce_min_seconds=float(self._setting("debounce_min_seconds", 4.0)),
             debounce_max_seconds=float(self._setting("debounce_max_seconds", 8.0)),
+            topic_max_seconds=int(self._setting("topic_max_seconds", 12)),
             vision_enabled=bool(self._setting("vision_enabled", True)),
+            continuation_seconds=int(self._setting("continuation_seconds", 90)),
+            humanize_delay_enabled=bool(
+                self._setting("humanize_delay_enabled", True)
+            ),
+            max_reply_segments=int(self._setting("max_reply_segments", 2)),
         )
 
     def _group_enabled(self, group_id: str) -> bool:

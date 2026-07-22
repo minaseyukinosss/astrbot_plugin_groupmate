@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Tuple
 
+from .relationships import RelationshipEntry, parse_relationships
+
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
     try:
@@ -64,12 +66,13 @@ class PluginSettings:
     spontaneous_cooldown_seconds: int = 600
     debounce_min_seconds: float = 4.0
     debounce_max_seconds: float = 8.0
+    topic_max_seconds: int = 12
     vision_enabled: bool = True
-    memory_retention_days: int = 30
-    shadow_mode: bool = False
-    shadow_sample_rate: float = 1.0
-    shadow_retention_days: int = 7
-    shadow_store_message_text: bool = False
+    handle_native_wake: bool = True
+    continuation_seconds: int = 90
+    humanize_delay_enabled: bool = True
+    max_reply_segments: int = 2
+    relationships: Tuple[RelationshipEntry, ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
@@ -100,18 +103,17 @@ class PluginSettings:
             ),
             debounce_min_seconds=minimum_debounce,
             debounce_max_seconds=maximum_debounce,
-            vision_enabled=bool(raw.get("vision_enabled", True)),
-            memory_retention_days=_bounded_int(
-                raw.get("memory_retention_days", 30), 30, 1, 365
+            topic_max_seconds=_bounded_int(raw.get("topic_max_seconds", 12), 12, 1, 60),
+            vision_enabled=_boolean(raw.get("vision_enabled", True), True),
+            handle_native_wake=_boolean(raw.get("handle_native_wake", True), True),
+            continuation_seconds=_bounded_int(
+                raw.get("continuation_seconds", 90), 90, 0, 600
             ),
-            shadow_mode=_boolean(raw.get("shadow_mode", False), False),
-            shadow_sample_rate=_bounded_float(
-                raw.get("shadow_sample_rate", 1.0), 1.0, 0.0, 1.0
+            humanize_delay_enabled=_boolean(
+                raw.get("humanize_delay_enabled", True), True
             ),
-            shadow_retention_days=_bounded_int(
-                raw.get("shadow_retention_days", 7), 7, 1, 30
+            max_reply_segments=_bounded_int(
+                raw.get("max_reply_segments", 2), 2, 1, 3
             ),
-            shadow_store_message_text=_boolean(
-                raw.get("shadow_store_message_text", False), False
-            ),
+            relationships=parse_relationships(raw.get("relationships")),
         )

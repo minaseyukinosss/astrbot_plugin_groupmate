@@ -7,9 +7,9 @@ import random
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
-from .models import ChatMessage, GroupPolicy, TriggerKind
+from .models import ChatMessage, GroupPolicy, TriggerKind, WorkflowOutcome
 from .topics import TopicWindow
-from .triggers import TriggerRouter
+from .triggers import TriggerResult, TriggerRouter
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,8 @@ class GroupActor:
         self._closed = False
         self.last_trigger = TriggerKind.IGNORE
         self.last_outcome = None
+        self._continuation_sender_id = ""
+        self._continuation_until = 0
 
     async def start(self) -> None:
         if self._worker is None:
@@ -91,13 +93,24 @@ class GroupActor:
             self._worker = None
 
     def snapshot(self) -> dict:
-        return {
+        outcome = self.last_outcome
+        payload = {
             "group_id": self.group_id,
             "messages": len(self.window.snapshot().messages),
             "pending": bool(self._debounce_task and not self._debounce_task.done()),
             "last_trigger": self.last_trigger.value,
             "closed": self._closed,
+            "continuation_active": bool(
+                self._continuation_sender_id and self._continuation_until > 0
+            ),
         }
+        if outcome is not None:
+            payload["last_outcome"] = {
+                "sent": outcome.sent,
+                "reason": outcome.reason,
+                "text": outcome.text,
+            }
+        return payload
 
     async def _run(self) -> None:
         while True:
@@ -114,32 +127,33 @@ class GroupActor:
 
     async def _handle_ingest(self, item: _Ingest) -> None:
         message = item.message
-        if not self.window.append(message):
-            return
-        save = getattr(getattr(self.workflow, "memory", None), "save_message", None)
-        if save:
-            save(message)
+        appended = self.window.append(message)
+        if appended:
+            save = getattr(getattr(self.workflow, "memory", None), "save_message", None)
+            if save:
+                save(message)
         if not item.schedule:
             return
 
-        result = self.router.classify(message)
+        result = self._maybe_continue(message, self.router.classify(message))
+        if not appended:
+            if result.kind not in (
+                TriggerKind.NATIVE_DIRECT,
+                TriggerKind.ALIAS_DIRECT,
+                TriggerKind.CONTINUATION,
+            ):
+                return
+
         self.last_trigger = result.kind
         if result.kind in (TriggerKind.IGNORE, TriggerKind.COMMAND):
             await self._observe_bypass(result.kind)
             return
-        if result.kind is TriggerKind.NATIVE_DIRECT:
-            self._generation += 1
-            self._cancel_debounce()
-            await self._observe_bypass(result.kind)
-            self.window.reset_topic()
-            return
-        if result.kind is TriggerKind.ALIAS_DIRECT:
-            self._generation += 1
-            self._cancel_debounce()
-            self.last_outcome = await self.workflow.evaluate(
-                self.window.snapshot(), result.kind, self.policy
-            )
-            self.window.reset_topic()
+        if result.kind in (
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.CONTINUATION,
+        ):
+            await self._evaluate_immediate(result.kind)
             return
 
         self._generation += 1
@@ -149,9 +163,26 @@ class GroupActor:
             self.policy.debounce_min_seconds,
             self.policy.debounce_max_seconds,
         )
+        topic = self.window.snapshot()
+        if topic.created_at:
+            elapsed = max(0, int(message.timestamp) - int(topic.created_at))
+            remaining = max(0.0, float(self.policy.topic_max_seconds) - float(elapsed))
+            delay = min(float(delay), remaining)
         self._debounce_task = asyncio.create_task(
             self._enqueue_evaluation(generation, result.kind, delay)
         )
+
+    async def _evaluate_immediate(self, trigger: TriggerKind) -> None:
+        self._generation += 1
+        self._cancel_debounce()
+        if trigger is TriggerKind.NATIVE_DIRECT and not self.policy.handle_native_wake:
+            await self._observe_bypass(trigger)
+            return
+        self.last_outcome = await self.workflow.evaluate(
+            self.window.snapshot(), trigger, self.policy
+        )
+        self._remember_continuation(self.last_outcome)
+        self.window.reset_topic()
 
     async def _enqueue_evaluation(
         self,
@@ -168,10 +199,73 @@ class GroupActor:
     async def _handle_evaluate(self, item: _EvaluateTopic) -> None:
         if item.generation != self._generation:
             return
+        topic = self.window.snapshot()
         self.last_outcome = await self.workflow.evaluate(
-            self.window.snapshot(), item.trigger, self.policy
+            topic, item.trigger, self.policy
         )
+        self._remember_continuation(self.last_outcome)
         self.window.reset_topic()
+
+    def _maybe_continue(
+        self, message: ChatMessage, result: TriggerResult
+    ) -> TriggerResult:
+        if result.kind is not TriggerKind.CANDIDATE:
+            return result
+        if self.policy.continuation_seconds <= 0:
+            return result
+        if not self._continuation_sender_id:
+            return result
+        if message.sender_id != self._continuation_sender_id:
+            return result
+        if message.timestamp > self._continuation_until:
+            self._clear_continuation()
+            return result
+        return TriggerResult(TriggerKind.CONTINUATION, "conversation_continuation")
+
+    def _remember_continuation(self, outcome: Optional[WorkflowOutcome]) -> None:
+        if outcome is None or not outcome.sent:
+            return
+        if self.last_trigger not in (
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.CONTINUATION,
+        ):
+            return
+        topic = self.window.snapshot()
+        latest = topic.latest
+        if latest is None or latest.is_bot:
+            return
+        seconds = int(self.policy.continuation_seconds)
+        if seconds <= 0:
+            self._clear_continuation()
+            return
+        self._continuation_sender_id = latest.sender_id
+        self._continuation_until = int(latest.timestamp) + seconds
+        if outcome.text:
+            self._append_bot_reply(outcome)
+
+    def _append_bot_reply(self, outcome: WorkflowOutcome) -> None:
+        topic = self.window.snapshot()
+        latest = topic.latest
+        stamp = int(latest.timestamp) + 1 if latest else 0
+        bot_message = ChatMessage(
+            message_id="bot-" + outcome.decision_id,
+            group_id=self.group_id,
+            sender_id="__bot__",
+            sender_name="爱弥斯",
+            text=outcome.text,
+            timestamp=stamp,
+            is_bot=True,
+            segment_types=("text",),
+        )
+        if self.window.append(bot_message):
+            save = getattr(getattr(self.workflow, "memory", None), "save_message", None)
+            if save:
+                save(bot_message)
+
+    def _clear_continuation(self) -> None:
+        self._continuation_sender_id = ""
+        self._continuation_until = 0
 
     def _cancel_debounce(self) -> None:
         if self._debounce_task is not None and not self._debounce_task.done():

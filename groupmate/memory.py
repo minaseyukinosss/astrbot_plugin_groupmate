@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import base64
 import re
 import sqlite3
 from pathlib import Path
@@ -12,41 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .models import ChatMessage, MemoryItem, MemoryKind
 
 
-SCHEMA_VERSION = 2
-
-_SHADOW_LABELS = {
-    "all",
-    "unlabeled",
-    "must_respond",
-    "may_respond",
-    "must_silence",
-    "skipped",
-}
-_SHADOW_ACTIONS = {"all", "respond", "ignore", "bypass"}
-
-
-def _encode_shadow_cursor(created_at: int, row_id: int) -> str:
-    payload = json.dumps(
-        {"created_at": int(created_at), "row_id": int(row_id)},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-
-
-def _decode_shadow_cursor(cursor: str) -> Tuple[int, int]:
-    if not isinstance(cursor, str) or not cursor or len(cursor) > 256:
-        raise ValueError("invalid shadow cursor")
-    padded = cursor + "=" * (-len(cursor) % 4)
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-        created_at = int(payload["created_at"])
-        row_id = int(payload["row_id"])
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-        raise ValueError("invalid shadow cursor")
-    if created_at < 0 or row_id < 1:
-        raise ValueError("invalid shadow cursor")
-    return created_at, row_id
+SCHEMA_VERSION = 4
 
 
 class SQLiteMemoryStore:
@@ -133,32 +98,6 @@ class SQLiteMemoryStore:
                     expires_at INTEGER,
                     sent_at INTEGER
                 );
-
-                CREATE TABLE IF NOT EXISTS shadow_decisions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    decision_id TEXT NOT NULL UNIQUE,
-                    group_hash TEXT NOT NULL,
-                    sender_hash TEXT NOT NULL,
-                    trigger TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    reason_code TEXT NOT NULL,
-                    would_rate_limit INTEGER NOT NULL,
-                    features_json TEXT NOT NULL,
-                    context_json TEXT,
-                    label TEXT NOT NULL DEFAULT 'unlabeled',
-                    labeled_at INTEGER,
-                    model_id TEXT NOT NULL,
-                    policy_version TEXT NOT NULL,
-                    latency_ms REAL NOT NULL,
-                    error_code TEXT,
-                    created_at INTEGER NOT NULL,
-                    expires_at INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_shadow_created
-                    ON shadow_decisions(created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_shadow_expires
-                    ON shadow_decisions(expires_at);
                 """
             )
             self._db.execute(
@@ -300,6 +239,34 @@ class SQLiteMemoryStore:
                 ),
             )
 
+    def list_memories(
+        self,
+        group_id: str,
+        *,
+        kind: Optional[MemoryKind] = None,
+        now: int,
+        limit: int = 20,
+    ) -> List[MemoryItem]:
+        sql = (
+            "SELECT * FROM memories WHERE group_id = ? "
+            "AND (expires_at IS NULL OR expires_at > ?)"
+        )
+        params: List[Any] = [str(group_id), int(now)]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind.value)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(0, int(limit)))
+        rows = self._db.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_memory(row) for row in rows]
+
+    def soften_memory(self, memory_id: str, *, importance: float) -> None:
+        with self._db:
+            self._db.execute(
+                "UPDATE memories SET importance = ? WHERE memory_id = ?",
+                (max(0.0, min(1.0, float(importance))), str(memory_id)),
+            )
+
     def search_memories(
         self,
         group_id: str,
@@ -307,6 +274,7 @@ class SQLiteMemoryStore:
         now: int,
         limit: int,
         subject_id: Optional[str] = None,
+        subject_ids: Optional[Sequence[str]] = None,
     ) -> List[MemoryItem]:
         sql = (
             "SELECT * FROM memories WHERE group_id = ? "
@@ -318,24 +286,39 @@ class SQLiteMemoryStore:
             params.append(str(subject_id))
         rows = self._db.execute(sql, tuple(params)).fetchall()
         query_tokens = self._tokens(query)
+        query_grams = self._char_ngrams(query)
+        focus_subjects = {
+            str(item) for item in (subject_ids or ()) if str(item).strip()
+        }
+        if subject_id:
+            focus_subjects.add(str(subject_id))
         ranked: List[Tuple[float, MemoryItem]] = []
         for row in rows:
             item = self._row_to_memory(row)
             item_tokens = self._tokens(item.text)
-            overlap = (
+            item_grams = self._char_ngrams(item.text)
+            token_overlap = (
                 len(query_tokens & item_tokens) / max(1, len(query_tokens))
                 if query_tokens
                 else 0.0
             )
+            gram_overlap = (
+                len(query_grams & item_grams) / max(1, len(query_grams))
+                if query_grams
+                else 0.0
+            )
+            overlap = max(token_overlap, gram_overlap * 0.9)
             age = max(0, int(now) - item.created_at)
             recency = max(0.0, 1.0 - age / (30 * 24 * 3600.0))
             authority = min(max(item.authority, 0), 10) / 10.0
+            subject_boost = 0.06 if item.subject_id in focus_subjects else 0.0
             score = (
-                overlap * 0.5
-                + item.importance * 0.2
-                + item.confidence * 0.15
-                + authority * 0.1
-                + recency * 0.05
+                overlap * 0.48
+                + item.importance * 0.18
+                + item.confidence * 0.12
+                + authority * 0.08
+                + recency * 0.08
+                + subject_boost
             )
             if overlap > 0 or not query_tokens:
                 ranked.append((score, item))
@@ -343,11 +326,15 @@ class SQLiteMemoryStore:
         return [item for _, item in ranked[: max(0, int(limit))]]
 
     def _row_to_memory(self, row: sqlite3.Row) -> MemoryItem:
+        try:
+            kind = MemoryKind(row["kind"])
+        except ValueError:
+            kind = MemoryKind.EPISODIC
         return MemoryItem(
             memory_id=row["memory_id"],
             group_id=row["group_id"],
             subject_id=row["subject_id"],
-            kind=MemoryKind(row["kind"]),
+            kind=kind,
             text=row["text"],
             created_at=row["created_at"],
             expires_at=row["expires_at"],
@@ -366,6 +353,13 @@ class SQLiteMemoryStore:
         latin.update("".join(pair) for pair in zip(chinese, chinese[1:]))
         return latin
 
+    @staticmethod
+    def _char_ngrams(text: str, size: int = 3) -> set:
+        cleaned = re.sub(r"\s+", "", (text or "").lower())
+        if len(cleaned) < size:
+            return set(cleaned) if cleaned else set()
+        return {cleaned[index : index + size] for index in range(len(cleaned) - size + 1)}
+
     def record_transition(
         self,
         decision_id: str,
@@ -382,6 +376,21 @@ class SQLiteMemoryStore:
                 """,
                 (decision_id, group_id, state, reason, int(timestamp)),
             )
+
+    def recent_decision_ends(
+        self, group_id: str, limit: int = 3
+    ) -> List[Dict[str, Any]]:
+        rows = self._db.execute(
+            """
+            SELECT decision_id, reason, timestamp
+            FROM decisions
+            WHERE group_id = ? AND state = 'END'
+            ORDER BY timestamp DESC, rowid DESC
+            LIMIT ?
+            """,
+            (str(group_id), max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def enqueue_outbox(
         self,
@@ -419,206 +428,6 @@ class SQLiteMemoryStore:
                 "UPDATE outbox SET sent_at = ? WHERE decision_id = ?",
                 (int(sent_at), decision_id),
             )
-
-    def save_shadow_decision(self, record) -> bool:
-        context_json = (
-            json.dumps(record.context, ensure_ascii=False, sort_keys=True)
-            if record.context is not None
-            else None
-        )
-        with self._db:
-            cursor = self._db.execute(
-                """
-                INSERT OR IGNORE INTO shadow_decisions(
-                    decision_id, group_hash, sender_hash, trigger, action,
-                    confidence, reason_code, would_rate_limit, features_json,
-                    context_json, label, labeled_at, model_id, policy_version,
-                    latency_ms, error_code, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unlabeled', NULL, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record.decision_id,
-                    record.group_hash,
-                    record.sender_hash,
-                    record.trigger,
-                    record.action,
-                    float(record.confidence),
-                    record.reason_code,
-                    int(record.would_rate_limit),
-                    json.dumps(record.features, ensure_ascii=False, sort_keys=True),
-                    context_json,
-                    record.model_id,
-                    record.policy_version,
-                    float(record.latency_ms),
-                    record.error_code,
-                    int(record.created_at),
-                    int(record.expires_at),
-                ),
-            )
-        return cursor.rowcount == 1
-
-    def get_shadow_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
-        row = self._db.execute(
-            "SELECT * FROM shadow_decisions WHERE decision_id = ?", (str(decision_id),)
-        ).fetchone()
-        return dict(row) if row else None
-
-    def label_shadow_decision(self, decision_id: str, label: str, labeled_at: int) -> bool:
-        allowed = {"must_respond", "may_respond", "must_silence", "skipped"}
-        if label not in allowed:
-            return False
-        with self._db:
-            cursor = self._db.execute(
-                """
-                UPDATE shadow_decisions SET label = ?, labeled_at = ?
-                WHERE decision_id = ?
-                """,
-                (label, int(labeled_at), str(decision_id)),
-            )
-        return cursor.rowcount == 1
-
-    def purge_expired_shadow(self, now: int) -> int:
-        with self._db:
-            cursor = self._db.execute(
-                "DELETE FROM shadow_decisions WHERE expires_at <= ?", (int(now),)
-            )
-        return cursor.rowcount
-
-    def shadow_count(self) -> int:
-        row = self._db.execute("SELECT COUNT(*) AS count FROM shadow_decisions").fetchone()
-        return int(row["count"])
-
-    def shadow_stats(self) -> Dict[str, Any]:
-        result = {
-            "total": self.shadow_count(),
-            "actions": {},
-            "labels": {},
-            "reasons": {},
-            "recent": [],
-        }
-        for field, target in (
-            ("action", "actions"),
-            ("label", "labels"),
-            ("reason_code", "reasons"),
-        ):
-            rows = self._db.execute(
-                "SELECT {} AS value, COUNT(*) AS count FROM shadow_decisions GROUP BY {}".format(
-                    field, field
-                )
-            ).fetchall()
-            result[target] = {str(row["value"]): int(row["count"]) for row in rows}
-        recent = self._db.execute(
-            """
-            SELECT decision_id, action, reason_code, label, created_at
-            FROM shadow_decisions ORDER BY created_at DESC, id DESC LIMIT 10
-            """
-        ).fetchall()
-        result["recent"] = [dict(row) for row in recent]
-        return result
-
-    def shadow_decision_page(
-        self,
-        label: str = "all",
-        action: str = "all",
-        limit: int = 20,
-        cursor: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        label = str(label or "all")
-        action = str(action or "all")
-        if label not in _SHADOW_LABELS:
-            raise ValueError("invalid shadow label filter")
-        if action not in _SHADOW_ACTIONS:
-            raise ValueError("invalid shadow action filter")
-        try:
-            bounded_limit = max(1, min(50, int(limit)))
-        except (TypeError, ValueError):
-            raise ValueError("invalid shadow page limit")
-
-        clauses = []
-        params: List[Any] = []
-        if label != "all":
-            clauses.append("label = ?")
-            params.append(label)
-        if action != "all":
-            clauses.append("action = ?")
-            params.append(action)
-        if cursor:
-            created_at, row_id = _decode_shadow_cursor(cursor)
-            clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
-            params.extend([created_at, created_at, row_id])
-
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        rows = self._db.execute(
-            """
-            SELECT id, decision_id, trigger, action, confidence, reason_code,
-                   would_rate_limit, label, labeled_at, model_id, policy_version,
-                   latency_ms, error_code, created_at, context_json
-            FROM shadow_decisions
-            {} ORDER BY created_at DESC, id DESC LIMIT ?
-            """.format(where),
-            tuple(params + [bounded_limit + 1]),
-        ).fetchall()
-        has_more = len(rows) > bounded_limit
-        visible = rows[:bounded_limit]
-        next_cursor = None
-        if has_more and visible:
-            last = visible[-1]
-            next_cursor = _encode_shadow_cursor(last["created_at"], last["id"])
-        return {
-            "items": [dict(row) for row in visible],
-            "next_cursor": next_cursor,
-            "has_more": has_more,
-        }
-
-    def recent_shadow_decisions(
-        self, group_hash: str, limit: int = 5
-    ) -> List[Dict[str, Any]]:
-        bounded_limit = max(1, min(10, int(limit)))
-        rows = self._db.execute(
-            """
-            SELECT decision_id, trigger, action, confidence, reason_code,
-                   would_rate_limit, label, created_at, context_json
-            FROM shadow_decisions
-            WHERE group_hash = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?
-            """,
-            (str(group_hash), bounded_limit),
-        ).fetchall()
-        decisions = []
-        for row in rows:
-            decision = dict(row)
-            raw_context = decision.pop("context_json")
-            latest_message = None
-            if raw_context:
-                try:
-                    context = json.loads(raw_context)
-                except (RecursionError, TypeError, ValueError):
-                    context = None
-                if isinstance(context, list):
-                    for message in reversed(context):
-                        if not isinstance(message, dict):
-                            continue
-                        text = message.get("text")
-                        if isinstance(text, str) and text.strip():
-                            latest_message = {
-                                "sender": message.get("sender"),
-                                "text": text,
-                            }
-                            break
-            decision["latest_message"] = latest_message
-            decisions.append(decision)
-        return decisions
-
-    def labeled_shadow_records(self) -> List[Dict[str, Any]]:
-        rows = self._db.execute(
-            """
-            SELECT * FROM shadow_decisions
-            WHERE label IN ('must_respond', 'may_respond', 'must_silence')
-            ORDER BY created_at ASC, id ASC
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self._db.close()

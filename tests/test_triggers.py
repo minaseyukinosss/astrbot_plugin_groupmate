@@ -12,10 +12,20 @@ def test_existing_command_is_bypassed(message_factory):
     assert result.kind is TriggerKind.COMMAND
 
 
-def test_native_at_is_not_generated_by_plugin(message_factory):
-    result = build_router().classify(message_factory(text="在吗", mentions_bot=True))
+def test_native_at_is_bypassed_when_native_wake_disabled(message_factory):
+    router = TriggerRouter(
+        GroupPolicy(aliases=("爱弥斯", "小爱", "飞行雪绒"), handle_native_wake=False)
+    )
+    result = router.classify(message_factory(text="在吗", mentions_bot=True))
 
     assert result.kind is TriggerKind.NATIVE_DIRECT
+
+
+def test_alias_bot_suffix_is_direct_address(message_factory):
+    router = build_router()
+
+    assert router.classify(message_factory(text="爱弥斯bot")).kind is TriggerKind.ALIAS_DIRECT
+    assert router.classify(message_factory(text="爱弥斯 bot")).kind is TriggerKind.ALIAS_DIRECT
 
 
 def test_alias_direct_and_alias_discussion_are_distinct(message_factory):

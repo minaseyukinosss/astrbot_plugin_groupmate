@@ -39,6 +39,20 @@ def test_onebot_translation_detects_bot_mention_and_self_message():
     assert OneBotTranslator.from_history(self_message, bot_id="9").is_bot is True
 
 
+def test_onebot_translation_coerces_missing_timestamp():
+    raw = {
+        "message_id": "4",
+        "group_id": "2",
+        "user_id": "3",
+        "sender": {"nickname": "Alice"},
+        "message": [{"type": "text", "data": {"text": "小爱"}}],
+    }
+
+    message = OneBotTranslator.from_history(raw, bot_id="9")
+
+    assert message.timestamp > 0
+
+
 def test_decision_parser_accepts_fenced_json_and_clamps_values():
     decision = parse_decision_response(
         """```json

@@ -4,35 +4,32 @@ from __future__ import annotations
 
 import html
 from pathlib import Path
-from typing import Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 from .models import MemoryItem, TopicSnapshot
+from .relationships import (
+    DEFAULT_RELATIONSHIPS,
+    RelationshipEntry,
+    relationship_map,
+    resolve_speaker,
+)
 
 
 class BundledPersonaProvider:
-    _RELATIONSHIPS = {
-        "674852406": ("最亲近", "Minase"),
-        "1634104393": ("闺蜜", ""),
-    }
-
-    def __init__(self, override_prompt: str = "") -> None:
+    def __init__(
+        self,
+        override_prompt: str = "",
+        relationships: Optional[Sequence[RelationshipEntry]] = None,
+    ) -> None:
         self.override_prompt = override_prompt.strip()
+        entries = tuple(relationships) if relationships is not None else DEFAULT_RELATIONSHIPS
+        self._relationships: Dict[str, Tuple[str, str]] = relationship_map(entries)
 
-    @classmethod
-    def _speaker_context(
-        cls, sender_id: str, sender_name: str
-    ) -> tuple[str, str, str]:
-        sender_id = str(sender_id)
-        sender_name = (sender_name or "").strip()
-        relationship, fixed_address = cls._RELATIONSHIPS.get(
-            sender_id, ("普通群友", "")
-        )
-        if not sender_name or sender_name == sender_id:
-            speaker = fixed_address or "群友"
-        else:
-            speaker = sender_name[:80]
-        suggested_address = fixed_address or speaker
-        return speaker, relationship, suggested_address
+    def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
+        self._relationships = relationship_map(relationships)
+
+    def _speaker_context(self, sender_id: str, sender_name: str) -> Tuple[str, str, str]:
+        return resolve_speaker(sender_id, sender_name, self._relationships)
 
     def bundled_system_prompt(self) -> str:
         path = Path(__file__).resolve().parent.parent / "resources" / "aemeath_persona.md"

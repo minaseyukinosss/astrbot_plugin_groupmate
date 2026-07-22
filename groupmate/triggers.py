@@ -66,5 +66,7 @@ class TriggerRouter:
                 return True
             if any(tail.startswith(cue) for cue in self._DIRECT_TAILS):
                 return True
+            if re.fullmatch(r"(?i)bot", tail):
+                return True
         return bool(re.search(r"(?:叫|喊|问问)" + re.escape(alias), text))
 

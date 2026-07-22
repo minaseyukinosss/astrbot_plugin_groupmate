@@ -13,9 +13,13 @@ class FakeMemoryRepository:
     def __init__(self):
         self.transitions = []
         self.outbox = {}
+        self.memories = []
 
     def search_memories(self, group_id, query, now, limit, subject_id=None):
-        return []
+        return list(self.memories)[:limit]
+
+    def add_memory(self, memory):
+        self.memories.append(memory)
 
     def record_transition(self, decision_id, group_id, state, reason, timestamp):
         self.transitions.append((decision_id, group_id, state, reason, timestamp))
@@ -69,6 +73,12 @@ class FakePlatform:
             {"group_id": group_id, "text": text, "decision_id": decision_id}
         )
 
+    async def send_segments(
+        self, group_id, segments, decision_id, quote_message_id=None
+    ):
+        for segment in segments:
+            await self.send_text(group_id, segment, decision_id)
+
 
 class StaticPersona:
     async def system_prompt(self, group_id):
@@ -84,9 +94,18 @@ class NullVision:
 
 
 class RecordingWorkflow:
-    def __init__(self):
+    def __init__(self, sent=True, text="在呢。"):
         self.evaluations = []
+        self.sent = sent
+        self.text = text
 
     async def evaluate(self, topic, trigger, policy):
         self.evaluations.append((topic, trigger, policy))
-        return None
+        from groupmate.models import WorkflowOutcome
+
+        return WorkflowOutcome(
+            decision_id="test-" + str(len(self.evaluations)),
+            sent=self.sent,
+            reason="sent" if self.sent else "silent",
+            text=self.text if self.sent else "",
+        )

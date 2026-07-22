@@ -11,8 +11,6 @@ from astrbot.api.star import Context, Star
 
 from .groupmate.astrbot_adapter import AstrBotBridge
 from .groupmate.config import PluginSettings
-from .groupmate.shadow_admin import shadow_recent_response
-from .groupmate.web_api import GroupmateWebAPI
 
 
 class GroupmatePlugin(Star):
@@ -22,14 +20,14 @@ class GroupmatePlugin(Star):
         self.config = PluginSettings.from_mapping(config)
         data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
         self.bridge = AstrBotBridge(context, self.config, data_dir)
-        self.web_api = GroupmateWebAPI(self.bridge, data_dir)
-        self.web_api.register(context)
         logger.info("Groupmate initialized")
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def observe_group_message(self, event: AstrMessageEvent):
         """旁路观察 QQ 群消息，不抢占已有指令。"""
+        if self.bridge.should_take_native_wake(event):
+            event.call_llm = False
         await self.bridge.handle_event(event)
 
     @filter.on_llm_request()
@@ -71,46 +69,6 @@ class GroupmatePlugin(Star):
             group_id, max_messages=self.bridge._policy_for(group_id).history_limit
         )
         yield event.plain_result("这群刚才的上下文清掉了。")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("groupmate_shadow_stats")
-    async def groupmate_shadow_stats(self, event: AstrMessageEvent):
-        """查看不包含消息正文的影子模式统计。"""
-        yield event.plain_result(
-            json.dumps(self.bridge.memory.shadow_stats(), ensure_ascii=False, sort_keys=True)
-        )
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("groupmate_shadow_label")
-    async def groupmate_shadow_label(
-        self, event: AstrMessageEvent, decision_id: str, label: str
-    ):
-        """为本地影子决策添加人工标签，不修改原始预测。"""
-        if self.bridge.normalize_shadow_label(label) is None:
-            yield event.plain_result("标签只能是：必须回复、可以回复、必须沉默、跳过。")
-            return
-        if not self.bridge.label_shadow_decision(decision_id, label):
-            yield event.plain_result("没有找到这条影子决策。")
-            return
-        yield event.plain_result("影子决策已标注。")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("groupmate_shadow_recent")
-    async def groupmate_shadow_recent(
-        self, event: AstrMessageEvent, limit: int = 5
-    ):
-        """查看当前群近期影子决策和可用于标注的完整 ID。"""
-
-        def lookup(group_id: str, bounded_limit: int):
-            try:
-                return self.bridge.recent_shadow_decisions(group_id, bounded_limit)
-            except Exception:
-                logger.exception("Failed to read recent Groupmate shadow decisions")
-                raise
-
-        yield event.plain_result(
-            shadow_recent_response(event.get_group_id(), limit, lookup)
-        )
 
     async def terminate(self):
         await self.bridge.close()

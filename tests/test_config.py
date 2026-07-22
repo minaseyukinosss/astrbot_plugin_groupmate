@@ -8,10 +8,13 @@ def test_defaults_are_balanced_and_safe():
     assert settings.spontaneous_hourly_limit == 6
     assert settings.decision_threshold >= 0.7
     assert settings.enabled_groups == ()
-    assert settings.shadow_mode is False
-    assert settings.shadow_sample_rate == 1.0
-    assert settings.shadow_retention_days == 7
-    assert settings.shadow_store_message_text is False
+    assert settings.continuation_seconds == 90
+    assert settings.topic_max_seconds == 12
+    assert settings.humanize_delay_enabled is True
+    assert settings.max_reply_segments == 2
+    assert settings.handle_native_wake is True
+    assert len(settings.relationships) == 2
+    assert settings.relationships[0].sender_id == "674852406"
 
 
 def test_invalid_ranges_are_clamped():
@@ -19,28 +22,28 @@ def test_invalid_ranges_are_clamped():
         {
             "history_limit": 9999,
             "decision_threshold": -2,
-            "shadow_sample_rate": 3,
-            "shadow_retention_days": 999,
+            "max_reply_segments": 9,
+            "topic_max_seconds": 999,
         }
     )
 
     assert settings.history_limit == 500
     assert settings.decision_threshold == 0.0
-    assert settings.shadow_sample_rate == 1.0
-    assert settings.shadow_retention_days == 30
+    assert settings.max_reply_segments == 3
+    assert settings.topic_max_seconds == 60
 
 
-def test_shadow_boolean_strings_are_parsed_safely():
+def test_boolean_strings_are_parsed_safely():
     disabled = PluginSettings.from_mapping(
-        {"shadow_mode": "false", "shadow_store_message_text": "0"}
+        {"handle_native_wake": "false", "humanize_delay_enabled": "0"}
     )
     enabled = PluginSettings.from_mapping(
-        {"shadow_mode": "true", "shadow_store_message_text": "yes"}
+        {"handle_native_wake": "true", "humanize_delay_enabled": "yes"}
     )
-    assert disabled.shadow_mode is False
-    assert disabled.shadow_store_message_text is False
-    assert enabled.shadow_mode is True
-    assert enabled.shadow_store_message_text is True
+    assert disabled.handle_native_wake is False
+    assert disabled.humanize_delay_enabled is False
+    assert enabled.handle_native_wake is True
+    assert enabled.humanize_delay_enabled is True
 
 
 def test_aliases_and_group_ids_are_normalized():

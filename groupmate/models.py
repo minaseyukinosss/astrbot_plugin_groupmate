@@ -17,6 +17,7 @@ class TriggerKind(StringEnum):
     COMMAND = "command"
     NATIVE_DIRECT = "native_direct"
     ALIAS_DIRECT = "alias_direct"
+    CONTINUATION = "continuation"
     ALIAS_MENTION = "alias_mention"
     CANDIDATE = "candidate"
 
@@ -35,7 +36,6 @@ class Urgency(StringEnum):
 class MemoryKind(StringEnum):
     PROFILE = "profile"
     EPISODIC = "episodic"
-    REFLECTION = "reflection"
 
 
 @dataclass(frozen=True)
@@ -171,6 +171,7 @@ class WorkflowOutcome:
 @dataclass(frozen=True)
 class GroupPolicy:
     aliases: Tuple[str, ...] = ("爱弥斯", "小爱", "飞行雪绒")
+    handle_native_wake: bool = True
     history_limit: int = 100
     decision_threshold: float = 0.72
     spontaneous_hourly_limit: int = 6
@@ -181,4 +182,7 @@ class GroupPolicy:
     candidate_ttl_seconds: int = 20
     max_reply_chars: int = 60
     vision_enabled: bool = True
+    continuation_seconds: int = 90
+    humanize_delay_enabled: bool = False
+    max_reply_segments: int = 2
 

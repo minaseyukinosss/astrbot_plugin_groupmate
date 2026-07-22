@@ -56,6 +56,15 @@ class PlatformPort(Protocol):
     ) -> None:
         ...
 
+    async def send_segments(
+        self,
+        group_id: str,
+        segments: Sequence[str],
+        decision_id: str,
+        quote_message_id: Optional[str] = None,
+    ) -> None:
+        ...
+
 
 class HistoryPort(Protocol):
     async def fetch_recent(self, group_id: str, count: int) -> Sequence[ChatMessage]:

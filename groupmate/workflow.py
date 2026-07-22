@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict, deque
-from typing import DefaultDict, Deque, List, Optional, Sequence
+from typing import DefaultDict, Deque, List, Optional
 from uuid import uuid4
 
+from .delivery import build_delivery_plan, delivery_still_valid
 from .guardrails import AemeathOutputGuard
 from .models import (
     Decision,
@@ -72,30 +74,60 @@ class CognitiveWorkflow:
 
         if not topic.messages:
             return self._silent(decision_id, topic.group_id, "empty_topic", now)
-        if trigger in (TriggerKind.IGNORE, TriggerKind.COMMAND, TriggerKind.NATIVE_DIRECT):
+        if trigger in (TriggerKind.IGNORE, TriggerKind.COMMAND):
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
-        if now - topic.updated_at > policy.candidate_ttl_seconds:
+        if trigger is TriggerKind.NATIVE_DIRECT and not policy.handle_native_wake:
+            return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
+        if trigger not in (
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.CONTINUATION,
+        ) and now - topic.updated_at > policy.candidate_ttl_seconds:
             return self._silent(decision_id, topic.group_id, "stale_topic", now)
         if trigger is TriggerKind.CANDIDATE and not self.rate_limiter.allow(now):
             return self._silent(decision_id, topic.group_id, "rate_limited", now)
 
         query = " ".join(message.text for message in topic.messages[-8:] if message.text)
-        memories = list(
-            self.memory.search_memories(
-                topic.group_id,
-                query,
-                now=now,
-                limit=8,
+        subject_ids = tuple(
+            dict.fromkeys(
+                message.sender_id
+                for message in topic.messages[-8:]
+                if message.sender_id and not message.is_bot
             )
         )
+        search_kwargs = {
+            "group_id": topic.group_id,
+            "query": query,
+            "now": now,
+            "limit": 8,
+        }
+        try:
+            memories = list(
+                self.memory.search_memories(subject_ids=subject_ids, **search_kwargs)
+            )
+        except TypeError:
+            memories = list(self.memory.search_memories(**search_kwargs))
         self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
 
-        if trigger is TriggerKind.ALIAS_DIRECT:
+        if trigger in (
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.CONTINUATION,
+        ):
+            if trigger is TriggerKind.NATIVE_DIRECT:
+                reason_code = "native_direct"
+                contribution = "回应对方刚才的直接呼叫"
+            elif trigger is TriggerKind.CONTINUATION:
+                reason_code = "conversation_continuation"
+                contribution = "继续回应对方刚才的对话"
+            else:
+                reason_code = "alias_direct"
+                contribution = "回应对方刚才的直接呼叫"
             decision = Decision.respond(
-                contribution="回应对方刚才的直接呼叫",
+                contribution=contribution,
                 confidence=1.0,
                 trigger=trigger,
-                reason_code="alias_direct",
+                reason_code=reason_code,
                 target_message_id=topic.latest.message_id if topic.latest else None,
                 urgency=Urgency.HIGH,
             )
@@ -116,7 +148,11 @@ class CognitiveWorkflow:
         )
         if decision.action is not DecisionAction.RESPOND:
             return self._silent(decision_id, topic.group_id, "decision_ignore", now)
-        if trigger is not TriggerKind.ALIAS_DIRECT and decision.confidence < policy.decision_threshold:
+        if trigger not in (
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.CONTINUATION,
+        ) and decision.confidence < policy.decision_threshold:
             return self._silent(decision_id, topic.group_id, "below_threshold", now)
 
         memories = await self._add_visual_context(
@@ -162,33 +198,92 @@ class CognitiveWorkflow:
             )
         self._record(decision_id, topic.group_id, "GUARD", "accepted", now)
 
+        direct_wake = trigger in (
+            TriggerKind.ALIAS_DIRECT,
+            TriggerKind.NATIVE_DIRECT,
+            TriggerKind.CONTINUATION,
+        )
+        delivery = build_delivery_plan(
+            decision_id=decision_id,
+            group_id=topic.group_id,
+            text=guarded.text,
+            urgency=decision.urgency,
+            now=now,
+            ttl_seconds=policy.candidate_ttl_seconds,
+            max_chars=policy.max_reply_chars,
+            max_segments=policy.max_reply_segments,
+            humanize_delay=policy.humanize_delay_enabled,
+            direct_wake=direct_wake,
+            quote_message_id=decision.target_message_id,
+        )
+        if not delivery.segments:
+            return self._silent(decision_id, topic.group_id, "empty_delivery", now)
+        self._record(
+            decision_id,
+            topic.group_id,
+            "SCHEDULE",
+            "delay={:.2f};segments={}".format(
+                delivery.delay_seconds, len(delivery.segments)
+            ),
+            now,
+        )
+
+        outbox_text = "\n".join(delivery.segments)
         enqueue = getattr(self.memory, "enqueue_outbox", None)
         if enqueue and not enqueue(
             decision_id,
             topic.group_id,
-            guarded.text,
+            outbox_text,
             created_at=now,
-            expires_at=now + policy.candidate_ttl_seconds,
+            expires_at=delivery.expires_at,
         ):
             return self._silent(decision_id, topic.group_id, "duplicate_outbox", now)
+
+        if delivery.delay_seconds > 0:
+            await asyncio.sleep(delivery.delay_seconds)
+        send_now = self.clock.now()
+        if not delivery_still_valid(delivery, send_now):
+            return self._silent(decision_id, topic.group_id, "delivery_expired", send_now)
+
         try:
-            await self.platform.send_text(topic.group_id, guarded.text, decision_id)
-        except Exception:
-            return self._silent(decision_id, topic.group_id, "send_error", now)
+            await self._send_delivery(delivery)
+        except Exception as exc:
+            return self._silent(
+                decision_id,
+                topic.group_id,
+                "send_error:" + exc.__class__.__name__ + ":" + str(exc),
+                send_now,
+            )
 
         mark_sent = getattr(self.memory, "mark_outbox_sent", None)
         if mark_sent:
-            mark_sent(decision_id, sent_at=now)
+            mark_sent(decision_id, sent_at=send_now)
         if trigger is TriggerKind.CANDIDATE:
-            self.rate_limiter.record(now)
-        self._recent_outputs[topic.group_id].append(guarded.text)
-        self._record(decision_id, topic.group_id, "SEND", "sent", now)
+            self.rate_limiter.record(send_now)
+        self._recent_outputs[topic.group_id].append(outbox_text)
+        self._record(decision_id, topic.group_id, "SEND", "sent", send_now)
+
         return WorkflowOutcome(
             decision_id=decision_id,
             sent=True,
             reason="sent",
-            text=guarded.text,
+            text=outbox_text,
         )
+
+    async def _send_delivery(self, delivery) -> None:
+        sender = getattr(self.platform, "send_segments", None)
+        if sender is not None:
+            await sender(
+                delivery.group_id,
+                delivery.segments,
+                delivery.decision_id,
+                delivery.quote_message_id,
+            )
+            return
+        for segment in delivery.segments:
+            await self.platform.send_text(
+                delivery.group_id, segment, delivery.decision_id
+            )
 
     async def _add_visual_context(
         self,
@@ -257,4 +352,3 @@ class CognitiveWorkflow:
         record = getattr(self.memory, "record_transition", None)
         if record:
             record(decision_id, group_id, state, reason, timestamp)
-

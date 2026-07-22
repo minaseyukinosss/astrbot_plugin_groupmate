@@ -27,6 +27,7 @@ def balanced_policy():
         debounce_min_seconds=0.01,
         debounce_max_seconds=0.01,
         spontaneous_cooldown_seconds=0,
+        humanize_delay_enabled=False,
     )
 
 

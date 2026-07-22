@@ -9,6 +9,16 @@
     "type": "list",
     "default": ["爱弥斯", "小爱", "飞行雪绒"]
   },
+  "handle_native_wake": {
+    "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot 的直接呼叫；开启后会抑制 AstrBot 默认 LLM 回复，避免重复发言。",
+    "type": "bool",
+    "default": true
+  },
+  "continuation_seconds": {
+    "description": "直接呼叫成功后，同一发送者无需再叫名字即可续聊的秒数；0 表示关闭。",
+    "type": "int",
+    "default": 90
+  },
   "decision_provider": {
     "description": "自主插话判断模型。建议选择快速、便宜的模型。",
     "type": "string",
@@ -70,34 +80,29 @@
     "type": "float",
     "default": 8.0
   },
+  "topic_max_seconds": {
+    "description": "单个话题最长收集窗口（秒）；防抖等待不会超过该上限。",
+    "type": "int",
+    "default": 12
+  },
+  "humanize_delay_enabled": {
+    "description": "发送前加入拟人短延迟；直接唤醒延迟更短。",
+    "type": "bool",
+    "default": true
+  },
+  "max_reply_segments": {
+    "description": "单次回复最多拆成几段短消息。",
+    "type": "int",
+    "default": 2
+  },
+  "relationships": {
+    "description": "关系映射列表，每项含 id（QQ号）、relationship、address；留空使用内置默认。",
+    "type": "list",
+    "default": []
+  },
   "vision_enabled": {
     "description": "是否允许在被询问或上下文需要时理解图片。",
     "type": "bool",
     "default": true
-  },
-  "memory_retention_days": {
-    "description": "近期事件记忆的默认保留天数。",
-    "type": "int",
-    "default": 30
-  },
-  "shadow_mode": {
-    "description": "影子模式：只观察和判断，Groupmate 绝不生成或发送回复。",
-    "type": "bool",
-    "default": false
-  },
-  "shadow_sample_rate": {
-    "description": "影子模式采样比例，1.0 表示记录所有候选。",
-    "type": "float",
-    "default": 1.0
-  },
-  "shadow_retention_days": {
-    "description": "影子决策记录的本地保留天数。",
-    "type": "int",
-    "default": 7
-  },
-  "shadow_store_message_text": {
-    "description": "是否保存脱敏后的有限上下文供本地人工标注；默认只保存统计特征。",
-    "type": "bool",
-    "default": false
   }
 }
