@@ -260,13 +260,6 @@ class SQLiteMemoryStore:
         rows = self._db.execute(sql, tuple(params)).fetchall()
         return [self._row_to_memory(row) for row in rows]
 
-    def soften_memory(self, memory_id: str, *, importance: float) -> None:
-        with self._db:
-            self._db.execute(
-                "UPDATE memories SET importance = ? WHERE memory_id = ?",
-                (max(0.0, min(1.0, float(importance))), str(memory_id)),
-            )
-
     def search_memories(
         self,
         group_id: str,

@@ -146,7 +146,6 @@ class GroupActor:
 
         self.last_trigger = result.kind
         if result.kind in (TriggerKind.IGNORE, TriggerKind.COMMAND):
-            await self._observe_bypass(result.kind)
             return
         if result.kind in (
             TriggerKind.NATIVE_DIRECT,
@@ -176,7 +175,6 @@ class GroupActor:
         self._generation += 1
         self._cancel_debounce()
         if trigger is TriggerKind.NATIVE_DIRECT and not self.policy.handle_native_wake:
-            await self._observe_bypass(trigger)
             return
         self.last_outcome = await self.workflow.evaluate(
             self.window.snapshot(), trigger, self.policy
@@ -271,15 +269,6 @@ class GroupActor:
         if self._debounce_task is not None and not self._debounce_task.done():
             self._debounce_task.cancel()
         self._debounce_task = None
-
-    async def _observe_bypass(self, trigger: TriggerKind) -> None:
-        observer = getattr(self.workflow, "observe_bypass", None)
-        if observer is None:
-            return
-        try:
-            await observer(self.window.snapshot(), trigger, self.policy)
-        except Exception:
-            return
 
 
 class GroupRuntimeManager:

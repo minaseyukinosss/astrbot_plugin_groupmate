@@ -79,3 +79,8 @@ AstrBot/data/plugin_data/astrbot_plugin_groupmate/groupmate.db
 cd astrbot_plugin_groupmate
 PYTHONPATH=. pytest -q
 ```
+
+设计文档：
+
+- [现行精简架构](docs/superpowers/specs/2026-07-22-groupmate-v2-architecture.md)
+- [智能体设计规格](docs/superpowers/specs/2026-07-17-groupmate-agent-design.md)

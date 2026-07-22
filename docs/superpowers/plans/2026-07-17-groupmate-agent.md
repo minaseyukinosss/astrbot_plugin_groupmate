@@ -1,12 +1,12 @@
 # Groupmate 智能体实施计划
 
-> **供执行者使用：** 实施时应使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans`，并按照测试驱动开发流程逐项完成。
+> **状态（2026-07-22）：** 核心已落地。影子评测 / WebUI 控制中心 / 表达学习等后续草案已废弃，勿再按任务 9 的 evaluation 路径实施。现行架构见 `docs/superpowers/specs/2026-07-22-groupmate-v2-architecture.md`。
 
-**目标：** 构建一个可用于生产环境的 AstrBot 插件。插件能够观察 QQ 群聊、恢复 NapCat 近期历史、执行结构化主动参与决策、生成符合人格的回复，并维护有限社交记忆。
+**目标：** 构建可用于生产的 AstrBot 群聊伙伴插件：观察 QQ 群、补拉历史、结构化门控、人格短回复、有限持久化。
 
-**架构：** 使用端口与适配器围绕确定性认知工作流构建模块化单体。领域模块不依赖 AstrBot；每群一个 Actor 串行化状态，而 AstrBot/NapCat、模型、视觉、存储和消息发送都位于系统边界。
+**架构：** 端口与适配器 + 确定性认知工作流；每群 Actor 串行；领域不依赖 AstrBot。
 
-**技术栈：** Python 3.10+、`asyncio`、`dataclasses`、`sqlite3`、AstrBot 4.24+、NapCat/OneBot v11、pytest。
+**技术栈：** Python 3.7+ 可测 / 运行适配 AstrBot 4.24+、NapCat/OneBot v11、pytest。
 
 ---
 
@@ -224,26 +224,21 @@ pytest tests/test_config.py -q
 
 提交信息：`feat: add groupmate WebUI configuration`。
 
-## 任务 9：回放评估、说明文档与最终验证
+## 任务 9：说明文档与最终验证
 
 **计划文件：**
 
-- `groupmate/evaluation.py`
-- `tests/fixtures/replay.jsonl`
-- `tests/test_replay.py`
 - `README.md`
 - `.gitignore`
 
-回放报告应统计硬触发召回、主动回复准确率、指令干扰、重复回复、人格通过率和模型调用次数。README 需说明安装位置、NapCat 要求、配置、隐私、管理命令、架构和首版限制。
+README 说明安装位置、NapCat 要求、精简配置、隐私、管理命令与现行架构。不包含影子评测 / evaluation 子系统。
 
 最终验证：
 
 ```bash
-pytest -q
-python -m compileall -q main.py groupmate tests
+PYTHONPATH=. pytest -q
 python -m json.tool _conf_schema.json >/dev/null
-git diff --check
 ```
 
-所有命令必须成功，且 Git 工作区不得存在意外文件。
+所有命令必须成功。
 
