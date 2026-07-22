@@ -9,9 +9,10 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from groupmate.astrbot_adapter import AstrBotBridge
-from groupmate.config import PluginSettings
-from groupmate.shadow_admin import shadow_recent_response
+from .groupmate.astrbot_adapter import AstrBotBridge
+from .groupmate.config import PluginSettings
+from .groupmate.shadow_admin import shadow_recent_response
+from .groupmate.web_api import GroupmateWebAPI
 
 
 class GroupmatePlugin(Star):
@@ -21,6 +22,8 @@ class GroupmatePlugin(Star):
         self.config = PluginSettings.from_mapping(config)
         data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
         self.bridge = AstrBotBridge(context, self.config, data_dir)
+        self.web_api = GroupmateWebAPI(self.bridge, data_dir)
+        self.web_api.register(context)
         logger.info("Groupmate initialized")
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
