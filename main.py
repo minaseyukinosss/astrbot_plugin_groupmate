@@ -27,7 +27,19 @@ class GroupmatePlugin(Star):
     async def observe_group_message(self, event: AstrMessageEvent):
         """旁路观察 QQ 群消息，不抢占已有指令。"""
         if self.bridge.should_take_native_wake(event):
-            event.call_llm = False
+            if self.bridge.should_defer_native_wake_to_astrbot(event):
+                # 需要联网/外部事实：只观察，不抑制 AstrBot 默认 Agent（保留搜索工具）。
+                await self.bridge.observe_only(event)
+                return
+            # AstrBot ProcessStage 默认 Agent 条件：
+            #   is_at_or_wake_command and not event.call_llm and not _has_send_oper
+            # call_llm 的语义是「禁止默认 LLM」（见 AstrMessageEvent），默认 False。
+            # Groupmate 异步投递，返回时尚未 event.send，不能靠 _has_send_oper；
+            # 必须显式置 True，否则 @ 会同时触发 AstrBot 原生回复与 Groupmate。
+            if hasattr(event, "should_call_llm"):
+                event.should_call_llm(True)
+            else:
+                event.call_llm = True
         await self.bridge.handle_event(event)
 
     @filter.on_llm_request()

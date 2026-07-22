@@ -103,6 +103,28 @@ def test_continuation_bypasses_decision_model(topic_snapshot, balanced_policy):
     assert decider.calls == 0
 
 
+def test_copied_at_sends_tip_without_llm(topic_snapshot, balanced_policy):
+    platform = FakePlatform()
+    decider = StaticDecisionModel(Decision.ignore("should_not_run"))
+    generator = StaticGenerationModel("不该生成这句")
+    workflow = build_workflow(decider, generator=generator, platform=platform)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic_snapshot,
+            TriggerKind.COPIED_AT,
+            balanced_policy,
+            trigger_alias="爱弥斯",
+        )
+    )
+
+    assert outcome.sent is True
+    assert outcome.reason == "copied_at_tip"
+    assert platform.sent[0]["text"] == "AT爱弥斯 不能复制哦，复制的@为纯文本而非有效@"
+    assert decider.calls == 0
+    assert generator.calls == 0
+
+
 def test_low_confidence_decision_stays_silent(topic_snapshot, balanced_policy):
     workflow = build_workflow(
         StaticDecisionModel(Decision.respond("也许回复", confidence=0.2))

@@ -17,6 +17,7 @@ class TriggerKind(StringEnum):
     COMMAND = "command"
     NATIVE_DIRECT = "native_direct"
     ALIAS_DIRECT = "alias_direct"
+    COPIED_AT = "copied_at"
     CONTINUATION = "continuation"
     ALIAS_MENTION = "alias_mention"
     CANDIDATE = "candidate"
@@ -183,6 +184,6 @@ class GroupPolicy:
     max_reply_chars: int = 60
     vision_enabled: bool = True
     continuation_seconds: int = 90
-    humanize_delay_enabled: bool = False
+    humanize_delay_enabled: bool = True
     max_reply_segments: int = 2
 

@@ -13,6 +13,7 @@ from .relationships import (
     relationship_map,
     resolve_speaker,
 )
+from .topics import select_active_messages
 
 
 class BundledPersonaProvider:
@@ -44,8 +45,11 @@ class BundledPersonaProvider:
         topic: TopicSnapshot,
         memories: Sequence[MemoryItem],
     ) -> str:
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
         message_lines = []
-        for message in topic.messages[-20:]:
+        for message in active:
             content = message.text or "[图片]"
             if message.image_urls and message.text:
                 content += " [图片]"
@@ -75,7 +79,10 @@ class BundledPersonaProvider:
             )
         sections.extend(
             [
-                "<runtime_rule>只回复当前仍在进行的话题，不解释内部决策。</runtime_rule>",
+                "<runtime_rule>"
+                "只回复当前活跃话题（recent_messages 内最近一段），"
+                "不要串联更早的无关讨论；不解释内部决策。"
+                "</runtime_rule>",
                 "</group_context>",
             ]
         )

@@ -32,6 +32,7 @@ from .ports import (
     VisionPort,
 )
 from .rate_limit import SlidingWindowRateLimiter
+from .topics import select_active_messages
 
 
 class CognitiveWorkflow:
@@ -67,6 +68,7 @@ class CognitiveWorkflow:
         topic: TopicSnapshot,
         trigger: TriggerKind,
         policy: GroupPolicy,
+        trigger_alias: str = "",
     ) -> WorkflowOutcome:
         decision_id = uuid4().hex
         now = self.clock.now()
@@ -78,6 +80,10 @@ class CognitiveWorkflow:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
         if trigger is TriggerKind.NATIVE_DIRECT and not policy.handle_native_wake:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
+        if trigger is TriggerKind.COPIED_AT:
+            return await self._send_copied_at_tip(
+                decision_id, topic, trigger_alias, now
+            )
         if trigger not in (
             TriggerKind.ALIAS_DIRECT,
             TriggerKind.NATIVE_DIRECT,
@@ -87,11 +93,14 @@ class CognitiveWorkflow:
         if trigger is TriggerKind.CANDIDATE and not self.rate_limiter.allow(now):
             return self._silent(decision_id, topic.group_id, "rate_limited", now)
 
-        query = " ".join(message.text for message in topic.messages[-8:] if message.text)
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
+        query = " ".join(message.text for message in active if message.text)
         subject_ids = tuple(
             dict.fromkeys(
                 message.sender_id
-                for message in topic.messages[-8:]
+                for message in active
                 if message.sender_id and not message.is_bot
             )
         )
@@ -129,6 +138,7 @@ class CognitiveWorkflow:
                 trigger=trigger,
                 reason_code=reason_code,
                 target_message_id=topic.latest.message_id if topic.latest else None,
+                needs_vision=bool(self._topic_image_urls(topic)),
                 urgency=Urgency.HIGH,
             )
         else:
@@ -167,7 +177,6 @@ class CognitiveWorkflow:
             target_message_id=decision.target_message_id,
             urgency=decision.urgency,
             persona_prompt=persona_prompt,
-            image_urls=self._topic_image_urls(topic) if decision.needs_vision else (),
         )
         self._record(decision_id, topic.group_id, "PLAN", decision.contribution, now)
 
@@ -320,10 +329,42 @@ class CognitiveWorkflow:
             self._record(decision_id, topic.group_id, "VISION", "described", now)
         return memories
 
+    async def _send_copied_at_tip(
+        self,
+        decision_id: str,
+        topic: TopicSnapshot,
+        trigger_alias: str,
+        now: int,
+    ) -> WorkflowOutcome:
+        alias = (trigger_alias or "").strip() or "我"
+        # Use "AT" instead of "@" so the tip itself is not another plain-text At.
+        text = "AT{} 不能复制哦，复制的@为纯文本而非有效@".format(alias)
+        self._record(decision_id, topic.group_id, "GATE", "copied_plain_at", now)
+        try:
+            await self.platform.send_text(topic.group_id, text, decision_id)
+        except Exception as exc:
+            return self._silent(
+                decision_id,
+                topic.group_id,
+                "send_error:" + exc.__class__.__name__ + ":" + str(exc),
+                now,
+            )
+        self._recent_outputs[topic.group_id].append(text)
+        self._record(decision_id, topic.group_id, "SEND", "copied_at_tip", now)
+        return WorkflowOutcome(
+            decision_id=decision_id,
+            sent=True,
+            reason="copied_at_tip",
+            text=text,
+        )
+
     @staticmethod
     def _topic_image_urls(topic: TopicSnapshot) -> tuple:
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
         urls = []
-        for message in topic.messages[-8:]:
+        for message in active:
             urls.extend(message.image_urls)
         return tuple(dict.fromkeys(urls))
 

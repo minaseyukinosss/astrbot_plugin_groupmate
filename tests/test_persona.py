@@ -199,13 +199,40 @@ def test_dynamic_context_limits_recent_messages_and_memories():
 
     prompt = BundledPersonaProvider().build_user_context(topic, memories)
 
-    assert prompt.count("<message ") == 20
+    assert prompt.count("<message ") == 8
     assert "oldest-excluded" not in prompt
-    assert "recent-0" in prompt
+    assert "recent-0" not in prompt
+    assert "recent-11" not in prompt
+    assert "recent-12" in prompt
     assert "recent-19" in prompt
     assert "memory-0-sentinel" in prompt
     assert "memory-7-sentinel" in prompt
     assert "memory-8-sentinel" not in prompt
+    assert "不要串联更早的无关讨论" in prompt
+
+
+def test_dynamic_context_excludes_prior_topic_after_idle_gap():
+    older = ChatMessage("m1", "g1", "u1", "群友", "鸣潮要倒闭了", 100)
+    newer = ChatMessage("m2", "g1", "u2", "群友", "战双有4w倍率的大招", 230)
+    follow = ChatMessage("m3", "g1", "u1", "群友", "真不是填错了吗", 235)
+    topic = TopicSnapshot("t1", "g1", (older, newer, follow), 100, 235)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    assert "倒闭" not in prompt
+    assert "4w倍率" in prompt
+    assert "填错了" in prompt
+
+
+def test_dynamic_context_respects_topic_created_at_boundary():
+    older = ChatMessage("m1", "g1", "u1", "群友", "鸣潮要倒闭了", 100)
+    newer = ChatMessage("m2", "g1", "u2", "群友", "战双有4w倍率", 110)
+    topic = TopicSnapshot("t1", "g1", (older, newer), 110, 110)
+
+    prompt = BundledPersonaProvider().build_user_context(topic, [])
+
+    assert "倒闭" not in prompt
+    assert "4w倍率" in prompt
 
 
 def test_dynamic_context_truncates_speaker_and_content_fields():

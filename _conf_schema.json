@@ -10,7 +10,7 @@
     "default": ["爱弥斯", "小爱", "飞行雪绒"]
   },
   "handle_native_wake": {
-    "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot 的直接呼叫；开启后会抑制 AstrBot 默认 LLM 回复，避免重复发言。",
+    "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot 的闲聊直接呼叫；开启后会抑制 AstrBot 默认 LLM 回复。明显需要联网/外部事实的问题会自动交回 AstrBot Agent（保留搜索等工具）。",
     "type": "bool",
     "default": true
   },
@@ -50,16 +50,6 @@
     "editor_mode": true,
     "editor_language": "markdown"
   },
-  "history_limit": {
-    "description": "每群工作记忆和启动补拉的消息数量。",
-    "type": "int",
-    "default": 100
-  },
-  "decision_threshold": {
-    "description": "自主插话决策的最低置信度。",
-    "type": "float",
-    "default": 0.72
-  },
   "spontaneous_hourly_limit": {
     "description": "每群每小时最多自主发言次数。",
     "type": "int",
@@ -69,31 +59,6 @@
     "description": "两次自主发言之间的最短间隔。",
     "type": "int",
     "default": 600
-  },
-  "debounce_min_seconds": {
-    "description": "话题聚合等待下限。",
-    "type": "float",
-    "default": 4.0
-  },
-  "debounce_max_seconds": {
-    "description": "话题聚合等待上限。",
-    "type": "float",
-    "default": 8.0
-  },
-  "topic_max_seconds": {
-    "description": "单个话题最长收集窗口（秒）；防抖等待不会超过该上限。",
-    "type": "int",
-    "default": 12
-  },
-  "humanize_delay_enabled": {
-    "description": "发送前加入拟人短延迟；直接唤醒延迟更短。",
-    "type": "bool",
-    "default": true
-  },
-  "max_reply_segments": {
-    "description": "单次回复最多拆成几段短消息。",
-    "type": "int",
-    "default": 2
   },
   "relationships": {
     "description": "关系映射列表，每项含 id（QQ号）、relationship、address；留空使用内置默认。",

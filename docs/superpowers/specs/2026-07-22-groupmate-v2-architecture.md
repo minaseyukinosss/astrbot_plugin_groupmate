@@ -37,10 +37,11 @@ OneBot 规范化
 OBSERVE → RECALL → GATE → [VISION] → PLAN → GENERATE → GUARD → SCHEDULE → SEND
 ```
 
-- **直接唤醒 / 续聊**：跳过决策模型，立即生成。
-- **候选插话**：防抖聚合 → 频率限制 → 决策模型过门槛才生成。
+- **直接唤醒 / 续聊**：跳过决策模型，立即生成。直接唤醒含平台 `@`/回复、**句首别名**、显式召唤动词。
+- **软提及 / 候选插话**：别名在句中或普通消息 → 防抖聚合 → 频率限制 → 决策模型过门槛才生成。
 - **指令**：旁路，不追加人格回复。
 - **失败默认沉默**（fail-closed）。
+- **触发器不做口语穷举**：不维护「在吗/在不」类白名单；句首点名即呼叫。
 
 无 LEARN / REFLECT / EMOJI / SHADOW 阶段。
 
@@ -63,7 +64,9 @@ OBSERVE → RECALL → GATE → [VISION] → PLAN → GENERATE → GUARD → SCH
 
 ## 5. 配置面（与 `_conf_schema.json` 一致）
 
-启用群、别名、模型 Provider、人格、历史窗口、决策门槛、小时限额与冷却、防抖与 `topic_max_seconds`、续聊秒数、拟人延迟、分段数、关系映射、看图开关。
+对外只暴露：启用群、别名、原生唤醒接管、续聊秒数、模型 Provider、人格、自主发言限额与冷却、关系映射、看图开关。
+
+防抖、`topic_max_seconds`、决策门槛、历史补拉条数、拟人延迟、分段数等为内部常量（见 `groupmate/config.py`），不进配置页；旧配置键会被忽略。
 
 管理命令仅：`status` / `pause` / `resume` / `reset`。
 

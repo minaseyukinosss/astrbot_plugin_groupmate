@@ -7,17 +7,19 @@ from typing import Any, Mapping, Tuple
 
 from .relationships import RelationshipEntry, parse_relationships
 
+# Internal pipeline knobs — not exposed in _conf_schema.json.
+HISTORY_LIMIT = 100
+DECISION_THRESHOLD = 0.72
+DEBOUNCE_MIN_SECONDS = 4.0
+DEBOUNCE_MAX_SECONDS = 8.0
+TOPIC_MAX_SECONDS = 12
+HUMANIZE_DELAY_ENABLED = True
+MAX_REPLY_SEGMENTS = 2
+
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
     try:
         return max(low, min(high, int(value)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
-    try:
-        return max(low, min(high, float(value)))
     except (TypeError, ValueError):
         return default
 
@@ -60,26 +62,24 @@ class PluginSettings:
     vision_provider: str = ""
     persona_id: str = ""
     persona_prompt: str = ""
-    history_limit: int = 100
-    decision_threshold: float = 0.72
     spontaneous_hourly_limit: int = 6
     spontaneous_cooldown_seconds: int = 600
-    debounce_min_seconds: float = 4.0
-    debounce_max_seconds: float = 8.0
-    topic_max_seconds: int = 12
     vision_enabled: bool = True
     handle_native_wake: bool = True
     continuation_seconds: int = 90
-    humanize_delay_enabled: bool = True
-    max_reply_segments: int = 2
     relationships: Tuple[RelationshipEntry, ...] = ()
+    # Internal (hardcoded) — kept on the dataclass for policy wiring.
+    history_limit: int = HISTORY_LIMIT
+    decision_threshold: float = DECISION_THRESHOLD
+    debounce_min_seconds: float = DEBOUNCE_MIN_SECONDS
+    debounce_max_seconds: float = DEBOUNCE_MAX_SECONDS
+    topic_max_seconds: int = TOPIC_MAX_SECONDS
+    humanize_delay_enabled: bool = HUMANIZE_DELAY_ENABLED
+    max_reply_segments: int = MAX_REPLY_SEGMENTS
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
-        minimum_debounce = _bounded_float(raw.get("debounce_min_seconds", 4), 4.0, 0.0, 30.0)
-        maximum_debounce = _bounded_float(
-            raw.get("debounce_max_seconds", 8), 8.0, minimum_debounce, 30.0
-        )
+        # Legacy keys for internal knobs are ignored on purpose.
         return cls(
             enabled_groups=_string_tuple(raw.get("enabled_groups", ())),
             aliases=_string_tuple(
@@ -91,29 +91,23 @@ class PluginSettings:
             vision_provider=str(raw.get("vision_provider", "") or "").strip(),
             persona_id=str(raw.get("persona_id", "") or "").strip(),
             persona_prompt=str(raw.get("persona_prompt", "") or "").strip(),
-            history_limit=_bounded_int(raw.get("history_limit", 100), 100, 1, 500),
-            decision_threshold=_bounded_float(
-                raw.get("decision_threshold", 0.72), 0.72, 0.0, 1.0
-            ),
             spontaneous_hourly_limit=_bounded_int(
                 raw.get("spontaneous_hourly_limit", 6), 6, 1, 60
             ),
             spontaneous_cooldown_seconds=_bounded_int(
                 raw.get("spontaneous_cooldown_seconds", 600), 600, 0, 7200
             ),
-            debounce_min_seconds=minimum_debounce,
-            debounce_max_seconds=maximum_debounce,
-            topic_max_seconds=_bounded_int(raw.get("topic_max_seconds", 12), 12, 1, 60),
             vision_enabled=_boolean(raw.get("vision_enabled", True), True),
             handle_native_wake=_boolean(raw.get("handle_native_wake", True), True),
             continuation_seconds=_bounded_int(
                 raw.get("continuation_seconds", 90), 90, 0, 600
             ),
-            humanize_delay_enabled=_boolean(
-                raw.get("humanize_delay_enabled", True), True
-            ),
-            max_reply_segments=_bounded_int(
-                raw.get("max_reply_segments", 2), 2, 1, 3
-            ),
             relationships=parse_relationships(raw.get("relationships")),
+            history_limit=HISTORY_LIMIT,
+            decision_threshold=DECISION_THRESHOLD,
+            debounce_min_seconds=DEBOUNCE_MIN_SECONDS,
+            debounce_max_seconds=DEBOUNCE_MAX_SECONDS,
+            topic_max_seconds=TOPIC_MAX_SECONDS,
+            humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
+            max_reply_segments=MAX_REPLY_SEGMENTS,
         )

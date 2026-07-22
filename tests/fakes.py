@@ -99,7 +99,8 @@ class RecordingWorkflow:
         self.sent = sent
         self.text = text
 
-    async def evaluate(self, topic, trigger, policy):
+    async def evaluate(self, topic, trigger, policy, trigger_alias=""):
+        del trigger_alias
         self.evaluations.append((topic, trigger, policy))
         from groupmate.models import WorkflowOutcome
 

@@ -140,6 +140,7 @@ class GroupActor:
             if result.kind not in (
                 TriggerKind.NATIVE_DIRECT,
                 TriggerKind.ALIAS_DIRECT,
+                TriggerKind.COPIED_AT,
                 TriggerKind.CONTINUATION,
             ):
                 return
@@ -150,9 +151,10 @@ class GroupActor:
         if result.kind in (
             TriggerKind.NATIVE_DIRECT,
             TriggerKind.ALIAS_DIRECT,
+            TriggerKind.COPIED_AT,
             TriggerKind.CONTINUATION,
         ):
-            await self._evaluate_immediate(result.kind)
+            await self._evaluate_immediate(result.kind, result.alias)
             return
 
         self._generation += 1
@@ -171,13 +173,13 @@ class GroupActor:
             self._enqueue_evaluation(generation, result.kind, delay)
         )
 
-    async def _evaluate_immediate(self, trigger: TriggerKind) -> None:
+    async def _evaluate_immediate(self, trigger: TriggerKind, alias: str = "") -> None:
         self._generation += 1
         self._cancel_debounce()
         if trigger is TriggerKind.NATIVE_DIRECT and not self.policy.handle_native_wake:
             return
         self.last_outcome = await self.workflow.evaluate(
-            self.window.snapshot(), trigger, self.policy
+            self.window.snapshot(), trigger, self.policy, trigger_alias=alias
         )
         self._remember_continuation(self.last_outcome)
         self.window.reset_topic()

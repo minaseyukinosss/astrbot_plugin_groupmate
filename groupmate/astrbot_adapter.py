@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+from .external_knowledge import needs_external_knowledge
 from .guardrails import AemeathOutputGuard
 from .memory import SQLiteMemoryStore
 from .models import (
@@ -25,8 +26,18 @@ from .models import (
 from .persona import BundledPersonaProvider
 from .rate_limit import SlidingWindowRateLimiter
 from .runtime import GroupRuntimeManager
+from .topics import select_active_messages
 from .triggers import TriggerRouter
 from .workflow import CognitiveWorkflow
+from .config import (
+    DEBOUNCE_MAX_SECONDS,
+    DEBOUNCE_MIN_SECONDS,
+    DECISION_THRESHOLD,
+    HISTORY_LIMIT,
+    HUMANIZE_DELAY_ENABLED,
+    MAX_REPLY_SEGMENTS,
+    TOPIC_MAX_SECONDS,
+)
 
 
 class OneBotTranslator:
@@ -215,11 +226,14 @@ class AstrBotDecisionModel:
 
     @staticmethod
     def _prompt(topic, policy, memories) -> str:
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
         lines = [
             "<topic>",
             "\n".join(
                 "{}: {}".format(message.sender_name, message.text or "[媒体]")
-                for message in topic.messages[-20:]
+                for message in active
             ),
             "</topic>",
             "<policy>最多每小时 {} 条自主回复；门槛 {:.2f}</policy>".format(
@@ -285,7 +299,6 @@ class AstrBotGenerationModel:
             chat_provider_id=provider_id,
             prompt=prompt,
             system_prompt=plan.persona_prompt,
-            image_urls=list(plan.image_urls) or None,
         )
         return getattr(response, "completion_text", "") or ""
 
@@ -386,17 +399,96 @@ class AstrBotBridge:
         self.runtime = GroupRuntimeManager(self._workflow_for, self._policy_for)
 
     async def handle_event(self, event: Any) -> None:
-        if self.paused:
+        actor = await self._prepare_actor(event)
+        if actor is None:
+            return
+        await actor.submit(self._message_from_event(event))
+
+    async def observe_only(self, event: Any) -> None:
+        """Ingest the message into the group window without generating a reply."""
+        actor = await self._prepare_actor(event)
+        if actor is None:
+            return
+        await actor.preload(self._message_from_event(event))
+
+    async def enrich_request(self, event: Any, req: Any) -> None:
+        # Skip only when Groupmate will suppress AstrBot and answer itself.
+        if self.should_take_native_wake(event) and not self.should_defer_native_wake_to_astrbot(
+            event
+        ):
             return
         group_id = str(event.get_group_id())
-        if not self._group_enabled(group_id):
+        if self.paused or not group_id or self._is_command_event(event):
             return
+        actor = await self.runtime.actor_for(group_id)
+        topic = actor.window.snapshot()
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
+        memories = self.memory.search_memories(
+            group_id,
+            " ".join(message.text for message in active),
+            now=max((message.timestamp for message in active), default=0),
+            limit=8,
+        )
+        prompt = BundledPersonaProvider(
+            relationships=self._relationships()
+        ).build_user_context(topic, memories)
+        if self.should_defer_native_wake_to_astrbot(event):
+            prompt = (
+                "Groupmate 已观察本群上下文；本轮需要联网或外部事实，"
+                "由平台 Agent 作答（可使用搜索等工具）。\n" + prompt
+            )
+        try:
+            from astrbot.core.agent.message import TextPart
+
+            req.extra_user_content_parts.append(TextPart(text=prompt).mark_as_temp())
+        except Exception:
+            return
+
+    def should_take_native_wake(self, event: Any) -> bool:
+        """Whether this @ / reply-to-bot is a Groupmate native-wake candidate.
+
+        When True and not deferred, the plugin must set ``event.call_llm = True``
+        so AstrBot's ProcessStage skips its default agent (condition is
+        ``is_at_or_wake_command and not call_llm``; ``call_llm`` means
+        "prohibit default LLM").
+        """
+        if not bool(self._setting("handle_native_wake", True)):
+            return False
+        if self.paused:
+            return False
+        group_id = str(event.get_group_id())
+        if not group_id or not self._group_enabled(group_id):
+            return False
+        message = self._message_from_event(event)
+        return (
+            TriggerRouter(self._policy_for(group_id)).classify(message).kind
+            is TriggerKind.NATIVE_DIRECT
+        )
+
+    def should_defer_native_wake_to_astrbot(self, event: Any) -> bool:
+        """Hand @ wakes that need web/external facts back to AstrBot's Agent."""
+        if not self.should_take_native_wake(event):
+            return False
+        return needs_external_knowledge(self._message_from_event(event).text)
+
+    async def _prepare_actor(self, event: Any):
+        if self.paused:
+            return None
+        group_id = str(event.get_group_id())
+        if not self._group_enabled(group_id):
+            return None
         umo = str(event.unified_msg_origin)
         self._umo_by_group[group_id] = umo
         try:
-            self._provider_by_group[group_id] = await self.context.get_current_chat_provider_id(umo)
+            self._provider_by_group[group_id] = await self.context.get_current_chat_provider_id(
+                umo
+            )
         except Exception:
-            self._provider_by_group.setdefault(group_id, self._setting("generation_provider", ""))
+            self._provider_by_group.setdefault(
+                group_id, self._setting("generation_provider", "")
+            )
         actor = await self.runtime.actor_for(group_id)
         if group_id not in self._bootstrapped:
             bot = getattr(event, "bot", None)
@@ -408,57 +500,17 @@ class AstrBotBridge:
                     for message in history:
                         await actor.preload(message)
                     await actor.drain()
+                    actor.window.reset_topic()
                 except Exception:
                     pass
             self._bootstrapped.add(group_id)
-        await actor.submit(
-            OneBotTranslator.from_event(
-                event,
-                bot_id=str(event.get_self_id()),
-                is_command=self._is_command_event(event),
-            )
-        )
+        return actor
 
-    async def enrich_request(self, event: Any, req: Any) -> None:
-        if bool(self._setting("handle_native_wake", True)):
-            return
-        group_id = str(event.get_group_id())
-        if self.paused or not group_id or self._is_command_event(event):
-            return
-        actor = await self.runtime.actor_for(group_id)
-        topic = actor.window.snapshot()
-        memories = self.memory.search_memories(
-            group_id,
-            " ".join(message.text for message in topic.messages[-8:]),
-            now=max((message.timestamp for message in topic.messages), default=0),
-            limit=8,
-        )
-        prompt = BundledPersonaProvider(
-            relationships=self._relationships()
-        ).build_user_context(topic, memories)
-        try:
-            from astrbot.core.agent.message import TextPart
-
-            req.extra_user_content_parts.append(TextPart(text=prompt).mark_as_temp())
-        except Exception:
-            return
-
-    def should_take_native_wake(self, event: Any) -> bool:
-        if not bool(self._setting("handle_native_wake", True)):
-            return False
-        if self.paused:
-            return False
-        group_id = str(event.get_group_id())
-        if not group_id or not self._group_enabled(group_id):
-            return False
-        message = OneBotTranslator.from_event(
+    def _message_from_event(self, event: Any) -> ChatMessage:
+        return OneBotTranslator.from_event(
             event,
             bot_id=str(event.get_self_id()),
             is_command=self._is_command_event(event),
-        )
-        return (
-            TriggerRouter(self._policy_for(group_id)).classify(message).kind
-            is TriggerKind.NATIVE_DIRECT
         )
 
     async def close(self) -> None:
@@ -528,21 +580,19 @@ class AstrBotBridge:
         return GroupPolicy(
             aliases=aliases,
             handle_native_wake=bool(self._setting("handle_native_wake", True)),
-            history_limit=int(self._setting("history_limit", 100)),
-            decision_threshold=float(self._setting("decision_threshold", 0.72)),
+            history_limit=HISTORY_LIMIT,
+            decision_threshold=DECISION_THRESHOLD,
             spontaneous_hourly_limit=int(self._setting("spontaneous_hourly_limit", 6)),
             spontaneous_cooldown_seconds=int(
                 self._setting("spontaneous_cooldown_seconds", 600)
             ),
-            debounce_min_seconds=float(self._setting("debounce_min_seconds", 4.0)),
-            debounce_max_seconds=float(self._setting("debounce_max_seconds", 8.0)),
-            topic_max_seconds=int(self._setting("topic_max_seconds", 12)),
+            debounce_min_seconds=DEBOUNCE_MIN_SECONDS,
+            debounce_max_seconds=DEBOUNCE_MAX_SECONDS,
+            topic_max_seconds=TOPIC_MAX_SECONDS,
             vision_enabled=bool(self._setting("vision_enabled", True)),
             continuation_seconds=int(self._setting("continuation_seconds", 90)),
-            humanize_delay_enabled=bool(
-                self._setting("humanize_delay_enabled", True)
-            ),
-            max_reply_segments=int(self._setting("max_reply_segments", 2)),
+            humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
+            max_reply_segments=MAX_REPLY_SEGMENTS,
         )
 
     def _group_enabled(self, group_id: str) -> bool:

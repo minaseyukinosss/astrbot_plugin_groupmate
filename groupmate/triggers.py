@@ -1,4 +1,16 @@
-"""Deterministic first-stage routing for incoming group messages."""
+"""Deterministic first-stage routing for incoming group messages.
+
+Wake contract (open-source stable):
+
+1. Platform ``@`` / reply-to-bot → ``NATIVE_DIRECT``
+2. Leading plain-text ``@alias`` without a real At segment → ``COPIED_AT``
+3. Message equals alias, or starts with alias → ``ALIAS_DIRECT``
+4. Alias appears only mid/end sentence → ``ALIAS_MENTION``
+5. Explicit summon verbs before alias (叫/喊/问问) → ``ALIAS_DIRECT``
+
+Colloquial tails after a leading alias are not enumerated. In Chinese group chat,
+a sentence-initial nickname is a vocative; mid-sentence mention is discussion.
+"""
 
 from __future__ import annotations
 
@@ -16,20 +28,9 @@ class TriggerResult:
 
 
 class TriggerRouter:
-    _DIRECT_PUNCTUATION = "，,。.!！?？:：~～、"
-    _DIRECT_TAILS = (
-        "在吗",
-        "在不在",
-        "干嘛",
-        "出来",
-        "看看",
-        "听我说",
-        "你觉得",
-        "你怎么看",
-        "帮我",
-        "说句话",
-        "醒醒",
-    )
+    """Classify whether a message is a direct wake, soft mention, or candidate."""
+
+    _SUMMON_RE_TEMPLATE = r"(?:叫|喊|问问){alias}"
 
     def __init__(self, policy: GroupPolicy) -> None:
         self.policy = policy
@@ -42,31 +43,35 @@ class TriggerRouter:
         if message.mentions_bot or message.reply_to_bot:
             return TriggerResult(TriggerKind.NATIVE_DIRECT, "native_direct")
 
-        text = re.sub(r"\s+", "", message.text)
+        text = re.sub(r"\s+", "", message.text or "")
+        if not text:
+            return TriggerResult(TriggerKind.IGNORE, "ignored_sender_or_empty")
+
         for alias in sorted(self.policy.aliases, key=len, reverse=True):
             alias = alias.strip()
-            if not alias or alias not in text:
+            if not alias:
                 continue
-            if self._is_direct_address(text, alias):
+            if text.startswith("@" + alias) or text == "@" + alias:
+                # Real platform At already returned NATIVE_DIRECT above.
+                # Leading "@别名" here is almost always a copied plain-text At.
+                return TriggerResult(TriggerKind.COPIED_AT, "copied_plain_at", alias)
+            if self._is_prefix_address(text, alias):
                 return TriggerResult(TriggerKind.ALIAS_DIRECT, "alias_direct", alias)
-            return TriggerResult(TriggerKind.ALIAS_MENTION, "alias_mentioned", alias)
+            if self._is_explicit_summon(text, alias):
+                return TriggerResult(TriggerKind.ALIAS_DIRECT, "alias_summon", alias)
+            if alias in text:
+                return TriggerResult(TriggerKind.ALIAS_MENTION, "alias_mentioned", alias)
 
         return TriggerResult(TriggerKind.CANDIDATE, "ordinary_group_message")
 
-    def _is_direct_address(self, text: str, alias: str) -> bool:
+    @staticmethod
+    def _is_prefix_address(text: str, alias: str) -> bool:
         if text == alias:
             return True
-        if text.startswith("@" + alias):
-            return True
         if text.startswith(alias):
-            tail = text[len(alias) :]
-            if not tail:
-                return True
-            if tail[0] in self._DIRECT_PUNCTUATION:
-                return True
-            if any(tail.startswith(cue) for cue in self._DIRECT_TAILS):
-                return True
-            if re.fullmatch(r"(?i)bot", tail):
-                return True
-        return bool(re.search(r"(?:叫|喊|问问)" + re.escape(alias), text))
+            return True
+        return False
 
+    def _is_explicit_summon(self, text: str, alias: str) -> bool:
+        pattern = self._SUMMON_RE_TEMPLATE.format(alias=re.escape(alias))
+        return bool(re.search(pattern, text))

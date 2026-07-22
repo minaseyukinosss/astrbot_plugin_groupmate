@@ -61,10 +61,10 @@ def compute_delay_seconds(
         return 0.0
     length = len((text or "").strip())
     if direct_wake or urgency is Urgency.HIGH:
-        return min(0.8, 0.15 + length * 0.01)
+        return min(0.35, 0.05 + length * 0.004)
     if urgency is Urgency.LOW:
-        return min(4.0, 0.8 + length * 0.04)
-    return min(2.5, 0.3 + length * 0.025)
+        return min(1.5, 0.25 + length * 0.015)
+    return min(0.9, 0.1 + length * 0.01)
 
 
 def build_delivery_plan(
