@@ -8,6 +8,7 @@ const state = {
   nextCursor: null,
   hasMore: false,
   loading: false,
+  pendingSelectId: null,
   filters: { label: "unlabeled", action: "all", limit: 20 },
 };
 
@@ -170,7 +171,12 @@ async function loadDecisions(append = false) {
     state.decisions = append ? state.decisions.concat(items) : items;
     state.nextCursor = data.next_cursor || null;
     state.hasMore = Boolean(data.has_more);
-    if (!append) state.selected = state.decisions[0] || null;
+    if (!append) {
+      state.selected = state.decisions.find((item) => item.decision_id === state.pendingSelectId)
+        || state.decisions[0]
+        || null;
+      state.pendingSelectId = null;
+    }
     renderReview();
     setStatus("审阅列表已更新");
   } catch (error) {
@@ -243,8 +249,15 @@ $("action-filter").addEventListener("change", (event) => {
 document.addEventListener("click", (event) => {
   const open = event.target.closest("[data-open-id]");
   if (open) {
-    state.selected = state.decisions.find((item) => item.decision_id === open.dataset.openId) || null;
-    renderReview();
+    state.selected = state.decisions.find((item) => item.decision_id === open.dataset.openId)
+      || state.overview?.recent?.find((item) => item.decision_id === open.dataset.openId)
+      || null;
+    if (state.view !== "review") {
+      state.pendingSelectId = open.dataset.openId;
+      setView("review");
+    } else {
+      renderReview();
+    }
     return;
   }
   const label = event.target.closest("[data-label-action]");
