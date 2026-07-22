@@ -198,3 +198,40 @@ def test_recent_shadow_decisions_treat_deep_context_json_as_unavailable(tmp_path
         }
     ]
     store.close()
+
+
+def test_shadow_decision_page_filters_and_returns_opaque_cursor(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "memory.db")
+    for row in (
+        record(decision_id="respond", action="respond", created_at=30),
+        record(decision_id="ignored", action="ignore", created_at=20),
+        record(decision_id="labeled", action="ignore", created_at=10),
+    ):
+        store.save_shadow_decision(row)
+    store.label_shadow_decision("labeled", "must_silence", 40)
+
+    page = store.shadow_decision_page(label="unlabeled", action="all", limit=1)
+
+    assert [row["decision_id"] for row in page["items"]] == ["respond"]
+    assert page["has_more"] is True
+    assert page["next_cursor"]
+    assert page["items"][0]["context_json"] is None
+    store.close()
+
+
+def test_shadow_decision_page_cursor_continues_newest_first(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "memory.db")
+    for index in range(3):
+        store.save_shadow_decision(
+            record(decision_id="d{}".format(index), created_at=index)
+        )
+
+    first = store.shadow_decision_page(label="all", action="all", limit=2)
+    second = store.shadow_decision_page(
+        label="all", action="all", limit=2, cursor=first["next_cursor"]
+    )
+
+    assert [row["decision_id"] for row in first["items"]] == ["d2", "d1"]
+    assert [row["decision_id"] for row in second["items"]] == ["d0"]
+    assert second["has_more"] is False
+    store.close()

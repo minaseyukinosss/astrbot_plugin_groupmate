@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import re
 import sqlite3
 from pathlib import Path
@@ -12,6 +13,40 @@ from .models import ChatMessage, MemoryItem, MemoryKind
 
 
 SCHEMA_VERSION = 2
+
+_SHADOW_LABELS = {
+    "all",
+    "unlabeled",
+    "must_respond",
+    "may_respond",
+    "must_silence",
+    "skipped",
+}
+_SHADOW_ACTIONS = {"all", "respond", "ignore", "bypass"}
+
+
+def _encode_shadow_cursor(created_at: int, row_id: int) -> str:
+    payload = json.dumps(
+        {"created_at": int(created_at), "row_id": int(row_id)},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_shadow_cursor(cursor: str) -> Tuple[int, int]:
+    if not isinstance(cursor, str) or not cursor or len(cursor) > 256:
+        raise ValueError("invalid shadow cursor")
+    padded = cursor + "=" * (-len(cursor) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        created_at = int(payload["created_at"])
+        row_id = int(payload["row_id"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise ValueError("invalid shadow cursor")
+    if created_at < 0 or row_id < 1:
+        raise ValueError("invalid shadow cursor")
+    return created_at, row_id
 
 
 class SQLiteMemoryStore:
@@ -480,6 +515,60 @@ class SQLiteMemoryStore:
         ).fetchall()
         result["recent"] = [dict(row) for row in recent]
         return result
+
+    def shadow_decision_page(
+        self,
+        label: str = "all",
+        action: str = "all",
+        limit: int = 20,
+        cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        label = str(label or "all")
+        action = str(action or "all")
+        if label not in _SHADOW_LABELS:
+            raise ValueError("invalid shadow label filter")
+        if action not in _SHADOW_ACTIONS:
+            raise ValueError("invalid shadow action filter")
+        try:
+            bounded_limit = max(1, min(50, int(limit)))
+        except (TypeError, ValueError):
+            raise ValueError("invalid shadow page limit")
+
+        clauses = []
+        params: List[Any] = []
+        if label != "all":
+            clauses.append("label = ?")
+            params.append(label)
+        if action != "all":
+            clauses.append("action = ?")
+            params.append(action)
+        if cursor:
+            created_at, row_id = _decode_shadow_cursor(cursor)
+            clauses.append("(created_at < ? OR (created_at = ? AND id < ?))")
+            params.extend([created_at, created_at, row_id])
+
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self._db.execute(
+            """
+            SELECT id, decision_id, trigger, action, confidence, reason_code,
+                   would_rate_limit, label, labeled_at, model_id, policy_version,
+                   latency_ms, error_code, created_at, context_json
+            FROM shadow_decisions
+            {} ORDER BY created_at DESC, id DESC LIMIT ?
+            """.format(where),
+            tuple(params + [bounded_limit + 1]),
+        ).fetchall()
+        has_more = len(rows) > bounded_limit
+        visible = rows[:bounded_limit]
+        next_cursor = None
+        if has_more and visible:
+            last = visible[-1]
+            next_cursor = _encode_shadow_cursor(last["created_at"], last["id"])
+        return {
+            "items": [dict(row) for row in visible],
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
 
     def recent_shadow_decisions(
         self, group_hash: str, limit: int = 5
