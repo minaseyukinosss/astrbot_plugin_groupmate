@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from .models import Urgency
+from ..models import Urgency
 
 
 @dataclass(frozen=True)

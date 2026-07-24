@@ -2,7 +2,7 @@ import asyncio
 import sys
 import types
 
-from groupmate.astrbot_adapter import AstrBotPlatformPort
+from groupmate.host import AstrBotPlatformPort
 
 
 class FakeMessageChain:

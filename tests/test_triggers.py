@@ -8,7 +8,7 @@ Contract:
 """
 
 from groupmate.models import GroupPolicy, TriggerKind
-from groupmate.triggers import TriggerRouter
+from groupmate.engine.triggers import TriggerRouter
 
 
 def build_router(aliases=("爱弥斯", "小爱", "飞行雪绒")):

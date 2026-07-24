@@ -1,7 +1,7 @@
 import asyncio
 
 from groupmate.models import GroupPolicy
-from groupmate.runtime import GroupActor, GroupRuntimeManager
+from groupmate.engine.runtime import GroupActor, GroupRuntimeManager
 from tests.fakes import RecordingWorkflow
 
 

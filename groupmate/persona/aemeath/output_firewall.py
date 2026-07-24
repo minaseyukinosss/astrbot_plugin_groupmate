@@ -1,22 +1,20 @@
-"""Deterministic user-visible response constraints."""
+"""爱弥斯出戏/输出防火墙（OutputGuard 实现）。"""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import List, Sequence, Tuple
+from typing import List, Sequence
+
+from ...ports import GuardResult
 
 
-@dataclass(frozen=True)
-class GuardResult:
-    accepted: bool
-    text: str
-    codes: Tuple[str, ...]
-    repairable: bool
-
-
-class AemeathOutputGuard:
+class AemeathOutputFirewall:
+    # 任意括号动作/舞台旁白（不只拦「不回复」类决策旁白）
+    _STAGE_DIRECTION = re.compile(
+        r"[（(][^）)\n]{1,}[）)]"
+        r"|[\*＊][^*\n＊]{2,}[\*＊]"
+    )
     _NARRATION = re.compile(
         r"[（(][^）)]*(?:不回复|沉默|没人叫|系统|决定|思考|旁白)[^）)]*[）)]",
         re.IGNORECASE,
@@ -52,9 +50,9 @@ class AemeathOutputGuard:
             non_repairable.add("empty_output")
         if len(cleaned) > self.max_chars:
             codes.append("too_long")
-        if self._sentence_count(cleaned) > self.max_sentences:
+        if self._unit_count(cleaned) > self.max_sentences:
             codes.append("too_many_sentences")
-        if self._NARRATION.search(cleaned):
+        if self._STAGE_DIRECTION.search(cleaned) or self._NARRATION.search(cleaned):
             codes.append("decision_narration")
         if self._CUSTOMER_SERVICE.search(cleaned):
             codes.append("customer_service_template")
@@ -77,10 +75,12 @@ class AemeathOutputGuard:
             repairable=bool(unique_codes) and not bool(non_repairable),
         )
 
-    @staticmethod
-    def _sentence_count(text: str) -> int:
-        chunks = [chunk for chunk in re.split(r"[。！？!?]+", text) if chunk.strip()]
-        return len(chunks)
+    @classmethod
+    def _unit_count(cls, text: str) -> int:
+        """按句读或换行气泡计条数（防无标点长段/多行小说腔）。"""
+        by_punct = [c for c in re.split(r"[。！？!?]+", text) if c.strip()]
+        by_line = [c for c in text.splitlines() if c.strip()]
+        return max(len(by_punct), len(by_line))
 
     def _is_duplicate(self, text: str, recent_outputs: Sequence[str]) -> bool:
         normalized = self._normalize(text)

@@ -21,6 +21,8 @@
 | 表情包 stickers | 资源与时机成本高，非核心 |
 | 影子模式 / evaluation / WebUI 控制中心 | 运维评测，不直接服务拟人聊天 |
 
+> **2026-07-24 起**：架构演进见 [`2026-07-24-companion-core.md`](./2026-07-24-companion-core.md)。软路径改为 SpeakContract（`<SILENCE>`），不再依赖独立 DecisionModel。
+
 若要再加能力，须有真实群聊缺口证据，且不得重新膨胀为上述整包子系统。
 
 ## 3. 现行管线
@@ -64,9 +66,8 @@ OBSERVE → RECALL → GATE → [VISION] → PLAN → GENERATE → GUARD → SCH
 
 ## 5. 配置面（与 `_conf_schema.json` 一致）
 
-对外只暴露：启用群、别名、原生唤醒接管、续聊秒数、模型 Provider、人格、自主发言限额与冷却、关系映射、看图开关。
-
-防抖、`topic_max_seconds`、决策门槛、历史补拉条数、拟人延迟、分段数等为内部常量（见 `groupmate/config.py`），不进配置页；旧配置键会被忽略。
+对外只暴露分组配置：唤醒范围、人格常用/高级覆盖、关系表（`template_list`）、模型 Provider、自主发言限额。  
+防抖、`topic_max_seconds`、历史补拉条数、拟人延迟、分段数等为内部常量（见 `groupmate/config.py`），不进配置页；旧扁平配置键仍可读。
 
 管理命令仅：`status` / `pause` / `resume` / `reset`。
 

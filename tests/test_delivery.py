@@ -1,4 +1,4 @@
-from groupmate.delivery import compute_delay_seconds
+from groupmate.engine.delivery import compute_delay_seconds
 from groupmate.models import Urgency
 
 

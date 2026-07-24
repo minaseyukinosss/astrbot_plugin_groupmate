@@ -1,5 +1,4 @@
-from groupmate.astrbot_adapter import OneBotTranslator, parse_decision_response
-from groupmate.models import DecisionAction, TriggerKind, Urgency
+from groupmate.host import OneBotTranslator
 
 
 def test_onebot_history_translation_preserves_reply_and_image():
@@ -51,26 +50,3 @@ def test_onebot_translation_coerces_missing_timestamp():
     message = OneBotTranslator.from_history(raw, bot_id="9")
 
     assert message.timestamp > 0
-
-
-def test_decision_parser_accepts_fenced_json_and_clamps_values():
-    decision = parse_decision_response(
-        """```json
-        {"action":"respond","confidence":4,"reason_code":"helpful",
-         "contribution":"给一句短反应","urgency":"high","needs_vision":true}
-        ```""",
-        trigger=TriggerKind.CANDIDATE,
-    )
-
-    assert decision.action is DecisionAction.RESPOND
-    assert decision.confidence == 1.0
-    assert decision.urgency is Urgency.HIGH
-    assert decision.needs_vision is True
-
-
-def test_decision_parser_fails_closed_on_invalid_json():
-    decision = parse_decision_response("not json", trigger=TriggerKind.CANDIDATE)
-
-    assert decision.action is DecisionAction.IGNORE
-    assert decision.reason_code == "invalid_decision_schema"
-

@@ -4,7 +4,7 @@
 
 **Goal:** 重写插件实际加载的爱弥斯人格，使其符合最新剧情设定、自然参与群聊、按关系表达亲疏，并只在真实越界时逐级保护边界。
 
-**Architecture:** 保持稳定系统人格与动态群聊上下文分离。`BundledPersonaProvider` 在组装动态上下文时将发送者 ID 转换为安全关系标签和建议称呼，不把原始 QQ 号交给生成模型；`AemeathOutputGuard` 只新增空洞回球的确定性拦截。运行时人格负责性格、关系解释和情境策略，工作区根目录的展开版供人工审阅。
+**Architecture:** 保持稳定系统人格与动态群聊上下文分离。`BundledPersonaProvider` 在组装动态上下文时将发送者 ID 转换为安全关系标签和建议称呼，不把原始 QQ 号交给生成模型；`AemeathOutputFirewall` 只新增空洞回球的确定性拦截。运行时人格负责性格、关系解释和情境策略，工作区根目录的展开版供人工审阅。
 
 **Tech Stack:** Python 3.10+、`dataclasses`、`html`、正则表达式、Markdown、pytest。
 
@@ -202,14 +202,14 @@ git commit -m "feat: add safe persona relationship context"
     ],
 )
 def test_aemeath_guard_rejects_known_failures(text, code):
-    result = AemeathOutputGuard(max_chars=60).validate(text, recent_outputs=[])
+    result = AemeathOutputFirewall(max_chars=60).validate(text, recent_outputs=[])
 
     assert result.accepted is False
     assert code in result.codes
 
 
 def test_guard_accepts_required_clarifying_question():
-    result = AemeathOutputGuard(max_chars=60).validate(
+    result = AemeathOutputFirewall(max_chars=60).validate(
         "你用的是哪个版本？",
         recent_outputs=[],
     )
@@ -226,7 +226,7 @@ def test_guard_accepts_required_clarifying_question():
     ],
 )
 def test_guard_accepts_warm_and_bounded_replies(text):
-    result = AemeathOutputGuard(max_chars=60).validate(text, recent_outputs=[])
+    result = AemeathOutputFirewall(max_chars=60).validate(text, recent_outputs=[])
 
     assert result.accepted is True
 ```

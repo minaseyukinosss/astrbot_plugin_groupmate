@@ -158,6 +158,8 @@ class ReplyPlan:
     target_message_id: Optional[str]
     urgency: Urgency
     persona_prompt: str
+    user_prompt: str = ""
+    soft_trigger: bool = False
     image_urls: Tuple[str, ...] = ()
 
 
@@ -174,7 +176,6 @@ class GroupPolicy:
     aliases: Tuple[str, ...] = ("爱弥斯", "小爱", "飞行雪绒")
     handle_native_wake: bool = True
     history_limit: int = 100
-    decision_threshold: float = 0.72
     spontaneous_hourly_limit: int = 6
     spontaneous_cooldown_seconds: int = 600
     debounce_min_seconds: float = 4.0

@@ -9,8 +9,9 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from .groupmate.astrbot_adapter import AstrBotBridge
+from .groupmate.host import AstrBotBridge
 from .groupmate.config import PluginSettings
+from .groupmate.host.web_api import GroupmateWebAPI
 
 
 class GroupmatePlugin(Star):
@@ -20,6 +21,8 @@ class GroupmatePlugin(Star):
         self.config = PluginSettings.from_mapping(config)
         data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
         self.bridge = AstrBotBridge(context, self.config, data_dir)
+        self.web_api = GroupmateWebAPI(self.bridge)
+        self.web_api.register(context)
         logger.info("Groupmate initialized")
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
@@ -80,6 +83,10 @@ class GroupmatePlugin(Star):
         actor.window = actor.window.__class__(
             group_id, max_messages=self.bridge._policy_for(group_id).history_limit
         )
+        sessions = getattr(getattr(actor, "workflow", None), "sessions", None)
+        if sessions is not None:
+            sessions.reset(group_id)
+        actor._clear_continuation()
         yield event.plain_result("这群刚才的上下文清掉了。")
 
     async def terminate(self):

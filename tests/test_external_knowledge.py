@@ -1,4 +1,4 @@
-from groupmate.external_knowledge import needs_external_knowledge
+from groupmate.engine.external_knowledge import needs_external_knowledge
 
 
 def test_user_isa_example_needs_external():

@@ -1,6 +1,3 @@
-from groupmate.models import Decision
-
-
 class FakeClock:
     def __init__(self, now=101):
         self.value = now
@@ -14,6 +11,7 @@ class FakeMemoryRepository:
         self.transitions = []
         self.outbox = {}
         self.memories = []
+        self.favorability = {}
 
     def search_memories(self, group_id, query, now, limit, subject_id=None):
         return list(self.memories)[:limit]
@@ -33,21 +31,24 @@ class FakeMemoryRepository:
     def mark_outbox_sent(self, decision_id, sent_at):
         self.outbox[decision_id]["sent_at"] = sent_at
 
+    def get_favorability(self, group_id, user_id):
+        return self.favorability.get((str(group_id), str(user_id)))
 
-class StaticDecisionModel:
-    def __init__(self, decision):
-        self.decision = decision
-        self.calls = 0
+    def set_favorability(self, group_id, user_id, score, updated_at):
+        from groupmate.core.favorability import clamp_score
 
-    async def decide(self, topic, policy, memories):
-        self.calls += 1
-        return self.decision
+        del updated_at
+        value = clamp_score(score)
+        self.favorability[(str(group_id), str(user_id))] = value
+        return value
 
+    def adjust_favorability(self, group_id, user_id, delta, updated_at, *, default=0):
+        from groupmate.core.favorability import apply_delta
 
-class FailingDecisionModel:
-    async def decide(self, topic, policy, memories):
-        raise RuntimeError("provider unavailable")
-
+        current = self.get_favorability(group_id, user_id)
+        return self.set_favorability(
+            group_id, user_id, apply_delta(current, delta, default=default), updated_at
+        )
 
 class StaticGenerationModel:
     def __init__(self, text):
@@ -84,7 +85,8 @@ class StaticPersona:
     async def system_prompt(self, group_id):
         return "你是爱弥斯。"
 
-    def build_user_context(self, topic, memories):
+    def build_user_context(self, topic, memories, **kwargs):
+        del kwargs
         return "<group_context>test</group_context>"
 
 

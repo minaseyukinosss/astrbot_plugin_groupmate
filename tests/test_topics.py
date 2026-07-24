@@ -1,4 +1,4 @@
-from groupmate.topics import (
+from groupmate.engine.topics import (
     ACTIVE_CONTEXT_MAX_MESSAGES,
     TOPIC_IDLE_GAP_SECONDS,
     TopicWindow,

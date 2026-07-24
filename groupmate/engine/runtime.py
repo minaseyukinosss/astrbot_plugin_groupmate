@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
-from .models import ChatMessage, GroupPolicy, TriggerKind, WorkflowOutcome
+from ..models import ChatMessage, GroupPolicy, TriggerKind, WorkflowOutcome
 from .topics import TopicWindow
 from .triggers import TriggerResult, TriggerRouter
 

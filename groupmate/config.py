@@ -5,16 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Tuple
 
-from .relationships import RelationshipEntry, parse_relationships
+from .core.relationships import RelationshipEntry, parse_relationships
 
 # Internal pipeline knobs — not exposed in _conf_schema.json.
 HISTORY_LIMIT = 100
-DECISION_THRESHOLD = 0.72
 DEBOUNCE_MIN_SECONDS = 4.0
 DEBOUNCE_MAX_SECONDS = 8.0
 TOPIC_MAX_SECONDS = 12
 HUMANIZE_DELAY_ENABLED = True
 MAX_REPLY_SEGMENTS = 2
+DEFAULT_MAX_REPLY_CHARS = 60
+DEFAULT_CHARACTER_NAME = "爱弥斯"
+DEFAULT_ALIASES = ("爱弥斯", "小爱", "飞行雪绒")
+
+_NESTED_GROUPS = (
+    "wake_group",
+    "persona_group",
+    "relationship_group",
+    "provider_group",
+    "limits_group",
+)
 
 
 def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
@@ -53,24 +63,46 @@ def _boolean(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _as_mapping(raw: Any) -> Mapping[str, Any]:
+    if isinstance(raw, Mapping):
+        return raw
+    return {}
+
+
+def flatten_plugin_config(raw: Mapping[str, Any]) -> dict:
+    """Flatten nested AstrBot schema groups; keep legacy flat keys as fallback."""
+    flat: dict = {}
+    for group in _NESTED_GROUPS:
+        nested = raw.get(group)
+        if isinstance(nested, Mapping):
+            for key, value in nested.items():
+                flat[key] = value
+    for key, value in raw.items():
+        if key in _NESTED_GROUPS:
+            continue
+        if key not in flat:
+            flat[key] = value
+    return flat
+
+
 @dataclass(frozen=True)
 class PluginSettings:
     enabled_groups: Tuple[str, ...] = ()
-    aliases: Tuple[str, ...] = ("爱弥斯", "小爱", "飞行雪绒")
-    decision_provider: str = ""
+    aliases: Tuple[str, ...] = DEFAULT_ALIASES
     generation_provider: str = ""
     vision_provider: str = ""
     persona_id: str = ""
     persona_prompt: str = ""
+    character_name: str = DEFAULT_CHARACTER_NAME
+    max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS
     spontaneous_hourly_limit: int = 6
     spontaneous_cooldown_seconds: int = 600
     vision_enabled: bool = True
     handle_native_wake: bool = True
     continuation_seconds: int = 90
     relationships: Tuple[RelationshipEntry, ...] = ()
-    # Internal (hardcoded) — kept on the dataclass for policy wiring.
+    group_brief: str = ""
     history_limit: int = HISTORY_LIMIT
-    decision_threshold: float = DECISION_THRESHOLD
     debounce_min_seconds: float = DEBOUNCE_MIN_SECONDS
     debounce_max_seconds: float = DEBOUNCE_MAX_SECONDS
     topic_max_seconds: int = TOPIC_MAX_SECONDS
@@ -79,32 +111,41 @@ class PluginSettings:
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
-        # Legacy keys for internal knobs are ignored on purpose.
+        data = flatten_plugin_config(_as_mapping(raw))
+        character_name = str(
+            data.get("character_name", DEFAULT_CHARACTER_NAME) or DEFAULT_CHARACTER_NAME
+        ).strip() or DEFAULT_CHARACTER_NAME
         return cls(
-            enabled_groups=_string_tuple(raw.get("enabled_groups", ())),
+            enabled_groups=_string_tuple(data.get("enabled_groups", ())),
             aliases=_string_tuple(
-                raw.get("aliases", ("爱弥斯", "小爱", "飞行雪绒")),
-                ("爱弥斯", "小爱", "飞行雪绒"),
+                data.get("aliases", DEFAULT_ALIASES),
+                DEFAULT_ALIASES,
             ),
-            decision_provider=str(raw.get("decision_provider", "") or "").strip(),
-            generation_provider=str(raw.get("generation_provider", "") or "").strip(),
-            vision_provider=str(raw.get("vision_provider", "") or "").strip(),
-            persona_id=str(raw.get("persona_id", "") or "").strip(),
-            persona_prompt=str(raw.get("persona_prompt", "") or "").strip(),
+            generation_provider=str(data.get("generation_provider", "") or "").strip(),
+            vision_provider=str(data.get("vision_provider", "") or "").strip(),
+            persona_id=str(data.get("persona_id", "") or "").strip(),
+            persona_prompt=str(data.get("persona_prompt", "") or "").strip(),
+            character_name=character_name,
+            max_reply_chars=_bounded_int(
+                data.get("max_reply_chars", DEFAULT_MAX_REPLY_CHARS),
+                DEFAULT_MAX_REPLY_CHARS,
+                20,
+                200,
+            ),
             spontaneous_hourly_limit=_bounded_int(
-                raw.get("spontaneous_hourly_limit", 6), 6, 1, 60
+                data.get("spontaneous_hourly_limit", 6), 6, 1, 60
             ),
             spontaneous_cooldown_seconds=_bounded_int(
-                raw.get("spontaneous_cooldown_seconds", 600), 600, 0, 7200
+                data.get("spontaneous_cooldown_seconds", 600), 600, 0, 7200
             ),
-            vision_enabled=_boolean(raw.get("vision_enabled", True), True),
-            handle_native_wake=_boolean(raw.get("handle_native_wake", True), True),
+            vision_enabled=_boolean(data.get("vision_enabled", True), True),
+            handle_native_wake=_boolean(data.get("handle_native_wake", True), True),
             continuation_seconds=_bounded_int(
-                raw.get("continuation_seconds", 90), 90, 0, 600
+                data.get("continuation_seconds", 90), 90, 0, 600
             ),
-            relationships=parse_relationships(raw.get("relationships")),
+            relationships=parse_relationships(data.get("relationships"), defaults=()),
+            group_brief=str(data.get("group_brief", "") or "").strip(),
             history_limit=HISTORY_LIMIT,
-            decision_threshold=DECISION_THRESHOLD,
             debounce_min_seconds=DEBOUNCE_MIN_SECONDS,
             debounce_max_seconds=DEBOUNCE_MAX_SECONDS,
             topic_max_seconds=TOPIC_MAX_SECONDS,

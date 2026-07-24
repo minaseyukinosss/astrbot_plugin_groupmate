@@ -1,73 +1,148 @@
 {
-  "enabled_groups": {
-    "description": "允许观察的 QQ 群号；留空表示所有群。",
-    "type": "list",
-    "default": []
+  "wake_group": {
+    "description": "唤醒与观察范围",
+    "type": "object",
+    "hint": "控制哪些群启用、如何被叫到。",
+    "items": {
+      "enabled_groups": {
+        "description": "允许观察的 QQ 群号；留空表示所有群。",
+        "type": "list",
+        "default": []
+      },
+      "aliases": {
+        "description": "Bot 的昵称和直接称呼。",
+        "type": "list",
+        "default": ["爱弥斯", "小爱", "飞行雪绒"]
+      },
+      "handle_native_wake": {
+        "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot；开启后抑制 AstrBot 默认 LLM。明显需联网的问题仍交回 AstrBot Agent。",
+        "type": "bool",
+        "default": true
+      },
+      "continuation_seconds": {
+        "description": "直接呼叫成功后，同一发送者无需再叫名字即可续聊的秒数；0 表示关闭。",
+        "type": "int",
+        "default": 90
+      }
+    }
   },
-  "aliases": {
-    "description": "Bot 的昵称和直接称呼。",
-    "type": "list",
-    "default": ["爱弥斯", "小爱", "飞行雪绒"]
+  "persona_group": {
+    "description": "人格（常用 + 高级）",
+    "type": "object",
+    "hint": "常用项改称呼与氛围；高级区可整份覆盖内置爱弥斯 Pack。优先级：本地覆盖文本 > AstrBot 人格 > 内置 Pack。",
+    "items": {
+      "character_name": {
+        "description": "角色展示名（Session / 口吻锚点里自称）。",
+        "type": "string",
+        "default": "爱弥斯",
+        "hint": "默认爱弥斯；一般与别名对应，不必等于 QQ 昵称。"
+      },
+      "group_brief": {
+        "description": "一句话群氛围说明，写入稳定 system（不含具体成员关系）。",
+        "type": "text",
+        "default": "",
+        "editor_mode": true,
+        "editor_language": "markdown"
+      },
+      "max_reply_chars": {
+        "description": "单条回复最大字数（输出护栏）。",
+        "type": "int",
+        "default": 60,
+        "hint": "建议 40–80；过长容易变成小说腔。"
+      },
+      "persona_id": {
+        "description": "【高级】AstrBot 人格 ID；留空则用内置爱弥斯 Pack。",
+        "type": "string",
+        "_special": "select_persona",
+        "default": ""
+      },
+      "persona_prompt": {
+        "description": "【高级】整份人格覆盖文本；非空时优先于 AstrBot 人格与内置 Pack。",
+        "type": "text",
+        "default": "",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "hint": "只写「我是谁、怎么说话」；不要塞系统/插件说明书。留空=不覆盖。"
+      }
+    }
   },
-  "handle_native_wake": {
-    "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot 的闲聊直接呼叫；开启后会抑制 AstrBot 默认 LLM 回复。明显需要联网/外部事实的问题会自动交回 AstrBot Agent（保留搜索等工具）。",
-    "type": "bool",
-    "default": true
+  "relationship_group": {
+    "description": "成员关系映射",
+    "type": "object",
+    "hint": "按 QQ 号配置关系与建议称呼；留空使用内置默认。模型只看到关系标签与称呼，看不到 QQ 号。",
+    "items": {
+      "relationships": {
+        "description": "关系表（可增删行）",
+        "type": "template_list",
+        "default": [],
+        "templates": {
+          "member": {
+            "name": "群成员",
+            "hint": "一条 = 一个 QQ 号的关系分寸",
+            "display_item": "id",
+            "hide_hint_in_list": true,
+            "items": {
+              "id": {
+                "description": "QQ 号",
+                "type": "string",
+                "default": ""
+              },
+              "relationship": {
+                "description": "关系标签",
+                "type": "string",
+                "default": "普通群友",
+                "hint": "常用：普通群友 / 闺蜜 / 最亲近",
+                "options": ["普通群友", "闺蜜", "最亲近"]
+              },
+              "address": {
+                "description": "建议称呼",
+                "type": "string",
+                "default": "",
+                "hint": "可空；空则用对方群昵称。"
+              }
+            }
+          }
+        }
+      }
+    }
   },
-  "continuation_seconds": {
-    "description": "直接呼叫成功后，同一发送者无需再叫名字即可续聊的秒数；0 表示关闭。",
-    "type": "int",
-    "default": 90
+  "provider_group": {
+    "description": "模型 Provider",
+    "type": "object",
+    "items": {
+      "generation_provider": {
+        "description": "自主回复模型；留空时使用当前群聊天模型。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "vision_provider": {
+        "description": "按需图片理解模型；留空时复用回复模型。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "vision_enabled": {
+        "description": "是否允许在被询问或上下文需要时理解图片。",
+        "type": "bool",
+        "default": true
+      }
+    }
   },
-  "decision_provider": {
-    "description": "自主插话判断模型。建议选择快速、便宜的模型。",
-    "type": "string",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "generation_provider": {
-    "description": "自主回复模型；留空时使用当前群聊天模型。",
-    "type": "string",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "vision_provider": {
-    "description": "按需图片理解模型；留空时复用回复模型。",
-    "type": "string",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "persona_id": {
-    "description": "AstrBot 人格 ID；留空时使用插件内置爱弥斯预设。",
-    "type": "string",
-    "_special": "select_persona",
-    "default": ""
-  },
-  "persona_prompt": {
-    "description": "可选的插件本地人格覆盖文本。",
-    "type": "text",
-    "default": "",
-    "editor_mode": true,
-    "editor_language": "markdown"
-  },
-  "spontaneous_hourly_limit": {
-    "description": "每群每小时最多自主发言次数。",
-    "type": "int",
-    "default": 6
-  },
-  "spontaneous_cooldown_seconds": {
-    "description": "两次自主发言之间的最短间隔。",
-    "type": "int",
-    "default": 600
-  },
-  "relationships": {
-    "description": "关系映射列表，每项含 id（QQ号）、relationship、address；留空使用内置默认。",
-    "type": "list",
-    "default": []
-  },
-  "vision_enabled": {
-    "description": "是否允许在被询问或上下文需要时理解图片。",
-    "type": "bool",
-    "default": true
+  "limits_group": {
+    "description": "自主发言限额",
+    "type": "object",
+    "items": {
+      "spontaneous_hourly_limit": {
+        "description": "每群每小时最多自主发言次数。",
+        "type": "int",
+        "default": 6
+      },
+      "spontaneous_cooldown_seconds": {
+        "description": "两次自主发言之间的最短间隔（秒）。",
+        "type": "int",
+        "default": 600
+      }
+    }
   }
 }

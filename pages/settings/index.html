@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Groupmate 设置</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">GROUPMATE</p>
+          <h1>群聊伙伴</h1>
+          <p class="lede">运行状态与人格配置入口。详细项在 AstrBot 插件「配置」里改。</p>
+        </div>
+        <span id="badge" class="badge" data-tone="neutral">读取中</span>
+      </header>
+
+      <div id="error" class="notice" hidden></div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>运行</h2>
+          <button id="refresh" class="btn quiet" type="button">刷新</button>
+        </div>
+        <dl class="kv" id="runtime-kv">
+          <div><dt>状态</dt><dd id="paused-text">—</dd></div>
+          <div><dt>已初始化群</dt><dd id="group-count">—</dd></div>
+          <div><dt>展示名</dt><dd id="character-name">—</dd></div>
+          <div><dt>字数护栏</dt><dd id="max-chars">—</dd></div>
+        </dl>
+        <div class="actions">
+          <button id="pause" class="btn" type="button">暂停观察</button>
+          <button id="resume" class="btn primary" type="button">恢复观察</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>人格与关系</h2>
+        </div>
+        <p class="muted">
+          别名、群氛围、关系表、整份人格覆盖等，请到 WebUI
+          <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>
+          （齿轮）里可视化编辑。优先级：本地覆盖文本 &gt; AstrBot 人格 &gt; 内置 Pack。
+        </p>
+        <pre id="config-preview" class="preview">加载中…</pre>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

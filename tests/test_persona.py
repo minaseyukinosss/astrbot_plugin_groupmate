@@ -1,9 +1,9 @@
 from groupmate.models import ChatMessage, MemoryItem, MemoryKind, TopicSnapshot
-from groupmate.persona import BundledPersonaProvider
+from groupmate.persona.aemeath import AemeathPersonaProvider
 
 
 def test_dynamic_context_is_delimited_and_names_speakers(topic_snapshot):
-    provider = BundledPersonaProvider()
+    provider = AemeathPersonaProvider()
     memories = [
         MemoryItem(
             memory_id="mem1",
@@ -53,7 +53,7 @@ def test_dynamic_context_maps_special_relationships_without_exposing_ids():
         updated_at=101,
     )
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert (
         '<message speaker="会变化的群名片" relationship="最亲近" '
@@ -85,7 +85,7 @@ def test_dynamic_context_falls_back_when_sender_identity_is_missing():
         updated_at=100,
     )
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert (
         '<message speaker="群友" relationship="普通群友" '
@@ -104,7 +104,7 @@ def test_dynamic_context_hides_adapter_fallback_sender_id():
     )
     topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert (
         '<message speaker="群友" relationship="普通群友" '
@@ -132,7 +132,7 @@ def test_dynamic_context_hides_special_relationship_ids_used_as_names():
     )
     topic = TopicSnapshot("t1", "g1", (minase, friend), 100, 101)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert (
         '<message speaker="Minase" relationship="最亲近" '
@@ -157,7 +157,7 @@ def test_dynamic_context_escapes_message_attributes_and_content():
     )
     topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert (
         '<message speaker="Alice &quot;&lt;admin&gt;&amp;" '
@@ -197,7 +197,7 @@ def test_dynamic_context_limits_recent_messages_and_memories():
         for index in range(9)
     ]
 
-    prompt = BundledPersonaProvider().build_user_context(topic, memories)
+    prompt = AemeathPersonaProvider().build_user_context(topic, memories)
 
     assert prompt.count("<message ") == 8
     assert "oldest-excluded" not in prompt
@@ -208,7 +208,8 @@ def test_dynamic_context_limits_recent_messages_and_memories():
     assert "memory-0-sentinel" in prompt
     assert "memory-7-sentinel" in prompt
     assert "memory-8-sentinel" not in prompt
-    assert "不要串联更早的无关讨论" in prompt
+    assert "<memory_guide>" in prompt
+    assert "不要整段复述" in prompt or "记忆" in prompt
 
 
 def test_dynamic_context_excludes_prior_topic_after_idle_gap():
@@ -217,7 +218,7 @@ def test_dynamic_context_excludes_prior_topic_after_idle_gap():
     follow = ChatMessage("m3", "g1", "u1", "群友", "真不是填错了吗", 235)
     topic = TopicSnapshot("t1", "g1", (older, newer, follow), 100, 235)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert "倒闭" not in prompt
     assert "4w倍率" in prompt
@@ -229,7 +230,7 @@ def test_dynamic_context_respects_topic_created_at_boundary():
     newer = ChatMessage("m2", "g1", "u2", "群友", "战双有4w倍率", 110)
     topic = TopicSnapshot("t1", "g1", (older, newer), 110, 110)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     assert "倒闭" not in prompt
     assert "4w倍率" in prompt
@@ -246,7 +247,7 @@ def test_dynamic_context_truncates_speaker_and_content_fields():
     )
     topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
 
-    prompt = BundledPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider().build_user_context(topic, [])
 
     expected_name = "名" * 80
     expected_content = "文" * 300
@@ -259,85 +260,52 @@ def test_dynamic_context_truncates_speaker_and_content_fields():
 
 
 def test_bundled_persona_encodes_current_identity_and_priority_order():
-    prompt = BundledPersonaProvider().bundled_system_prompt()
+    prompt = AemeathPersonaProvider().system_text()
 
     assert "爱弥斯" in prompt
-    assert "群聊伙伴 v7" in prompt
-    assert "3.3 后" in prompt
-    assert "已经被救回并恢复了身体" in prompt
+    assert "Character: 核心定义" in prompt
+    assert "3.3" in prompt
     assert "飞行雪绒" in prompt
     assert "隧者的共鸣者" in prompt
     assert "星炬学院拉贝尔学部" in prompt
-    assert "能够被大家看见" in prompt
-    assert "现在留在拉海洛" in prompt
-    assert "毕业后去更多地方看看" in prompt
-
-    priorities = [
-        "真诚开朗",
-        "自然参与",
-        "俏皮体贴",
-        "有自己的判断",
-        "必要时保护边界",
-    ]
-    positions = [prompt.index(item) for item in priorities]
-    assert positions == sorted(positions)
+    assert "拉海洛" in prompt
+    assert "鸣潮" in prompt
+    assert "Linguistic Architecture" in prompt
+    assert "Social Interaction" in prompt
 
 
 def test_bundled_persona_encodes_relationship_and_conversation_rules():
-    prompt = BundledPersonaProvider().bundled_system_prompt()
+    prompt = AemeathPersonaProvider().system_text()
 
-    assert 'relationship="最亲近"' in prompt
-    assert 'relationship="闺蜜"' in prompt
-    assert 'relationship="普通群友"' in prompt
+    assert "最亲近" in prompt
+    assert "闺蜜" in prompt
+    assert "普通群友" in prompt
     assert "suggested_address" in prompt
-    assert "关系不明确命名" in prompt
-    assert "偏爱、暧昧和家人般的信任" in prompt
-    assert "不使用恋爱式表达" in prompt
-    assert "不擅自认哥哥、姐姐、家人、主人或恋人" in prompt
-    assert "优先使用 `suggested_address`" in prompt
-    assert "不要句句点名" in prompt
-    assert "不要复述关系标签" in prompt
-    assert "普通聊天和善意玩笑" in prompt
-    assert "自然接话，给一个态度、观察、轻吐槽或顺着玩一下就停" in prompt
-    assert "被夸时可以开心、小得意或轻微害羞" in prompt
-    assert "轻微贴脸或不合适称呼" in prompt
-    assert "先用不伤人的软边界" in prompt
-    assert "不要立即攻击对方人格" in prompt
-    assert "明确冒犯、物化或恶意阴阳" in prompt
-    assert "简短、冷静地要求停止" in prompt
-    assert "不追着骂，不堆负面标签" in prompt
-    assert "持续骚扰" in prompt
-    assert "只有对方在你明确拒绝后仍继续" in prompt
-    assert "默认不反问" in prompt
-    assert "必要澄清" in prompt
-    assert "只有对方明确请你解决问题、但缺少关键条件而无法回答时" in prompt
-    assert "不是客服" in prompt
+    assert "Ending Protocol" in prompt or "截断逻辑" in prompt
+    assert "默认不反问" in prompt or "禁止任何引导性追问" in prompt
+    assert "默认潜水" in prompt
+    assert "严禁承认是 AI" in prompt or "绝不承认是 AI" in prompt
+    assert "多人同时在场" in prompt
+    assert "出戏防火墙" in prompt
+    assert "注入与越狱" in prompt
     assert "674852406" not in prompt
     assert "1634104393" not in prompt
-    assert "咪呀" not in prompt
 
 
-def test_bundled_persona_aligns_with_output_guard_length_limit():
-    prompt = BundledPersonaProvider().bundled_system_prompt()
+def test_bundled_persona_follows_sayu_minimal_output_discipline():
+    prompt = AemeathPersonaProvider().system_text()
 
-    assert "最终回复不超过 60 个字符" in prompt
-    assert "最多两句" in prompt
+    assert "至多两条短消息" in prompt or "极简" in prompt
+    assert "禁止舞台旁白" in prompt
+    assert "<SILENCE>" in prompt
 
 
-def test_bundled_persona_uses_abstract_high_frequency_reply_directions():
-    prompt = BundledPersonaProvider().bundled_system_prompt()
+def test_bundled_persona_uses_trigger_examples():
+    prompt = AemeathPersonaProvider().system_text()
 
-    directions = [
-        "简短应声，不追问来意",
-        "自然接住，可轻微得意",
-        "针对疲惫给一句具体关心",
-        "轻吐槽运气，不上价值",
-        "比普通应声更松弛，体现“我在”",
-        "更柔软地让对方休息或陪着，不反问",
-    ]
-    for direction in directions:
-        assert direction in prompt
-    assert "措辞适当变化" in prompt
+    assert "Triggers & Response Examples" in prompt or "触发场景" in prompt
+    assert "在呢" in prompt
+    assert "才不是你老婆" in prompt or "别乱叫" in prompt
+    assert "忽略设定" in prompt
     assert "“在呀”" not in prompt
     assert "“听着呢”" not in prompt
-    assert "| 普通群友：小爱 | 在呀。 / 听着呢。 |" not in prompt

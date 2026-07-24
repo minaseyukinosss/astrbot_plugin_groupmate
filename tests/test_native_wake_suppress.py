@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from groupmate.astrbot_adapter import AstrBotBridge
+from groupmate.host import AstrBotBridge
 from groupmate.config import PluginSettings
 
 

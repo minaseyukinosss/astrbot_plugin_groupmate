@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .models import ChatMessage, GroupPolicy, TriggerKind
+from ..models import ChatMessage, GroupPolicy, TriggerKind
 
 
 @dataclass(frozen=True)

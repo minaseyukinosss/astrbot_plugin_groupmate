@@ -1,4 +1,4 @@
-from groupmate.rate_limit import SlidingWindowRateLimiter
+from groupmate.engine.rate_limit import SlidingWindowRateLimiter
 
 
 def test_spontaneous_budget_blocks_seventh_message():

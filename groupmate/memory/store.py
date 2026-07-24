@@ -8,10 +8,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .models import ChatMessage, MemoryItem, MemoryKind
+from ..models import ChatMessage, MemoryItem, MemoryKind
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class SQLiteMemoryStore:
@@ -98,6 +98,26 @@ class SQLiteMemoryStore:
                     expires_at INTEGER,
                     sent_at INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS favorability (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, user_id)
+                );
+                """
+            )
+            # Incremental: older DBs created before favorability table.
+            self._db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS favorability (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, user_id)
+                )
                 """
             )
             self._db.execute(
@@ -421,6 +441,55 @@ class SQLiteMemoryStore:
                 "UPDATE outbox SET sent_at = ? WHERE decision_id = ?",
                 (int(sent_at), decision_id),
             )
+
+    def get_favorability(self, group_id: str, user_id: str) -> Optional[int]:
+        row = self._db.execute(
+            "SELECT score FROM favorability WHERE group_id = ? AND user_id = ?",
+            (str(group_id), str(user_id)),
+        ).fetchone()
+        return int(row["score"]) if row else None
+
+    def set_favorability(
+        self,
+        group_id: str,
+        user_id: str,
+        score: int,
+        updated_at: int,
+    ) -> int:
+        from ..core.favorability import clamp_score
+
+        value = clamp_score(score)
+        with self._db:
+            self._db.execute(
+                """
+                INSERT INTO favorability(group_id, user_id, score, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(group_id, user_id) DO UPDATE SET
+                    score = excluded.score,
+                    updated_at = excluded.updated_at
+                """,
+                (str(group_id), str(user_id), value, int(updated_at)),
+            )
+        return value
+
+    def adjust_favorability(
+        self,
+        group_id: str,
+        user_id: str,
+        delta: int,
+        updated_at: int,
+        *,
+        default: int = 0,
+    ) -> int:
+        current = self.get_favorability(group_id, user_id)
+        from ..core.favorability import apply_delta
+
+        return self.set_favorability(
+            group_id,
+            user_id,
+            apply_delta(current, delta, default=default),
+            updated_at,
+        )
 
     def close(self) -> None:
         self._db.close()

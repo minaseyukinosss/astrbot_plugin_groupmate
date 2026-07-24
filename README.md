@@ -1,64 +1,77 @@
 # AstrBot Groupmate 群聊伙伴插件
 
-Groupmate 让 AstrBot 观察 QQ 群聊、判断何时适合加入，并按人格自然短回复。
+基于 **Companion Core** 的 AstrBot 群聊伙伴：观察 QQ 群、按开口契约决定是否说话，并以 Persona Pack（默认爱弥斯）自然短回复。
 
-面向 **AstrBot 4.24+** 与 **NapCat/OneBot v11**，默认内置爱弥斯人格。
+面向 **AstrBot 4.24+** 与 **NapCat/OneBot v11**。
 
-## 核心能力（精简）
+## 目录结构
 
-只保留对拟人化有直接帮助的部分：
+```text
+astrbot_plugin_groupmate/
+├── main.py
+├── metadata.yaml / _conf_schema.json
+├── docs/superpowers/specs/
+├── groupmate/
+│   ├── core/                 # 装配 / Session / SILENCE / 口吻 / 情绪
+│   ├── persona/aemeath/      # Persona Pack（persona / constraints / voice / moods）
+│   ├── engine/               # workflow / runtime / triggers / topics …
+│   ├── memory/               # SQLite 记忆存储
+│   └── host/                 # AstrBot 适配（bridge / onebot / llm）
+└── tests/
+```
 
-- 每群串行 Actor：话题防抖、直接唤醒立即回复、续聊窗口
-- 触发路由：原生 `@`/回复 Bot、别名呼叫、续聊、候选插话、指令旁路
-- 决策门控 + 人格生成 + Guard + 拟人延迟/分段发送
-- 关系称呼映射、可选按需看图、工作记忆检索（不自动“伪学习”）
+## 核心能力
+
+- 稳定 system + 固定顺序动态 user
+- 每轮 voice_anchor、mood、好感档位关系行；可召回自我情景
+- SpeakContract（`<SILENCE>`）；OutputFirewall
+- 每群 Actor：防抖、直接唤醒、续聊
 - 管理命令：status / pause / resume / reset
 
-刻意不包含：表达学习、反思合并、疲劳状态机、表情包、影子评测 WebUI。
+刻意不包含：工具环全家桶、Kanban、心跳巡检、表达自学习。
 
 ## 安装
 
-将插件目录放入：
+将插件目录放入 `AstrBot/data/plugins/astrbot_plugin_groupmate/`。
 
-```text
-AstrBot/data/plugins/astrbot_plugin_groupmate/
-```
-
-至少包含 `main.py`、`metadata.yaml`、`_conf_schema.json`、`groupmate/`、`resources/`。
+至少包含：`main.py`、`metadata.yaml`、`_conf_schema.json`、`groupmate/`。
 
 ## 配置
 
 | 配置项 | 说明 | 默认 |
 |---|---|---|
-| `enabled_groups` | 允许观察的群；空=全部 | `[]` |
-| `aliases` | 直接称呼 | 爱弥斯、小爱、飞行雪绒 |
-| `handle_native_wake` | Groupmate 接管 `@`/回复 Bot | `true` |
-| `continuation_seconds` | 直接呼叫后同人续聊秒数 | `90` |
-| `decision_provider` | 自主插话判断模型 | 空 |
-| `generation_provider` | 回复模型；空=当前群模型 | 空 |
-| `vision_provider` | 看图模型；空=复用回复模型 | 空 |
-| `persona_id` / `persona_prompt` | AstrBot 人格或本地覆盖 | 空 |
-| `spontaneous_hourly_limit` | 每小时最多自主发言 | `6` |
-| `spontaneous_cooldown_seconds` | 自主发言最短间隔 | `600` |
-| `relationships` | id / relationship / address | 内置默认 |
-| `vision_enabled` | 允许按需看图 | `true` |
+| `wake_group.enabled_groups` | 允许观察的群；空=全部 | `[]` |
+| `wake_group.aliases` | 直接称呼 | 爱弥斯、小爱、飞行雪绒 |
+| `wake_group.handle_native_wake` | Groupmate 接管 `@`/回复 Bot | `true` |
+| `wake_group.continuation_seconds` | 直接呼叫后同人续聊秒数 | `90` |
+| `persona_group.character_name` | 展示名（Session / 口吻） | 爱弥斯 |
+| `persona_group.group_brief` | 一句话群氛围（进稳定 system） | 空 |
+| `persona_group.max_reply_chars` | 单条回复字数护栏 | `60` |
+| `persona_group.persona_id` | 【高级】AstrBot 人格 | 空 |
+| `persona_group.persona_prompt` | 【高级】整份人格覆盖文本 | 空 |
+| `relationship_group.relationships` | QQ / 关系 / 称呼（可视化增删） | 内置默认 |
+| `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
+| `provider_group.vision_provider` | 看图模型；空=复用回复模型 | 空 |
+| `provider_group.vision_enabled` | 允许按需看图 | `true` |
+| `limits_group.spontaneous_hourly_limit` | 每小时最多自主发言 | `6` |
+| `limits_group.spontaneous_cooldown_seconds` | 自主发言最短间隔 | `600` |
 
-防抖窗口、决策门槛、历史补拉条数、拟人延迟与分段数等为内部常量，不在配置页暴露。
+## 配置入口
+
+1. **插件 Pages（本插件页）**：WebUI → 插件 →「群聊伙伴 Groupmate」详情 → 打开 **settings** 页（运行状态 / 暂停恢复 / 当前配置摘要）。
+2. **可视化配置（齿轮）**：同一插件详情里的 **配置**，改别名、人格、关系表、字数护栏等（`_conf_schema.json`）。
+
+人格优先级：`persona_prompt`（非空）> `persona_id` > 内置 `persona/aemeath/` Pack。
+
+改完 schema 或 `pages/` 后请在 WebUI **重载插件**；仅改静态页通常刷新即可。
 
 ## 唤醒路径
 
-1. **直接唤醒**（立即回复；闲聊默认抑制 AstrBot 重复发言）
-   - 平台 `@` / 回复 Bot
-   - **句首别名**：消息以配置别名开头（`爱弥斯你在不`、`小爱，帮我看下`）
-   - 显式召唤：`叫/喊/问问` + 别名
-   - **例外**：`@` / 回复 Bot 若明显需要联网或外部事实（如「某某怎么了」「帮我查一下」），Groupmate 只观察、不回复，交回 AstrBot 默认 Agent（可使用 `web_search_tavily` 等工具），避免双回复也避免丢搜索能力
-   - **复制的伪 @**：句首是纯文本 `@别名`（非平台有效 At 段）时，不走闲聊生成，提示「不能复制哦，复制的@为纯文本而非有效@」
-2. **软提及**：别名只出现在句中/句尾（`我觉得爱弥斯挺难调`）→ 防抖后走决策，不保证回复
-3. **续聊**：直接呼叫成功后，同一发送者在窗口内无需再叫名字
-4. **主动插话**：普通候选经防抖 + 频率限制 + 决策模型，过门槛才说
-5. **指令**：已有 AstrBot/插件指令旁路，不追加人格回复
-
-句首点名按中文群聊惯例视为呼叫，不维护口语白名单（「在吗/在不/在么」等）。
+1. **直接唤醒**：`@` / 回复 Bot / 句首别名 → 立即生成（可 SILENCE）
+2. **软提及 / 候选**：防抖 + 额度 → 主生成；`<SILENCE>` 则不发送
+3. **续聊**：窗口内同人；Session 注入近轮对话
+4. **指令**：旁路
+5. **联网例外**：交回 AstrBot Agent
 
 ## 管理命令
 
@@ -67,24 +80,8 @@ AstrBot/data/plugins/astrbot_plugin_groupmate/
 | `/groupmate_status` | 运行状态 |
 | `/groupmate_pause` | 暂停观察 |
 | `/groupmate_resume` | 恢复 |
-| `/groupmate_reset` | 清空当前群短期上下文 |
+| `/groupmate_reset` | 清空当前群短期上下文与 Session |
 
-## 数据
+## 规格
 
-```text
-AstrBot/data/plugin_data/astrbot_plugin_groupmate/groupmate.db
-```
-
-保存有限消息索引、记忆条目、决策轨迹与 Outbox。建议用 `enabled_groups` 限制范围，勿把库文件提交公开仓库。
-
-## 测试
-
-```bash
-cd astrbot_plugin_groupmate
-PYTHONPATH=. pytest -q
-```
-
-设计文档：
-
-- [现行精简架构](docs/superpowers/specs/2026-07-22-groupmate-v2-architecture.md)
-- [智能体设计规格](docs/superpowers/specs/2026-07-17-groupmate-agent-design.md)
+见 [`docs/superpowers/specs/2026-07-24-companion-core.md`](docs/superpowers/specs/2026-07-24-companion-core.md)。
