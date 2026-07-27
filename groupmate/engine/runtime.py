@@ -18,6 +18,7 @@ from ..models import (
     TriggerKind,
     WorkflowOutcome,
 )
+from ..core.scenes import classify_scene, is_hard_scene
 from .topics import TopicWindow
 from .triggers import TriggerResult, TriggerRouter
 
@@ -220,12 +221,8 @@ class GroupActor:
         self.last_trigger = result.kind
         if result.kind in (TriggerKind.IGNORE, TriggerKind.COMMAND):
             return
-        if result.kind in (
-            TriggerKind.NATIVE_DIRECT,
-            TriggerKind.ALIAS_DIRECT,
-            TriggerKind.COPIED_AT,
-            TriggerKind.CONTINUATION,
-        ):
+        scene = classify_scene(result.kind, message)
+        if is_hard_scene(scene, result.kind):
             await self._evaluate_immediate(result.kind, result.alias)
             return
         if self._hard_task is not None:

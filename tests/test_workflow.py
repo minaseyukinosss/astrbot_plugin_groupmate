@@ -113,6 +113,20 @@ def test_reply_to_bot_scene_quotes_anchor_message(message_factory, balanced_poli
     )
 
 
+def test_direct_address_scene_quotes_anchor_message(message_factory, balanced_policy):
+    platform = FakePlatform()
+    workflow = build_workflow(platform=platform)
+    message = message_factory(message_id="direct-anchor", text="小爱，在吗")
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert platform.sent[0]["quote_message_id"] == "direct-anchor"
+
+
 def test_ambient_scene_does_not_quote_latest_message(
     topic_snapshot, balanced_policy
 ):

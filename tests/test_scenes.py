@@ -1,4 +1,4 @@
-from groupmate.core.scenes import classify_scene, policy_for_scene
+from groupmate.core.scenes import classify_scene, is_hard_scene, policy_for_scene
 from groupmate.models import ChatMessage, InteractionScene, QuoteMode, TriggerKind
 
 
@@ -32,7 +32,7 @@ def test_leading_alias_is_direct_address_not_task_by_default():
     )
 
     assert scene is InteractionScene.DIRECT_ADDRESS
-    assert policy_for_scene(scene).quote_mode is QuoteMode.WHEN_INTERLEAVED
+    assert policy_for_scene(scene).quote_mode is QuoteMode.ALWAYS
 
 
 def test_explicit_capability_request_is_task_scene():
@@ -78,3 +78,21 @@ def test_look_up_request_is_task_scene():
     )
 
     assert scene is InteractionScene.TASK_REQUEST
+
+
+def test_indirect_alias_mention_is_not_social_response():
+    scene = classify_scene(
+        TriggerKind.ALIAS_MENTION,
+        message("听说小爱昨天坏了"),
+    )
+
+    assert scene is InteractionScene.AMBIENT_CONTRIBUTION
+
+
+def test_social_scene_priority_still_follows_user_addressing():
+    assert is_hard_scene(
+        InteractionScene.SOCIAL_RESPONSE, TriggerKind.ALIAS_DIRECT
+    )
+    assert not is_hard_scene(
+        InteractionScene.SOCIAL_RESPONSE, TriggerKind.ALIAS_MENTION
+    )
