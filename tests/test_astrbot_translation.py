@@ -50,3 +50,46 @@ def test_onebot_translation_coerces_missing_timestamp():
     message = OneBotTranslator.from_history(raw, bot_id="9")
 
     assert message.timestamp > 0
+
+
+def test_event_translation_uses_resolved_reply_sender_to_detect_bot():
+    class ReplyComponent:
+        type = "Reply"
+        id = "50"
+        sender_id = "9"
+
+    class MessageObject:
+        raw_message = {
+            "message_id": "51",
+            "group_id": "2",
+            "user_id": "3",
+            "time": 10,
+            "sender": {"nickname": "Alice"},
+            "message": [
+                {"type": "reply", "data": {"id": "50"}},
+                {"type": "text", "data": {"text": "那这个呢"}},
+            ],
+        }
+        message = [ReplyComponent()]
+
+    class Event:
+        message_obj = MessageObject()
+        is_at_or_wake_command = True
+        message_str = "那这个呢"
+
+        @staticmethod
+        def get_group_id():
+            return "2"
+
+        @staticmethod
+        def get_sender_id():
+            return "3"
+
+        @staticmethod
+        def get_sender_name():
+            return "Alice"
+
+    message = OneBotTranslator.from_event(Event(), bot_id="9")
+
+    assert message.reply_to_message_id == "50"
+    assert message.reply_to_bot is True

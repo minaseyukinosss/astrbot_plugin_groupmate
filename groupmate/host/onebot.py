@@ -108,9 +108,26 @@ class OneBotTranslator:
                 ),
                 is_bot=str(event.get_sender_id()) == str(bot_id),
             )
+        reply_id = message.reply_to_message_id
+        reply_to_bot = message.reply_to_bot
+        components = getattr(getattr(event, "message_obj", None), "message", ()) or ()
+        for component in components:
+            component_type = str(getattr(component, "type", "")).lower()
+            class_name = component.__class__.__name__.lower()
+            if class_name != "reply" and not component_type.endswith("reply"):
+                continue
+            resolved_id = str(getattr(component, "id", "") or "")
+            if resolved_id:
+                reply_id = resolved_id
+            sender_id = str(getattr(component, "sender_id", "") or "")
+            if sender_id and sender_id == str(bot_id):
+                reply_to_bot = True
+            break
         native_direct = bool(getattr(event, "is_at_or_wake_command", False))
         return replace(
             message,
+            reply_to_message_id=reply_id,
+            reply_to_bot=reply_to_bot,
             is_command=is_command,
             mentions_bot=message.mentions_bot or native_direct,
             metadata=dict(message.metadata, native_direct=native_direct),
