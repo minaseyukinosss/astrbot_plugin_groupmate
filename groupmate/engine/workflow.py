@@ -168,6 +168,7 @@ class CognitiveWorkflow:
 
         favorability_early = self._peek_favorability(topic, targeting)
         reply_mode = ReplyMode.SHORT_SOCIAL
+        response_act = None
         contribution = ""
         target_message_id = topic.latest.message_id if topic.latest else None
         needs_vision = bool(self._topic_image_urls(topic))
@@ -210,12 +211,15 @@ class CognitiveWorkflow:
                 targeting,
                 decision_id=decision_id,
                 soft_trigger=soft_trigger,
+                scene=scene,
+                aliases=policy.aliases,
             )
             if intent is None:
                 return self._silent(decision_id, topic.group_id, "intent_missing", now)
             if intent.expires_at and now > intent.expires_at:
                 return self._silent(decision_id, topic.group_id, "intent_expired", now)
             reply_mode = intent.mode
+            response_act = intent.response_act
             contribution = intent.contribution
             target_message_id = intent.target_message_id or target_message_id
             needs_vision = "vision" in intent.required_capabilities
@@ -223,7 +227,12 @@ class CognitiveWorkflow:
                 decision_id,
                 topic.group_id,
                 "INTENT",
-                intent.mode.value,
+                "{}:{}".format(
+                    intent.mode.value,
+                    intent.response_act.act.value
+                    if intent.response_act is not None
+                    else "",
+                ),
                 now,
             )
             decision = Decision.respond(
@@ -369,6 +378,7 @@ class CognitiveWorkflow:
             user_prompt=user_prompt,
             soft_trigger=soft_trigger,
             reply_mode=reply_mode,
+            response_act=response_act,
         )
         self._record(decision_id, topic.group_id, "PLAN", plan.contribution, now)
 

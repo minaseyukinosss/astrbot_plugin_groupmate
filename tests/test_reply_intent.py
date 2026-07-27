@@ -8,6 +8,7 @@ from groupmate.engine.rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from groupmate.models import (
     ChatMessage,
     GroupPolicy,
+    InteractionScene,
     ReplyMode,
     TopicSnapshot,
     TriggerKind,
@@ -58,6 +59,72 @@ def test_planner_builds_help_intent():
     assert intent is not None
     assert intent.mode is ReplyMode.HELP_DETAIL
     assert intent.contribution
+
+
+def test_planner_attaches_scene_driven_response_act():
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="Nova！"),),
+        created_at=100,
+        updated_at=100,
+    )
+    targeting = AddresseeResolver().resolve(topic, TriggerKind.ALIAS_DIRECT)
+    opp = OpportunityArbiter(
+        budgets=BudgetTracker(SlidingWindowRateLimiter(cooldown_seconds=0))
+    ).evaluate(
+        topic,
+        TriggerKind.ALIAS_DIRECT,
+        GroupPolicy(aliases=("Nova",), humanize_delay_enabled=False),
+        targeting,
+        now=100,
+    )
+
+    intent = ReplyIntentPlanner().plan(
+        opp,
+        topic,
+        targeting,
+        decision_id="d1",
+        soft_trigger=False,
+        scene=InteractionScene.DIRECT_ADDRESS,
+        aliases=("Nova",),
+    )
+
+    assert intent is not None
+    assert intent.response_act.act.name == "ACKNOWLEDGE"
+
+
+def test_planner_exposes_task_clarification_requirements():
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="帮我翻译一下"),),
+        created_at=100,
+        updated_at=100,
+    )
+    targeting = AddresseeResolver().resolve(topic, TriggerKind.ALIAS_DIRECT)
+    opp = OpportunityArbiter(
+        budgets=BudgetTracker(SlidingWindowRateLimiter(cooldown_seconds=0))
+    ).evaluate(
+        topic,
+        TriggerKind.ALIAS_DIRECT,
+        GroupPolicy(humanize_delay_enabled=False),
+        targeting,
+        now=100,
+    )
+
+    intent = ReplyIntentPlanner().plan(
+        opp,
+        topic,
+        targeting,
+        decision_id="d1",
+        scene=InteractionScene.TASK_REQUEST,
+        required_information=("待翻译文本",),
+    )
+
+    assert intent is not None
+    assert intent.response_act.act.name == "CLARIFY"
+    assert intent.response_act.required_information == ("待翻译文本",)
 
 
 def test_firewall_allows_longer_help_mode():

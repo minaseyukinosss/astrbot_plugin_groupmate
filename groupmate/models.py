@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+
+if TYPE_CHECKING:
+    from .core.response_act import ResponseActPlan
 
 
 class StringEnum(str, Enum):
@@ -213,6 +216,7 @@ class ReplyIntent:
     evidence_message_ids: Tuple[str, ...]
     created_at: int
     expires_at: int
+    response_act: Optional["ResponseActPlan"] = None
 
 
 @dataclass(frozen=True)
@@ -452,6 +456,7 @@ class ReplyPlan:
     image_urls: Tuple[str, ...] = ()
     reply_mode: ReplyMode = ReplyMode.SHORT_SOCIAL
     opportunity_id: str = ""
+    response_act: Optional["ResponseActPlan"] = None
 
 
 @dataclass(frozen=True)
