@@ -457,6 +457,7 @@ class ReplyPlan:
     reply_mode: ReplyMode = ReplyMode.SHORT_SOCIAL
     opportunity_id: str = ""
     response_act: Optional["ResponseActPlan"] = None
+    required_capabilities: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

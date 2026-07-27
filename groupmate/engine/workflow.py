@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from ..core.addressee import AddresseeResolver
 from ..core.intent import max_chars_for_mode
+from ..core.response_act import TaskResolution, TaskResolutionStatus
 from ..core.session import GroupSession, GroupSessionStore
 from ..core.scenes import classify_scene, policy_for_scene
 from ..core.speak_contract import SpeakContract
@@ -59,7 +60,7 @@ _HARD_TRIGGERS = frozenset(
 )
 TaskResponseResolver = Callable[
     [InteractionScene, ChatMessage, GroupPolicy],
-    Tuple[bool, Sequence[str]],
+    object,
 ]
 
 
@@ -177,6 +178,7 @@ class CognitiveWorkflow:
         favorability_early = self._peek_favorability(topic, targeting)
         reply_mode = ReplyMode.SHORT_SOCIAL
         response_act = None
+        required_capabilities: Tuple[str, ...] = ()
         contribution = ""
         target_message_id = topic.latest.message_id if topic.latest else None
         needs_vision = bool(self._topic_image_urls(topic))
@@ -213,9 +215,17 @@ class CognitiveWorkflow:
                     )
                 return self._silent(decision_id, topic.group_id, reason, now)
 
-            task_supported, required_information = self._task_response_inputs(
+            task_resolution, task_resolution_reason = self._task_response_inputs(
                 scene, topic.latest, policy
             )
+            if task_resolution_reason:
+                self._record(
+                    decision_id,
+                    topic.group_id,
+                    "TASK_RESOLUTION",
+                    task_resolution_reason,
+                    now,
+                )
             intent = self.intent_planner.plan(
                 opportunity,
                 topic,
@@ -224,8 +234,9 @@ class CognitiveWorkflow:
                 soft_trigger=soft_trigger,
                 scene=scene,
                 aliases=policy.aliases,
-                task_supported=task_supported,
-                required_information=required_information,
+                task_supported=task_resolution.supported,
+                required_information=task_resolution.required_information,
+                capability_name=task_resolution.capability_name,
             )
             if intent is None:
                 return self._silent(decision_id, topic.group_id, "intent_missing", now)
@@ -233,6 +244,7 @@ class CognitiveWorkflow:
                 return self._silent(decision_id, topic.group_id, "intent_expired", now)
             reply_mode = intent.mode
             response_act = intent.response_act
+            required_capabilities = intent.required_capabilities
             contribution = intent.contribution
             target_message_id = intent.target_message_id or target_message_id
             needs_vision = "vision" in intent.required_capabilities
@@ -392,6 +404,7 @@ class CognitiveWorkflow:
             soft_trigger=soft_trigger,
             reply_mode=reply_mode,
             response_act=response_act,
+            required_capabilities=required_capabilities,
         )
         self._record(decision_id, topic.group_id, "PLAN", plan.contribution, now)
 
@@ -525,22 +538,56 @@ class CognitiveWorkflow:
         scene: InteractionScene,
         message: Optional[ChatMessage],
         policy: GroupPolicy,
-    ) -> Tuple[bool, Tuple[str, ...]]:
-        if (
-            scene is not InteractionScene.TASK_REQUEST
-            or message is None
-            or self.task_response_resolver is None
-        ):
-            return False, ()
-        supported, required_information = self.task_response_resolver(
-            scene, message, policy
+    ) -> Tuple[TaskResolution, str]:
+        if scene is not InteractionScene.TASK_REQUEST or message is None:
+            return TaskResolution(), ""
+        if self.task_response_resolver is None:
+            return TaskResolution(), "resolver_missing"
+        try:
+            value = self.task_response_resolver(scene, message, policy)
+        except Exception as exc:  # noqa: BLE001 - capability boundary fails closed
+            return (
+                TaskResolution(),
+                "resolver_error:{}".format(type(exc).__name__),
+            )
+        if value is None:
+            return TaskResolution(), "resolver_none"
+        if isinstance(value, TaskResolution):
+            resolution = value
+        elif self._is_legacy_task_resolution(value):
+            supported, required_information = value
+            resolution = TaskResolution(
+                status=(
+                    TaskResolutionStatus.SUPPORTED
+                    if supported
+                    else TaskResolutionStatus.UNSUPPORTED
+                ),
+                required_information=required_information,
+            )
+        else:
+            return TaskResolution(), "resolver_invalid"
+        if resolution.required_information:
+            reason = "needs_information"
+        elif resolution.status is TaskResolutionStatus.SUPPORTED:
+            reason = "supported"
+        elif resolution.status is TaskResolutionStatus.UNSUPPORTED:
+            reason = "unsupported"
+        else:
+            reason = "unknown"
+        if resolution.capability_name:
+            reason += ":" + resolution.capability_name
+        return resolution, reason
+
+    @staticmethod
+    def _is_legacy_task_resolution(value: object) -> bool:
+        if not isinstance(value, tuple) or len(value) != 2:
+            return False
+        supported, required_information = value
+        return (
+            isinstance(supported, bool)
+            and isinstance(required_information, Sequence)
+            and not isinstance(required_information, (str, bytes))
         )
-        missing = tuple(
-            str(item).strip()
-            for item in (required_information or ())
-            if str(item).strip()
-        )
-        return supported is True, missing
 
     def _resolve_targeting(
         self,

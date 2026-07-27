@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from groupmate.core import response_act as response_act_module
 from groupmate.core.response_act import (
     ResponseAct,
     ResponseActPlan,
@@ -87,6 +88,47 @@ def test_visual_input_maps_to_visual_reaction():
     assert plan.act.name == "VISUAL_REACTION"
 
 
+@pytest.mark.parametrize(
+    ("scene", "reply_mode", "text", "expected_name"),
+    (
+        (
+            InteractionScene.SOCIAL_RESPONSE,
+            ReplyMode.SHORT_SOCIAL,
+            "谢谢你",
+            "RECIPROCATE",
+        ),
+        (
+            InteractionScene.DIRECT_ADDRESS,
+            ReplyMode.HELP_DETAIL,
+            "这个怎么处理？",
+            "ANSWER",
+        ),
+    ),
+)
+def test_text_semantics_take_priority_over_visual_input(
+    scene, reply_mode, text, expected_name
+):
+    plan = plan_response_act(
+        scene,
+        reply_mode=reply_mode,
+        text=text,
+        has_visual=True,
+    )
+
+    assert plan.act.name == expected_name
+
+
+def test_visual_reaction_requires_text_free_input():
+    plan = plan_response_act(
+        InteractionScene.DIRECT_ADDRESS,
+        reply_mode=ReplyMode.SHORT_SOCIAL,
+        text="看看这个",
+        has_visual=True,
+    )
+
+    assert plan.act.name == "ANSWER"
+
+
 def test_boundary_has_priority_over_task_handling():
     plan = _plan(
         InteractionScene.TASK_REQUEST,
@@ -121,6 +163,36 @@ def test_task_scene_uses_information_then_capability_priority(
 
     assert plan.act.name == expected_name
     assert plan.required_information == required_information
+
+
+def test_task_resolution_is_immutable_and_normalizes_boundary_values():
+    facts = ["  待翻译文本  ", "目标\n语言"]
+    resolution = response_act_module.TaskResolution(
+        status=response_act_module.TaskResolutionStatus.SUPPORTED,
+        capability_name="  translator  ",
+        required_information=facts,
+    )
+
+    facts.append("changed")
+
+    assert resolution.supported is True
+    assert resolution.capability_name == "translator"
+    assert resolution.required_information == ("待翻译文本", "目标 语言")
+    with pytest.raises(FrozenInstanceError):
+        resolution.capability_name = "changed"
+
+
+def test_task_response_plan_keeps_capability_identity():
+    plan = plan_response_act(
+        InteractionScene.TASK_REQUEST,
+        reply_mode=ReplyMode.HELP_DETAIL,
+        text="帮我翻译这句话",
+        task_supported=True,
+        capability_name="translator",
+    )
+
+    assert plan.act.name == "TASK_HANDOFF"
+    assert plan.capability_name == "translator"
 
 
 def test_same_inputs_always_produce_the_same_plan():

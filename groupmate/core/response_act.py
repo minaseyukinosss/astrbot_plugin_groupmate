@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from ..models import InteractionScene, ReplyMode, StringEnum
 
@@ -21,19 +21,61 @@ class ResponseAct(StringEnum):
     VISUAL_REACTION = "visual_reaction"
 
 
+class TaskResolutionStatus(StringEnum):
+    UNKNOWN = "unknown"
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True)
+class TaskResolution:
+    status: TaskResolutionStatus = TaskResolutionStatus.UNKNOWN
+    capability_name: str = ""
+    required_information: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        status = self.status
+        if not isinstance(status, TaskResolutionStatus):
+            try:
+                status = TaskResolutionStatus(str(status))
+            except ValueError:
+                status = TaskResolutionStatus.UNKNOWN
+        object.__setattr__(self, "status", status)
+        object.__setattr__(
+            self,
+            "capability_name",
+            _clean_fact(self.capability_name, max_chars=80),
+        )
+        object.__setattr__(
+            self,
+            "required_information",
+            _clean_facts(self.required_information),
+        )
+
+    @property
+    def supported(self) -> bool:
+        return self.status is TaskResolutionStatus.SUPPORTED
+
+
 @dataclass(frozen=True)
 class ResponseActPlan:
     act: ResponseAct
     scene: InteractionScene
     reason_codes: Tuple[str, ...]
     required_information: Tuple[str, ...] = ()
+    capability_name: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes or ()))
         object.__setattr__(
             self,
             "required_information",
-            tuple(self.required_information or ()),
+            _clean_facts(self.required_information),
+        )
+        object.__setattr__(
+            self,
+            "capability_name",
+            _clean_fact(self.capability_name, max_chars=80),
         )
 
 
@@ -51,14 +93,12 @@ def plan_response_act(
     boundary_required: bool = False,
     task_supported: bool = False,
     required_information: Sequence[str] = (),
+    capability_name: str = "",
 ) -> ResponseActPlan:
     """Choose one response act using only explicit, observable inputs."""
 
-    missing = tuple(
-        str(item).strip()
-        for item in (required_information or ())
-        if str(item).strip()
-    )
+    missing = _clean_facts(required_information)
+    capability = _clean_fact(capability_name, max_chars=80)
     scene_reason = "scene:{}".format(scene.value)
 
     if boundary_required or reply_mode is ReplyMode.BOUNDARY:
@@ -80,26 +120,23 @@ def plan_response_act(
                 scene,
                 (scene_reason, "task_information_missing"),
                 missing,
+                capability,
             )
         if task_supported:
             return ResponseActPlan(
                 ResponseAct.TASK_HANDOFF,
                 scene,
                 (scene_reason, "task_supported"),
+                capability_name=capability,
             )
         return ResponseActPlan(
             ResponseAct.TASK_UNSUPPORTED,
             scene,
             (scene_reason, "task_unsupported"),
+            capability_name=capability,
         )
 
     cleaned = (text or "").strip()
-    if has_visual:
-        return ResponseActPlan(
-            ResponseAct.VISUAL_REACTION,
-            scene,
-            (scene_reason, "visual_input"),
-        )
     if scene is InteractionScene.SOCIAL_RESPONSE:
         if _PLAYFUL.search(cleaned):
             return ResponseActPlan(
@@ -117,6 +154,12 @@ def plan_response_act(
             ResponseAct.ANSWER,
             scene,
             (scene_reason, "help_request"),
+        )
+    if has_visual and not cleaned:
+        return ResponseActPlan(
+            ResponseAct.VISUAL_REACTION,
+            scene,
+            (scene_reason, "visual_input"),
         )
     if scene in (
         InteractionScene.DIRECT_ADDRESS,
@@ -151,3 +194,17 @@ def _is_bare_address(text: str, aliases: Sequence[str]) -> bool:
         if str(alias).strip()
     }
     return normalized in normalized_aliases
+
+
+def _clean_facts(values: Optional[Sequence[str]]) -> Tuple[str, ...]:
+    return tuple(
+        cleaned
+        for cleaned in (
+            _clean_fact(item, max_chars=120) for item in (values or ())
+        )
+        if cleaned
+    )
+
+
+def _clean_fact(value: object, *, max_chars: int) -> str:
+    return " ".join(str(value or "").split())[:max_chars]
