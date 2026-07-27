@@ -77,8 +77,10 @@ class MediaCandidate:
             raise ValueError("media candidate source, locator, and kind are required")
         if not self.semantic_label:
             raise ValueError("media candidate semantic_label is required")
-        if not self.purpose and not self.safety_label:
-            raise ValueError("media candidate purpose or safety_label is required")
+        if not self.purpose:
+            raise ValueError("media candidate purpose is required")
+        if not self.safety_label:
+            raise ValueError("media candidate safety_label is required")
 
 
 @dataclass(frozen=True)

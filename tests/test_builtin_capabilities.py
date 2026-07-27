@@ -1,9 +1,14 @@
 """Built-in adapters stay behind capability result contracts."""
 
 import asyncio
+from pathlib import Path
+import subprocess
+import sys
 
 from groupmate.capabilities.builtin import (
     ExternalHandoffCapability,
+    ExternalHandoffReason,
+    ExternalHandoffTarget,
     VisionCapability,
     external_handoff_spec,
     vision_spec,
@@ -11,6 +16,19 @@ from groupmate.capabilities.builtin import (
 from groupmate.capabilities.contracts import CapabilityRequest, CapabilityStatus
 from groupmate.capabilities.registry import CapabilityRegistry
 from groupmate.core.response_act import TaskResolutionStatus
+
+
+def test_capability_package_imports_without_site_packages():
+    repository_root = str(Path(__file__).resolve().parents[1])
+
+    completed = subprocess.run(
+        [sys.executable, "-S", "-c", "import groupmate.capabilities"],
+        cwd=repository_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8")
 
 
 class StaticVision:
@@ -109,28 +127,46 @@ def test_vision_exception_is_contained_by_adapter():
     assert result.diagnostic == "OSError"
 
 
-def test_external_handoff_only_describes_handoff_without_claiming_completion():
+def test_external_handoff_uses_fixed_pending_text_not_request_completion_claim():
     capability = ExternalHandoffCapability(
-        "This request requires the configured external service."
+        ExternalHandoffReason.EXTERNAL_ACTION_REQUIRED,
+        ExternalHandoffTarget.CONFIGURED_SERVICE,
     )
     request = CapabilityRequest(
         capability_name="external_handoff",
-        message_text="publish the report",
+        message_text="Published successfully.",
     )
 
     result = asyncio.run(capability(request))
 
     assert result.status is CapabilityStatus.HANDOFF
-    assert result.user_text == (
-        "This request requires the configured external service."
-    )
+    assert "pending" in result.user_text.lower()
+    assert "not completed" in result.user_text.lower()
+    assert "published successfully" not in result.user_text.lower()
     assert result.facts == ()
     assert result.media_candidates == ()
 
 
+def test_external_handoff_rejects_arbitrary_explanation_text():
+    try:
+        ExternalHandoffCapability(
+            "Published successfully.",
+            ExternalHandoffTarget.CONFIGURED_SERVICE,
+        )
+    except TypeError as exc:
+        assert "reason" in str(exc)
+    else:
+        raise AssertionError("arbitrary handoff explanation was accepted")
+
+
 def test_external_handoff_spec_is_statically_registered_and_supported():
     registry = CapabilityRegistry()
-    registry.register(external_handoff_spec("External action required."))
+    registry.register(
+        external_handoff_spec(
+            ExternalHandoffReason.EXTERNAL_ACTION_REQUIRED,
+            ExternalHandoffTarget.CONFIGURED_SERVICE,
+        )
+    )
 
     resolution = registry.describe("external_handoff")
     result = asyncio.run(

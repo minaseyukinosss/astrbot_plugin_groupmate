@@ -174,6 +174,19 @@ def test_describe_and_resolve_map_to_task_resolution_contract():
     assert resolved.required_information == ("message_text",)
 
 
+def test_resolve_does_not_swallow_matcher_cancellation_on_python_37():
+    def cancelled(_request):
+        raise asyncio.CancelledError()
+
+    registry = CapabilityRegistry()
+    registry.register(
+        CapabilitySpec("cancelled", _echo, required_information=cancelled)
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        registry.resolve(_request("cancelled"))
+
+
 def test_unavailable_registered_capability_resolves_and_executes_as_unsupported():
     registry = CapabilityRegistry()
     registry.register(CapabilitySpec("offline", _echo, available=False))

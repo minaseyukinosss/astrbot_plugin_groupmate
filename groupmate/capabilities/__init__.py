@@ -2,6 +2,8 @@
 
 from .builtin import (
     ExternalHandoffCapability,
+    ExternalHandoffReason,
+    ExternalHandoffTarget,
     VisionCapability,
     external_handoff_spec,
     vision_spec,
@@ -21,6 +23,8 @@ __all__ = [
     "CapabilitySpec",
     "CapabilityStatus",
     "ExternalHandoffCapability",
+    "ExternalHandoffReason",
+    "ExternalHandoffTarget",
     "MediaCandidate",
     "VisionCapability",
     "external_handoff_spec",

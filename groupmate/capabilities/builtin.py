@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from ..ports import VisionPort
+from ..models import StringEnum
 from .contracts import CapabilityRequest, CapabilityResult, CapabilityStatus
 from .registry import CapabilitySpec
+
+if TYPE_CHECKING:
+    from ..ports import VisionPort
+
+
+class ExternalHandoffReason(StringEnum):
+    EXTERNAL_ACTION_REQUIRED = "external_action_required"
+    HUMAN_REVIEW_REQUIRED = "human_review_required"
+
+
+class ExternalHandoffTarget(StringEnum):
+    CONFIGURED_SERVICE = "configured_service"
+    HUMAN_OPERATOR = "human_operator"
 
 
 class VisionCapability:
     name = "vision"
 
-    def __init__(self, vision: Optional[VisionPort]) -> None:
+    def __init__(self, vision: Optional["VisionPort"]) -> None:
         self._vision = vision
 
     async def __call__(self, request: CapabilityRequest) -> CapabilityResult:
@@ -62,22 +75,36 @@ class VisionCapability:
 class ExternalHandoffCapability:
     name = "external_handoff"
 
-    def __init__(self, explanation: str) -> None:
-        self._explanation = " ".join(str(explanation or "").split())
-        if not self._explanation:
-            raise ValueError("handoff explanation is required")
+    def __init__(
+        self,
+        reason: ExternalHandoffReason,
+        target: ExternalHandoffTarget,
+    ) -> None:
+        if not isinstance(reason, ExternalHandoffReason):
+            raise TypeError("handoff reason must be an ExternalHandoffReason")
+        if not isinstance(target, ExternalHandoffTarget):
+            raise TypeError("handoff target must be an ExternalHandoffTarget")
+        self._reason = reason
+        self._target = target
 
     async def __call__(self, request: CapabilityRequest) -> CapabilityResult:
         del request
+        if self._target is ExternalHandoffTarget.HUMAN_OPERATOR:
+            target_text = "a human operator"
+        else:
+            target_text = "the configured external service"
         return CapabilityResult(
             CapabilityStatus.HANDOFF,
             self.name,
-            user_text=self._explanation,
-            error_code="external_action_required",
+            user_text=(
+                "This request is pending and not completed. "
+                "It requires handoff to {}.".format(target_text)
+            ),
+            error_code=self._reason.value,
         )
 
 
-def vision_spec(vision: Optional[VisionPort]) -> CapabilitySpec:
+def vision_spec(vision: Optional["VisionPort"]) -> CapabilitySpec:
     capability = VisionCapability(vision)
     return CapabilitySpec(
         capability.name,
@@ -89,6 +116,9 @@ def vision_spec(vision: Optional[VisionPort]) -> CapabilitySpec:
     )
 
 
-def external_handoff_spec(explanation: str) -> CapabilitySpec:
-    capability = ExternalHandoffCapability(explanation)
+def external_handoff_spec(
+    reason: ExternalHandoffReason,
+    target: ExternalHandoffTarget,
+) -> CapabilitySpec:
+    capability = ExternalHandoffCapability(reason, target)
     return CapabilitySpec(capability.name, capability)

@@ -80,6 +80,27 @@ def test_media_candidate_is_safe_immutable_metadata():
         candidate.locator = "changed"
 
 
+@pytest.mark.parametrize(
+    ("purpose", "safety_label", "missing_field"),
+    (
+        ("", "reviewed", "purpose"),
+        ("reply attachment", "", "safety_label"),
+    ),
+)
+def test_media_candidate_requires_purpose_and_safety_label(
+    purpose, safety_label, missing_field
+):
+    with pytest.raises(ValueError, match=missing_field):
+        MediaCandidate(
+            source="generated",
+            locator="asset://preview/1",
+            media_kind="image",
+            semantic_label="preview",
+            purpose=purpose,
+            safety_label=safety_label,
+        )
+
+
 def test_success_result_copies_facts_and_media_candidates():
     candidate = MediaCandidate(
         source="generated",

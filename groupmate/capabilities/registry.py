@@ -87,6 +87,8 @@ class CapabilityRegistry:
                 if isinstance(required_information, (str, bytes)):
                     raise TypeError("required information must be a sequence")
                 required_information = tuple(required_information or ())
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001 - support resolution fails closed
                 return TaskResolution(
                     status=TaskResolutionStatus.UNKNOWN,
