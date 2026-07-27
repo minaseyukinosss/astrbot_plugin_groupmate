@@ -2,24 +2,30 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict, deque
-from typing import DefaultDict, Deque, List, Optional
+from typing import Callable, DefaultDict, Deque, List, Optional, Sequence
 from uuid import uuid4
 
+from ..core.addressee import AddresseeResolver
+from ..core.intent import max_chars_for_mode
 from ..core.session import GroupSession, GroupSessionStore
 from ..core.speak_contract import SpeakContract
-from ..core.favorability import delta_for_turn, seed_score_for_relationship
-from ..core.history_format import focus_speaker
+from ..core.favorability import seed_score_for_relationship
 from ..core.relationships import resolve_speaker
-from .delivery import build_delivery_plan, delivery_still_valid
+from .delivery import DeliveryService, build_delivery_plan
+from .opportunity import OpportunityArbiter
+from .planner import ReplyIntentPlanner
 from ..models import (
+    AddresseeKind,
     Decision,
     DecisionAction,
     GroupPolicy,
     MemoryItem,
     MemoryKind,
+    OpportunityAction,
+    ReplyMode,
     ReplyPlan,
+    TargetingDecision,
     TopicSnapshot,
     TriggerKind,
     Urgency,
@@ -35,7 +41,9 @@ from ..ports import (
     TraceSink,
     VisionPort,
 )
-from .rate_limit import SlidingWindowRateLimiter
+from ..social.events import SocialEventClassifier
+from ..memory.memory_writer import MemoryWriter
+from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from .topics import select_active_messages
 
 _SOFT_TRIGGERS = frozenset({TriggerKind.ALIAS_MENTION, TriggerKind.CANDIDATE})
@@ -62,6 +70,13 @@ class CognitiveWorkflow:
         trace: Optional[TraceSink] = None,
         sessions: Optional[GroupSessionStore] = None,
         character_name: str = "角色",
+        delivery_service: Optional[DeliveryService] = None,
+        addressee_resolver: Optional[AddresseeResolver] = None,
+        social_classifier: Optional[SocialEventClassifier] = None,
+        opportunity_arbiter: Optional[OpportunityArbiter] = None,
+        intent_planner: Optional[ReplyIntentPlanner] = None,
+        budgets: Optional[BudgetTracker] = None,
+        memory_writer: Optional[MemoryWriter] = None,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -73,12 +88,31 @@ class CognitiveWorkflow:
         self.clock = clock
         self.trace = trace
         self.character_name = (character_name or "角色").strip() or "角色"
+        self.delivery_service = delivery_service or DeliveryService(
+            platform, memory, clock, self.character_name
+        )
         self.sessions = sessions or GroupSessionStore(
             character_name=self.character_name
         )
+        self.addressee_resolver = addressee_resolver or AddresseeResolver()
+        self.social_classifier = social_classifier or SocialEventClassifier()
+        self.budgets = budgets or BudgetTracker(rate_limiter)
+        self.opportunity_arbiter = opportunity_arbiter or OpportunityArbiter(
+            budgets=self.budgets, send_limiter=rate_limiter
+        )
+        self.memory_writer = memory_writer or MemoryWriter(memory)
+        self.intent_planner = intent_planner or ReplyIntentPlanner()
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
+
+    def hydrate_recent_outputs(self, group_id: str, texts: Sequence[str]) -> None:
+        bucket = self._recent_outputs[str(group_id)]
+        bucket.clear()
+        for text in texts:
+            cleaned = (text or "").strip()
+            if cleaned:
+                bucket.append(cleaned)
 
     def session_for(self, group_id: str) -> GroupSession:
         return self.sessions.get(group_id)
@@ -89,10 +123,12 @@ class CognitiveWorkflow:
         trigger: TriggerKind,
         policy: GroupPolicy,
         trigger_alias: str = "",
+        still_valid: Optional[Callable[[], bool]] = None,
     ) -> WorkflowOutcome:
         decision_id = uuid4().hex
         now = self.clock.now()
         soft_trigger = trigger in _SOFT_TRIGGERS
+        opportunity_enabled = bool(getattr(policy, "v3_opportunity_enabled", True))
         self._record(decision_id, topic.group_id, "OBSERVE", trigger.value, now)
 
         if not topic.messages:
@@ -103,39 +139,104 @@ class CognitiveWorkflow:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
         if trigger is TriggerKind.COPIED_AT:
             return await self._send_copied_at_tip(
-                decision_id, topic, trigger_alias, now
+                decision_id, topic, trigger_alias, now, still_valid
             )
-        if soft_trigger and now - topic.updated_at > policy.candidate_ttl_seconds:
-            return self._silent(decision_id, topic.group_id, "stale_topic", now)
-        if trigger is TriggerKind.CANDIDATE and not self.rate_limiter.allow(now):
-            return self._silent(decision_id, topic.group_id, "rate_limited", now)
 
-        active = select_active_messages(
-            topic.messages, topic_created_at=topic.created_at
-        )
-        query = " ".join(message.text for message in active if message.text)
-        subject_ids = tuple(
-            dict.fromkeys(
-                message.sender_id
-                for message in active
-                if message.sender_id and not message.is_bot
-            )
-        )
-        search_kwargs = {
-            "group_id": topic.group_id,
-            "query": query,
-            "now": now,
-            "limit": 8,
-        }
-        try:
-            memories = list(
-                self.memory.search_memories(subject_ids=subject_ids, **search_kwargs)
-            )
-        except TypeError:
-            memories = list(self.memory.search_memories(**search_kwargs))
-        self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
+        # Legacy soft path prechecks when opportunity arbiter disabled
+        if not opportunity_enabled:
+            if soft_trigger and now - topic.updated_at > policy.candidate_ttl_seconds:
+                return self._silent(decision_id, topic.group_id, "stale_topic", now)
+            if trigger is TriggerKind.CANDIDATE and not self.rate_limiter.allow(now):
+                return self._silent(decision_id, topic.group_id, "rate_limited", now)
 
-        decision = self._build_decision(trigger, topic, soft_trigger)
+        targeting = self._resolve_targeting(topic, trigger, policy)
+        self._record(
+            decision_id,
+            topic.group_id,
+            "ADDRESSEE",
+            ",".join(
+                targeting.social_target.reason_codes
+                or (targeting.social_target.kind.value,)
+            ),
+            now,
+        )
+
+        favorability_early = self._peek_favorability(topic, targeting)
+        reply_mode = ReplyMode.SHORT_SOCIAL
+        contribution = ""
+        target_message_id = topic.latest.message_id if topic.latest else None
+        needs_vision = bool(self._topic_image_urls(topic))
+        urgency = Urgency.HIGH if not soft_trigger else Urgency.NORMAL
+
+        if opportunity_enabled:
+            opportunity = self.opportunity_arbiter.evaluate(
+                topic,
+                trigger,
+                policy,
+                targeting,
+                now=now,
+                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+                favorability=favorability_early,
+            )
+            self._record(
+                decision_id,
+                topic.group_id,
+                "OPPORTUNITY",
+                ",".join(opportunity.reason_codes),
+                now,
+            )
+            if opportunity.expires_at and now > opportunity.expires_at:
+                return self._silent(decision_id, topic.group_id, "opportunity_expired", now)
+            if opportunity.action is OpportunityAction.SILENCE:
+                reason = opportunity.reason_codes[-1] if opportunity.reason_codes else "opportunity_silence"
+                if reason.startswith("utility=") or reason.startswith("threshold="):
+                    reason = "opportunity_silence"
+                if opportunity.reason_codes and opportunity.reason_codes[0] == "prefilter":
+                    reason = "prefilter_" + (
+                        opportunity.reason_codes[1]
+                        if len(opportunity.reason_codes) > 1
+                        else "blocked"
+                    )
+                return self._silent(decision_id, topic.group_id, reason, now)
+
+            intent = self.intent_planner.plan(
+                opportunity,
+                topic,
+                targeting,
+                decision_id=decision_id,
+                soft_trigger=soft_trigger,
+            )
+            if intent is None:
+                return self._silent(decision_id, topic.group_id, "intent_missing", now)
+            if intent.expires_at and now > intent.expires_at:
+                return self._silent(decision_id, topic.group_id, "intent_expired", now)
+            reply_mode = intent.mode
+            contribution = intent.contribution
+            target_message_id = intent.target_message_id or target_message_id
+            needs_vision = "vision" in intent.required_capabilities
+            self._record(
+                decision_id,
+                topic.group_id,
+                "INTENT",
+                intent.mode.value,
+                now,
+            )
+            decision = Decision.respond(
+                contribution=contribution,
+                confidence=opportunity.confidence,
+                trigger=trigger,
+                reason_code="opportunity_speak",
+                target_message_id=target_message_id,
+                needs_vision=needs_vision,
+                urgency=urgency,
+            )
+        else:
+            decision = self._build_decision(trigger, topic, soft_trigger)
+            contribution = decision.contribution
+            target_message_id = decision.target_message_id
+            needs_vision = decision.needs_vision
+            urgency = decision.urgency
+
         self._record(
             decision_id,
             topic.group_id,
@@ -146,22 +247,83 @@ class CognitiveWorkflow:
         if decision.action is not DecisionAction.RESPOND:
             return self._silent(decision_id, topic.group_id, "decision_ignore", now)
 
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
+        query = " ".join(message.text for message in active if message.text)
+        memory_subject = targeting.memory_subject
+        no_personal = (
+            memory_subject.kind is AddresseeKind.AMBIGUOUS
+            or "no_personal_memory" in memory_subject.reason_codes
+        )
+        if (
+            not no_personal
+            and memory_subject.kind is AddresseeKind.USER
+            and memory_subject.target_user_ids
+        ):
+            subject_ids = tuple(memory_subject.target_user_ids)
+            include_user_in_group = True
+        elif no_personal:
+            subject_ids = ()
+            include_user_in_group = False
+        else:
+            subject_ids = tuple(
+                dict.fromkeys(
+                    message.sender_id
+                    for message in active
+                    if message.sender_id and not message.is_bot
+                )
+            )
+            include_user_in_group = True
+        search_kwargs = {
+            "group_id": topic.group_id,
+            "query": query,
+            "now": now,
+            "limit": 8,
+            "include_user_in_group": include_user_in_group,
+        }
+        try:
+            memories = list(
+                self.memory.search_memories(subject_ids=subject_ids, **search_kwargs)
+            )
+        except TypeError:
+            try:
+                memories = list(self.memory.search_memories(**search_kwargs))
+            except TypeError:
+                search_kwargs.pop("include_user_in_group", None)
+                memories = list(self.memory.search_memories(**search_kwargs))
+        self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
+
+        # cost budget：超限则本轮关闭 vision
+        if needs_vision and not self.budgets.allow_cost(now):
+            needs_vision = False
+            decision = Decision.respond(
+                contribution=decision.contribution,
+                confidence=decision.confidence,
+                trigger=decision.trigger,
+                reason_code=decision.reason_code,
+                target_message_id=decision.target_message_id,
+                needs_vision=False,
+                urgency=decision.urgency,
+            )
+
         memories = await self._add_visual_context(
             decision_id, topic, decision, policy, memories, now
         )
         session = self.session_for(topic.group_id)
-        favorability = self._ensure_favorability(topic, now)
+        favorability = self._ensure_favorability(topic, targeting, now)
         assemble = getattr(self.persona, "assemble", None)
+        assemble_kwargs = {
+            "contribution": contribution or decision.contribution,
+            "soft_trigger": soft_trigger,
+            "session": session,
+            "favorability": favorability,
+            "targeting": targeting,
+            "reply_mode": reply_mode,
+        }
         if assemble is not None:
             try:
-                assembled = assemble(
-                    topic,
-                    memories,
-                    contribution=decision.contribution,
-                    soft_trigger=soft_trigger,
-                    session=session,
-                    favorability=favorability,
-                )
+                assembled = assemble(topic, memories, **assemble_kwargs)
             except TypeError:
                 assembled = assemble(
                     topic,
@@ -169,6 +331,7 @@ class CognitiveWorkflow:
                     contribution=decision.contribution,
                     soft_trigger=soft_trigger,
                     session=session,
+                    favorability=favorability,
                 )
             persona_prompt = assembled.system
             user_prompt = assembled.user
@@ -176,14 +339,7 @@ class CognitiveWorkflow:
             persona_prompt = await self.persona.system_prompt(topic.group_id)
             build_user = self.persona.build_user_context
             try:
-                user_prompt = build_user(
-                    topic,
-                    memories,
-                    contribution=decision.contribution,
-                    soft_trigger=soft_trigger,
-                    session=session,
-                    favorability=favorability,
-                )
+                user_prompt = build_user(topic, memories, **assemble_kwargs)
             except TypeError:
                 try:
                     user_prompt = build_user(
@@ -192,6 +348,7 @@ class CognitiveWorkflow:
                         contribution=decision.contribution,
                         soft_trigger=soft_trigger,
                         session=session,
+                        favorability=favorability,
                     )
                 except TypeError:
                     user_prompt = build_user(topic, memories)
@@ -200,50 +357,62 @@ class CognitiveWorkflow:
             decision_id=decision_id,
             group_id=topic.group_id,
             trigger=trigger,
-            contribution=decision.contribution,
-            target_message_id=decision.target_message_id,
-            urgency=decision.urgency,
+            contribution=contribution or decision.contribution,
+            target_message_id=target_message_id,
+            urgency=urgency,
             persona_prompt=persona_prompt,
             user_prompt=user_prompt,
             soft_trigger=soft_trigger,
+            reply_mode=reply_mode,
         )
-        self._record(decision_id, topic.group_id, "PLAN", decision.contribution, now)
+        self._record(decision_id, topic.group_id, "PLAN", plan.contribution, now)
 
+        if not self.budgets.allow_generation(now):
+            return self._silent(
+                decision_id, topic.group_id, "generation_budget_exhausted", now
+            )
         try:
             text = await self.generation_model.generate(plan, topic, memories)
         except Exception:
-            self._touch_favorability(topic, soft_trigger=soft_trigger, sent=False, now=now)
             return self._silent(decision_id, topic.group_id, "generation_error", now)
+        self.budgets.record_generation(now)
 
         speak = SpeakContract.resolve(text)
         if not speak.should_send:
             self._record(decision_id, topic.group_id, "SPEAK", speak.reason, now)
-            self._touch_favorability(topic, soft_trigger=soft_trigger, sent=False, now=now)
             return self._silent(decision_id, topic.group_id, speak.reason, now)
 
-        guarded = self.output_guard.validate(
-            speak.text,
-            recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-        )
+        validate = self.output_guard.validate
+        try:
+            guarded = validate(
+                speak.text,
+                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+                reply_mode=reply_mode,
+            )
+        except TypeError:
+            guarded = validate(
+                speak.text,
+                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+            )
         if not guarded.accepted and guarded.repairable:
             try:
                 repaired = await self.generation_model.repair(speak.text, guarded.codes)
             except Exception:
-                self._touch_favorability(
-                    topic, soft_trigger=soft_trigger, sent=False, now=now
-                )
                 return self._silent(decision_id, topic.group_id, "repair_error", now)
             if SpeakContract.resolve(repaired).should_send is False:
-                self._touch_favorability(
-                    topic, soft_trigger=soft_trigger, sent=False, now=now
-                )
                 return self._silent(decision_id, topic.group_id, "model_silence", now)
-            guarded = self.output_guard.validate(
-                repaired,
-                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-            )
+            try:
+                guarded = validate(
+                    repaired,
+                    recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+                    reply_mode=reply_mode,
+                )
+            except TypeError:
+                guarded = validate(
+                    repaired,
+                    recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+                )
         if not guarded.accepted:
-            self._touch_favorability(topic, soft_trigger=soft_trigger, sent=False, now=now)
             return self._silent(
                 decision_id,
                 topic.group_id,
@@ -253,21 +422,21 @@ class CognitiveWorkflow:
         self._record(decision_id, topic.group_id, "GUARD", "accepted", now)
 
         direct_wake = trigger in _HARD_TRIGGERS
+        mode_max = max_chars_for_mode(reply_mode, policy_max=policy.max_reply_chars)
         delivery = build_delivery_plan(
             decision_id=decision_id,
             group_id=topic.group_id,
             text=guarded.text,
-            urgency=decision.urgency,
+            urgency=urgency,
             now=now,
             ttl_seconds=policy.candidate_ttl_seconds,
-            max_chars=policy.max_reply_chars,
+            max_chars=mode_max,
             max_segments=policy.max_reply_segments,
             humanize_delay=policy.humanize_delay_enabled,
             direct_wake=direct_wake,
-            quote_message_id=decision.target_message_id,
+            quote_message_id=target_message_id,
         )
         if not delivery.segments:
-            self._touch_favorability(topic, soft_trigger=soft_trigger, sent=False, now=now)
             return self._silent(decision_id, topic.group_id, "empty_delivery", now)
         self._record(
             decision_id,
@@ -279,51 +448,77 @@ class CognitiveWorkflow:
             now,
         )
 
-        outbox_text = "\n".join(delivery.segments)
-        enqueue = getattr(self.memory, "enqueue_outbox", None)
-        if enqueue and not enqueue(
-            decision_id,
-            topic.group_id,
-            outbox_text,
-            created_at=now,
-            expires_at=delivery.expires_at,
-        ):
-            return self._silent(decision_id, topic.group_id, "duplicate_outbox", now)
-
-        if delivery.delay_seconds > 0:
-            await asyncio.sleep(delivery.delay_seconds)
+        outcome = await self.delivery_service.deliver(
+            delivery,
+            kind="candidate" if soft_trigger else "reply",
+            still_valid=still_valid,
+            sent_reason="sent",
+        )
         send_now = self.clock.now()
-        if not delivery_still_valid(delivery, send_now):
-            return self._silent(decision_id, topic.group_id, "delivery_expired", send_now)
-
-        try:
-            await self._send_delivery(delivery)
-        except Exception as exc:
-            return self._silent(
-                decision_id,
-                topic.group_id,
-                "send_error:" + exc.__class__.__name__ + ":" + str(exc),
-                send_now,
+        if not outcome.sent:
+            self._record(
+                decision_id, topic.group_id, "END", outcome.reason, send_now
             )
-
-        mark_sent = getattr(self.memory, "mark_outbox_sent", None)
-        if mark_sent:
-            mark_sent(decision_id, sent_at=send_now)
+            return outcome
         if trigger is TriggerKind.CANDIDATE:
-            self.rate_limiter.record(send_now)
-        self._recent_outputs[topic.group_id].append(outbox_text)
-        self._remember_session_turns(topic, outbox_text, send_now)
-        self._touch_favorability(
-            topic, soft_trigger=soft_trigger, sent=True, now=send_now
-        )
-        self._record(decision_id, topic.group_id, "SEND", "sent", send_now)
-
-        return WorkflowOutcome(
+            self.budgets.record_send(send_now)
+        self._recent_outputs[topic.group_id].append(outcome.text)
+        self._remember_session_turns(topic, outcome.text, send_now)
+        self._record_social_success(
+            topic,
+            targeting,
+            soft_trigger=soft_trigger,
             decision_id=decision_id,
-            sent=True,
-            reason="sent",
-            text=outbox_text,
+            now=send_now,
+            social_enabled=bool(getattr(policy, "v3_social_enabled", True)),
         )
+        try:
+            self.memory_writer.schedule_after_send(
+                topic,
+                targeting,
+                decision_id=decision_id,
+                now=send_now,
+                reply_text=outcome.text or "",
+                enabled=bool(getattr(policy, "v3_memory_writer_enabled", True)),
+            )
+        except Exception:  # noqa: BLE001 — MemoryWriter 不得影响主回复
+            self._record(
+                decision_id, topic.group_id, "MEMORY", "schedule_failed", send_now
+            )
+        return outcome
+
+    def _resolve_targeting(
+        self,
+        topic: TopicSnapshot,
+        trigger: TriggerKind,
+        policy: GroupPolicy,
+    ) -> TargetingDecision:
+        relationships = {}
+        assembly = getattr(self.persona, "assembly", None)
+        if assembly is not None:
+            relationships = getattr(assembly, "_relationships", {}) or {}
+        return self.addressee_resolver.resolve(
+            topic,
+            trigger,
+            aliases=policy.aliases,
+            relationships=relationships,
+        )
+
+    def _peek_favorability(
+        self,
+        topic: TopicSnapshot,
+        targeting: TargetingDecision,
+    ) -> Optional[int]:
+        get = getattr(self.memory, "get_favorability", None)
+        if get is None:
+            return None
+        if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
+            return None
+        user_id = self._social_user_id(targeting)
+        if not user_id:
+            return None
+        score = get(topic.group_id, user_id)
+        return int(score) if score is not None else None
 
     def _build_decision(
         self,
@@ -362,16 +557,33 @@ class CognitiveWorkflow:
             urgency=Urgency.HIGH,
         )
 
-    def _ensure_favorability(self, topic: TopicSnapshot, now: int) -> Optional[int]:
+    def _social_user_id(self, targeting: TargetingDecision) -> Optional[str]:
+        target = targeting.social_target
+        if target.kind is not AddresseeKind.USER:
+            return None
+        if not target.target_user_ids:
+            return None
+        return str(target.target_user_ids[0])
+
+    def _ensure_favorability(
+        self,
+        topic: TopicSnapshot,
+        targeting: TargetingDecision,
+        now: int,
+    ) -> Optional[int]:
         get = getattr(self.memory, "get_favorability", None)
         if get is None:
             return None
-        active = select_active_messages(
-            topic.messages, topic_created_at=topic.created_at
-        )
-        sender_id, sender_name = focus_speaker(active)
+        if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
+            return None
+        sender_id = self._social_user_id(targeting)
         if not sender_id:
             return None
+        get_state = getattr(self.memory, "get_relationship_state", None)
+        if get_state is not None:
+            state = get_state(topic.group_id, sender_id)
+            if state is not None:
+                return int(state.affinity)
         score = get(topic.group_id, sender_id)
         if score is not None:
             return int(score)
@@ -379,6 +591,14 @@ class CognitiveWorkflow:
         assembly = getattr(self.persona, "assembly", None)
         if assembly is not None:
             relationships = getattr(assembly, "_relationships", {}) or {}
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
+        sender_name = ""
+        for message in reversed(active):
+            if message.sender_id == sender_id:
+                sender_name = message.sender_name or ""
+                break
         _, relationship, _ = resolve_speaker(sender_id, sender_name, relationships)
         seed = seed_score_for_relationship(relationship)
         value = 0 if seed is None else int(seed)
@@ -387,30 +607,97 @@ class CognitiveWorkflow:
             return int(set_fav(topic.group_id, sender_id, value, now))
         return value
 
-    def _touch_favorability(
+    def _record_social_success(
         self,
         topic: TopicSnapshot,
+        targeting: TargetingDecision,
         *,
         soft_trigger: bool,
-        sent: bool,
+        decision_id: str,
         now: int,
+        social_enabled: bool = True,
     ) -> None:
-        adjust = getattr(self.memory, "adjust_favorability", None)
-        if adjust is None:
+        if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
+            self._record(
+                decision_id,
+                topic.group_id,
+                "SOCIAL",
+                "skipped_ambiguous",
+                now,
+            )
+            return
+        user_id = self._social_user_id(targeting)
+        if not user_id:
+            return
+        if not social_enabled:
+            from ..core.favorability import delta_for_turn
+
+            adjust = getattr(self.memory, "adjust_favorability", None)
+            if adjust is None:
+                return
+            active = select_active_messages(
+                topic.messages, topic_created_at=topic.created_at
+            )
+            latest_text = active[-1].text if active else ""
+            delta = delta_for_turn(
+                sent=True, soft_trigger=soft_trigger, latest_text=latest_text
+            )
+            if delta:
+                adjust(topic.group_id, user_id, delta, now, default=0)
+            self._record(decision_id, topic.group_id, "SOCIAL", "legacy_delta", now)
+            return
+        record = getattr(self.memory, "record_social_interaction", None)
+        if record is None:
+            adjust = getattr(self.memory, "adjust_favorability", None)
+            if adjust is None:
+                return
+            adjust(
+                topic.group_id,
+                user_id,
+                1 if soft_trigger else 2,
+                now,
+                default=0,
+            )
             return
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
         )
-        sender_id, _ = focus_speaker(active)
-        if not sender_id:
+        source = None
+        for message in reversed(active):
+            if message.sender_id == user_id and not message.is_bot:
+                source = message
+                break
+        if source is None:
+            source = topic.latest
+        if source is None or source.is_bot:
             return
-        latest_text = active[-1].text if active else ""
-        delta = delta_for_turn(
-            sent=sent, soft_trigger=soft_trigger, latest_text=latest_text
+        relationships = {}
+        assembly = getattr(self.persona, "assembly", None)
+        if assembly is not None:
+            relationships = getattr(assembly, "_relationships", {}) or {}
+        configured = None
+        if user_id in relationships:
+            configured = relationships[user_id][0]
+        event = self.social_classifier.classify(
+            source,
+            user_id=user_id,
+            soft_trigger=soft_trigger,
+            decision_id=decision_id,
+            occurred_at=now,
         )
-        if delta == 0:
-            return
-        adjust(topic.group_id, sender_id, delta, now, default=0)
+        record(
+            event,
+            soft_trigger=soft_trigger,
+            configured_relationship=configured,
+            now=now,
+        )
+        self._record(
+            decision_id,
+            topic.group_id,
+            "SOCIAL",
+            event.kind.value,
+            now,
+        )
 
     def _remember_session_turns(
         self,
@@ -421,25 +708,18 @@ class CognitiveWorkflow:
         session = self.session_for(topic.group_id)
         latest = topic.latest
         if latest is not None and not latest.is_bot and latest.text:
-            session.append_user(latest.sender_name or "群友", latest.text, latest.timestamp)
+            session.append_user(
+                latest.sender_name or "群友",
+                latest.text,
+                latest.timestamp,
+                speaker_id=latest.sender_id,
+                source_message_id=latest.message_id,
+            )
         session.append_assistant(
-            assistant_text, timestamp, speaker=self.character_name
+            assistant_text,
+            timestamp,
+            speaker=self.character_name,
         )
-
-    async def _send_delivery(self, delivery) -> None:
-        sender = getattr(self.platform, "send_segments", None)
-        if sender is not None:
-            await sender(
-                delivery.group_id,
-                delivery.segments,
-                delivery.decision_id,
-                delivery.quote_message_id,
-            )
-            return
-        for segment in delivery.segments:
-            await self.platform.send_text(
-                delivery.group_id, segment, delivery.decision_id
-            )
 
     async def _add_visual_context(
         self,
@@ -460,6 +740,7 @@ class CognitiveWorkflow:
         except Exception:
             description = ""
         if description:
+            self.budgets.record_cost(now)
             memories.append(
                 MemoryItem(
                     memory_id=decision_id + "-vision",
@@ -482,27 +763,36 @@ class CognitiveWorkflow:
         topic: TopicSnapshot,
         trigger_alias: str,
         now: int,
+        still_valid: Optional[Callable[[], bool]] = None,
     ) -> WorkflowOutcome:
         alias = (trigger_alias or "").strip() or "我"
         text = "AT{} 不能复制哦，复制的@为纯文本而非有效@".format(alias)
         self._record(decision_id, topic.group_id, "GATE", "copied_plain_at", now)
-        try:
-            await self.platform.send_text(topic.group_id, text, decision_id)
-        except Exception as exc:
-            return self._silent(
-                decision_id,
-                topic.group_id,
-                "send_error:" + exc.__class__.__name__ + ":" + str(exc),
-                now,
-            )
-        self._recent_outputs[topic.group_id].append(text)
-        self._record(decision_id, topic.group_id, "SEND", "copied_at_tip", now)
-        return WorkflowOutcome(
+        delivery = build_delivery_plan(
             decision_id=decision_id,
-            sent=True,
-            reason="copied_at_tip",
+            group_id=topic.group_id,
             text=text,
+            urgency=Urgency.HIGH,
+            now=now,
+            ttl_seconds=20,
+            max_chars=max(1, len(text)),
+            max_segments=1,
+            humanize_delay=False,
+            direct_wake=True,
         )
+        outcome = await self.delivery_service.deliver(
+            delivery,
+            kind="copied_at_tip",
+            still_valid=still_valid,
+            sent_reason="copied_at_tip",
+        )
+        if outcome.sent:
+            self._recent_outputs[topic.group_id].append(text)
+        else:
+            self._record(
+                decision_id, topic.group_id, "END", outcome.reason, self.clock.now()
+            )
+        return outcome
 
     @staticmethod
     def _topic_image_urls(topic: TopicSnapshot) -> tuple:

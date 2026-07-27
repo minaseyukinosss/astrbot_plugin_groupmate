@@ -23,6 +23,10 @@ def test_defaults_are_balanced_and_safe():
     assert settings.relationships == ()
     assert settings.character_name == "爱弥斯"
     assert settings.max_reply_chars == 60
+    assert settings.v3_scheduler_enabled is True
+    assert settings.v3_social_enabled is True
+    assert settings.v3_opportunity_enabled is True
+    assert settings.v3_memory_writer_enabled is True
 
 
 def test_internal_knobs_ignore_legacy_config_keys():
@@ -69,6 +73,10 @@ def test_nested_schema_groups_are_flattened():
                 "enabled_groups": ["100"],
                 "handle_native_wake": False,
                 "continuation_seconds": 30,
+                "v3_scheduler_enabled": False,
+                "v3_social_enabled": False,
+                "v3_opportunity_enabled": False,
+                "v3_memory_writer_enabled": False,
             },
             "persona_group": {
                 "character_name": "飞行雪绒",
@@ -90,6 +98,10 @@ def test_nested_schema_groups_are_flattened():
     assert settings.enabled_groups == ("100",)
     assert settings.handle_native_wake is False
     assert settings.continuation_seconds == 30
+    assert settings.v3_scheduler_enabled is False
+    assert settings.v3_social_enabled is False
+    assert settings.v3_opportunity_enabled is False
+    assert settings.v3_memory_writer_enabled is False
     assert settings.character_name == "飞行雪绒"
     assert settings.group_brief == "这个群爱抽卡"
     assert settings.max_reply_chars == 48

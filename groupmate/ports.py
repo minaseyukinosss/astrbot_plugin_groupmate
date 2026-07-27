@@ -10,7 +10,7 @@ try:
 except ImportError:  # pragma: no cover
     from typing_extensions import Protocol
 
-from .models import ChatMessage, MemoryItem, ReplyPlan, TopicSnapshot
+from .models import ChatMessage, MemoryItem, ReplyPlan, SendResult, TopicSnapshot
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,13 @@ class GuardResult:
 
 
 class OutputGuard(Protocol):
-    def validate(self, text: str, recent_outputs: Sequence[str]) -> GuardResult:
+    def validate(
+        self,
+        text: str,
+        recent_outputs: Sequence[str],
+        *,
+        reply_mode=None,
+    ) -> GuardResult:
         ...
 
 
@@ -50,7 +56,7 @@ class PlatformPort(Protocol):
         group_id: str,
         text: str,
         decision_id: str,
-    ) -> None:
+    ) -> SendResult:
         ...
 
     async def send_segments(
@@ -59,7 +65,7 @@ class PlatformPort(Protocol):
         segments: Sequence[str],
         decision_id: str,
         quote_message_id: Optional[str] = None,
-    ) -> None:
+    ) -> SendResult:
         ...
 
 
@@ -105,6 +111,41 @@ class MemoryRepository(Protocol):
         *,
         default: int = 0,
     ) -> int:
+        ...
+
+    def append_social_event(self, event) -> bool:
+        ...
+
+    def list_social_events(
+        self, group_id: str, user_id: Optional[str] = None, limit: int = 200
+    ):
+        ...
+
+    def get_relationship_state(self, group_id: str, user_id: str):
+        ...
+
+    def upsert_relationship_state(self, state) -> None:
+        ...
+
+    def rebuild_relationship_state(
+        self,
+        group_id: str,
+        user_id: str,
+        *,
+        configured_relationship: Optional[str] = None,
+        seed_affinity: int = 0,
+        now: int = 0,
+    ):
+        ...
+
+    def record_social_interaction(
+        self,
+        event,
+        *,
+        soft_trigger: bool = False,
+        configured_relationship: Optional[str] = None,
+        now: int = 0,
+    ):
         ...
 
 

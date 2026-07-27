@@ -63,14 +63,14 @@ class GroupmatePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("groupmate_pause")
     async def groupmate_pause(self, event: AstrMessageEvent):
-        """暂停群聊观察和自主回复。"""
+        """暂停决策与发送，继续观察并记录群消息。"""
         self.bridge.paused = True
-        yield event.plain_result("群聊伙伴先安静一下。")
+        yield event.plain_result("先安静一下，我还会看着群消息。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("groupmate_resume")
     async def groupmate_resume(self, event: AstrMessageEvent):
-        """恢复群聊观察和自主回复。"""
+        """恢复群聊决策与发送。"""
         self.bridge.paused = False
         yield event.plain_result("好，继续看群里。")
 

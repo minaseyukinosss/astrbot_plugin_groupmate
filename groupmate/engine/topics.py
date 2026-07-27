@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Sequence, Set, Tuple
+from typing import Deque, Iterable, Optional, Set, Tuple
 from uuid import uuid4
 
 from ..core.history_format import (
@@ -59,10 +59,34 @@ class TopicWindow:
             updated_at=self._updated_at,
         )
 
-    def reset_topic(self) -> None:
-        self.topic_id = uuid4().hex
+    def reset_topic(self, topic_id: Optional[str] = None) -> str:
+        self.topic_id = topic_id or uuid4().hex
         self._created_at = 0
         self._updated_at = 0
+        return self.topic_id
+
+    def hydrate(
+        self,
+        *,
+        topic_id: str,
+        created_at: int,
+        updated_at: int,
+        messages: Iterable[ChatMessage],
+    ) -> None:
+        self.topic_id = str(topic_id)
+        self._messages = deque()
+        self._seen = set()
+        self._seen_order = deque()
+        self._created_at = int(created_at or 0)
+        self._updated_at = int(updated_at or 0)
+        for message in messages:
+            self.append(message)
+        if self._messages and not self._created_at:
+            self._created_at = self._messages[0].timestamp
+        if self._messages:
+            self._updated_at = max(
+                self._updated_at, max(item.timestamp for item in self._messages)
+            )
 
     def _remember_identity(self, identity: Tuple[str, str]) -> None:
         seen_limit = max(self.max_messages * 4, 100)

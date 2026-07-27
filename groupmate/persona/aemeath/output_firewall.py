@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
+from ...models import ReplyMode
 from ...ports import GuardResult
+from ...core.intent import constraints_for
 
 
 class AemeathOutputFirewall:
@@ -40,17 +42,29 @@ class AemeathOutputFirewall:
         self.max_chars = max(1, max_chars)
         self.max_sentences = max(1, max_sentences)
 
-    def validate(self, text: str, recent_outputs: Sequence[str]) -> GuardResult:
+    def validate(
+        self,
+        text: str,
+        recent_outputs: Sequence[str],
+        *,
+        reply_mode: Optional[ReplyMode] = None,
+    ) -> GuardResult:
         cleaned = (text or "").strip().strip("`").strip()
         codes: List[str] = []
         non_repairable = set()
+        max_chars = self.max_chars
+        max_sentences = self.max_sentences
+        if reply_mode is not None:
+            constr = constraints_for(reply_mode)
+            max_chars = constr.max_chars
+            max_sentences = constr.max_sentences
 
         if not cleaned:
             codes.append("empty_output")
             non_repairable.add("empty_output")
-        if len(cleaned) > self.max_chars:
+        if len(cleaned) > max_chars:
             codes.append("too_long")
-        if self._unit_count(cleaned) > self.max_sentences:
+        if self._unit_count(cleaned) > max_sentences:
             codes.append("too_many_sentences")
         if self._STAGE_DIRECTION.search(cleaned) or self._NARRATION.search(cleaned):
             codes.append("decision_narration")

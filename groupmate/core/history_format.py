@@ -111,6 +111,8 @@ def format_relationship_line(
     sender_name: str,
     relationships: dict,
     favorability: Optional[int] = None,
+    *,
+    allow_intimate_address: bool = True,
 ) -> str:
     """Current-focus speaker relationship + favorability tier (no IDs)."""
     from .favorability import format_favorability_perception
@@ -119,6 +121,9 @@ def format_relationship_line(
         sender_id, sender_name, relationships
     )
     del speaker
+    if not allow_intimate_address:
+        suggested_address = ""
+        relationship = relationship if relationship == "普通群友" else "普通群友"
     return format_favorability_perception(
         favorability,
         relationship=relationship,

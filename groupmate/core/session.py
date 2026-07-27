@@ -15,6 +15,8 @@ class DialogueTurn:
     speaker: str
     text: str
     timestamp: int
+    speaker_id: str = ""
+    source_message_id: str = ""
 
 
 class GroupSession:
@@ -39,6 +41,9 @@ class GroupSession:
         speaker: str,
         text: str,
         timestamp: int,
+        *,
+        speaker_id: str = "",
+        source_message_id: str = "",
     ) -> None:
         cleaned = (text or "").strip()
         if not cleaned:
@@ -49,6 +54,8 @@ class GroupSession:
                 speaker=(speaker or "群友").strip() or "群友",
                 text=cleaned[:300],
                 timestamp=int(timestamp),
+                speaker_id=str(speaker_id or ""),
+                source_message_id=str(source_message_id or ""),
             )
         )
 
@@ -57,6 +64,9 @@ class GroupSession:
         text: str,
         timestamp: int,
         speaker: Optional[str] = None,
+        *,
+        speaker_id: str = "",
+        source_message_id: str = "",
     ) -> None:
         cleaned = (text or "").strip()
         if not cleaned:
@@ -68,8 +78,15 @@ class GroupSession:
                 speaker=name,
                 text=cleaned[:300],
                 timestamp=int(timestamp),
+                speaker_id=str(speaker_id or ""),
+                source_message_id=str(source_message_id or ""),
             )
         )
+
+    def hydrate(self, turns: Iterable[DialogueTurn]) -> None:
+        self._turns.clear()
+        for turn in turns:
+            self._turns.append(turn)
 
     def recent_turns(self, limit: int = 6) -> Tuple[DialogueTurn, ...]:
         if limit <= 0:

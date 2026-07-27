@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -115,3 +116,21 @@ def test_casual_at_does_not_defer(tmp_path):
     event = _FakeEvent(text="你今天怎样")
     assert bridge.should_take_native_wake(event) is True
     assert bridge.should_defer_native_wake_to_astrbot(event) is False
+
+
+def test_pause_still_observes_without_dispatch(tmp_path):
+    async def scenario():
+        bridge = _bridge(tmp_path)
+        bridge.paused = True
+        event = _FakeEvent(at_bot=False, text="暂停期间也要记住")
+        await bridge.handle_event(event)
+        await bridge.runtime.drain()
+        messages = bridge.memory.recent_messages(event.get_group_id(), 10)
+        snapshot = bridge.runtime.snapshots()[event.get_group_id()]
+        await bridge.close()
+        return messages, snapshot
+
+    messages, snapshot = asyncio.run(scenario())
+    assert [message.text for message in messages] == ["暂停期间也要记住"]
+    assert snapshot["dispatch_enabled"] is False
+    assert "last_outcome" not in snapshot

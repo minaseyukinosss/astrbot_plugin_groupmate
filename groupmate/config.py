@@ -108,6 +108,10 @@ class PluginSettings:
     topic_max_seconds: int = TOPIC_MAX_SECONDS
     humanize_delay_enabled: bool = HUMANIZE_DELAY_ENABLED
     max_reply_segments: int = MAX_REPLY_SEGMENTS
+    v3_scheduler_enabled: bool = True
+    v3_social_enabled: bool = True
+    v3_opportunity_enabled: bool = True
+    v3_memory_writer_enabled: bool = True
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
@@ -151,4 +155,14 @@ class PluginSettings:
             topic_max_seconds=TOPIC_MAX_SECONDS,
             humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
             max_reply_segments=MAX_REPLY_SEGMENTS,
+            v3_scheduler_enabled=_boolean(
+                data.get("v3_scheduler_enabled", True), True
+            ),
+            v3_social_enabled=_boolean(data.get("v3_social_enabled", True), True),
+            v3_opportunity_enabled=_boolean(
+                data.get("v3_opportunity_enabled", True), True
+            ),
+            v3_memory_writer_enabled=_boolean(
+                data.get("v3_memory_writer_enabled", True), True
+            ),
         )

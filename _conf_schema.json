@@ -23,6 +23,30 @@
         "description": "直接呼叫成功后，同一发送者无需再叫名字即可续聊的秒数；0 表示关闭。",
         "type": "int",
         "default": 90
+      },
+      "v3_scheduler_enabled": {
+        "description": "启用 V3 非阻塞调度器；关闭时临时回退旧串行调度。",
+        "type": "bool",
+        "default": true,
+        "hint": "仅用于 Phase 1 故障回滚，正常保持开启。"
+      },
+      "v3_social_enabled": {
+        "description": "启用 V3 社会事件与关系投影；关闭时回退旧 favorability 增量，新表只读。",
+        "type": "bool",
+        "default": true,
+        "hint": "仅用于 Phase 3 故障回滚，正常保持开启。"
+      },
+      "v3_opportunity_enabled": {
+        "description": "启用 V3 发言机会仲裁；关闭时 soft 恢复进模型 + SpeakContract 旧路径。",
+        "type": "bool",
+        "default": true,
+        "hint": "仅用于 Phase 4 故障回滚，正常保持开启。"
+      },
+      "v3_memory_writer_enabled": {
+        "description": "启用 V3 记忆候选抽取与仲裁写入；关闭后只读既有 memories，不再接受候选。",
+        "type": "bool",
+        "default": true,
+        "hint": "仅用于 Phase 5 故障回滚，正常保持开启。"
       }
     }
   },

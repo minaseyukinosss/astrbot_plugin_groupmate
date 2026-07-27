@@ -31,6 +31,7 @@ class OneBotTranslator:
         segment_types: List[str] = []
         reply_id: Optional[str] = None
         mentions_bot = False
+        mentioned_user_ids: List[str] = []
         for segment in segments:
             if not isinstance(segment, dict):
                 continue
@@ -43,8 +44,10 @@ class OneBotTranslator:
                     text_parts.append(str(text))
             elif kind == "at":
                 qq = str(data.get("qq", data.get("user_id", "")))
-                if qq == str(bot_id):
+                if qq and qq == str(bot_id):
                     mentions_bot = True
+                elif qq and qq not in ("all", "0"):
+                    mentioned_user_ids.append(qq)
                 name = data.get("name") or data.get("display_name")
                 if name:
                     text_parts.append("@" + str(name))
@@ -79,6 +82,7 @@ class OneBotTranslator:
             is_bot=sender_id == str(bot_id),
             image_urls=tuple(dict.fromkeys(image_urls)),
             segment_types=tuple(segment_types),
+            mentioned_user_ids=tuple(dict.fromkeys(mentioned_user_ids)),
             metadata={"raw": raw},
         )
 

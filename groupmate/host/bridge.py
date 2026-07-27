@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Dict
 
@@ -13,13 +14,14 @@ from ..config import (
     MAX_REPLY_SEGMENTS,
     TOPIC_MAX_SECONDS,
 )
+from ..core.projections import StateProjector
 from ..engine.external_knowledge import needs_external_knowledge
 from ..engine.rate_limit import SlidingWindowRateLimiter
 from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
 from ..memory import SQLiteMemoryStore
-from ..models import ChatMessage, GroupPolicy, TriggerKind
+from ..models import ChatMessage, GroupPolicy, MessageOrigin, TriggerKind
 from ..persona.aemeath import (
     CHARACTER_NAME,
     AemeathOutputFirewall,
@@ -47,14 +49,23 @@ class AstrBotBridge:
         self._umo_by_group: Dict[str, str] = {}
         self._provider_by_group: Dict[str, str] = {}
         self._bootstrapped = set()
-        self.paused = False
-        self.runtime = GroupRuntimeManager(self._workflow_for, self._policy_for)
+        self._bootstrap_locks: Dict[str, asyncio.Lock] = {}
+        self._paused = False
+        self.runtime = GroupRuntimeManager(
+            self._workflow_for,
+            self._policy_for,
+            v3_scheduler_enabled=bool(
+                self._setting("v3_scheduler_enabled", True)
+            ),
+        )
 
     async def handle_event(self, event: Any) -> None:
         actor = await self._prepare_actor(event)
         if actor is None:
             return
-        await actor.submit(self._message_from_event(event))
+        await actor.submit(
+            self._message_from_event(event), schedule=not self.paused
+        )
 
     async def observe_only(self, event: Any) -> None:
         """Ingest the message into the group window without generating a reply."""
@@ -123,8 +134,6 @@ class AstrBotBridge:
         return needs_external_knowledge(self._message_from_event(event).text)
 
     async def _prepare_actor(self, event: Any):
-        if self.paused:
-            return None
         group_id = str(event.get_group_id())
         if not self._group_enabled(group_id):
             return None
@@ -140,20 +149,75 @@ class AstrBotBridge:
             )
         actor = await self.runtime.actor_for(group_id)
         if group_id not in self._bootstrapped:
-            bot = getattr(event, "bot", None)
-            if bot is not None:
-                try:
-                    history = await NapCatHistoryPort(bot, event.get_self_id()).fetch_recent(
-                        group_id, self._policy_for(group_id).history_limit
-                    )
-                    for message in history:
-                        await actor.preload(message)
-                    await actor.drain()
-                    actor.window.reset_topic()
-                except Exception:
-                    pass
-            self._bootstrapped.add(group_id)
+            lock = self._bootstrap_locks.get(group_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._bootstrap_locks[group_id] = lock
+            async with lock:
+                if group_id not in self._bootstrapped:
+                    await self._bootstrap_group(actor, event)
+                    self._bootstrapped.add(group_id)
         return actor
+
+    async def _bootstrap_group(self, actor, event: Any) -> None:
+        group_id = actor.group_id
+        policy = self._policy_for(group_id)
+        was_dispatch = actor._dispatch_enabled and not self.paused
+        actor.set_dispatch_enabled(False)
+        clock = _SystemClock()
+        projector = StateProjector(
+            self.memory,
+            character_name=str(
+                self._setting("character_name", CHARACTER_NAME) or CHARACTER_NAME
+            ),
+        )
+        snapshot = projector.rebuild(group_id, now=clock.now(), policy=policy)
+        projector.apply(
+            snapshot,
+            window=actor.window,
+            session=actor.workflow.session_for(group_id),
+            rate_limiter=actor.workflow.rate_limiter,
+            workflow=actor.workflow,
+            set_continuation=actor.set_continuation,
+        )
+
+        bot = getattr(event, "bot", None)
+        if bot is not None:
+            try:
+                history = await NapCatHistoryPort(
+                    bot, event.get_self_id()
+                ).fetch_recent(group_id, policy.history_limit)
+                for message in history:
+                    stamped = message
+                    if message.origin is not MessageOrigin.BOT_DELIVERY:
+                        from dataclasses import replace
+
+                        stamped = replace(
+                            message,
+                            origin=MessageOrigin.PLATFORM_HISTORY,
+                            ingested_at=clock.now(),
+                        )
+                    await actor.preload(stamped)
+                await actor.drain()
+            except Exception:
+                # Keep local ledger projection; do not wipe context.
+                pass
+
+        # Start a fresh open epoch after history projection; never send.
+        import time
+        from uuid import uuid4
+
+        now = int(time.time())
+        topic = actor.window.snapshot()
+        last_id = topic.latest.message_id if topic.latest else None
+        close = getattr(self.memory, "close_topic_epoch_async", None)
+        if close is not None and topic.topic_id:
+            await close(group_id, topic.topic_id, now, "RESET", last_id)
+        new_id = actor.window.reset_topic()
+        open_epoch = getattr(self.memory, "open_topic_epoch_async", None)
+        if open_epoch is not None:
+            await open_epoch(group_id, new_id, now, last_id)
+        actor.set_dispatch_enabled(was_dispatch and not self.paused)
 
     def _message_from_event(self, event: Any) -> ChatMessage:
         return OneBotTranslator.from_event(
@@ -163,8 +227,22 @@ class AstrBotBridge:
         )
 
     async def close(self) -> None:
+        self.paused = True
         await self.runtime.close()
+        await self.memory.mark_sending_unknown_async()
+        await self.memory.flush_async()
         self.memory.close()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        self._paused = bool(value)
+        runtime = getattr(self, "runtime", None)
+        if runtime is not None:
+            runtime.set_dispatch_enabled(not self._paused)
 
     def status(self) -> Dict[str, Any]:
         groups: Dict[str, Any] = {}
@@ -174,6 +252,9 @@ class AstrBotBridge:
             groups[group_id] = enriched
         return {
             "paused": self.paused,
+            "scheduler": (
+                "v3" if self.runtime.v3_scheduler_enabled else "legacy"
+            ),
             "groups": groups,
             "bootstrapped": sorted(self._bootstrapped),
         }
@@ -243,6 +324,11 @@ class AstrBotBridge:
             continuation_seconds=int(self._setting("continuation_seconds", 90)),
             humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
             max_reply_segments=MAX_REPLY_SEGMENTS,
+            v3_social_enabled=bool(self._setting("v3_social_enabled", True)),
+            v3_opportunity_enabled=bool(self._setting("v3_opportunity_enabled", True)),
+            v3_memory_writer_enabled=bool(
+                self._setting("v3_memory_writer_enabled", True)
+            ),
         )
 
     def _group_enabled(self, group_id: str) -> bool:

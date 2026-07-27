@@ -1,0 +1,190 @@
+import asyncio
+
+from groupmate.engine.delivery import DeliveryPlan, DeliveryService
+from groupmate.memory.store import SQLiteMemoryStore
+from groupmate.models import SendResult
+from tests.fakes import FakeClock
+
+
+class ReceiptPlatform:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    async def send_segments(
+        self, group_id, segments, decision_id, quote_message_id=None
+    ):
+        del group_id, segments, decision_id, quote_message_id
+        self.calls += 1
+        return self.result
+
+
+def plan(decision_id):
+    return DeliveryPlan(
+        decision_id=decision_id,
+        group_id="g",
+        segments=("在呢。",),
+        delay_seconds=0,
+        expires_at=200,
+    )
+
+
+def test_confirmed_delivery_atomically_writes_bot_message(tmp_path):
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "delivery.db")
+        platform = ReceiptPlatform(SendResult.confirmed())
+        service = DeliveryService(platform, store, FakeClock(101), "爱弥斯")
+        outcome = await service.deliver(plan("confirmed"))
+        row = store.outbox_record("confirmed")
+        messages = store.recent_messages("g", 10)
+        store.close()
+        return outcome, row, messages, platform.calls
+
+    outcome, row, messages, calls = asyncio.run(scenario())
+    assert outcome.sent is True
+    assert row["status"] == "sent"
+    assert row["attempt"] == 1
+    assert calls == 1
+    assert len(messages) == 1
+    assert messages[0].is_bot is True
+    assert messages[0].metadata["decision_id"] == "confirmed"
+
+
+def test_unknown_delivery_is_terminal_and_not_retried(tmp_path):
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "unknown.db")
+        platform = ReceiptPlatform(SendResult.unknown())
+        service = DeliveryService(platform, store, FakeClock(101))
+        first = await service.deliver(plan("unknown"))
+        second = await service.deliver(plan("unknown"))
+        row = store.outbox_record("unknown")
+        messages = store.recent_messages("g", 10)
+        store.close()
+        return first, second, row, messages, platform.calls
+
+    first, second, row, messages, calls = asyncio.run(scenario())
+    assert first.reason == "send_unknown"
+    assert second.reason == "duplicate_outbox"
+    assert row["status"] == "unknown"
+    assert calls == 1
+    assert messages == []
+
+
+def test_expired_delivery_never_calls_platform(tmp_path):
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "expired.db")
+        platform = ReceiptPlatform(SendResult.confirmed())
+        service = DeliveryService(platform, store, FakeClock(201))
+        outcome = await service.deliver(plan("expired"))
+        row = store.outbox_record("expired")
+        store.close()
+        return outcome, row, platform.calls
+
+    outcome, row, calls = asyncio.run(scenario())
+    assert outcome.reason == "delivery_expired"
+    assert row["status"] == "expired"
+    assert calls == 0
+
+
+def test_cancellation_before_send_marks_expired(tmp_path):
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "cancel-before.db")
+        platform = ReceiptPlatform(SendResult.confirmed())
+        service = DeliveryService(platform, store, FakeClock(101))
+        delayed = DeliveryPlan(
+            decision_id="cancel-before",
+            group_id="g",
+            segments=("稍后",),
+            delay_seconds=60,
+            expires_at=200,
+        )
+        task = asyncio.create_task(service.deliver(delayed))
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        row = store.outbox_record("cancel-before")
+        store.close()
+        return row
+
+    assert asyncio.run(scenario())["status"] == "expired"
+
+
+def test_cancellation_during_send_marks_unknown(tmp_path):
+    class BlockingPlatform:
+        def __init__(self):
+            self.started = asyncio.Event()
+
+        async def send_segments(self, *args, **kwargs):
+            del args, kwargs
+            self.started.set()
+            await asyncio.Event().wait()
+
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "cancel-send.db")
+        platform = BlockingPlatform()
+        service = DeliveryService(platform, store, FakeClock(101))
+        task = asyncio.create_task(service.deliver(plan("cancel-send")))
+        await platform.started.wait()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        row = store.outbox_record("cancel-send")
+        store.close()
+        return row
+
+    assert asyncio.run(scenario())["status"] == "unknown"
+
+
+def test_definite_platform_error_marks_failed(tmp_path):
+    class FailedPlatform:
+        async def send_segments(self, *args, **kwargs):
+            del args, kwargs
+            raise ValueError("rejected")
+
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "failed.db")
+        service = DeliveryService(FailedPlatform(), store, FakeClock(101))
+        outcome = await service.deliver(plan("failed"))
+        row = store.outbox_record("failed")
+        store.close()
+        return outcome, row
+
+    outcome, row = asyncio.run(scenario())
+    assert outcome.reason == "send_error:ValueError"
+    assert row["status"] == "failed"
+
+
+def test_platform_timeout_marks_unknown(tmp_path):
+    class TimeoutPlatform:
+        async def send_segments(self, *args, **kwargs):
+            del args, kwargs
+            raise asyncio.TimeoutError()
+
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "timeout.db")
+        service = DeliveryService(TimeoutPlatform(), store, FakeClock(101))
+        outcome = await service.deliver(plan("timeout"))
+        row = store.outbox_record("timeout")
+        store.close()
+        return outcome, row
+
+    outcome, row = asyncio.run(scenario())
+    assert outcome.reason == "send_unknown"
+    assert row["status"] == "unknown"
+
+
+def test_startup_recovers_orphaned_sending_as_unknown(tmp_path):
+    async def create_orphan(path):
+        store = SQLiteMemoryStore(path)
+        assert store.enqueue_outbox("orphan", "g", "x", 1, 100)
+        assert await store.transition_outbox_async(
+            "orphan", "pending", "sending", increment_attempt=True
+        )
+        store.close()
+
+    path = tmp_path / "recovery.db"
+    asyncio.run(create_orphan(path))
+    reopened = SQLiteMemoryStore(path)
+    row = reopened.outbox_record("orphan")
+    reopened.close()
+    assert row["status"] == "unknown"
+    assert row["failure_code"] == "startup_recovery"

@@ -1,8 +1,21 @@
 # Companion Core 框架规格（Phase 1 + 拟人化上下文体系）
 
 日期：2026-07-24  
-状态：**现行生效**  
+状态：**现行实现基线（Companion Core Phase 1）**
+
 前置：[`2026-07-22-groupmate-v2-architecture.md`](./2026-07-22-groupmate-v2-architecture.md)
+
+目标态与后续迁移以
+[`2026-07-24-groupmate-humanlike-roadmap.md`](../plans/2026-07-24-groupmate-humanlike-roadmap.md)
+定义的 Groupmate V3 总体架构规范为准。本文继续约束当前已经落地的目录、Prompt
+装配和 Phase 1 行为；V3 的 Ledger/投影、发言仲裁、能力层、记忆、统一 Delivery
+等契约必须按路线文档逐阶段迁移，在相应阶段验收前不得假设目标态已经实现。
+
+若两份文档描述不同：
+
+- 判断当前代码应如何工作时，以本文和现有测试为准；
+- 设计新模块或实施迁移时，以 V3 总体架构规范为准；
+- 不允许为了提前符合目标态而跳过兼容迁移、feature flag、测试和回滚步骤。
 
 ## 1. 目标
 
@@ -82,4 +95,9 @@ recent_messages → session_turns → mood → relationship_line → voice_ancho
 
 ## 5. 非目标
 
-Kanban、Heartbeat、自动 LEARN、完整工具环、迁 gsuid_core、向量 RAG、把好感做成可刷榜的数值游戏（对用户暴露分数）。
+Kanban、Heartbeat、全量聊天自动 LEARN、完整工具环、迁 gsuid_core、向量 RAG、把好感做成可刷榜的数值游戏（对用户暴露分数）。
+
+这里的“全量聊天自动 LEARN”是指未经筛选地把群消息写成长期记忆。后续允许按
+[`2026-07-24-groupmate-humanlike-roadmap.md`](../plans/2026-07-24-groupmate-humanlike-roadmap.md)
+引入保守、异步、可追溯的 `MemoryWriter`：只提取明确、可公开、高置信且有 scope /
+source / authority / TTL 的事实；敏感信息、关系推断和不确定主体默认不写入。

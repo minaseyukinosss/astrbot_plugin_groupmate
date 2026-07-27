@@ -7,18 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
 
-from ..models import MemoryItem, TopicSnapshot
+from ..models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
 from .history_format import (
     focus_speaker,
     format_history_block,
     format_relationship_line,
     select_active_messages,
 )
+from .intent import constraints_for, speak_note_for
 from .mood import describe_mood, infer_mood, load_mood_descriptions
 from .relationships import RelationshipEntry, relationship_map, resolve_speaker
 from .self_episodes import format_self_episodes, needs_self_recall
 from .session import DialogueTurn, GroupSession
-from .speak_contract import SpeakContract
 from .voice_anchor import format_voice_anchor_block, load_voice_anchor
 
 
@@ -40,6 +40,7 @@ DYNAMIC_BLOCK_ORDER = (
     "self_episodes",
     "relevant_memories",
     "memory_guide",
+    "reply_mode",
     "speak_note",
     "reply_task",
 )
@@ -161,11 +162,17 @@ class ContextAssembly:
         session: Optional[GroupSession] = None,
         mood_key: Optional[str] = None,
         favorability: Optional[int] = None,
+        targeting: Optional[TargetingDecision] = None,
+        reply_mode: Optional[ReplyMode] = None,
     ) -> str:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
         )
-        sender_id, sender_name = focus_speaker(active)
+        sender_id, sender_name = self._focus_from_targeting(active, targeting)
+        ambiguous = bool(
+            targeting is not None
+            and targeting.social_target.kind.value == "ambiguous"
+        )
         _, relationship, _ = resolve_speaker(
             sender_id, sender_name, self._relationships
         )
@@ -173,9 +180,11 @@ class ContextAssembly:
         resolved_mood = mood_key or infer_mood(
             soft_trigger=soft_trigger,
             latest_text=latest_text,
-            relationship=relationship,
-            favorability=favorability,
+            relationship="" if ambiguous else relationship,
+            favorability=None if ambiguous else favorability,
         )
+        mode = reply_mode or ReplyMode.SHORT_SOCIAL
+        mode_constr = constraints_for(mode)
 
         sections = ["<group_context>"]
 
@@ -202,7 +211,8 @@ class ContextAssembly:
                         sender_id,
                         sender_name,
                         self._relationships,
-                        favorability=favorability,
+                        favorability=None if ambiguous else favorability,
+                        allow_intimate_address=not ambiguous,
                     )
                 )
             )
@@ -215,7 +225,14 @@ class ContextAssembly:
             if episodes:
                 sections.append(episodes)
 
-        memory_lines = [html.escape(item.text[:300]) for item in memories[:8]]
+        memory_lines = []
+        for item in memories[:8]:
+            text = html.escape(item.text[:300])
+            mid = (item.memory_id or "").strip()
+            if mid:
+                memory_lines.append("[{}] {}".format(html.escape(mid[:8]), text))
+            else:
+                memory_lines.append(text)
         if memory_lines:
             sections.extend(
                 ["<relevant_memories>", "\n".join(memory_lines), "</relevant_memories>"]
@@ -226,10 +243,16 @@ class ContextAssembly:
                     "<memory_guide>{}</memory_guide>".format(html.escape(guide[:500]))
                 )
 
+        sections.append(
+            "<reply_mode>{}；{}</reply_mode>".format(
+                html.escape(mode.value),
+                html.escape(mode_constr.length_hint),
+            )
+        )
         sections.extend(
             [
                 "<speak_note>{}</speak_note>".format(
-                    SpeakContract.note_for(soft_trigger)
+                    speak_note_for(mode, soft_trigger=soft_trigger)
                 ),
                 "<reply_task>你可以补充：{}。只输出最终群聊回复或 <SILENCE>，不要解释过程。</reply_task>".format(
                     html.escape((contribution or "给一句自然短反应").strip())
@@ -249,11 +272,17 @@ class ContextAssembly:
         session: Optional[GroupSession] = None,
         mood_key: Optional[str] = None,
         favorability: Optional[int] = None,
+        targeting: Optional[TargetingDecision] = None,
+        reply_mode: Optional[ReplyMode] = None,
     ) -> AssembledPrompt:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
         )
-        sender_id, sender_name = focus_speaker(active)
+        sender_id, sender_name = self._focus_from_targeting(active, targeting)
+        ambiguous = bool(
+            targeting is not None
+            and targeting.social_target.kind.value == "ambiguous"
+        )
         _, relationship, _ = resolve_speaker(
             sender_id, sender_name, self._relationships
         )
@@ -261,8 +290,8 @@ class ContextAssembly:
         resolved_mood = mood_key or infer_mood(
             soft_trigger=soft_trigger,
             latest_text=latest_text,
-            relationship=relationship,
-            favorability=favorability,
+            relationship="" if ambiguous else relationship,
+            favorability=None if ambiguous else favorability,
         )
         return AssembledPrompt(
             system=self.build_system(),
@@ -274,10 +303,29 @@ class ContextAssembly:
                 session=session,
                 mood_key=resolved_mood,
                 favorability=favorability,
+                targeting=targeting,
+                reply_mode=reply_mode,
             ),
             soft_trigger=soft_trigger,
             mood_key=resolved_mood,
         )
+
+    @staticmethod
+    def _focus_from_targeting(
+        active,
+        targeting: Optional[TargetingDecision],
+    ) -> Tuple[str, str]:
+        if targeting is not None:
+            audience = targeting.reply_audience
+            if audience.kind.value == "user" and audience.target_user_ids:
+                uid = audience.target_user_ids[0]
+                for message in reversed(tuple(active)):
+                    if message.sender_id == uid:
+                        return uid, message.sender_name or ""
+                return uid, ""
+            if audience.kind.value == "ambiguous":
+                return "", ""
+        return focus_speaker(active)
 
     @staticmethod
     def _format_session_turns(turns: Sequence[DialogueTurn]) -> list:

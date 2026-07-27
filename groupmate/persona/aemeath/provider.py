@@ -8,7 +8,7 @@ from typing import Optional, Sequence
 from ...core.context_assembly import AssembledPrompt, ContextAssembly
 from ...core.relationships import RelationshipEntry
 from ...core.session import GroupSession
-from ...models import MemoryItem, TopicSnapshot
+from ...models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
 from .relationships import DEFAULT_RELATIONSHIPS
 
 PACK_DIR = Path(__file__).resolve().parent
@@ -62,6 +62,8 @@ class AemeathPersonaProvider:
         session: Optional[GroupSession] = None,
         mood_key: Optional[str] = None,
         favorability: Optional[int] = None,
+        targeting: Optional[TargetingDecision] = None,
+        reply_mode: Optional[ReplyMode] = None,
     ) -> str:
         return self._assembly.build_user(
             topic,
@@ -71,6 +73,8 @@ class AemeathPersonaProvider:
             session=session,
             mood_key=mood_key,
             favorability=favorability,
+            targeting=targeting,
+            reply_mode=reply_mode,
         )
 
     def assemble(
@@ -83,6 +87,8 @@ class AemeathPersonaProvider:
         session: Optional[GroupSession] = None,
         mood_key: Optional[str] = None,
         favorability: Optional[int] = None,
+        targeting: Optional[TargetingDecision] = None,
+        reply_mode: Optional[ReplyMode] = None,
     ) -> AssembledPrompt:
         return self._assembly.assemble(
             topic,
@@ -92,6 +98,8 @@ class AemeathPersonaProvider:
             session=session,
             mood_key=mood_key,
             favorability=favorability,
+            targeting=targeting,
+            reply_mode=reply_mode,
         )
 
     @property

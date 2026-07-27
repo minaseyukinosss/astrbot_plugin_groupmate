@@ -115,8 +115,11 @@ def test_continuation_sends(topic_snapshot, balanced_policy):
 
 def test_copied_at_sends_tip_without_llm(topic_snapshot, balanced_policy):
     platform = FakePlatform()
+    memory = FakeMemoryRepository()
     generator = StaticGenerationModel("不该生成这句")
-    workflow = build_workflow(generator=generator, platform=platform)
+    workflow = build_workflow(
+        generator=generator, platform=platform, memory=memory
+    )
 
     outcome = asyncio.run(
         workflow.evaluate(
@@ -131,6 +134,9 @@ def test_copied_at_sends_tip_without_llm(topic_snapshot, balanced_policy):
     assert outcome.reason == "copied_at_tip"
     assert platform.sent[0]["text"] == "AT爱弥斯 不能复制哦，复制的@为纯文本而非有效@"
     assert generator.calls == 0
+    assert memory.outbox[outcome.decision_id]["status"] == "sent"
+    assert len(memory.messages) == 1
+    assert memory.messages[0].metadata["origin"] == "bot_delivery"
 
 
 def test_session_remembers_assistant_turn_after_send(topic_snapshot, balanced_policy):

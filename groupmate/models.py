@@ -34,9 +34,170 @@ class Urgency(StringEnum):
     HIGH = "high"
 
 
+class OutboxStatus(StringEnum):
+    PENDING = "pending"
+    SENDING = "sending"
+    SENT = "sent"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    UNKNOWN = "unknown"
+
+
+class SendReceiptKind(StringEnum):
+    CONFIRMED = "confirmed"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
 class MemoryKind(StringEnum):
     PROFILE = "profile"
     EPISODIC = "episodic"
+
+
+class MemoryScope(StringEnum):
+    GROUP = "GROUP"
+    USER_IN_GROUP = "USER_IN_GROUP"
+    SELF = "SELF"
+
+
+class MemoryStatus(StringEnum):
+    ACCEPTED = "accepted"
+    SUPERSEDED = "superseded"
+    EXPIRED = "expired"
+    DELETED = "deleted"
+
+
+class Sensitivity(StringEnum):
+    NONE = "none"
+    CREDENTIAL = "credential"
+    PII = "pii"
+    MEDICAL = "medical"
+    POLITICAL = "political"
+    SEXUAL = "sexual"
+    MINOR = "minor"
+    THIRD_PARTY = "third_party"
+    JOKE = "joke"
+    OTHER = "other"
+
+
+class CandidateStatus(StringEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    CONFLICTED = "conflicted"
+
+
+class MessageOrigin(StringEnum):
+    PLATFORM_REALTIME = "PLATFORM_REALTIME"
+    PLATFORM_HISTORY = "PLATFORM_HISTORY"
+    BOT_DELIVERY = "BOT_DELIVERY"
+    SYSTEM_SYNTHETIC = "SYSTEM_SYNTHETIC"
+
+
+class AddresseeKind(StringEnum):
+    USER = "user"
+    BOT = "bot"
+    GROUP = "group"
+    AMBIGUOUS = "ambiguous"
+
+
+class SocialEventKind(StringEnum):
+    PRAISE = "PRAISE"
+    THANKS = "THANKS"
+    HELP_REQUEST = "HELP_REQUEST"
+    HELPED = "HELPED"
+    FRIENDLY_TEASE = "FRIENDLY_TEASE"
+    CORRECTION = "CORRECTION"
+    BOUNDARY_PUSH = "BOUNDARY_PUSH"
+    HARASSMENT = "HARASSMENT"
+    APOLOGY = "APOLOGY"
+    NEUTRAL = "NEUTRAL"
+
+
+class OpportunityAction(StringEnum):
+    SPEAK = "speak"
+    SILENCE = "silence"
+
+
+class ReplyMode(StringEnum):
+    SHORT_SOCIAL = "short_social"
+    HELP_DETAIL = "help_detail"
+    BOUNDARY = "boundary"
+    TASK_RESULT = "task_result"
+
+
+@dataclass(frozen=True)
+class AddresseeResolution:
+    kind: AddresseeKind
+    target_user_ids: Tuple[str, ...] = ()
+    target_message_id: Optional[str] = None
+    confidence: float = 0.0
+    evidence_message_ids: Tuple[str, ...] = ()
+    reason_codes: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TargetingDecision:
+    reply_audience: AddresseeResolution
+    memory_subject: AddresseeResolution
+    social_target: AddresseeResolution
+
+
+@dataclass(frozen=True)
+class SocialEvent:
+    event_id: str
+    group_id: str
+    user_id: str
+    kind: SocialEventKind
+    source_message_id: str
+    confidence: float
+    occurred_at: int
+    decision_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RelationshipState:
+    group_id: str
+    user_id: str
+    familiarity: int = 0
+    affinity: int = 0
+    trust: int = 0
+    boundary_pressure: int = 0
+    interaction_count: int = 0
+    last_interaction_at: int = 0
+    configured_relationship: Optional[str] = None
+    updated_at: int = 0
+
+
+@dataclass(frozen=True)
+class SpeakOpportunity:
+    opportunity_id: str
+    group_id: str
+    action: OpportunityAction
+    trigger: TriggerKind
+    audience_ids: Tuple[str, ...]
+    target_message_id: Optional[str]
+    contribution: str
+    confidence: float
+    interruption_cost: float
+    created_at: int
+    expires_at: int
+    reason_codes: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReplyIntent:
+    decision_id: str
+    opportunity_id: str
+    group_id: str
+    audience_ids: Tuple[str, ...]
+    target_message_id: Optional[str]
+    mode: ReplyMode
+    contribution: str
+    required_capabilities: Tuple[str, ...]
+    evidence_message_ids: Tuple[str, ...]
+    created_at: int
+    expires_at: int
 
 
 @dataclass(frozen=True)
@@ -55,6 +216,13 @@ class ChatMessage:
     image_urls: Tuple[str, ...] = ()
     segment_types: Tuple[str, ...] = ()
     metadata: Dict[str, Any] = field(default_factory=dict, compare=False)
+    origin: MessageOrigin = MessageOrigin.PLATFORM_REALTIME
+    decision_id: Optional[str] = None
+    ingested_at: int = 0
+    platform: str = ""
+    bot_id: str = ""
+    event_version: int = 1
+    mentioned_user_ids: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "message_id", str(self.message_id))
@@ -64,6 +232,33 @@ class ChatMessage:
         object.__setattr__(self, "text", (self.text or "").strip())
         object.__setattr__(self, "image_urls", tuple(self.image_urls))
         object.__setattr__(self, "segment_types", tuple(self.segment_types))
+        mentions = tuple(
+            str(item).strip()
+            for item in (self.mentioned_user_ids or ())
+            if str(item).strip()
+        )
+        object.__setattr__(self, "mentioned_user_ids", mentions)
+        origin = self.origin
+        if not isinstance(origin, MessageOrigin):
+            try:
+                origin = MessageOrigin(str(origin))
+            except ValueError:
+                origin = MessageOrigin.PLATFORM_REALTIME
+        object.__setattr__(self, "origin", origin)
+        decision_id = str(self.decision_id).strip() if self.decision_id else None
+        object.__setattr__(self, "decision_id", decision_id or None)
+        ingested = int(self.ingested_at or 0)
+        if ingested <= 0:
+            ingested = int(self.timestamp or 0)
+        object.__setattr__(self, "ingested_at", ingested)
+        object.__setattr__(self, "platform", str(self.platform or ""))
+        object.__setattr__(self, "bot_id", str(self.bot_id or ""))
+        object.__setattr__(self, "event_version", max(1, int(self.event_version or 1)))
+        meta = dict(self.metadata or {})
+        if mentions and "mentioned_user_ids" not in meta:
+            meta["mentioned_user_ids"] = list(mentions)
+        object.__setattr__(self, "metadata", meta)
+
 
     @property
     def identity(self) -> Tuple[str, str]:
@@ -147,6 +342,85 @@ class MemoryItem:
     importance: float = 0.5
     authority: int = 0
     source_message_id: Optional[str] = None
+    status: MemoryStatus = MemoryStatus.ACCEPTED
+    scope: MemoryScope = MemoryScope.USER_IN_GROUP
+    sensitivity: Sensitivity = Sensitivity.NONE
+    extractor_version: str = "rules-v1"
+    supersedes_memory_id: Optional[str] = None
+    source_message_ids: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        ids = tuple(
+            str(item)
+            for item in (self.source_message_ids or ())
+            if str(item).strip()
+        )
+        if not ids and self.source_message_id:
+            ids = (str(self.source_message_id),)
+        object.__setattr__(self, "source_message_ids", ids)
+        if self.source_message_id is None and ids:
+            object.__setattr__(self, "source_message_id", ids[0])
+        status = self.status
+        if not isinstance(status, MemoryStatus):
+            try:
+                status = MemoryStatus(str(status))
+            except ValueError:
+                status = MemoryStatus.ACCEPTED
+        object.__setattr__(self, "status", status)
+        scope = self.scope
+        if not isinstance(scope, MemoryScope):
+            try:
+                scope = MemoryScope(str(scope))
+            except ValueError:
+                scope = MemoryScope.USER_IN_GROUP
+        object.__setattr__(self, "scope", scope)
+        sensitivity = self.sensitivity
+        if not isinstance(sensitivity, Sensitivity):
+            try:
+                sensitivity = Sensitivity(str(sensitivity))
+            except ValueError:
+                sensitivity = Sensitivity.NONE
+        object.__setattr__(self, "sensitivity", sensitivity)
+
+
+@dataclass(frozen=True)
+class MemoryCandidate:
+    candidate_id: str
+    group_id: str
+    scope: MemoryScope
+    subject_id: str
+    kind: MemoryKind
+    claim: str
+    source_message_ids: Tuple[str, ...]
+    confidence: float
+    sensitivity: Sensitivity
+    proposed_expires_at: Optional[int]
+    extractor_version: str
+    status: CandidateStatus = CandidateStatus.PENDING
+    created_at: int = 0
+    decided_at: Optional[int] = None
+    decision_reason: str = ""
+    claim_hash: str = ""
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    memory_id: str
+    status: MemoryStatus
+    scope: MemoryScope
+    subject_id: str
+    kind: MemoryKind
+    text: str
+    source_message_ids: Tuple[str, ...]
+    authority: int
+    confidence: float
+    created_at: int
+    expires_at: Optional[int] = None
+    supersedes_memory_id: Optional[str] = None
+    group_id: str = ""
+    sensitivity: Sensitivity = Sensitivity.NONE
+    extractor_version: str = "rules-v1"
+    importance: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -161,6 +435,8 @@ class ReplyPlan:
     user_prompt: str = ""
     soft_trigger: bool = False
     image_urls: Tuple[str, ...] = ()
+    reply_mode: ReplyMode = ReplyMode.SHORT_SOCIAL
+    opportunity_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -169,6 +445,45 @@ class WorkflowOutcome:
     sent: bool
     reason: str
     text: str = ""
+
+
+@dataclass(frozen=True)
+class SegmentReceipt:
+    index: int
+    platform_message_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SendResult:
+    kind: SendReceiptKind
+    segments: Tuple[SegmentReceipt, ...] = ()
+    error_code: str = ""
+    error_detail: str = ""
+
+    @classmethod
+    def confirmed(cls, count: int = 1) -> "SendResult":
+        return cls(
+            SendReceiptKind.CONFIRMED,
+            tuple(SegmentReceipt(index) for index in range(max(0, int(count)))),
+        )
+
+    @classmethod
+    def failed(cls, code: str, detail: str = "") -> "SendResult":
+        return cls(SendReceiptKind.FAILED, error_code=code, error_detail=detail)
+
+    @classmethod
+    def unknown(
+        cls,
+        code: str = "no_receipt",
+        detail: str = "",
+        segments: Tuple[SegmentReceipt, ...] = (),
+    ) -> "SendResult":
+        return cls(
+            SendReceiptKind.UNKNOWN,
+            segments=segments,
+            error_code=code,
+            error_detail=detail,
+        )
 
 
 @dataclass(frozen=True)
@@ -187,4 +502,11 @@ class GroupPolicy:
     continuation_seconds: int = 90
     humanize_delay_enabled: bool = True
     max_reply_segments: int = 2
+
+    # Phase 3：关闭后停止 social_events 写入，回退旧 favorability 增量
+    v3_social_enabled: bool = True
+    # Phase 4：关闭后 soft 恢复「进模型 + SpeakContract」旧路径
+    v3_opportunity_enabled: bool = True
+    # Phase 5：关闭后不再接受候选写入，只读既有 memories
+    v3_memory_writer_enabled: bool = True
 

@@ -90,7 +90,7 @@ def test_assembly_injects_favorability_into_user(topic_snapshot):
 
 def test_sqlite_favorability_persist_and_adjust(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "fav.db")
-    assert store.schema_version() == 5
+    assert store.schema_version() == 9
     assert store.get_favorability("g", "u") is None
     assert store.set_favorability("g", "u", 10, updated_at=1) == 10
     assert store.adjust_favorability("g", "u", 5, updated_at=2) == 15

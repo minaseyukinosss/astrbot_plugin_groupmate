@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Sequence
 
+from ..models import SegmentReceipt, SendReceiptKind, SendResult
 from ..persona.aemeath import AemeathPersonaProvider
 
 
@@ -95,7 +96,9 @@ class AstrBotPlatformPort:
         self.context = context
         self.umo_getter = umo_getter
 
-    async def send_text(self, group_id: str, text: str, decision_id: str) -> None:
+    async def send_text(
+        self, group_id: str, text: str, decision_id: str
+    ) -> SendResult:
         del decision_id
         from astrbot.api.event import MessageChain
 
@@ -103,16 +106,24 @@ class AstrBotPlatformPort:
         umo = self.umo_getter(group_id)
         sent = await self.context.send_message(umo, chain)
         if sent:
-            return
+            return SendResult.confirmed()
 
         from astrbot.api.star import StarTools
 
-        await StarTools.send_message_by_id(
-            "GroupMessage",
-            str(group_id),
-            chain,
-            platform="aiocqhttp",
-        )
+        try:
+            receipt = await StarTools.send_message_by_id(
+                "GroupMessage",
+                str(group_id),
+                chain,
+                platform="aiocqhttp",
+            )
+        except Exception as exc:
+            return SendResult.failed(
+                "fallback_error", exc.__class__.__name__ + ":" + str(exc)
+            )
+        if receipt is True:
+            return SendResult.confirmed()
+        return SendResult.unknown("fallback_without_receipt")
 
     async def send_segments(
         self,
@@ -120,12 +131,23 @@ class AstrBotPlatformPort:
         segments: Sequence[str],
         decision_id: str,
         quote_message_id: Optional[str] = None,
-    ) -> None:
+    ) -> SendResult:
         del quote_message_id
+        receipts = []
         for segment in segments:
             text = str(segment or "").strip()
             if text:
-                await self.send_text(group_id, text, decision_id)
+                result = await self.send_text(group_id, text, decision_id)
+                if result.kind is not SendReceiptKind.CONFIRMED:
+                    if receipts:
+                        return SendResult.unknown(
+                            "partial_send",
+                            result.error_detail,
+                            tuple(receipts),
+                        )
+                    return result
+                receipts.append(SegmentReceipt(len(receipts)))
+        return SendResult(SendReceiptKind.CONFIRMED, tuple(receipts))
 
 
 class AstrBotPersonaProvider(AemeathPersonaProvider):
