@@ -190,8 +190,11 @@ class FakePlatform:
     async def send_segments(
         self, group_id, segments, decision_id, quote_message_id=None
     ):
-        for segment in segments:
+        for index, segment in enumerate(segments):
             await self.send_text(group_id, segment, decision_id)
+            self.sent[-1]["quote_message_id"] = (
+                quote_message_id if index == 0 else None
+            )
         from groupmate.models import SendResult
 
         return SendResult.confirmed(len(segments))

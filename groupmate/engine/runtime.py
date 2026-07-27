@@ -6,8 +6,9 @@ import asyncio
 import inspect
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, replace
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Deque, Dict, Optional, Set
 from uuid import uuid4
 
 from ..models import (
@@ -42,6 +43,13 @@ class _ApplyOutcome:
 
 
 @dataclass(frozen=True)
+class _QueuedHardTurn:
+    trigger: TriggerKind
+    alias: str
+    topic: object
+
+
+@dataclass(frozen=True)
 class _Stop:
     pass
 
@@ -67,6 +75,7 @@ class GroupActor:
         self._soft_task = None
         self._hard_task = None
         self._deferred_message = None
+        self._hard_queue: Deque[_QueuedHardTurn] = deque()
         self._generation = 0
         self._random = random_source or random.Random()
         self._closed = False
@@ -74,8 +83,7 @@ class GroupActor:
         self._v3_scheduler_enabled = bool(v3_scheduler_enabled)
         self.last_trigger = TriggerKind.IGNORE
         self.last_outcome = None
-        self._continuation_sender_id = ""
-        self._continuation_until = 0
+        self._continuations: Dict[str, int] = {}
 
     async def start(self) -> None:
         if self._worker is None:
@@ -138,6 +146,7 @@ class GroupActor:
                 task.cancel()
         if self._evaluation_tasks:
             await asyncio.gather(*tuple(self._evaluation_tasks), return_exceptions=True)
+        self._hard_queue.clear()
         await self._close_open_epoch("SHUTDOWN")
         if self._worker is not None:
             await self._queue.put(_Stop())
@@ -152,13 +161,13 @@ class GroupActor:
             "messages": len(self.window.snapshot().messages),
             "pending": bool(self._debounce_task and not self._debounce_task.done()),
             "in_flight": sum(not task.done() for task in self._evaluation_tasks),
+            "pending_hard": len(self._hard_queue),
             "dispatch_enabled": self._dispatch_enabled,
             "scheduler": "v3" if self._v3_scheduler_enabled else "legacy",
             "last_trigger": self.last_trigger.value,
             "closed": self._closed,
-            "continuation_active": bool(
-                self._continuation_sender_id and self._continuation_until > 0
-            ),
+            "continuation_active": bool(self._continuations),
+            "continuation_senders": len(self._continuations),
         }
         if outcome is not None:
             payload["last_outcome"] = {
@@ -211,13 +220,6 @@ class GroupActor:
         self.last_trigger = result.kind
         if result.kind in (TriggerKind.IGNORE, TriggerKind.COMMAND):
             return
-        if self._hard_task is not None and result.kind not in (
-            TriggerKind.NATIVE_DIRECT,
-            TriggerKind.ALIAS_DIRECT,
-            TriggerKind.COPIED_AT,
-        ):
-            self._deferred_message = message
-            return
         if result.kind in (
             TriggerKind.NATIVE_DIRECT,
             TriggerKind.ALIAS_DIRECT,
@@ -225,6 +227,10 @@ class GroupActor:
             TriggerKind.CONTINUATION,
         ):
             await self._evaluate_immediate(result.kind, result.alias)
+            return
+        if self._hard_task is not None:
+            # Soft traffic is intentionally coalesced while a hard turn is active.
+            self._deferred_message = message
             return
 
         self._generation += 1
@@ -245,12 +251,10 @@ class GroupActor:
         )
 
     async def _evaluate_immediate(self, trigger: TriggerKind, alias: str = "") -> None:
-        self._generation += 1
         self._cancel_debounce()
         self._cancel_soft_task()
         if trigger is TriggerKind.NATIVE_DIRECT and not self.policy.handle_native_wake:
             return
-        generation = self._generation
         topic = self.window.snapshot()
         if not self._v3_scheduler_enabled:
             self.last_outcome = await self.workflow.evaluate(
@@ -261,6 +265,11 @@ class GroupActor:
                 self._append_bot_projection(self.last_outcome)
             await self._rotate_topic_epoch("HARD_WAKE")
             return
+        if self._hard_task is not None:
+            self._hard_queue.append(_QueuedHardTurn(trigger, alias, topic))
+            return
+        self._generation += 1
+        generation = self._generation
         self._launch_evaluation(generation, topic, trigger, alias, soft=False)
 
     async def _enqueue_evaluation(
@@ -308,6 +317,7 @@ class GroupActor:
             self._soft_task = None
             self._hard_task = None
             self._deferred_message = None
+            self._hard_queue.clear()
 
     def _launch_evaluation(
         self,
@@ -386,6 +396,17 @@ class GroupActor:
             else "EVALUATED"
         )
         await self._rotate_topic_epoch(close_reason)
+        if self._hard_queue and self._dispatch_enabled:
+            queued = self._hard_queue.popleft()
+            self._generation += 1
+            self._launch_evaluation(
+                self._generation,
+                queued.topic,
+                queued.trigger,
+                queued.alias,
+                soft=False,
+            )
+            return
         deferred = self._deferred_message
         self._deferred_message = None
         if deferred is not None and self._dispatch_enabled:
@@ -418,12 +439,11 @@ class GroupActor:
             return result
         if self.policy.continuation_seconds <= 0:
             return result
-        if not self._continuation_sender_id:
+        expires_at = self._continuations.get(message.sender_id)
+        if expires_at is None:
             return result
-        if message.sender_id != self._continuation_sender_id:
-            return result
-        if message.timestamp > self._continuation_until:
-            self._clear_continuation()
+        if message.timestamp > expires_at:
+            self._continuations.pop(message.sender_id, None)
             return result
         return TriggerResult(TriggerKind.CONTINUATION, "conversation_continuation")
 
@@ -447,8 +467,7 @@ class GroupActor:
             return
         granted_at = int(latest.timestamp)
         expires_at = granted_at + seconds
-        self._continuation_sender_id = latest.sender_id
-        self._continuation_until = expires_at
+        self._continuations[latest.sender_id] = expires_at
         memory = getattr(self.workflow, "memory", None)
         grant = getattr(memory, "grant_continuation_async", None)
         if grant is not None:
@@ -503,12 +522,17 @@ class GroupActor:
         self.window.append(bot_message)
 
     def set_continuation(self, sender_id: str, expires_at: int) -> None:
-        self._continuation_sender_id = str(sender_id or "")
-        self._continuation_until = int(expires_at or 0)
+        sender_id = str(sender_id or "")
+        expires_at = int(expires_at or 0)
+        if not sender_id:
+            self._continuations.clear()
+        elif expires_at > 0:
+            self._continuations[sender_id] = expires_at
+        else:
+            self._continuations.pop(sender_id, None)
 
     def _clear_continuation(self) -> None:
-        self._continuation_sender_id = ""
-        self._continuation_until = 0
+        self._continuations.clear()
 
     def _stamp_message(self, message: ChatMessage, *, schedule: bool) -> ChatMessage:
         if message.origin is MessageOrigin.BOT_DELIVERY:

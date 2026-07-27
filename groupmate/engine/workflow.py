@@ -9,6 +9,7 @@ from uuid import uuid4
 from ..core.addressee import AddresseeResolver
 from ..core.intent import max_chars_for_mode
 from ..core.session import GroupSession, GroupSessionStore
+from ..core.scenes import classify_scene, policy_for_scene
 from ..core.speak_contract import SpeakContract
 from ..core.favorability import seed_score_for_relationship
 from ..core.relationships import resolve_speaker
@@ -141,6 +142,10 @@ class CognitiveWorkflow:
             return await self._send_copied_at_tip(
                 decision_id, topic, trigger_alias, now, still_valid
             )
+
+        scene = classify_scene(trigger, topic.latest)
+        scene_policy = policy_for_scene(scene)
+        self._record(decision_id, topic.group_id, "SCENE", scene.value, now)
 
         # Legacy soft path prechecks when opportunity arbiter disabled
         if not opportunity_enabled:
@@ -423,6 +428,11 @@ class CognitiveWorkflow:
 
         direct_wake = trigger in _HARD_TRIGGERS
         mode_max = max_chars_for_mode(reply_mode, policy_max=policy.max_reply_chars)
+        quote_message_id = None
+        if scene_policy.should_quote(
+            interleaved=self._has_interleaved_context(topic, target_message_id)
+        ):
+            quote_message_id = target_message_id
         delivery = build_delivery_plan(
             decision_id=decision_id,
             group_id=topic.group_id,
@@ -434,7 +444,7 @@ class CognitiveWorkflow:
             max_segments=policy.max_reply_segments,
             humanize_delay=policy.humanize_delay_enabled,
             direct_wake=direct_wake,
-            quote_message_id=target_message_id,
+            quote_message_id=quote_message_id,
         )
         if not delivery.segments:
             return self._silent(decision_id, topic.group_id, "empty_delivery", now)
@@ -803,6 +813,27 @@ class CognitiveWorkflow:
         for message in active:
             urls.extend(message.image_urls)
         return tuple(dict.fromkeys(urls))
+
+    @staticmethod
+    def _has_interleaved_context(
+        topic: TopicSnapshot, target_message_id: Optional[str]
+    ) -> bool:
+        active = select_active_messages(
+            topic.messages, topic_created_at=topic.created_at
+        )
+        humans = [message for message in active if not message.is_bot]
+        if len(humans) < 2:
+            return False
+        recent = humans[-4:]
+        if recent[-1].timestamp - recent[0].timestamp > 15:
+            return False
+        senders = {message.sender_id for message in recent if message.sender_id}
+        if len(senders) > 1:
+            return True
+        return bool(
+            target_message_id
+            and recent[-1].message_id != str(target_message_id)
+        )
 
     def _silent(
         self,

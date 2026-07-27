@@ -90,6 +90,43 @@ def test_alias_direct_sends(topic_snapshot, balanced_policy):
     assert outcome.sent is True
 
 
+def test_reply_to_bot_scene_quotes_anchor_message(message_factory, balanced_policy):
+    platform = FakePlatform()
+    workflow = build_workflow(platform=platform)
+    message = message_factory(
+        message_id="reply-anchor",
+        text="那这个呢",
+        reply_to_bot=True,
+        reply_to_message_id="bot-previous",
+    )
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.NATIVE_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert platform.sent[0]["quote_message_id"] == "reply-anchor"
+    assert any(
+        state == "SCENE" and reason == "reply_to_bot"
+        for _, _, state, reason, _ in workflow.memory.transitions
+    )
+
+
+def test_ambient_scene_does_not_quote_latest_message(
+    topic_snapshot, balanced_policy
+):
+    platform = FakePlatform()
+    workflow = build_workflow(platform=platform)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic_snapshot, TriggerKind.CANDIDATE, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert platform.sent[0]["quote_message_id"] is None
+
+
 def test_direct_wake_is_not_rejected_as_stale_topic(message_factory, balanced_policy):
     message = message_factory(message_id="wake", text="小爱", timestamp=0)
     topic = TopicSnapshot("t1", "g1", (message,), 0, 0)

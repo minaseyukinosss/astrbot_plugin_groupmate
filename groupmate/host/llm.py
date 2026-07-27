@@ -97,12 +97,24 @@ class AstrBotPlatformPort:
         self.umo_getter = umo_getter
 
     async def send_text(
-        self, group_id: str, text: str, decision_id: str
+        self,
+        group_id: str,
+        text: str,
+        decision_id: str,
+        quote_message_id: Optional[str] = None,
     ) -> SendResult:
         del decision_id
         from astrbot.api.event import MessageChain
 
-        chain = MessageChain().message(text)
+        chain = MessageChain()
+        if quote_message_id:
+            from astrbot.api.message_components import Reply
+
+            components = getattr(chain, "chain", None)
+            if components is None:
+                return SendResult.failed("reply_component_unsupported")
+            components.append(Reply(id=str(quote_message_id)))
+        chain.message(text)
         umo = self.umo_getter(group_id)
         sent = await self.context.send_message(umo, chain)
         if sent:
@@ -132,12 +144,16 @@ class AstrBotPlatformPort:
         decision_id: str,
         quote_message_id: Optional[str] = None,
     ) -> SendResult:
-        del quote_message_id
         receipts = []
-        for segment in segments:
+        for index, segment in enumerate(segments):
             text = str(segment or "").strip()
             if text:
-                result = await self.send_text(group_id, text, decision_id)
+                result = await self.send_text(
+                    group_id,
+                    text,
+                    decision_id,
+                    quote_message_id=quote_message_id if index == 0 else None,
+                )
                 if result.kind is not SendReceiptKind.CONFIRMED:
                     if receipts:
                         return SendResult.unknown(

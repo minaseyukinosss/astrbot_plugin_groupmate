@@ -119,6 +119,21 @@ class OpportunityAction(StringEnum):
     SILENCE = "silence"
 
 
+class InteractionScene(StringEnum):
+    DIRECT_ADDRESS = "direct_address"
+    REPLY_TO_BOT = "reply_to_bot"
+    ACTIVE_CONTINUATION = "active_continuation"
+    SOCIAL_RESPONSE = "social_response"
+    AMBIENT_CONTRIBUTION = "ambient_contribution"
+    TASK_REQUEST = "task_request"
+
+
+class QuoteMode(StringEnum):
+    ALWAYS = "always"
+    WHEN_INTERLEAVED = "when_interleaved"
+    NEVER = "never"
+
+
 class ReplyMode(StringEnum):
     SHORT_SOCIAL = "short_social"
     HELP_DETAIL = "help_detail"
@@ -509,4 +524,3 @@ class GroupPolicy:
     v3_opportunity_enabled: bool = True
     # Phase 5：关闭后不再接受候选写入，只读既有 memories
     v3_memory_writer_enabled: bool = True
-

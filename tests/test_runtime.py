@@ -229,3 +229,102 @@ def test_runtime_manager_keeps_groups_isolated(message_factory):
     assert workflows["g1"].evaluations[0][0].group_id == "g1"
     assert workflows["g2"].evaluations[0][0].group_id == "g2"
 
+
+def test_direct_requests_are_serialized_without_invalidating_first(message_factory):
+    class BlockingWorkflow:
+        def __init__(self):
+            self.started = []
+            self.completed = []
+            self.first_started = asyncio.Event()
+            self.release_first = asyncio.Event()
+
+        async def evaluate(
+            self, topic, trigger, policy, trigger_alias="", still_valid=None
+        ):
+            del trigger, policy, trigger_alias
+            message_id = topic.latest.message_id
+            self.started.append(message_id)
+            if message_id == "first":
+                self.first_started.set()
+                await self.release_first.wait()
+            assert still_valid is None or still_valid()
+            self.completed.append(message_id)
+            from groupmate.models import WorkflowOutcome
+
+            return WorkflowOutcome("d-" + message_id, True, "sent", message_id)
+
+    async def scenario():
+        workflow = BlockingWorkflow()
+        actor = GroupActor("g1", workflow, policy=fast_policy())
+        await actor.start()
+        await actor.submit(
+            message_factory(message_id="first", text="小爱，先回答我")
+        )
+        await workflow.first_started.wait()
+        await actor.submit(
+            message_factory(
+                message_id="second",
+                sender_id="u2",
+                sender_name="Bob",
+                text="小爱，我也问一个",
+                timestamp=101,
+            )
+        )
+        await asyncio.sleep(0)
+        started_before_release = list(workflow.started)
+        workflow.release_first.set()
+        await actor.drain()
+        await actor.close()
+        return workflow, started_before_release
+
+    workflow, started_before_release = asyncio.run(scenario())
+
+    assert started_before_release == ["first"]
+    assert workflow.completed == ["first", "second"]
+
+
+def test_continuation_grants_are_kept_per_sender(message_factory):
+    async def scenario():
+        workflow = RecordingWorkflow()
+        actor = GroupActor(
+            "g1",
+            workflow,
+            policy=GroupPolicy(
+                aliases=("小爱",),
+                continuation_seconds=90,
+                debounce_min_seconds=0.01,
+                debounce_max_seconds=0.01,
+                spontaneous_cooldown_seconds=0,
+            ),
+        )
+        await actor.start()
+        await actor.submit(
+            message_factory(message_id="u1-wake", text="小爱", timestamp=100)
+        )
+        await actor.drain()
+        await actor.submit(
+            message_factory(
+                message_id="u2-wake",
+                sender_id="u2",
+                sender_name="Bob",
+                text="小爱",
+                timestamp=101,
+            )
+        )
+        await actor.drain()
+        await actor.submit(
+            message_factory(
+                message_id="u1-follow",
+                text="那第二种呢",
+                timestamp=105,
+            )
+        )
+        await actor.drain()
+        await actor.close()
+        return [item[1].value for item in workflow.evaluations]
+
+    assert asyncio.run(scenario()) == [
+        "alias_direct",
+        "alias_direct",
+        "continuation",
+    ]

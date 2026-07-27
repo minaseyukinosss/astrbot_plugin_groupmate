@@ -1249,6 +1249,27 @@ class SQLiteMemoryStore:
         row = self._db.execute(sql, tuple(params)).fetchone()
         return dict(row) if row else None
 
+    def list_active_continuation_grants(
+        self, group_id: str, now: int
+    ) -> List[Dict[str, Any]]:
+        rows = self._db.execute(
+            """
+            SELECT * FROM continuation_grants
+            WHERE group_id = ?
+              AND expires_at >= ?
+              AND absolute_deadline_at >= ?
+            ORDER BY granted_at DESC
+            """,
+            (str(group_id), int(now), int(now)),
+        ).fetchall()
+        latest_by_sender: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            latest_by_sender.setdefault(str(item["sender_id"]), item)
+        return sorted(
+            latest_by_sender.values(), key=lambda item: int(item["granted_at"])
+        )
+
     def get_favorability(self, group_id: str, user_id: str) -> Optional[int]:
         row = self._db.execute(
             "SELECT score FROM favorability WHERE group_id = ? AND user_id = ?",

@@ -6,6 +6,7 @@ import asyncio
 from uuid import uuid4
 
 from groupmate.core.projections import StateProjector
+from groupmate.core.session import GroupSession
 from groupmate.engine.rate_limit import SlidingWindowRateLimiter
 from groupmate.engine.runtime import GroupActor
 from groupmate.engine.topics import TopicWindow
@@ -208,6 +209,44 @@ def test_history_preload_does_not_schedule(message_factory, tmp_path):
         return evaluations
 
     assert asyncio.run(scenario()) == []
+
+
+def test_rebuild_restores_active_continuations_for_each_sender(tmp_path):
+    now = 200
+    store = SQLiteMemoryStore(tmp_path / "multi-grants.db")
+    for sender_id, granted_at in (("u1", 100), ("u2", 110)):
+        store.grant_continuation(
+            grant_id="grant-" + sender_id,
+            group_id="g1",
+            sender_id=sender_id,
+            opened_by_decision_id="d-" + sender_id,
+            opened_by_message_id="m-" + sender_id,
+            trigger_kind="ALIAS_DIRECT",
+            granted_at=granted_at,
+            expires_at=now + 60,
+            max_total_seconds=200,
+        )
+
+    snapshot = StateProjector(store).rebuild("g1", now=now, policy=_policy())
+    restored = {}
+
+    def set_continuation(sender_id, expires_at):
+        if not sender_id:
+            restored.clear()
+        else:
+            restored[sender_id] = expires_at
+
+    StateProjector(store).apply(
+        snapshot,
+        window=TopicWindow("g1"),
+        session=GroupSession("g1"),
+        rate_limiter=SlidingWindowRateLimiter(6, 0),
+        workflow=type("Workflow", (), {})(),
+        set_continuation=set_continuation,
+    )
+    store.close()
+
+    assert set(restored) == {"u1", "u2"}
 
 
 def test_unknown_outbox_not_counted_in_rate_rebuild(tmp_path):
