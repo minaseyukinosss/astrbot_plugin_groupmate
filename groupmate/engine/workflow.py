@@ -234,9 +234,7 @@ class CognitiveWorkflow:
                 soft_trigger=soft_trigger,
                 scene=scene,
                 aliases=policy.aliases,
-                task_supported=task_resolution.supported,
-                required_information=task_resolution.required_information,
-                capability_name=task_resolution.capability_name,
+                task_resolution=task_resolution,
             )
             if intent is None:
                 return self._silent(decision_id, topic.group_id, "intent_missing", now)

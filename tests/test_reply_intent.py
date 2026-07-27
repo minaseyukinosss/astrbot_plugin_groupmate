@@ -119,6 +119,7 @@ def test_planner_exposes_task_clarification_requirements():
         targeting,
         decision_id="d1",
         scene=InteractionScene.TASK_REQUEST,
+        task_supported=True,
         required_information=("待翻译文本",),
     )
 

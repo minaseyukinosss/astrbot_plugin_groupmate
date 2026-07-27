@@ -195,6 +195,38 @@ def test_task_response_plan_keeps_capability_identity():
     assert plan.capability_name == "translator"
 
 
+@pytest.mark.parametrize(
+    ("status_name", "expected_name"),
+    (
+        ("SUPPORTED", "CLARIFY"),
+        ("UNKNOWN", "TASK_UNSUPPORTED"),
+        ("UNSUPPORTED", "TASK_UNSUPPORTED"),
+    ),
+)
+def test_task_resolution_status_precedes_missing_information(
+    status_name, expected_name
+):
+    resolution = response_act_module.TaskResolution(
+        status=getattr(response_act_module.TaskResolutionStatus, status_name),
+        capability_name="translator",
+        required_information=("目标",),
+    )
+
+    plan = plan_response_act(
+        InteractionScene.TASK_REQUEST,
+        reply_mode=ReplyMode.HELP_DETAIL,
+        text="帮我翻译",
+        task_supported=True,
+        required_information=("旧参数",),
+        task_resolution=resolution,
+    )
+
+    assert plan.act.name == expected_name
+    assert plan.required_information == (
+        ("目标",) if status_name == "SUPPORTED" else ()
+    )
+
+
 def test_same_inputs_always_produce_the_same_plan():
     kwargs = {
         "reply_mode": ReplyMode.SHORT_SOCIAL,

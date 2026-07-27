@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from ..core.intent import has_image_capability, select_reply_mode
-from ..core.response_act import ResponseAct, ResponseActPlan, plan_response_act
+from ..core.response_act import (
+    ResponseAct,
+    ResponseActPlan,
+    TaskResolution,
+    plan_response_act,
+)
 from ..models import (
     InteractionScene,
     OpportunityAction,
@@ -36,6 +41,7 @@ class ReplyIntentPlanner:
         task_supported: bool = False,
         required_information: Sequence[str] = (),
         capability_name: str = "",
+        task_resolution: Optional[TaskResolution] = None,
     ) -> Optional[ReplyIntent]:
         if opportunity.action is not OpportunityAction.SPEAK:
             return None
@@ -62,6 +68,7 @@ class ReplyIntentPlanner:
             task_supported=task_supported,
             required_information=required_information,
             capability_name=capability_name,
+            task_resolution=task_resolution,
         )
         caps = []
         if act_plan.act in (

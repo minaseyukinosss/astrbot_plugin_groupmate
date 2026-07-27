@@ -289,6 +289,44 @@ def test_supported_task_stays_pending_and_forbids_completion_claims(
     assert "不得声称已完成" in plan.user_prompt
 
 
+@pytest.mark.parametrize(
+    "resolver",
+    (
+        lambda scene, message, policy: _resolution(
+            "UNKNOWN", required_information=("秘密参数",)
+        ),
+        lambda scene, message, policy: _resolution(
+            "UNSUPPORTED", required_information=("秘密参数",)
+        ),
+        lambda scene, message, policy: (False, ("秘密参数",)),
+    ),
+)
+def test_non_supported_task_status_ignores_missing_information_in_prompt(
+    resolver, message_factory, balanced_policy
+):
+    generator = RecordingGenerationModel("这个我现在做不了。")
+    workflow = build_workflow(
+        generator=generator,
+        persona=AemeathPersonaProvider(),
+        task_response_resolver=resolver,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我翻译"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    plan = generator.plans[-1]
+    assert outcome.sent is True
+    assert plan.response_act.act.name == "TASK_UNSUPPORTED"
+    assert plan.response_act.required_information == ()
+    assert "秘密参数" not in plan.user_prompt
+    assert "只追问" not in plan.user_prompt
+
+
 def _raising_resolver(scene, message, policy):
     raise RuntimeError("resolver unavailable")
 

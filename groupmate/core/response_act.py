@@ -49,7 +49,11 @@ class TaskResolution:
         object.__setattr__(
             self,
             "required_information",
-            _clean_facts(self.required_information),
+            (
+                _clean_facts(self.required_information)
+                if status is TaskResolutionStatus.SUPPORTED
+                else ()
+            ),
         )
 
     @property
@@ -94,11 +98,21 @@ def plan_response_act(
     task_supported: bool = False,
     required_information: Sequence[str] = (),
     capability_name: str = "",
+    task_resolution: Optional[TaskResolution] = None,
 ) -> ResponseActPlan:
     """Choose one response act using only explicit, observable inputs."""
 
-    missing = _clean_facts(required_information)
-    capability = _clean_fact(capability_name, max_chars=80)
+    resolution = task_resolution or TaskResolution(
+        status=(
+            TaskResolutionStatus.SUPPORTED
+            if task_supported
+            else TaskResolutionStatus.UNSUPPORTED
+        ),
+        capability_name=capability_name,
+        required_information=required_information,
+    )
+    missing = resolution.required_information
+    capability = resolution.capability_name
     scene_reason = "scene:{}".format(scene.value)
 
     if boundary_required or reply_mode is ReplyMode.BOUNDARY:
@@ -114,7 +128,7 @@ def plan_response_act(
         )
 
     if scene is InteractionScene.TASK_REQUEST:
-        if missing:
+        if resolution.status is TaskResolutionStatus.SUPPORTED and missing:
             return ResponseActPlan(
                 ResponseAct.CLARIFY,
                 scene,
@@ -122,7 +136,7 @@ def plan_response_act(
                 missing,
                 capability,
             )
-        if task_supported:
+        if resolution.status is TaskResolutionStatus.SUPPORTED:
             return ResponseActPlan(
                 ResponseAct.TASK_HANDOFF,
                 scene,
