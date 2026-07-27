@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from groupmate.host import AstrBotBridge
+from groupmate.host.bridge import TurnOwner
 from groupmate.config import PluginSettings
 
 
@@ -104,6 +105,7 @@ def test_suppress_polarity_matches_astrbot_process_stage(tmp_path):
 def test_defer_search_question_to_astrbot(tmp_path):
     bridge = _bridge(tmp_path)
     event = _FakeEvent(text="抖音isa怎么了。怎么那么多人骂她")
+    assert bridge.owner_for_event(event) is TurnOwner.ASTRBOT_AGENT
     assert bridge.should_take_native_wake(event) is True
     assert bridge.should_defer_native_wake_to_astrbot(event) is True
     # Defer path must leave call_llm False so ProcessStage can run Agent+tools.
@@ -114,8 +116,42 @@ def test_defer_search_question_to_astrbot(tmp_path):
 def test_casual_at_does_not_defer(tmp_path):
     bridge = _bridge(tmp_path)
     event = _FakeEvent(text="你今天怎样")
+    assert bridge.owner_for_event(event) is TurnOwner.GROUPMATE
     assert bridge.should_take_native_wake(event) is True
     assert bridge.should_defer_native_wake_to_astrbot(event) is False
+
+
+def test_non_native_message_is_observe_only_owner(tmp_path):
+    bridge = _bridge(tmp_path)
+    event = _FakeEvent(at_bot=False, text="今天好热")
+
+    assert bridge.owner_for_event(event) is TurnOwner.OBSERVE_ONLY
+
+
+def test_native_wake_has_exactly_one_owner(tmp_path):
+    bridge = _bridge(tmp_path)
+
+    assert bridge.owner_for_event(_FakeEvent(text="你今天怎样")) is TurnOwner.GROUPMATE
+    assert (
+        bridge.owner_for_event(_FakeEvent(text="查一下今天发布的公告"))
+        is TurnOwner.ASTRBOT_AGENT
+    )
+
+
+def test_owner_application_suppresses_only_groupmate_owned_wake(tmp_path):
+    bridge = _bridge(tmp_path)
+    groupmate_event = _FakeEvent(text="你今天怎样")
+    agent_event = _FakeEvent(text="搜索今天的新闻")
+    observe_event = _FakeEvent(at_bot=False, text="路过一下")
+
+    assert bridge.apply_owner_to_event(groupmate_event) is TurnOwner.GROUPMATE
+    assert groupmate_event.call_llm is True
+
+    assert bridge.apply_owner_to_event(agent_event) is TurnOwner.ASTRBOT_AGENT
+    assert agent_event.call_llm is False
+
+    assert bridge.apply_owner_to_event(observe_event) is TurnOwner.OBSERVE_ONLY
+    assert observe_event.call_llm is False
 
 
 def test_pause_still_observes_without_dispatch(tmp_path):

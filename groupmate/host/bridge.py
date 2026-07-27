@@ -21,7 +21,7 @@ from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
 from ..memory import SQLiteMemoryStore
-from ..models import ChatMessage, GroupPolicy, MessageOrigin, TriggerKind
+from ..models import ChatMessage, GroupPolicy, MessageOrigin, StringEnum, TriggerKind
 from ..persona.aemeath import (
     CHARACTER_NAME,
     AemeathOutputFirewall,
@@ -36,6 +36,12 @@ from .llm import (
     AstrBotVisionPort,
 )
 from .onebot import NapCatHistoryPort, OneBotTranslator
+
+
+class TurnOwner(StringEnum):
+    GROUPMATE = "groupmate"
+    ASTRBOT_AGENT = "astrbot_agent"
+    OBSERVE_ONLY = "observe_only"
 
 
 class AstrBotBridge:
@@ -129,9 +135,24 @@ class AstrBotBridge:
 
     def should_defer_native_wake_to_astrbot(self, event: Any) -> bool:
         """Hand @ wakes that need web/external facts back to AstrBot's Agent."""
+        return self.owner_for_event(event) is TurnOwner.ASTRBOT_AGENT
+
+    def owner_for_event(self, event: Any) -> TurnOwner:
+        """Return the single final-response owner for this host event."""
         if not self.should_take_native_wake(event):
-            return False
-        return needs_external_knowledge(self._message_from_event(event).text)
+            return TurnOwner.OBSERVE_ONLY
+        if needs_external_knowledge(self._message_from_event(event).text):
+            return TurnOwner.ASTRBOT_AGENT
+        return TurnOwner.GROUPMATE
+
+    def apply_owner_to_event(self, event: Any) -> TurnOwner:
+        owner = self.owner_for_event(event)
+        if owner is TurnOwner.GROUPMATE:
+            if hasattr(event, "should_call_llm"):
+                event.should_call_llm(True)
+            else:
+                event.call_llm = True
+        return owner
 
     async def _prepare_actor(self, event: Any):
         group_id = str(event.get_group_id())

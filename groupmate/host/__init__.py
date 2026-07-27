@@ -1,6 +1,6 @@
 """宿主适配层。"""
 
-from .bridge import AstrBotBridge
+from .bridge import AstrBotBridge, TurnOwner
 from .llm import (
     AstrBotGenerationModel,
     AstrBotPersonaProvider,
@@ -11,6 +11,7 @@ from .onebot import NapCatHistoryPort, OneBotTranslator
 
 __all__ = [
     "AstrBotBridge",
+    "TurnOwner",
     "AstrBotGenerationModel",
     "AstrBotPersonaProvider",
     "AstrBotPlatformPort",

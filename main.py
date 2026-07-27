@@ -9,7 +9,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from .groupmate.host import AstrBotBridge
+from .groupmate.host import AstrBotBridge, TurnOwner
 from .groupmate.config import PluginSettings
 from .groupmate.host.web_api import GroupmateWebAPI
 
@@ -29,20 +29,11 @@ class GroupmatePlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def observe_group_message(self, event: AstrMessageEvent):
         """旁路观察 QQ 群消息，不抢占已有指令。"""
-        if self.bridge.should_take_native_wake(event):
-            if self.bridge.should_defer_native_wake_to_astrbot(event):
-                # 需要联网/外部事实：只观察，不抑制 AstrBot 默认 Agent（保留搜索工具）。
-                await self.bridge.observe_only(event)
-                return
-            # AstrBot ProcessStage 默认 Agent 条件：
-            #   is_at_or_wake_command and not event.call_llm and not _has_send_oper
-            # call_llm 的语义是「禁止默认 LLM」（见 AstrMessageEvent），默认 False。
-            # Groupmate 异步投递，返回时尚未 event.send，不能靠 _has_send_oper；
-            # 必须显式置 True，否则 @ 会同时触发 AstrBot 原生回复与 Groupmate。
-            if hasattr(event, "should_call_llm"):
-                event.should_call_llm(True)
-            else:
-                event.call_llm = True
+        owner = self.bridge.apply_owner_to_event(event)
+        if owner is TurnOwner.ASTRBOT_AGENT:
+            # 只观察并让 AstrBot Agent 保持唯一的最终回复权。
+            await self.bridge.observe_only(event)
+            return
         await self.bridge.handle_event(event)
 
     @filter.on_llm_request()
