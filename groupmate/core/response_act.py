@@ -49,7 +49,7 @@ def plan_response_act(
     aliases: Sequence[str] = (),
     has_visual: bool = False,
     boundary_required: bool = False,
-    task_supported: bool = True,
+    task_supported: bool = False,
     required_information: Sequence[str] = (),
 ) -> ResponseActPlan:
     """Choose one response act using only explicit, observable inputs."""
@@ -71,7 +71,6 @@ def plan_response_act(
             ResponseAct.BOUNDARY,
             scene,
             (scene_reason, reason),
-            missing,
         )
 
     if scene is InteractionScene.TASK_REQUEST:

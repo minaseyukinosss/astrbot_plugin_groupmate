@@ -98,6 +98,7 @@ def test_boundary_has_priority_over_task_handling():
 
     assert plan.act.name == "BOUNDARY"
     assert "boundary_required" in plan.reason_codes
+    assert plan.required_information == ()
 
 
 @pytest.mark.parametrize(

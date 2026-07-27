@@ -33,7 +33,7 @@ class ReplyIntentPlanner:
         scene: Optional[InteractionScene] = None,
         aliases: Sequence[str] = (),
         boundary_required: bool = False,
-        task_supported: bool = True,
+        task_supported: bool = False,
         required_information: Sequence[str] = (),
     ) -> Optional[ReplyIntent]:
         if opportunity.action is not OpportunityAction.SPEAK:

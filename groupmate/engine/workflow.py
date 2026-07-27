@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Callable, DefaultDict, Deque, List, Optional, Sequence
+from typing import Callable, DefaultDict, Deque, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from ..core.addressee import AddresseeResolver
@@ -18,9 +18,11 @@ from .opportunity import OpportunityArbiter
 from .planner import ReplyIntentPlanner
 from ..models import (
     AddresseeKind,
+    ChatMessage,
     Decision,
     DecisionAction,
     GroupPolicy,
+    InteractionScene,
     MemoryItem,
     MemoryKind,
     OpportunityAction,
@@ -55,6 +57,10 @@ _HARD_TRIGGERS = frozenset(
         TriggerKind.CONTINUATION,
     }
 )
+TaskResponseResolver = Callable[
+    [InteractionScene, ChatMessage, GroupPolicy],
+    Tuple[bool, Sequence[str]],
+]
 
 
 class CognitiveWorkflow:
@@ -78,6 +84,7 @@ class CognitiveWorkflow:
         intent_planner: Optional[ReplyIntentPlanner] = None,
         budgets: Optional[BudgetTracker] = None,
         memory_writer: Optional[MemoryWriter] = None,
+        task_response_resolver: Optional[TaskResponseResolver] = None,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -103,6 +110,7 @@ class CognitiveWorkflow:
         )
         self.memory_writer = memory_writer or MemoryWriter(memory)
         self.intent_planner = intent_planner or ReplyIntentPlanner()
+        self.task_response_resolver = task_response_resolver
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
@@ -205,6 +213,9 @@ class CognitiveWorkflow:
                     )
                 return self._silent(decision_id, topic.group_id, reason, now)
 
+            task_supported, required_information = self._task_response_inputs(
+                scene, topic.latest, policy
+            )
             intent = self.intent_planner.plan(
                 opportunity,
                 topic,
@@ -213,6 +224,8 @@ class CognitiveWorkflow:
                 soft_trigger=soft_trigger,
                 scene=scene,
                 aliases=policy.aliases,
+                task_supported=task_supported,
+                required_information=required_information,
             )
             if intent is None:
                 return self._silent(decision_id, topic.group_id, "intent_missing", now)
@@ -506,6 +519,28 @@ class CognitiveWorkflow:
                 decision_id, topic.group_id, "MEMORY", "schedule_failed", send_now
             )
         return outcome
+
+    def _task_response_inputs(
+        self,
+        scene: InteractionScene,
+        message: Optional[ChatMessage],
+        policy: GroupPolicy,
+    ) -> Tuple[bool, Tuple[str, ...]]:
+        if (
+            scene is not InteractionScene.TASK_REQUEST
+            or message is None
+            or self.task_response_resolver is None
+        ):
+            return False, ()
+        supported, required_information = self.task_response_resolver(
+            scene, message, policy
+        )
+        missing = tuple(
+            str(item).strip()
+            for item in (required_information or ())
+            if str(item).strip()
+        )
+        return supported is True, missing
 
     def _resolve_targeting(
         self,

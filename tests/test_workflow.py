@@ -15,7 +15,16 @@ from tests.fakes import (
 )
 
 
-def build_workflow(generator=None, platform=None, memory=None, clock=None):
+def build_workflow(
+    generator=None,
+    platform=None,
+    memory=None,
+    clock=None,
+    task_response_resolver=None,
+):
+    kwargs = {}
+    if task_response_resolver is not None:
+        kwargs["task_response_resolver"] = task_response_resolver
     return CognitiveWorkflow(
         generation_model=generator or StaticGenerationModel("这也太离谱了呀。"),
         vision=NullVision(),
@@ -25,7 +34,23 @@ def build_workflow(generator=None, platform=None, memory=None, clock=None):
         output_guard=AemeathOutputFirewall(max_chars=60),
         rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
         clock=clock or FakeClock(),
+        **kwargs,
     )
+
+
+class RecordingGenerationModel(StaticGenerationModel):
+    def __init__(self, text="收到。"):
+        super().__init__(text)
+        self.plans = []
+
+    async def generate(self, plan, topic, memories):
+        self.plans.append(plan)
+        return await super().generate(plan, topic, memories)
+
+
+def _task_topic(message_factory, text="帮我翻译一下"):
+    message = message_factory(message_id="task", text=text)
+    return TopicSnapshot("task-topic", "g1", (message,), 100, 100)
 
 
 def test_generation_failure_fails_closed(topic_snapshot, balanced_policy):
@@ -88,6 +113,72 @@ def test_alias_direct_sends(topic_snapshot, balanced_policy):
     )
 
     assert outcome.sent is True
+
+
+def test_task_request_clarifies_when_resolver_reports_missing_information(
+    message_factory, balanced_policy
+):
+    generator = RecordingGenerationModel()
+    workflow = build_workflow(
+        generator=generator,
+        task_response_resolver=lambda scene, message, policy: (
+            True,
+            ("待翻译文本",),
+        ),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert generator.plans[-1].response_act.act.name == "CLARIFY"
+    assert generator.plans[-1].response_act.required_information == (
+        "待翻译文本",
+    )
+
+
+def test_task_request_hands_off_when_resolver_reports_supported(
+    message_factory, balanced_policy
+):
+    generator = RecordingGenerationModel()
+    workflow = build_workflow(
+        generator=generator,
+        task_response_resolver=lambda scene, message, policy: (True, ()),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我翻译这句话"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert generator.plans[-1].response_act.act.name == "TASK_HANDOFF"
+
+
+def test_task_request_is_unsupported_when_capability_is_unknown(
+    message_factory, balanced_policy
+):
+    generator = RecordingGenerationModel()
+    workflow = build_workflow(generator=generator)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我执行这个任务"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert generator.plans[-1].response_act.act.name == "TASK_UNSUPPORTED"
 
 
 def test_reply_to_bot_scene_quotes_anchor_message(message_factory, balanced_policy):
