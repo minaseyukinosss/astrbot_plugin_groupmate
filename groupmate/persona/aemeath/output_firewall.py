@@ -9,6 +9,7 @@ from typing import List, Optional, Sequence
 from ...models import ReplyMode
 from ...ports import GuardResult
 from ...core.intent import constraints_for
+from ...core.response_act import ResponseAct
 
 
 class AemeathOutputFirewall:
@@ -37,6 +38,12 @@ class AemeathOutputFirewall:
         re.IGNORECASE,
     )
     _INTERNAL_ID = re.compile(r"(?:sender_id|user_id|internal_id|内部ID)", re.IGNORECASE)
+    _COMPLETION_CLAIM = re.compile(
+        r"(?:(?:已经|已|刚刚).{0,16}"
+        r"(?:完成(?:了)?|成功(?:了)?|搞定(?:了)?|好(?:了)?))"
+        r"|(?:搞定了|完成了|做好了|弄好了|查好了|处理好了|发布成功)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, max_chars: int = 60, max_sentences: int = 2) -> None:
         self.max_chars = max(1, max_chars)
@@ -48,6 +55,8 @@ class AemeathOutputFirewall:
         recent_outputs: Sequence[str],
         *,
         reply_mode: Optional[ReplyMode] = None,
+        response_act: Optional[ResponseAct] = None,
+        capability_status=None,
     ) -> GuardResult:
         cleaned = (text or "").strip().strip("`").strip()
         codes: List[str] = []
@@ -77,6 +86,18 @@ class AemeathOutputFirewall:
         if self._INTERNAL_ID.search(cleaned):
             codes.append("internal_id_leak")
             non_repairable.add("internal_id_leak")
+        status = getattr(capability_status, "value", capability_status)
+        status = str(status or "").strip().lower()
+        task_not_successful = (
+            response_act is ResponseAct.TASK_UNSUPPORTED
+            or (
+                response_act is ResponseAct.TASK_HANDOFF
+                and status != "success"
+            )
+            or (bool(status) and status != "success")
+        )
+        if task_not_successful and self._COMPLETION_CLAIM.search(cleaned):
+            codes.append("false_task_completion")
         if self._is_duplicate(cleaned, recent_outputs):
             codes.append("duplicate_output")
             non_repairable.add("duplicate_output")

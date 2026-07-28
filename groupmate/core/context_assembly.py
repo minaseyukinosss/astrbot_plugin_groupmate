@@ -17,6 +17,7 @@ from .history_format import (
 from .intent import constraints_for, speak_note_for
 from .mood import describe_mood, infer_mood, load_mood_descriptions
 from .relationships import RelationshipEntry, relationship_map, resolve_speaker
+from .response_act import ResponseAct, ResponseActPlan
 from .self_episodes import format_self_episodes, needs_self_recall
 from .session import DialogueTurn, GroupSession
 from .voice_anchor import format_voice_anchor_block, load_voice_anchor
@@ -40,6 +41,7 @@ DYNAMIC_BLOCK_ORDER = (
     "self_episodes",
     "relevant_memories",
     "memory_guide",
+    "response_act",
     "reply_mode",
     "speak_note",
     "reply_task",
@@ -164,6 +166,9 @@ class ContextAssembly:
         favorability: Optional[int] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
+        response_act: Optional[ResponseActPlan] = None,
+        capability_facts: Sequence[str] = (),
+        capability_status: str = "",
     ) -> str:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
@@ -243,6 +248,14 @@ class ContextAssembly:
                     "<memory_guide>{}</memory_guide>".format(html.escape(guide[:500]))
                 )
 
+        response_block = self._response_act_block(
+            response_act,
+            capability_facts,
+            capability_status,
+        )
+        if response_block:
+            sections.append(response_block)
+
         sections.append(
             "<reply_mode>{}；{}</reply_mode>".format(
                 html.escape(mode.value),
@@ -274,6 +287,9 @@ class ContextAssembly:
         favorability: Optional[int] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
+        response_act: Optional[ResponseActPlan] = None,
+        capability_facts: Sequence[str] = (),
+        capability_status: str = "",
     ) -> AssembledPrompt:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
@@ -305,10 +321,51 @@ class ContextAssembly:
                 favorability=favorability,
                 targeting=targeting,
                 reply_mode=reply_mode,
+                response_act=response_act,
+                capability_facts=capability_facts,
+                capability_status=capability_status,
             ),
             soft_trigger=soft_trigger,
             mood_key=resolved_mood,
         )
+
+    @staticmethod
+    def _response_act_block(
+        plan: Optional[ResponseActPlan],
+        capability_facts: Sequence[str],
+        capability_status: str,
+    ) -> str:
+        if plan is None:
+            return ""
+        status = str(capability_status or "").strip().lower()
+        lines = [
+            "<response_act>",
+            "<act>{}</act>".format(html.escape(plan.act.value)),
+        ]
+        if status == "success":
+            facts = []
+            for fact in capability_facts or ():
+                cleaned = " ".join(str(fact or "").split())[:500]
+                if cleaned:
+                    facts.append(
+                        "<fact>{}</fact>".format(html.escape(cleaned))
+                    )
+            if facts:
+                lines.extend(["<capability_facts>"] + facts + ["</capability_facts>"])
+        if (
+            plan.act is ResponseAct.TASK_UNSUPPORTED
+            or (
+                plan.act is ResponseAct.TASK_HANDOFF
+                and status != "success"
+            )
+            or (status and status != "success")
+        ):
+            lines.append(
+                "<truth_constraint>任务尚未成功；不得声称已完成，"
+                "不得编造结果。</truth_constraint>"
+            )
+        lines.append("</response_act>")
+        return "\n".join(lines)
 
     @staticmethod
     def _focus_from_targeting(

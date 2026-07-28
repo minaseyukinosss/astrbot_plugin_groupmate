@@ -1,5 +1,6 @@
 """Scene-conditional reaction media selection."""
 
+import json
 from pathlib import Path
 
 from groupmate.core.response_act import ResponseAct
@@ -130,3 +131,50 @@ def test_reaction_assets_are_immutable_and_validate_identity():
         pass
     else:
         raise AssertionError("unsafe media id accepted")
+
+
+def test_catalog_loads_only_manifest_declared_safe_local_assets(tmp_path):
+    _touch(tmp_path / "warm.png")
+    _touch(tmp_path / "ignored.png")
+    (tmp_path / "catalog.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "media_id": "warm-1",
+                        "path": "warm.png",
+                        "tags": ["warm", "gift"],
+                        "safe": True,
+                    },
+                    {
+                        "media_id": "ignored",
+                        "path": "ignored.png",
+                        "tags": ["warm"],
+                        "safe": False,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = LocalReactionCatalog.from_directory(tmp_path)
+
+    selected = catalog.select(("warm",), recent_ids=())
+    assert selected is not None
+    assert selected.media_id == "warm-1"
+
+
+def test_catalog_directory_requires_valid_bounded_manifest(tmp_path):
+    (tmp_path / "catalog.json").write_text(
+        '{"items": [{"media_id": "bad", "path": "../bad.png", '
+        '"tags": ["warm"], "safe": true}]}',
+        encoding="utf-8",
+    )
+
+    try:
+        LocalReactionCatalog.from_directory(tmp_path)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unsafe reaction manifest accepted")

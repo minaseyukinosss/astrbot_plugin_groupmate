@@ -1,5 +1,7 @@
 import pytest
 
+from groupmate.capabilities.contracts import CapabilityStatus
+from groupmate.core.response_act import ResponseAct
 from groupmate.persona.aemeath import AemeathOutputFirewall
 
 
@@ -103,3 +105,37 @@ def test_guard_rejects_recent_duplicate():
 
     assert "duplicate_output" in result.codes
     assert result.repairable is False
+
+
+@pytest.mark.parametrize(
+    ("act", "status"),
+    (
+        (ResponseAct.TASK_UNSUPPORTED, CapabilityStatus.UNSUPPORTED),
+        (ResponseAct.TASK_HANDOFF, CapabilityStatus.HANDOFF),
+        (ResponseAct.TASK_HANDOFF, CapabilityStatus.FAILED),
+        (ResponseAct.TASK_HANDOFF, CapabilityStatus.TIMEOUT),
+        (ResponseAct.TASK_HANDOFF, None),
+    ),
+)
+def test_guard_rejects_false_task_completion_before_success(act, status):
+    result = AemeathOutputFirewall(max_chars=60).validate(
+        "已经帮你查好了。",
+        (),
+        response_act=act,
+        capability_status=status,
+    )
+
+    assert result.accepted is False
+    assert "false_task_completion" in result.codes
+    assert result.repairable is True
+
+
+def test_guard_allows_completion_fact_after_capability_success():
+    result = AemeathOutputFirewall(max_chars=60).validate(
+        "已经识别好了，图里是一盆花。",
+        (),
+        response_act=ResponseAct.TASK_HANDOFF,
+        capability_status=CapabilityStatus.SUCCESS,
+    )
+
+    assert "false_task_completion" not in result.codes

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from groupmate.host import AstrBotBridge
 from groupmate.host.bridge import TurnOwner
 from groupmate.config import PluginSettings
+from groupmate.core.response_act import TaskResolutionStatus
+from groupmate.models import ChatMessage, InteractionScene
 
 
 class _FakeEvent:
@@ -170,3 +172,48 @@ def test_pause_still_observes_without_dispatch(tmp_path):
     assert [message.text for message in messages] == ["暂停期间也要记住"]
     assert snapshot["dispatch_enabled"] is False
     assert "last_outcome" not in snapshot
+
+
+def test_bridge_registers_policy_scoped_vision_capability(tmp_path):
+    bridge = _bridge(tmp_path, vision_enabled=True)
+    workflow = bridge._workflow_for("g1")
+    message = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="群友甲",
+        text="帮我看看这张图",
+        timestamp=100,
+        image_urls=("https://example.test/image.png",),
+    )
+
+    resolution = workflow.task_response_resolver(
+        InteractionScene.TASK_REQUEST,
+        message,
+        bridge._policy_for("g1"),
+    )
+
+    assert workflow.capabilities is not None
+    assert resolution.status is TaskResolutionStatus.SUPPORTED
+    assert resolution.capability_name == "vision"
+
+
+def test_bridge_does_not_route_text_only_tasks_to_arbitrary_capabilities(tmp_path):
+    bridge = _bridge(tmp_path, vision_enabled=True)
+    workflow = bridge._workflow_for("g1")
+    message = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="群友甲",
+        text="帮我执行这个任务",
+        timestamp=100,
+    )
+
+    resolution = workflow.task_response_resolver(
+        InteractionScene.TASK_REQUEST,
+        message,
+        bridge._policy_for("g1"),
+    )
+
+    assert resolution.status is TaskResolutionStatus.UNSUPPORTED

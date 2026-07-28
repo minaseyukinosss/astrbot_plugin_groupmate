@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Dict
 
+from ..capabilities import CapabilityRegistry, CapabilityRequest, vision_spec
 from ..config import (
     DEBOUNCE_MAX_SECONDS,
     DEBOUNCE_MIN_SECONDS,
@@ -15,12 +16,14 @@ from ..config import (
     TOPIC_MAX_SECONDS,
 )
 from ..core.projections import StateProjector
+from ..core.response_act import TaskResolution, TaskResolutionStatus
 from ..engine.external_knowledge import needs_external_knowledge
 from ..engine.rate_limit import SlidingWindowRateLimiter
 from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
 from ..memory import SQLiteMemoryStore
+from ..media import LocalReactionCatalog
 from ..models import ChatMessage, GroupPolicy, MessageOrigin, StringEnum, TriggerKind
 from ..persona.aemeath import (
     CHARACTER_NAME,
@@ -297,12 +300,39 @@ class AstrBotBridge:
             self._setting("generation_provider", ""),
         )
         policy = self._policy_for(group_id)
+        vision = AstrBotVisionPort(
+            self.context,
+            lambda gid: self._setting("vision_provider", "") or getter(gid),
+        )
+        capabilities = CapabilityRegistry()
+        capabilities.register(vision_spec(vision if policy.vision_enabled else None))
+
+        def resolve_task(scene, message, group_policy):
+            del scene
+            if not group_policy.vision_enabled or not message.image_urls:
+                return TaskResolution(status=TaskResolutionStatus.UNSUPPORTED)
+            return capabilities.resolve(
+                CapabilityRequest(
+                    capability_name="vision",
+                    message_text=message.text,
+                    media_locators=message.image_urls,
+                    group_id=message.group_id,
+                    actor_id=message.sender_id,
+                    message_id=message.message_id,
+                )
+            )
+
+        reaction_catalog = None
+        if policy.v3_composition_enabled and policy.reaction_media_enabled:
+            try:
+                reaction_catalog = LocalReactionCatalog.from_directory(
+                    Path(policy.reaction_catalog_path)
+                )
+            except (OSError, TypeError, ValueError):
+                reaction_catalog = None
         return CognitiveWorkflow(
             generation_model=AstrBotGenerationModel(self.context, getter, persona),
-            vision=AstrBotVisionPort(
-                self.context,
-                lambda gid: self._setting("vision_provider", "") or getter(gid),
-            ),
+            vision=vision,
             platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
             memory=self.memory,
             persona=persona,
@@ -313,6 +343,11 @@ class AstrBotBridge:
             ),
             clock=_SystemClock(),
             character_name=character_name,
+            task_response_resolver=(
+                resolve_task if policy.v3_composition_enabled else None
+            ),
+            capabilities=capabilities,
+            reaction_catalog=reaction_catalog,
         )
 
     def _relationships(self):

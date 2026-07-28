@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from ...core.context_assembly import AssembledPrompt, ContextAssembly
+from ...core.response_act import ResponseActPlan
 from ...core.relationships import RelationshipEntry
 from ...core.session import GroupSession
 from ...models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
@@ -64,6 +65,9 @@ class AemeathPersonaProvider:
         favorability: Optional[int] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
+        response_act: Optional[ResponseActPlan] = None,
+        capability_facts: Sequence[str] = (),
+        capability_status: str = "",
     ) -> str:
         return self._assembly.build_user(
             topic,
@@ -75,6 +79,9 @@ class AemeathPersonaProvider:
             favorability=favorability,
             targeting=targeting,
             reply_mode=reply_mode,
+            response_act=response_act,
+            capability_facts=capability_facts,
+            capability_status=capability_status,
         )
 
     def assemble(
@@ -89,6 +96,9 @@ class AemeathPersonaProvider:
         favorability: Optional[int] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
+        response_act: Optional[ResponseActPlan] = None,
+        capability_facts: Sequence[str] = (),
+        capability_status: str = "",
     ) -> AssembledPrompt:
         return self._assembly.assemble(
             topic,
@@ -100,6 +110,9 @@ class AemeathPersonaProvider:
             favorability=favorability,
             targeting=targeting,
             reply_mode=reply_mode,
+            response_act=response_act,
+            capability_facts=capability_facts,
+            capability_status=capability_status,
         )
 
     @property

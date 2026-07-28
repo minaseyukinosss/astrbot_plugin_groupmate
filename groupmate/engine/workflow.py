@@ -2,18 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict, deque
+from dataclasses import replace
 from typing import Callable, DefaultDict, Deque, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
+from ..capabilities import (
+    CapabilityRegistry,
+    CapabilityRequest,
+    CapabilityResult,
+    CapabilityStatus,
+)
+from ..capabilities.contracts import validate_capability_name
 from ..core.addressee import AddresseeResolver
 from ..core.intent import max_chars_for_mode
-from ..core.response_act import TaskResolution, TaskResolutionStatus
+from ..core.response_act import (
+    ResponseAct,
+    ResponseActPlan,
+    TaskResolution,
+    TaskResolutionStatus,
+)
 from ..core.session import GroupSession, GroupSessionStore
 from ..core.scenes import classify_scene, policy_for_scene
 from ..core.speak_contract import SpeakContract
 from ..core.favorability import seed_score_for_relationship
 from ..core.relationships import resolve_speaker
+from .composer import ResponseComposer
 from .delivery import DeliveryService, build_delivery_plan
 from .opportunity import OpportunityArbiter
 from .planner import ReplyIntentPlanner
@@ -47,6 +62,7 @@ from ..ports import (
 )
 from ..social.events import SocialEventClassifier
 from ..memory.memory_writer import MemoryWriter
+from ..media.reactions import LocalReactionCatalog, ReactionPolicy
 from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from .topics import select_active_messages
 
@@ -86,6 +102,10 @@ class CognitiveWorkflow:
         budgets: Optional[BudgetTracker] = None,
         memory_writer: Optional[MemoryWriter] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
+        capabilities: Optional[CapabilityRegistry] = None,
+        composer: Optional[ResponseComposer] = None,
+        reaction_policy: Optional[ReactionPolicy] = None,
+        reaction_catalog: Optional[LocalReactionCatalog] = None,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -112,6 +132,10 @@ class CognitiveWorkflow:
         self.memory_writer = memory_writer or MemoryWriter(memory)
         self.intent_planner = intent_planner or ReplyIntentPlanner()
         self.task_response_resolver = task_response_resolver
+        self.capabilities = capabilities
+        self.composer = composer or ResponseComposer()
+        self.reaction_policy = reaction_policy or ReactionPolicy()
+        self.reaction_catalog = reaction_catalog
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
@@ -152,6 +176,7 @@ class CognitiveWorkflow:
         now = self.clock.now()
         soft_trigger = trigger in _SOFT_TRIGGERS
         opportunity_enabled = bool(getattr(policy, "v3_opportunity_enabled", True))
+        composition_enabled = bool(getattr(policy, "v3_composition_enabled", True))
         self._record(decision_id, topic.group_id, "OBSERVE", trigger.value, now)
 
         if not topic.messages:
@@ -287,6 +312,15 @@ class CognitiveWorkflow:
             needs_vision = decision.needs_vision
             urgency = decision.urgency
 
+        if composition_enabled and response_act is not None:
+            self._record(
+                decision_id,
+                topic.group_id,
+                "ACT",
+                response_act.act.value,
+                now,
+            )
+
         self._record(
             decision_id,
             topic.group_id,
@@ -344,22 +378,51 @@ class CognitiveWorkflow:
                 memories = list(self.memory.search_memories(**search_kwargs))
         self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
 
-        # cost budget：超限则本轮关闭 vision
-        if needs_vision and not self.budgets.allow_cost(now):
-            needs_vision = False
-            decision = Decision.respond(
-                contribution=decision.contribution,
-                confidence=decision.confidence,
-                trigger=decision.trigger,
-                reason_code=decision.reason_code,
-                target_message_id=decision.target_message_id,
-                needs_vision=False,
-                urgency=decision.urgency,
+        capability_result = None
+        capability_name = self._capability_name(
+            response_act, required_capabilities
+        )
+        if composition_enabled and capability_name and self.capabilities is not None:
+            capability_result = await self._execute_capability(
+                decision_id,
+                topic,
+                capability_name,
+                policy,
+                now,
+            )
+            if capability_result.status is CapabilityStatus.SUCCESS:
+                contribution = self._successful_capability_contribution(response_act)
+            else:
+                contribution = self._incomplete_capability_contribution(
+                    response_act, capability_result
+                )
+        else:
+            # Compatibility path for deployments that have not enabled composition.
+            if needs_vision and not self.budgets.allow_cost(now):
+                needs_vision = False
+                decision = replace(decision, needs_vision=False)
+            memories = await self._add_visual_context(
+                decision_id, topic, decision, policy, memories, now
             )
 
-        memories = await self._add_visual_context(
-            decision_id, topic, decision, policy, memories, now
+        capability_facts = (
+            capability_result.facts
+            if capability_result is not None
+            and capability_result.status is CapabilityStatus.SUCCESS
+            else ()
         )
+        capability_status = ""
+        if composition_enabled:
+            capability_status = (
+                capability_result.status.value
+                if capability_result is not None
+                else (
+                    CapabilityStatus.UNSUPPORTED.value
+                    if response_act is not None
+                    and response_act.act is ResponseAct.TASK_UNSUPPORTED
+                    else ""
+                )
+            )
         session = self.session_for(topic.group_id)
         favorability = self._ensure_favorability(topic, targeting, now)
         assemble = getattr(self.persona, "assemble", None)
@@ -371,6 +434,12 @@ class CognitiveWorkflow:
             "targeting": targeting,
             "reply_mode": reply_mode,
         }
+        if composition_enabled:
+            assemble_kwargs.update(
+                response_act=response_act,
+                capability_facts=capability_facts,
+                capability_status=capability_status,
+            )
         if assemble is not None:
             try:
                 assembled = assemble(topic, memories, **assemble_kwargs)
@@ -434,18 +503,13 @@ class CognitiveWorkflow:
             self._record(decision_id, topic.group_id, "SPEAK", speak.reason, now)
             return self._silent(decision_id, topic.group_id, speak.reason, now)
 
-        validate = self.output_guard.validate
-        try:
-            guarded = validate(
-                speak.text,
-                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-                reply_mode=reply_mode,
-            )
-        except TypeError:
-            guarded = validate(
-                speak.text,
-                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-            )
+        guarded = self._validate_output(
+            speak.text,
+            topic.group_id,
+            reply_mode,
+            response_act if composition_enabled else None,
+            capability_status,
+        )
         if not guarded.accepted and guarded.repairable:
             try:
                 repaired = await self.generation_model.repair(speak.text, guarded.codes)
@@ -453,17 +517,13 @@ class CognitiveWorkflow:
                 return self._silent(decision_id, topic.group_id, "repair_error", now)
             if SpeakContract.resolve(repaired).should_send is False:
                 return self._silent(decision_id, topic.group_id, "model_silence", now)
-            try:
-                guarded = validate(
-                    repaired,
-                    recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-                    reply_mode=reply_mode,
-                )
-            except TypeError:
-                guarded = validate(
-                    repaired,
-                    recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-                )
+            guarded = self._validate_output(
+                repaired,
+                topic.group_id,
+                reply_mode,
+                response_act if composition_enabled else None,
+                capability_status,
+            )
         if not guarded.accepted:
             return self._silent(
                 decision_id,
@@ -493,14 +553,44 @@ class CognitiveWorkflow:
             direct_wake=direct_wake,
             quote_message_id=quote_message_id,
         )
-        if not delivery.segments:
+        if composition_enabled and response_act is not None:
+            reaction = self._select_reaction(
+                topic.group_id,
+                response_act.act,
+                scene,
+                targeting,
+                policy,
+            )
+            draft = self.composer.compose(
+                text=guarded.text,
+                act_plan=response_act,
+                quote_message_id=quote_message_id,
+                capability_result=capability_result,
+                reaction=reaction,
+            )
+            delivery = replace(delivery, outbound=draft.segments)
+            media_ids = tuple(
+                item.media_id for item in draft.segments if item.media_id
+            )
+            self._record(
+                decision_id,
+                topic.group_id,
+                "COMPOSE",
+                "act={};media={}".format(
+                    response_act.act.value,
+                    ",".join(media_ids) if media_ids else "0",
+                ),
+                now,
+            )
+        if not delivery.segments and not delivery.outbound:
             return self._silent(decision_id, topic.group_id, "empty_delivery", now)
         self._record(
             decision_id,
             topic.group_id,
             "SCHEDULE",
             "delay={:.2f};segments={}".format(
-                delivery.delay_seconds, len(delivery.segments)
+                delivery.delay_seconds,
+                len(delivery.outbound) if delivery.outbound else len(delivery.segments),
             ),
             now,
         )
@@ -520,6 +610,9 @@ class CognitiveWorkflow:
         if trigger is TriggerKind.CANDIDATE:
             self.budgets.record_send(send_now)
         self._recent_outputs[topic.group_id].append(outcome.text)
+        for segment in delivery.outbound:
+            if segment.media_id:
+                self._recent_media_ids[topic.group_id].append(segment.media_id)
         self._remember_session_turns(topic, outcome.text, send_now)
         self._record_social_success(
             topic,
@@ -598,6 +691,162 @@ class CognitiveWorkflow:
             isinstance(supported, bool)
             and isinstance(required_information, Sequence)
             and not isinstance(required_information, (str, bytes))
+        )
+
+    @staticmethod
+    def _capability_name(
+        response_act: Optional[ResponseActPlan],
+        required_capabilities: Sequence[str],
+    ) -> str:
+        if response_act is not None and response_act.capability_name:
+            try:
+                return validate_capability_name(response_act.capability_name)
+            except (TypeError, ValueError):
+                return ""
+        for name in required_capabilities or ():
+            cleaned = str(name or "").strip()
+            if cleaned:
+                try:
+                    return validate_capability_name(cleaned)
+                except (TypeError, ValueError):
+                    return ""
+        return ""
+
+    async def _execute_capability(
+        self,
+        decision_id: str,
+        topic: TopicSnapshot,
+        capability_name: str,
+        policy: GroupPolicy,
+        now: int,
+    ) -> CapabilityResult:
+        if capability_name == "vision" and not policy.vision_enabled:
+            result = CapabilityResult(
+                CapabilityStatus.UNSUPPORTED,
+                capability_name,
+                user_text="Vision is disabled for this group.",
+                error_code="vision_disabled",
+            )
+        elif capability_name == "vision" and not self.budgets.allow_cost(now):
+            result = CapabilityResult(
+                CapabilityStatus.FAILED,
+                capability_name,
+                user_text="Vision could not run within the current budget.",
+                error_code="cost_budget_exhausted",
+            )
+        else:
+            latest = topic.latest
+            request = CapabilityRequest(
+                capability_name=capability_name,
+                message_text=latest.text if latest is not None else "",
+                media_locators=self._topic_image_urls(topic),
+                group_id=topic.group_id,
+                actor_id=latest.sender_id if latest is not None else "",
+                message_id=latest.message_id if latest is not None else "",
+            )
+            try:
+                result = await self.capabilities.execute(request)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - capability boundary fails closed
+                result = CapabilityResult(
+                    CapabilityStatus.FAILED,
+                    capability_name,
+                    user_text="The capability could not complete the request.",
+                    error_code="execution_error",
+                    diagnostic=type(exc).__name__,
+                )
+        if (
+            capability_name == "vision"
+            and result.status is CapabilityStatus.SUCCESS
+        ):
+            self.budgets.record_cost(now)
+        self._record(
+            decision_id,
+            topic.group_id,
+            "CAPABILITY",
+            result.status.value,
+            now,
+        )
+        return result
+
+    @staticmethod
+    def _successful_capability_contribution(
+        response_act: Optional[ResponseActPlan],
+    ) -> str:
+        if response_act is not None and response_act.act is ResponseAct.VISUAL_REACTION:
+            return "根据本轮已验证的图片事实，用爱弥斯的口吻自然短评"
+        return "根据本轮已验证事实直接回应，用爱弥斯自己的口吻表达"
+
+    @staticmethod
+    def _incomplete_capability_contribution(
+        response_act: Optional[ResponseActPlan],
+        result: CapabilityResult,
+    ) -> str:
+        if result.status is CapabilityStatus.UNSUPPORTED:
+            return "简短说明当前无法完成这项任务，不得编造结果"
+        if result.status is CapabilityStatus.HANDOFF:
+            return "简短说明任务仍在交接中，不得声称已经完成"
+        if result.status is CapabilityStatus.TIMEOUT:
+            return "简短说明这次没有得到结果，可以稍后重试"
+        if response_act is not None and response_act.act is ResponseAct.TASK_UNSUPPORTED:
+            return "简短说明当前无法完成这项任务"
+        return "简短说明这次没有成功完成，不得编造结果"
+
+    def _validate_output(
+        self,
+        text: str,
+        group_id: str,
+        reply_mode: ReplyMode,
+        response_act: Optional[ResponseActPlan],
+        capability_status: str,
+    ):
+        validate = self.output_guard.validate
+        recent = tuple(self._recent_outputs[group_id])
+        try:
+            return validate(
+                text,
+                recent_outputs=recent,
+                reply_mode=reply_mode,
+                response_act=response_act.act if response_act is not None else None,
+                capability_status=capability_status,
+            )
+        except TypeError:
+            try:
+                return validate(
+                    text,
+                    recent_outputs=recent,
+                    reply_mode=reply_mode,
+                )
+            except TypeError:
+                return validate(text, recent_outputs=recent)
+
+    def _select_reaction(
+        self,
+        group_id: str,
+        act: ResponseAct,
+        scene: InteractionScene,
+        targeting: TargetingDecision,
+        policy: GroupPolicy,
+    ):
+        if not policy.reaction_media_enabled or self.reaction_catalog is None:
+            return None
+        ambiguous = (
+            targeting.reply_audience.kind is AddresseeKind.AMBIGUOUS
+            or targeting.social_target.kind is AddresseeKind.AMBIGUOUS
+        )
+        if not self.reaction_policy.allowed(act, scene, ambiguous):
+            return None
+        tags = {
+            ResponseAct.RECIPROCATE: ("warm",),
+            ResponseAct.PLAYFUL_REPLY: ("playful",),
+            ResponseAct.VISUAL_REACTION: ("visual",),
+        }.get(act)
+        if not tags:
+            return None
+        return self.reaction_catalog.select(
+            tags,
+            tuple(self._recent_media_ids[group_id]),
         )
 
     def _resolve_targeting(

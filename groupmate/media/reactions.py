@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,50 @@ class LocalReactionCatalog:
         items: Iterable[ReactionAsset],
     ) -> "LocalReactionCatalog":
         return cls(root, items)
+
+    @classmethod
+    def from_directory(cls, root: Path) -> "LocalReactionCatalog":
+        catalog_root = Path(root).expanduser().resolve()
+        manifest = catalog_root / "catalog.json"
+        if not manifest.is_file():
+            raise ValueError("reaction catalog requires catalog.json")
+        if manifest.stat().st_size > 256 * 1024:
+            raise ValueError("reaction catalog manifest is too large")
+        try:
+            raw = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise ValueError("reaction catalog manifest is invalid") from exc
+        if not isinstance(raw, dict) or set(raw) != {"items"}:
+            raise ValueError("reaction catalog manifest must contain only items")
+        raw_items = raw.get("items")
+        if not isinstance(raw_items, list) or len(raw_items) > 256:
+            raise ValueError("reaction catalog items must be a bounded list")
+        items = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict) or set(raw_item) != {
+                "media_id",
+                "path",
+                "tags",
+                "safe",
+            }:
+                raise ValueError("reaction catalog item fields are invalid")
+            if raw_item.get("safe") is not True:
+                continue
+            asset = ReactionAsset(
+                raw_item.get("media_id"),
+                raw_item.get("path"),
+                raw_item.get("tags"),
+                raw_item.get("safe"),
+            )
+            candidate = (catalog_root / asset.relative_path).resolve()
+            try:
+                candidate.relative_to(catalog_root)
+            except ValueError as exc:
+                raise ValueError("reaction asset escapes catalog root") from exc
+            if not candidate.is_file():
+                raise ValueError("reaction asset file is missing")
+            items.append(asset)
+        return cls(catalog_root, items)
 
     def select(
         self,

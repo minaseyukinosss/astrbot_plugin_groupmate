@@ -1,16 +1,31 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
+from groupmate.capabilities import (
+    CapabilityRegistry,
+    CapabilityRequest,
+    CapabilitySpec,
+    CapabilityStatus,
+    vision_spec,
+)
 from groupmate.core import response_act as response_act_module
 from groupmate.core.speak_contract import SpeakContract, is_silence
-from groupmate.models import ReplyMode, TopicSnapshot, TriggerKind
+from groupmate.models import (
+    OutboundKind,
+    ReplyMode,
+    SendResult,
+    TopicSnapshot,
+    TriggerKind,
+)
 from groupmate.persona.aemeath import (
     AemeathOutputFirewall,
     AemeathPersonaProvider,
 )
 from groupmate.engine.rate_limit import SlidingWindowRateLimiter
 from groupmate.engine.workflow import CognitiveWorkflow
+from groupmate.media import LocalReactionCatalog, ReactionAsset
 from tests.fakes import (
     FakeClock,
     FakeMemoryRepository,
@@ -29,10 +44,16 @@ def build_workflow(
     vision=None,
     persona=None,
     task_response_resolver=None,
+    capabilities=None,
+    reaction_catalog=None,
 ):
     kwargs = {}
     if task_response_resolver is not None:
         kwargs["task_response_resolver"] = task_response_resolver
+    if capabilities is not None:
+        kwargs["capabilities"] = capabilities
+    if reaction_catalog is not None:
+        kwargs["reaction_catalog"] = reaction_catalog
     return CognitiveWorkflow(
         generation_model=generator or StaticGenerationModel("这也太离谱了呀。"),
         vision=vision or NullVision(),
@@ -63,6 +84,28 @@ class CountingVision(NullVision):
     async def describe(self, image_urls):
         self.calls += 1
         return "图片描述"
+
+
+class RepairingGenerationModel(RecordingGenerationModel):
+    def __init__(self, text, repair_text):
+        super().__init__(text)
+        self.repair_text = repair_text
+
+    async def repair(self, text, violations):
+        self.repairs += 1
+        return self.repair_text
+
+
+class RichFakePlatform(FakePlatform):
+    def __init__(self):
+        super().__init__()
+        self.outbound = []
+
+    async def send_outbound(
+        self, group_id, segments, decision_id, quote_message_id=None
+    ):
+        self.outbound.append(tuple(segments))
+        return SendResult.confirmed(len(segments))
 
 
 def _task_topic(message_factory, text="帮我翻译一下"):
@@ -287,6 +330,256 @@ def test_supported_task_stays_pending_and_forbids_completion_claims(
     assert plan.reply_mode is not ReplyMode.TASK_RESULT
     assert "尚未执行" in plan.user_prompt
     assert "不得声称已完成" in plan.user_prompt
+
+
+def test_supported_vision_task_uses_capability_facts_before_aemeath_generation(
+    message_factory, balanced_policy
+):
+    vision = CountingVision()
+    registry = CapabilityRegistry()
+    registry.register(vision_spec(vision))
+    generator = RecordingGenerationModel("图里这盆花开得很好看呀。")
+    message = message_factory(
+        message_id="vision-task",
+        text="帮我看看这张图",
+        image_urls=("https://example.test/flower.png",),
+    )
+    topic = TopicSnapshot("vision-topic", "g1", (message,), 100, 100)
+    workflow = build_workflow(
+        generator=generator,
+        persona=AemeathPersonaProvider(),
+        capabilities=registry,
+        task_response_resolver=lambda scene, latest, policy: registry.resolve(
+            CapabilityRequest(
+                capability_name="vision",
+                message_text=latest.text,
+                media_locators=latest.image_urls,
+                group_id=latest.group_id,
+                actor_id=latest.sender_id,
+                message_id=latest.message_id,
+            )
+        ),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    prompt = generator.plans[-1].user_prompt
+    assert outcome.sent is True
+    assert vision.calls == 1
+    assert "图片描述" in prompt
+    assert "<response_act>" in prompt
+    assert "vision" not in prompt
+    assert any(
+        state == "ACT" and reason == "task_handoff"
+        for _, _, state, reason, _ in workflow.memory.transitions
+    )
+    assert any(
+        state == "CAPABILITY" and reason == CapabilityStatus.SUCCESS.value
+        for _, _, state, reason, _ in workflow.memory.transitions
+    )
+    assert any(
+        state == "COMPOSE"
+        for _, _, state, _, _ in workflow.memory.transitions
+    )
+
+
+def test_unsupported_task_completion_claim_is_repaired_before_send(
+    message_factory, balanced_policy
+):
+    generator = RepairingGenerationModel(
+        "已经帮你查好了。",
+        "这个我现在做不了。",
+    )
+    workflow = build_workflow(generator=generator)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我执行这个任务"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert outcome.text == "这个我现在做不了。"
+    assert generator.repairs == 1
+
+
+def test_false_completion_after_repair_fails_closed(
+    message_factory, balanced_policy
+):
+    generator = RepairingGenerationModel(
+        "已经帮你查好了。",
+        "已经处理完成了。",
+    )
+    platform = FakePlatform()
+    workflow = build_workflow(generator=generator, platform=platform)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我执行这个任务"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is False
+    assert outcome.reason.startswith("guard_rejected:false_task_completion")
+    assert platform.sent == []
+
+
+def test_composition_flag_off_keeps_legacy_text_only_path(
+    message_factory, balanced_policy
+):
+    vision = CountingVision()
+    registry = CapabilityRegistry()
+    registry.register(vision_spec(vision))
+    generator = RecordingGenerationModel("已经帮你看好了。")
+    workflow = build_workflow(
+        generator=generator,
+        capabilities=registry,
+        task_response_resolver=lambda scene, latest, policy: registry.resolve(
+            CapabilityRequest(
+                capability_name="vision",
+                message_text=latest.text,
+                media_locators=latest.image_urls,
+            )
+        ),
+    )
+    message = message_factory(
+        message_id="legacy-vision",
+        text="帮我看看这张图",
+        image_urls=("https://example.test/flower.png",),
+    )
+    topic = TopicSnapshot("legacy-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic,
+            TriggerKind.ALIAS_DIRECT,
+            replace(balanced_policy, v3_composition_enabled=False),
+        )
+    )
+
+    assert outcome.sent is True
+    assert vision.calls == 0
+    assert not any(
+        state in ("ACT", "CAPABILITY", "COMPOSE")
+        for _, _, state, _, _ in workflow.memory.transitions
+    )
+
+
+def test_capability_cancellation_propagates(message_factory, balanced_policy):
+    async def cancelled(request):
+        del request
+        raise asyncio.CancelledError()
+
+    registry = CapabilityRegistry()
+    registry.register(CapabilitySpec("vision", cancelled))
+    workflow = build_workflow(
+        capabilities=registry,
+        task_response_resolver=lambda scene, latest, policy: _resolution(
+            "SUPPORTED", capability_name="vision"
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            workflow.evaluate(
+                _task_topic(message_factory, "帮我看看这张图"),
+                TriggerKind.ALIAS_DIRECT,
+                balanced_policy,
+            )
+        )
+
+
+def test_invalid_capability_name_fails_closed(message_factory, balanced_policy):
+    workflow = build_workflow(
+        generator=StaticGenerationModel("这个我现在做不了。"),
+        capabilities=CapabilityRegistry(),
+        task_response_resolver=lambda scene, latest, policy: _resolution(
+            "SUPPORTED", capability_name="INVALID NAME"
+        ),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(message_factory, "帮我执行这个任务"),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert not any(
+        state == "CAPABILITY"
+        for _, _, state, _, _ in workflow.memory.transitions
+    )
+
+
+def test_social_reciprocation_can_emit_scene_allowed_reaction_media(
+    tmp_path, message_factory, balanced_policy
+):
+    (tmp_path / "warm.png").write_bytes(b"image")
+    catalog = LocalReactionCatalog.from_items(
+        tmp_path,
+        (ReactionAsset("warm-1", "warm.png", ("warm",), True),),
+    )
+    platform = RichFakePlatform()
+    workflow = build_workflow(
+        generator=StaticGenerationModel("我也很开心呀。"),
+        platform=platform,
+        reaction_catalog=catalog,
+    )
+    message = message_factory(message_id="social", text="小爱，谢谢你")
+    topic = TopicSnapshot("social-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic,
+            TriggerKind.ALIAS_DIRECT,
+            replace(balanced_policy, reaction_media_enabled=True),
+        )
+    )
+
+    assert outcome.sent is True
+    assert tuple(item.kind for item in platform.outbound[-1]) == (
+        OutboundKind.TEXT,
+        OutboundKind.IMAGE,
+    )
+
+
+def test_boundary_act_never_emits_reaction_media(
+    tmp_path, message_factory, balanced_policy
+):
+    (tmp_path / "warm.png").write_bytes(b"image")
+    catalog = LocalReactionCatalog.from_items(
+        tmp_path,
+        (ReactionAsset("warm-1", "warm.png", ("warm",), True),),
+    )
+    platform = RichFakePlatform()
+    workflow = build_workflow(
+        generator=StaticGenerationModel("不行，别这么叫我。"),
+        platform=platform,
+        reaction_catalog=catalog,
+    )
+    message = message_factory(message_id="boundary", text="小爱，叫你老婆行吗")
+    topic = TopicSnapshot("boundary-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic,
+            TriggerKind.ALIAS_DIRECT,
+            replace(balanced_policy, reaction_media_enabled=True),
+        )
+    )
+
+    assert outcome.sent is True
+    assert tuple(item.kind for item in platform.outbound[-1]) == (
+        OutboundKind.TEXT,
+    )
 
 
 @pytest.mark.parametrize(
