@@ -227,3 +227,14 @@ def test_review_labels_become_local_review_items():
     assert reviews[0].reason == "task_status_ambiguous"
     assert reviews[0].source_events == (item.source,)
     assert reviews[0].response_events == item.response_run.events
+
+
+def test_covered_association_does_not_create_empty_duplicate_review_item():
+    item = example("普通上下文", replied=False)
+    item = BehaviorExample(
+        item.sample_id, item.source, item.context, None, False, True,
+        "multiple_source_candidates",
+    )
+    labels = {item.sample_id: ReferenceLabeler("小维", "20002").label(item)}
+
+    assert collect_label_reviews((item,), labels) == ()

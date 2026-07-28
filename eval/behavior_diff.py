@@ -52,6 +52,16 @@ def _sorted_nested(values):
     }
 
 
+def _sorted_three_level(values):
+    return {
+        left: {
+            middle: {right: inner[right] for right in sorted(inner)}
+            for middle, inner in sorted(middles.items())
+        }
+        for left, middles in sorted(values.items())
+    }
+
+
 def _run_bucket(value):
     if value <= 1:
         return "1"
@@ -106,7 +116,11 @@ def build_diff_report(
     scenes = defaultdict(lambda: defaultdict(int))
     acts = defaultdict(lambda: defaultdict(int))
     quote = defaultdict(int)
+    quote_by_scene = defaultdict(lambda: defaultdict(int))
     media = defaultdict(int)
+    media_by_scene_act = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(int))
+    )
     run_messages = defaultdict(int)
     run_chars = defaultdict(int)
     run_latency = defaultdict(int)
@@ -137,6 +151,7 @@ def build_diff_report(
                 "quote" if projected.quote_allowed else "unquoted",
             )
             quote[quote_key] += 1
+            quote_by_scene[reference.scene.value][quote_key] += 1
             if observed_quote != projected.quote_allowed:
                 mismatch["quote"].append(example.sample_id)
 
@@ -150,10 +165,23 @@ def build_diff_report(
                 "media" if projected_media else "text_only",
             )
             media[media_key] += 1
+            reference_act = (
+                reference.act.value if reference.act is not None else "none"
+            )
+            conditional_media = media_by_scene_act[reference.scene.value][
+                reference_act
+            ]
+            conditional_media[media_key] += 1
             media["projected_decorative_eligible"] += int(
                 projected.decorative_media_allowed
             )
+            conditional_media["projected_decorative_eligible"] += int(
+                projected.decorative_media_allowed
+            )
             media["projected_capability_eligible"] += int(
+                projected.capability_media_allowed
+            )
+            conditional_media["projected_capability_eligible"] += int(
                 projected.capability_media_allowed
             )
             if observed_media != projected_media:
@@ -232,8 +260,14 @@ def build_diff_report(
         "reply_confusion": _ordered_counts(reply_keys, reply),
         "scene_confusion": _sorted_nested(scenes),
         "act_confusion": _sorted_nested(acts),
-        "quote": dict(sorted(quote.items())),
-        "media": dict(sorted(media.items())),
+        "quote": dict(
+            sorted(quote.items()),
+            by_scene=_sorted_nested(quote_by_scene),
+        ),
+        "media": dict(
+            sorted(media.items()),
+            by_scene_act=_sorted_three_level(media_by_scene_act),
+        ),
         "run_diagnostics": {
             "message_count": _ordered_counts(("1", "2", "3+"), run_messages),
             "reply_chars": _ordered_counts(

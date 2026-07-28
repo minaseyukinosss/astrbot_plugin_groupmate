@@ -256,6 +256,8 @@ def collect_label_reviews(
         label = labels.get(example.sample_id)
         if label is None or label.confidence is not AssociationConfidence.REVIEW:
             continue
+        if example.covered_context or example.review_reason:
+            continue
         response_events = (
             example.response_run.events if example.response_run is not None else ()
         )

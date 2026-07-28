@@ -92,6 +92,15 @@ def test_report_groups_conditional_mismatches_and_invariants():
         "multiple_owner": 1,
     }
     assert report["mismatches"]["boundary_media"] == ["sample-c"]
+    assert report["quote"]["by_scene"]["direct_address"] == {
+        "target_unquoted_projected_quote": 2,
+    }
+    assert report["media"]["by_scene_act"]["direct_address"][
+        "acknowledge"
+    ]["target_text_only_projected_text_only"] == 1
+    assert report["media"]["by_scene_act"]["direct_address"][
+        "boundary"
+    ]["target_text_only_projected_media"] == 1
     assert "runtime_probability" not in json.dumps(report)
 
 
