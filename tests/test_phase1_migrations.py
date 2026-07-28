@@ -23,10 +23,10 @@ def test_v5_database_is_backed_up_and_migrated(tmp_path):
     db.close()
 
     store = SQLiteMemoryStore(path)
-    assert store.schema_version() == 9
+    assert store.schema_version() == 10
     assert store.outbox_record("sent-one")["status"] == "sent"
     store.close()
-    assert list(tmp_path.glob("legacy.db.pre-migrate-v5-to-v9.*"))
+    assert list(tmp_path.glob("legacy.db.pre-migrate-v5-to-v10.*"))
 
 
 def test_newer_database_is_rejected(tmp_path):
@@ -64,7 +64,7 @@ def test_failed_migration_rolls_back_and_keeps_backup(tmp_path, monkeypatch):
     db.close()
     assert version == "5"
     assert "temporary_column" not in columns
-    assert list(tmp_path.glob("broken.db.pre-migrate-v5-to-v9.*"))
+    assert list(tmp_path.glob("broken.db.pre-migrate-v5-to-v10.*"))
 
 
 def test_single_writer_serializes_concurrent_groups(tmp_path, message_factory):

@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class SchemaMigrationError(RuntimeError):
@@ -362,6 +362,17 @@ def _v8_to_v9(db: sqlite3.Connection) -> None:
     )
 
 
+def _v9_to_v10(db: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(outbox)").fetchall()
+    }
+    if "outbound_json" not in existing:
+        db.execute(
+            "ALTER TABLE outbox ADD COLUMN "
+            "outbound_json TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
 def _set_version(db: sqlite3.Connection, version: int) -> None:
     db.execute(
         "UPDATE schema_meta SET value=? WHERE key='version'",
@@ -385,7 +396,7 @@ def migrate_database(path: Path) -> Optional[Path]:
                 current, SCHEMA_VERSION
             )
         )
-    if current not in (0, 5, 6, 7, 8, SCHEMA_VERSION):
+    if current not in (0, 5, 6, 7, 8, 9, SCHEMA_VERSION):
         db.close()
         raise UnsupportedSchemaError(
             "no safe migration path from schema {}".format(current)
@@ -527,11 +538,28 @@ def migrate_database(path: Path) -> Optional[Path]:
                 }
                 if not required.issubset(columns):
                     raise SchemaMigrationError("schema verification failed")
+                _set_version(db, 9)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 9
+        if current == 9:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v9_to_v10(db)
+                columns = {
+                    str(row[1])
+                    for row in db.execute("PRAGMA table_info(outbox)").fetchall()
+                }
+                if "outbound_json" not in columns:
+                    raise SchemaMigrationError("schema verification failed")
                 _set_version(db, SCHEMA_VERSION)
                 db.commit()
             except BaseException:
                 db.rollback()
                 raise
+            current = SCHEMA_VERSION
         if _version(db) != SCHEMA_VERSION:
             raise SchemaMigrationError("schema verification failed")
     finally:

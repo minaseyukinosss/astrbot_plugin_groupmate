@@ -34,6 +34,7 @@ class ProjectionSnapshot:
     last_bot_speak_at: Optional[int]
     rebuilt_at: int
     continuations: Tuple[ContinuationProjection, ...] = ()
+    recent_media_ids: Tuple[str, ...] = ()
 
 
 class StateProjector:
@@ -77,6 +78,15 @@ class StateProjector:
         recent_outputs = tuple(
             item.text for item in bot_deliveries if (item.text or "").strip()
         )
+        recent_media_ids = []
+        for item in bot_deliveries:
+            values = item.metadata.get("media_ids", ())
+            if isinstance(values, (str, bytes)):
+                values = (values,)
+            for media_id in values or ():
+                cleaned = str(media_id or "").strip()
+                if cleaned and cleaned not in recent_media_ids:
+                    recent_media_ids.append(cleaned)
         spontaneous = ()
         list_spontaneous = getattr(self.store, "list_spontaneous_sent_at", None)
         if list_spontaneous is not None:
@@ -97,6 +107,7 @@ class StateProjector:
             last_bot_speak_at=last_bot,
             rebuilt_at=int(now),
             continuations=continuations,
+            recent_media_ids=tuple(recent_media_ids[-20:]),
         )
 
     def apply(
@@ -120,6 +131,9 @@ class StateProjector:
         hydrate_outputs = getattr(workflow, "hydrate_recent_outputs", None)
         if hydrate_outputs is not None:
             hydrate_outputs(snapshot.group_id, snapshot.recent_outputs)
+        hydrate_media = getattr(workflow, "hydrate_recent_media_ids", None)
+        if hydrate_media is not None:
+            hydrate_media(snapshot.group_id, snapshot.recent_media_ids)
         set_continuation("", 0)
         continuations = snapshot.continuations
         if not continuations and snapshot.continuation is not None:

@@ -110,6 +110,7 @@ class LocalReactionCatalog:
             eligible, key=lambda entry: entry[0].media_id
         )[0]
         return MediaCandidate(
+            media_id=asset.media_id,
             source="local_reaction_catalog",
             locator=str(media_path),
             media_kind="image",

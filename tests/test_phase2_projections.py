@@ -140,6 +140,53 @@ def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
     store.close()
 
 
+def test_projection_restores_and_hydrates_recent_media_ids(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "media-projection.db")
+    bot = ChatMessage(
+        message_id="bot-rich",
+        group_id="g1",
+        sender_id="__bot__",
+        sender_name="爱弥斯",
+        text="给你看",
+        timestamp=100,
+        is_bot=True,
+        image_urls=("https://example.test/result.png",),
+        segment_types=("text", "image"),
+        origin=MessageOrigin.BOT_DELIVERY,
+        decision_id="rich",
+        ingested_at=100,
+        metadata={
+            "origin": "bot_delivery",
+            "decision_id": "rich",
+            "media_ids": ["warm-1", "result-1"],
+        },
+    )
+    assert store.save_message(bot)
+    snapshot = StateProjector(store).rebuild("g1", now=200, policy=_policy())
+
+    class WorkflowStub:
+        def __init__(self):
+            self.media_ids = ()
+
+        def hydrate_recent_media_ids(self, group_id, media_ids):
+            assert group_id == "g1"
+            self.media_ids = tuple(media_ids)
+
+    workflow = WorkflowStub()
+    StateProjector(store).apply(
+        snapshot,
+        window=TopicWindow("g1"),
+        session=GroupSession("g1"),
+        rate_limiter=SlidingWindowRateLimiter(6, 0),
+        workflow=workflow,
+        set_continuation=lambda sender_id, expires_at: None,
+    )
+
+    assert snapshot.recent_media_ids == ("warm-1", "result-1")
+    assert workflow.media_ids == ("warm-1", "result-1")
+    store.close()
+
+
 def test_continuation_reply_does_not_renew_grant(tmp_path, message_factory):
     async def scenario():
         store = SQLiteMemoryStore(tmp_path / "grant.db")

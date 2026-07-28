@@ -10,6 +10,7 @@ from ..models import StringEnum
 
 
 _CAPABILITY_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
+_MEDIA_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$")
 
 
 class CapabilityStatus(StringEnum):
@@ -54,6 +55,7 @@ class CapabilityRequest:
 
 @dataclass(frozen=True)
 class MediaCandidate:
+    media_id: str
     source: str
     locator: str
     media_kind: str
@@ -63,6 +65,7 @@ class MediaCandidate:
 
     def __post_init__(self) -> None:
         for field_name in (
+            "media_id",
             "source",
             "locator",
             "media_kind",
@@ -73,6 +76,8 @@ class MediaCandidate:
             object.__setattr__(
                 self, field_name, _clean_text(getattr(self, field_name))
             )
+        if not _MEDIA_ID.match(self.media_id):
+            raise ValueError("media candidate media_id must be a stable identifier")
         if not self.source or not self.locator or not self.media_kind:
             raise ValueError("media candidate source, locator, and kind are required")
         if not self.semantic_label:

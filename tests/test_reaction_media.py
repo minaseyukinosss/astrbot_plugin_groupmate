@@ -67,6 +67,7 @@ def test_catalog_selects_by_tags_and_excludes_recent_ids(tmp_path):
     selected = catalog.select(("playful",), recent_ids=())
 
     assert selected is not None
+    assert selected.media_id == "play-1"
     assert selected.locator == str((tmp_path / "play.png").resolve())
     assert selected.source == "local_reaction_catalog"
     assert selected.media_kind == "image"

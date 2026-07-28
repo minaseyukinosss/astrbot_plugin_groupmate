@@ -115,12 +115,25 @@ class CognitiveWorkflow:
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
+        self._recent_media_ids: DefaultDict[str, Deque[str]] = defaultdict(
+            lambda: deque(maxlen=20)
+        )
 
     def hydrate_recent_outputs(self, group_id: str, texts: Sequence[str]) -> None:
         bucket = self._recent_outputs[str(group_id)]
         bucket.clear()
         for text in texts:
             cleaned = (text or "").strip()
+            if cleaned:
+                bucket.append(cleaned)
+
+    def hydrate_recent_media_ids(
+        self, group_id: str, media_ids: Sequence[str]
+    ) -> None:
+        bucket = self._recent_media_ids[str(group_id)]
+        bucket.clear()
+        for media_id in media_ids:
+            cleaned = str(media_id or "").strip()
             if cleaned:
                 bucket.append(cleaned)
 

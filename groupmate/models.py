@@ -46,6 +46,38 @@ class OutboxStatus(StringEnum):
     UNKNOWN = "unknown"
 
 
+class OutboundKind(StringEnum):
+    TEXT = "text"
+    IMAGE = "image"
+
+
+@dataclass(frozen=True)
+class OutboundSegment:
+    kind: OutboundKind
+    text: str = ""
+    media_id: str = ""
+    media_ref: str = ""
+
+    def __post_init__(self) -> None:
+        kind = self.kind
+        if not isinstance(kind, OutboundKind):
+            kind = OutboundKind(str(kind))
+        text = str(self.text or "").strip()
+        media_id = str(self.media_id or "").strip()
+        media_ref = str(self.media_ref or "").strip()
+        if kind is OutboundKind.TEXT:
+            if not text:
+                raise ValueError("text outbound segment requires text")
+            if media_id or media_ref:
+                raise ValueError("text outbound segment cannot contain media")
+        elif not media_id or not media_ref:
+            raise ValueError("image outbound segment requires media_id and media_ref")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "media_id", media_id)
+        object.__setattr__(self, "media_ref", media_ref)
+
+
 class SendReceiptKind(StringEnum):
     CONFIRMED = "confirmed"
     FAILED = "failed"
@@ -458,6 +490,30 @@ class ReplyPlan:
     opportunity_id: str = ""
     response_act: Optional["ResponseActPlan"] = None
     required_capabilities: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResponseDraft:
+    segments: Tuple[OutboundSegment, ...]
+    quote_message_id: Optional[str]
+    response_act: "ResponseAct"
+    capability_name: str = ""
+
+    def __post_init__(self) -> None:
+        segments = tuple(self.segments or ())
+        if not all(isinstance(item, OutboundSegment) for item in segments):
+            raise TypeError("response draft segments must be OutboundSegment values")
+        object.__setattr__(self, "segments", segments)
+        object.__setattr__(
+            self,
+            "quote_message_id",
+            str(self.quote_message_id).strip()
+            if self.quote_message_id is not None
+            else None,
+        )
+        object.__setattr__(
+            self, "capability_name", str(self.capability_name or "").strip()
+        )
 
 
 @dataclass(frozen=True)

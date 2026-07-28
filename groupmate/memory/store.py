@@ -17,6 +17,7 @@ from ..models import (
     MemoryScope,
     MemoryStatus,
     MessageOrigin,
+    OutboundSegment,
     RelationshipState,
     Sensitivity,
     SocialEvent,
@@ -794,6 +795,7 @@ class SQLiteMemoryStore:
         *,
         quote_message_id: Optional[str] = None,
         segments: Sequence[str] = (),
+        outbound: Sequence[OutboundSegment] = (),
         kind: str = "reply",
     ) -> bool:
         def operation(db):
@@ -801,8 +803,9 @@ class SQLiteMemoryStore:
                 """
                 INSERT OR IGNORE INTO outbox(
                     decision_id, group_id, text, created_at, expires_at, sent_at,
-                    status, attempt, quote_message_id, segments_json, kind
-                ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?)
+                    status, attempt, quote_message_id, segments_json, outbound_json,
+                    kind
+                ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
                 """,
                 (
                     decision_id,
@@ -812,6 +815,7 @@ class SQLiteMemoryStore:
                     expires_at,
                     quote_message_id,
                     json.dumps(tuple(segments), ensure_ascii=False),
+                    self._serialize_outbound(outbound),
                     str(kind),
                 ),
             )
@@ -837,14 +841,16 @@ class SQLiteMemoryStore:
         *,
         quote_message_id=None,
         segments=(),
+        outbound=(),
         kind="reply"
     ):
         cursor = db.execute(
             """
             INSERT OR IGNORE INTO outbox(
                 decision_id, group_id, text, created_at, expires_at, sent_at,
-                status, attempt, quote_message_id, segments_json, kind
-            ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?)
+                status, attempt, quote_message_id, segments_json, outbound_json,
+                kind
+            ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
             """,
             (
                 decision_id,
@@ -854,10 +860,27 @@ class SQLiteMemoryStore:
                 expires_at,
                 quote_message_id,
                 json.dumps(tuple(segments), ensure_ascii=False),
+                SQLiteMemoryStore._serialize_outbound(outbound),
                 str(kind),
             ),
         )
         return cursor.rowcount == 1
+
+    @staticmethod
+    def _serialize_outbound(outbound: Sequence[OutboundSegment]) -> str:
+        items = []
+        for segment in tuple(outbound or ()):
+            if not isinstance(segment, OutboundSegment):
+                raise TypeError("outbound values must be OutboundSegment instances")
+            items.append(
+                {
+                    "kind": segment.kind.value,
+                    "text": segment.text,
+                    "media_id": segment.media_id,
+                    "media_ref": segment.media_ref,
+                }
+            )
+        return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
     def pending_outbox(self, now: int) -> List[Dict[str, Any]]:
         rows = self._db.execute(

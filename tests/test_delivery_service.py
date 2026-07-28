@@ -1,8 +1,9 @@
 import asyncio
+import json
 
 from groupmate.engine.delivery import DeliveryPlan, DeliveryService
 from groupmate.memory.store import SQLiteMemoryStore
-from groupmate.models import SendResult
+from groupmate.models import OutboundKind, OutboundSegment, SendResult
 from tests.fakes import FakeClock
 
 
@@ -48,6 +49,64 @@ def test_confirmed_delivery_atomically_writes_bot_message(tmp_path):
     assert len(messages) == 1
     assert messages[0].is_bot is True
     assert messages[0].metadata["decision_id"] == "confirmed"
+
+
+def test_rich_delivery_persists_one_ordered_outbox_and_accurate_bot_message(tmp_path):
+    class RichPlatform:
+        def __init__(self):
+            self.calls = []
+
+        async def send_outbound(
+            self, group_id, outbound, decision_id, quote_message_id=None
+        ):
+            self.calls.append(
+                (group_id, tuple(outbound), decision_id, quote_message_id)
+            )
+            return SendResult.confirmed()
+
+    async def scenario():
+        store = SQLiteMemoryStore(tmp_path / "rich.db")
+        platform = RichPlatform()
+        service = DeliveryService(platform, store, FakeClock(101), "爱弥斯")
+        rich_plan = DeliveryPlan(
+            decision_id="rich",
+            group_id="g",
+            segments=(),
+            delay_seconds=0,
+            expires_at=200,
+            quote_message_id="source-1",
+            outbound=(
+                OutboundSegment(OutboundKind.TEXT, text="给你看"),
+                OutboundSegment(
+                    OutboundKind.IMAGE,
+                    media_id="result-1",
+                    media_ref="https://example.test/result.png",
+                ),
+            ),
+        )
+        outcome = await service.deliver(rich_plan)
+        row = store.outbox_record("rich")
+        messages = store.recent_messages("g", 10)
+        row_count = store._db.execute(
+            "SELECT COUNT(*) FROM outbox WHERE decision_id='rich'"
+        ).fetchone()[0]
+        store.close()
+        return outcome, row, messages, platform.calls, row_count
+
+    outcome, row, messages, calls, row_count = asyncio.run(scenario())
+
+    assert outcome.sent is True
+    assert row_count == 1
+    assert row["status"] == "sent"
+    assert [item["kind"] for item in json.loads(row["outbound_json"])] == [
+        "text",
+        "image",
+    ]
+    assert calls[0][3] == "source-1"
+    assert messages[0].text == "给你看"
+    assert messages[0].segment_types == ("text", "image")
+    assert messages[0].image_urls == ("https://example.test/result.png",)
+    assert messages[0].metadata["media_ids"] == ["result-1"]
 
 
 def test_unknown_delivery_is_terminal_and_not_retried(tmp_path):

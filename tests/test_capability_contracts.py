@@ -59,6 +59,7 @@ def test_capability_request_contains_only_data_not_privileged_dependencies():
 
 def test_media_candidate_is_safe_immutable_metadata():
     candidate = MediaCandidate(
+        media_id="asset-42",
         source="vision-provider",
         locator="asset://image/42",
         media_kind="image",
@@ -69,6 +70,7 @@ def test_media_candidate_is_safe_immutable_metadata():
 
     assert candidate.locator == "asset://image/42"
     assert {field.name for field in fields(MediaCandidate)} == {
+        "media_id",
         "source",
         "locator",
         "media_kind",
@@ -92,6 +94,7 @@ def test_media_candidate_requires_purpose_and_safety_label(
 ):
     with pytest.raises(ValueError, match=missing_field):
         MediaCandidate(
+            media_id="preview-1",
             source="generated",
             locator="asset://preview/1",
             media_kind="image",
@@ -103,6 +106,7 @@ def test_media_candidate_requires_purpose_and_safety_label(
 
 def test_success_result_copies_facts_and_media_candidates():
     candidate = MediaCandidate(
+        media_id="preview-1",
         source="generated",
         locator="asset://preview/1",
         media_kind="image",
@@ -139,6 +143,7 @@ def test_success_result_copies_facts_and_media_candidates():
 )
 def test_non_success_result_rejects_completed_facts_and_media(status):
     candidate = MediaCandidate(
+        media_id="preview-1",
         source="generated",
         locator="asset://preview/1",
         media_kind="image",
@@ -164,3 +169,16 @@ def test_non_success_result_rejects_completed_facts_and_media(status):
 def test_capability_names_are_explicit_stable_identifiers():
     with pytest.raises(ValueError, match="capability_name"):
         CapabilityRequest(capability_name="../../dynamic import")
+
+
+def test_media_ids_are_stable_non_path_identifiers():
+    with pytest.raises(ValueError, match="media_id"):
+        MediaCandidate(
+            media_id="../outside",
+            source="generated",
+            locator="/tmp/result.png",
+            media_kind="image",
+            semantic_label="result",
+            purpose="task result",
+            safety_label="provider_approved",
+        )

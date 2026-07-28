@@ -11,6 +11,8 @@ from typing import Callable, List, Optional, Tuple
 from ..models import (
     ChatMessage,
     MessageOrigin,
+    OutboundKind,
+    OutboundSegment,
     OutboxStatus,
     SendReceiptKind,
     SendResult,
@@ -27,6 +29,14 @@ class DeliveryPlan:
     delay_seconds: float
     expires_at: int
     quote_message_id: Optional[str] = None
+    outbound: Tuple[OutboundSegment, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "segments", tuple(self.segments or ()))
+        outbound = tuple(self.outbound or ())
+        if not all(isinstance(item, OutboundSegment) for item in outbound):
+            raise TypeError("delivery outbound must contain OutboundSegment values")
+        object.__setattr__(self, "outbound", outbound)
 
 
 _SENTENCE_END = re.compile(r"(?<=[。！？!?～~…])")
@@ -110,7 +120,7 @@ def build_delivery_plan(
 
 
 def delivery_still_valid(plan: DeliveryPlan, now: int) -> bool:
-    return bool(plan.segments) and int(now) <= int(plan.expires_at)
+    return bool(plan.segments or plan.outbound) and int(now) <= int(plan.expires_at)
 
 
 class DeliveryService:
@@ -130,7 +140,7 @@ class DeliveryService:
         still_valid: Optional[Callable[[], bool]] = None,
         sent_reason: str = "sent",
     ) -> WorkflowOutcome:
-        text = "\n".join(plan.segments)
+        text = self._text_for_plan(plan)
         enqueue_task = asyncio.create_task(self._enqueue(plan, text, kind))
         try:
             inserted = await asyncio.shield(enqueue_task)
@@ -209,7 +219,9 @@ class DeliveryService:
                 False,
                 "send_error:" + exc.__class__.__name__,
             )
-        result = self._normalize_result(result, len(plan.segments))
+        result = self._normalize_result(
+            result, len(plan.outbound) if plan.outbound else len(plan.segments)
+        )
         if result.kind is SendReceiptKind.FAILED:
             await self._transition(
                 plan.decision_id,
@@ -230,6 +242,22 @@ class DeliveryService:
             return WorkflowOutcome(plan.decision_id, False, "send_unknown")
 
         sent_at = self.clock.now()
+        outbound = tuple(plan.outbound or ())
+        segment_types = (
+            tuple(item.kind.value for item in outbound)
+            if outbound
+            else ("text",)
+        )
+        image_urls = tuple(
+            item.media_ref
+            for item in outbound
+            if item.kind is OutboundKind.IMAGE
+        )
+        media_ids = [
+            item.media_id
+            for item in outbound
+            if item.kind is OutboundKind.IMAGE
+        ]
         bot_message = ChatMessage(
             message_id="bot-" + plan.decision_id,
             group_id=plan.group_id,
@@ -238,7 +266,8 @@ class DeliveryService:
             text=text,
             timestamp=sent_at,
             is_bot=True,
-            segment_types=("text",),
+            image_urls=image_urls,
+            segment_types=segment_types,
             origin=MessageOrigin.BOT_DELIVERY,
             decision_id=plan.decision_id,
             ingested_at=sent_at,
@@ -246,6 +275,7 @@ class DeliveryService:
                 "origin": "bot_delivery",
                 "decision_id": plan.decision_id,
                 "delivery_kind": kind,
+                "media_ids": media_ids,
             },
         )
         finalized = await self._finalize(
@@ -256,16 +286,36 @@ class DeliveryService:
         return WorkflowOutcome(plan.decision_id, True, sent_reason, text)
 
     async def _send(self, plan: DeliveryPlan):
+        if plan.outbound:
+            rich_sender = getattr(self.platform, "send_outbound", None)
+            if rich_sender is not None:
+                return await rich_sender(
+                    plan.group_id,
+                    plan.outbound,
+                    plan.decision_id,
+                    plan.quote_message_id,
+                )
+            if any(
+                item.kind is OutboundKind.IMAGE for item in plan.outbound
+            ):
+                return SendResult.failed("rich_media_unsupported")
+            text_segments = tuple(
+                item.text
+                for item in plan.outbound
+                if item.kind is OutboundKind.TEXT
+            )
+        else:
+            text_segments = plan.segments
         sender = getattr(self.platform, "send_segments", None)
         if sender is not None:
             return await sender(
                 plan.group_id,
-                plan.segments,
+                text_segments,
                 plan.decision_id,
                 plan.quote_message_id,
             )
         results = []
-        for segment in plan.segments:
+        for segment in text_segments:
             results.append(
                 await self.platform.send_text(
                     plan.group_id, segment, plan.decision_id
@@ -290,6 +340,7 @@ class DeliveryService:
                     plan.expires_at,
                     quote_message_id=plan.quote_message_id,
                     segments=plan.segments,
+                    outbound=plan.outbound,
                     kind=kind,
                 )
             )
@@ -305,6 +356,7 @@ class DeliveryService:
                 plan.expires_at,
                 quote_message_id=plan.quote_message_id,
                 segments=plan.segments,
+                outbound=plan.outbound,
                 kind=kind,
             )
         except TypeError:
@@ -316,6 +368,16 @@ class DeliveryService:
                 plan.expires_at,
             )
         return bool(await value) if inspect.isawaitable(value) else bool(value)
+
+    @staticmethod
+    def _text_for_plan(plan: DeliveryPlan) -> str:
+        if plan.outbound:
+            return "\n".join(
+                item.text
+                for item in plan.outbound
+                if item.kind is OutboundKind.TEXT and item.text
+            )
+        return "\n".join(plan.segments)
 
     async def _transition(self, decision_id, expected, status, **kwargs) -> bool:
         method = getattr(self.memory, "transition_outbox_async", None)
