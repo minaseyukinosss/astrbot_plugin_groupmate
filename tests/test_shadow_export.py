@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from eval.shadow_export import main
 from tests.shadow_fixtures import message, write_export
 
@@ -84,6 +86,34 @@ def test_cli_returns_nonzero_for_invalid_export(tmp_path, capsys):
     code = main(_args(tmp_path / "missing", tmp_path))
     assert code == 2
     assert "manifest" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize(
+    "flag,relative",
+    (
+        ("--id-salt-file", "local.salt"),
+        ("--output", "manifest.json"),
+        ("--markdown-output", "report.md"),
+        ("--review-output", "review.jsonl"),
+    ),
+)
+def test_cli_rejects_writes_inside_source_export_before_mutation(
+    tmp_path, capsys, flag, relative
+):
+    root = write_export(
+        tmp_path / "export",
+        [message("m1", "20002", "在", 1000)],
+        target_uin="20002",
+    )
+    manifest_before = (root / "manifest.json").read_bytes()
+    args = _args(root, tmp_path)
+    index = args.index(flag) + 1
+    args[index] = str(root / relative)
+
+    assert main(args) == 2
+    assert "export directory" in capsys.readouterr().err
+    assert (root / "manifest.json").read_bytes() == manifest_before
+    assert not (tmp_path / "results" / ".salt").exists()
 
 
 def test_cli_fails_when_no_high_confidence_examples(tmp_path, capsys):

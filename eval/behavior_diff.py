@@ -245,6 +245,9 @@ def build_diff_report(
             "target_records": summary.target_records,
             "excluded_system": summary.excluded_system,
             "excluded_recalled": summary.excluded_recalled,
+            "excluded_content_ineligible": (
+                summary.excluded_content_ineligible
+            ),
             "duplicate_records": summary.duplicate_records,
             "chunks": summary.chunk_count,
             "examples": len(examples),

@@ -179,6 +179,10 @@ def test_missing_or_future_explicit_reference_enters_review(tmp_path, reference_
     assert all(not item.observed_replied for item in examples)
     assert len(reviews) == 1
     assert reviews[0].reason in ("missing_reply_reference", "timestamp_inversion")
+    if reviews[0].reason == "missing_reply_reference":
+        assert reviews[0].source_events == (
+            _by_id(examples, "m1").source,
+        )
 
 
 def test_context_is_bounded_to_six_events(tmp_path):

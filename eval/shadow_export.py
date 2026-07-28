@@ -79,6 +79,36 @@ def _privacy_values(ingest, args):
     )
 
 
+def _validate_local_paths(args) -> None:
+    export_root = args.export_dir.expanduser().resolve()
+    writable = [
+        args.id_salt_file,
+        args.output,
+        args.markdown_output,
+        args.review_output,
+    ]
+    resolved = []
+    for path in writable:
+        if path is None:
+            continue
+        target = path.expanduser().resolve()
+        try:
+            target.relative_to(export_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                "output paths must be outside the source export directory"
+            )
+        resolved.append(target)
+    if len(resolved) != len(set(resolved)):
+        raise ValueError("output paths must be distinct")
+    if args.overrides is not None:
+        override = args.overrides.expanduser().resolve()
+        if override in resolved:
+            raise ValueError("output paths must not overwrite overrides")
+
+
 def write_review_queue(reviews, path: Path) -> None:
     rows = []
     for item in reviews:
@@ -105,6 +135,7 @@ def write_review_queue(reviews, path: Path) -> None:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        _validate_local_paths(args)
         salt = load_or_create_salt(args.id_salt_file)
         hasher = LocalIdHasher(salt)
         ingest = load_export(args.export_dir, args.target_uin)

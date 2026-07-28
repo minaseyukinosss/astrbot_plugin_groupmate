@@ -83,6 +83,7 @@ def test_report_groups_conditional_mismatches_and_invariants():
     )
 
     assert report["reply_confusion"]["target_reply_projected_silence"] == 1
+    assert report["counts"]["excluded_content_ineligible"] == 0
     assert report["scene_confusion"]["social_response"]["direct_address"] == 1
     assert report["mismatches"]["reply"] == ["sample-b"]
     assert report["violations"] == {

@@ -389,6 +389,12 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
             excluded_recalled=sum(item.recalled for item in ordered),
             duplicate_records=duplicates,
             chunk_count=len(chunks),
+            excluded_content_ineligible=sum(
+                not item.system
+                and not item.recalled
+                and not item.content_eligible
+                for item in ordered
+            ),
         ),
         target_uin=configured_target,
     )

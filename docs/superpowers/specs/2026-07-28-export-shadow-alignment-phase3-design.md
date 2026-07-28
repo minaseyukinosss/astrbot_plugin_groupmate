@@ -79,6 +79,7 @@ The ingest layer:
   message ID and retains only valid non-empty string mention identifiers;
 - marks system and recalled messages as excluded rather than treating them as
   dialogue;
+- counts content-ineligible records separately so report totals remain auditable;
 - rejects malformed JSON, missing required fields, invalid timestamps, and
   missing chunk files instead of silently producing partial conclusions.
 
@@ -210,6 +211,9 @@ The shareable JSON report excludes UINs and raw text. The local review JSONL may
 contain the minimum source and response excerpts needed for human judgment and is
 always written under an ignored path unless the user explicitly selects another
 local path.
+All writable destinations must resolve outside the source export directory, must
+be distinct, and must not overwrite the local overrides input. These checks run
+before salt creation or report writes.
 
 ## Failure Behavior
 

@@ -119,6 +119,8 @@ python3 -m eval.shadow_export \
 可分享的 JSON/Markdown 报告只包含聚合统计、规则码和加盐匿名样本 ID。原始聊天
 片段只进入 `phase3-review.jsonl`，该文件仅供本机人工复核。`eval/results/`、复核
 文件和 `.shadow-id-salt` 都不得提交；盐一旦丢失，同一原始消息会得到不同匿名 ID。
+所有盐、报告和复核输出路径必须位于源导出目录之外，且不得互相覆盖或覆盖人工
+标签文件；命令会在创建任何文件前检查这条边界。
 
 人工确认的复核项可通过 `--overrides path/to/overrides.jsonl` 提升为高置信标签。
 每行必须是完整 JSON 对象，只允许以下字段：

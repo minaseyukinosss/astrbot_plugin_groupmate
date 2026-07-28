@@ -53,7 +53,10 @@ class ReferenceLabeler:
     def label(self, example: BehaviorExample) -> ReferenceLabel:
         if not isinstance(example, BehaviorExample):
             raise TypeError("example must be a BehaviorExample")
-        if example.covered_context or example.review_reason:
+        if (
+            not example.observed_replied
+            and (example.covered_context or example.review_reason)
+        ):
             return self._review(
                 InteractionScene.AMBIENT_CONTRIBUTION,
                 None,

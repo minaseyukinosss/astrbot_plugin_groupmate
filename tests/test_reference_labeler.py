@@ -136,6 +136,19 @@ def test_covered_association_is_not_ground_truth():
     assert label.act is None
 
 
+def test_linked_reply_remains_ground_truth_when_also_covered_context():
+    item = example("小维，在吗")
+    item = BehaviorExample(
+        item.sample_id, item.source, item.context, item.response_run, True, True,
+        "multiple_source_candidates",
+    )
+
+    label = ReferenceLabeler("小维", "20002").label(item)
+
+    assert label.confidence is AssociationConfidence.HIGH
+    assert label.act is ResponseAct.ACKNOWLEDGE
+
+
 def test_reply_to_target_and_native_mention_are_directed():
     labeler = ReferenceLabeler("小维", "20002")
     reply = example("你觉得呢？")

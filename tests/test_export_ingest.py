@@ -435,6 +435,18 @@ def test_nonobject_record_reports_chunk_name_and_line(tmp_path):
         load_export(root, target_uin="10001")
 
 
+def test_summary_accounts_for_content_ineligible_records(tmp_path):
+    empty = message("m-empty", "20002", "", 1000)
+    root = write_export(
+        tmp_path / "export-empty", (empty,), target_uin="20002"
+    )
+
+    result = load_export(root, target_uin="20002")
+
+    assert result.summary.target_records == 1
+    assert result.summary.excluded_content_ineligible == 1
+
+
 def test_load_export_rejects_configured_target_absent(tmp_path):
     root = write_export(
         tmp_path / "export",

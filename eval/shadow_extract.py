@@ -184,7 +184,16 @@ def _associate_runs(
         if len(anchors) == 1:
             source = by_id.get(anchors[0])
             if source is None:
-                reviews.append(_review(run, "missing_reply_reference", ()))
+                candidates = _preceding_humans(
+                    events,
+                    run,
+                    target_uin,
+                    adjacent_gap_ms,
+                    after_ms=candidate_floor,
+                )
+                reviews.append(_review(
+                    run, "missing_reply_reference", candidates[-5:]
+                ))
                 continue
             if source.timestamp_ms > start:
                 reviews.append(_review(run, "timestamp_inversion", (source,)))

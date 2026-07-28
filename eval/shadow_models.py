@@ -114,6 +114,7 @@ class ExportSummary:
     excluded_recalled: int
     duplicate_records: int
     chunk_count: int
+    excluded_content_ineligible: int = 0
 
 
 @dataclass(frozen=True)
