@@ -8,9 +8,15 @@
 回复长度和延迟。指标必须在相同用户交互场景内比较；`overall` 只用于观察分布
 漂移，不能作为运行时决定回复、引用或选择媒体的随机概率。
 
+`eval.behavior_metrics` 进一步按 `scene` 与 `response act` 分组，统计条件回复率、
+已回复前提下的媒体率、长度、延迟和安全违规。`scenarios/phase2_behavior.jsonl`
+使用 `scene:*`、`act:*`、`media:*`、`capability:*` 标签描述用户行为应触发的
+场景、行为和允许的输出形式。标签不是抽样权重，也不得转化为线上随机概率。
+
 ## 内容
 
 - `scenarios/baseline.jsonl`：120 条版本化、脱敏的合成场景；
+- `scenarios/phase2_behavior.jsonl`：场景—行为—能力组合的独立验收集；
 - `schema.py`：场景与结果契约、隐私校验、Prompt 版本哈希；
 - `runner.py`：deterministic/model 两种运行模式；
 - `providers.py`：无第三方依赖的 OpenAI-compatible Provider；
@@ -39,6 +45,16 @@ python3 -m eval.runner \
 
 ```bash
 python3 -m eval.runner --mode deterministic --enforce
+```
+
+第二阶段行为集单独执行，避免改变 120 条基础集的组成：
+
+```bash
+python3 -m eval.runner \
+  --mode deterministic \
+  --enforce \
+  --scenarios eval/scenarios/phase2_behavior.jsonl \
+  --output /tmp/groupmate-phase2-behavior.json
 ```
 
 ## 真实模型模式
