@@ -13,7 +13,7 @@ catchphrases, relationship labels, or reusable response text.
 
 ## Evidence And Interpretation
 
-The full-group export contains 1,461 messages from target QQ `323537051`. It mixes
+The full-group export contains 1,461 messages from the local target account. It mixes
 natural dialogue, plugin output, media results, and automatic notices, so raw media
 and reply counts cannot be runtime probabilities.
 

@@ -14,12 +14,11 @@ capabilities, write memories, or learn Xiao Wei's identity and wording.
 
 ## Confirmed Data Source
 
-The current source is a QQChatExporter V5 chunked JSONL export:
+The current source is a local QQChatExporter V5 chunked JSONL export. Its path and
+target sender identifier remain local and are supplied at execution time through
+`SHADOW_EXPORT_DIR` and `SHADOW_TARGET_UIN`:
 
-- export root:
-  `/Users/minase/Desktop/ams/学习素材/exports/group_885617919_20260727_100415_chunked_jsonl`;
 - manifest total: 11,304 records;
-- target UIN: `323537051`;
 - target records: 1,461;
 - target record types include 1,000 text, 303 reply, 118 video, 35 forward,
   two file, one audio, and two system records.
@@ -194,8 +193,8 @@ explicit arguments. A representative invocation is:
 
 ```bash
 python3.7 -m eval.shadow_export \
-  --export-dir /Users/minase/Desktop/ams/学习素材/exports/group_885617919_20260727_100415_chunked_jsonl \
-  --target-uin 323537051 \
+  --export-dir "$SHADOW_EXPORT_DIR" \
+  --target-uin "$SHADOW_TARGET_UIN" \
   --target-alias 小维 \
   --current-alias 爱弥斯 \
   --id-salt-file eval/results/.shadow-id-salt \
