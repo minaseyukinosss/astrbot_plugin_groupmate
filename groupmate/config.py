@@ -23,6 +23,7 @@ _NESTED_GROUPS = (
     "persona_group",
     "relationship_group",
     "provider_group",
+    "media_group",
     "limits_group",
 )
 
@@ -112,6 +113,9 @@ class PluginSettings:
     v3_social_enabled: bool = True
     v3_opportunity_enabled: bool = True
     v3_memory_writer_enabled: bool = True
+    v3_composition_enabled: bool = True
+    reaction_media_enabled: bool = False
+    reaction_catalog_path: str = ""
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
@@ -119,6 +123,9 @@ class PluginSettings:
         character_name = str(
             data.get("character_name", DEFAULT_CHARACTER_NAME) or DEFAULT_CHARACTER_NAME
         ).strip() or DEFAULT_CHARACTER_NAME
+        reaction_catalog_path = str(
+            data.get("reaction_catalog_path", "") or ""
+        ).strip()
         return cls(
             enabled_groups=_string_tuple(data.get("enabled_groups", ())),
             aliases=_string_tuple(
@@ -165,4 +172,12 @@ class PluginSettings:
             v3_memory_writer_enabled=_boolean(
                 data.get("v3_memory_writer_enabled", True), True
             ),
+            v3_composition_enabled=_boolean(
+                data.get("v3_composition_enabled", True), True
+            ),
+            reaction_media_enabled=(
+                _boolean(data.get("reaction_media_enabled", False), False)
+                and bool(reaction_catalog_path)
+            ),
+            reaction_catalog_path=reaction_catalog_path,
         )

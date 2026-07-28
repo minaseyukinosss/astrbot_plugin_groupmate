@@ -530,3 +530,8 @@ class GroupPolicy:
     v3_opportunity_enabled: bool = True
     # Phase 5：关闭后不再接受候选写入，只读既有 memories
     v3_memory_writer_enabled: bool = True
+    # Phase 6：关闭后回退当前文本-only workflow。
+    v3_composition_enabled: bool = True
+    # 反应素材必须同时显式启用并配置本地目录。
+    reaction_media_enabled: bool = False
+    reaction_catalog_path: str = ""

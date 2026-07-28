@@ -153,6 +153,31 @@
       }
     }
   },
+  "media_group": {
+    "description": "场景编排与反应素材",
+    "type": "object",
+    "hint": "反应素材只在明确允许的社交场景中使用，不按概率随机发送。",
+    "items": {
+      "v3_composition_enabled": {
+        "description": "启用场景驱动的响应动作与结构化回复编排。",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭时回退当前文本回复路径。"
+      },
+      "reaction_media_enabled": {
+        "description": "允许在互惠、玩笑和纯视觉反应场景使用本地素材。",
+        "type": "bool",
+        "default": false,
+        "hint": "还必须配置素材目录；边界、任务和目标不明确场景始终禁用。"
+      },
+      "reaction_catalog_path": {
+        "description": "本地反应素材目录。",
+        "type": "string",
+        "default": "",
+        "hint": "留空时反应素材功能保持关闭。"
+      }
+    }
+  },
   "limits_group": {
     "description": "自主发言限额",
     "type": "object",

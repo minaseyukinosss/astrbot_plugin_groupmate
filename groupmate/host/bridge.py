@@ -350,6 +350,16 @@ class AstrBotBridge:
             v3_memory_writer_enabled=bool(
                 self._setting("v3_memory_writer_enabled", True)
             ),
+            v3_composition_enabled=bool(
+                self._setting("v3_composition_enabled", True)
+            ),
+            reaction_media_enabled=bool(
+                self._setting("reaction_media_enabled", False)
+                and str(self._setting("reaction_catalog_path", "") or "").strip()
+            ),
+            reaction_catalog_path=str(
+                self._setting("reaction_catalog_path", "") or ""
+            ).strip(),
         )
 
     def _group_enabled(self, group_id: str) -> bool:

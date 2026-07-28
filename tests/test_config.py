@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from groupmate.config import (
     HISTORY_LIMIT,
     HUMANIZE_DELAY_ENABLED,
@@ -27,6 +30,9 @@ def test_defaults_are_balanced_and_safe():
     assert settings.v3_social_enabled is True
     assert settings.v3_opportunity_enabled is True
     assert settings.v3_memory_writer_enabled is True
+    assert settings.v3_composition_enabled is True
+    assert settings.reaction_media_enabled is False
+    assert settings.reaction_catalog_path == ""
 
 
 def test_internal_knobs_ignore_legacy_config_keys():
@@ -88,6 +94,11 @@ def test_nested_schema_groups_are_flattened():
                 "vision_enabled": False,
                 "generation_provider": "gpt",
             },
+            "media_group": {
+                "v3_composition_enabled": False,
+                "reaction_media_enabled": True,
+                "reaction_catalog_path": " /srv/groupmate/reactions ",
+            },
             "limits_group": {
                 "spontaneous_hourly_limit": 3,
                 "spontaneous_cooldown_seconds": 120,
@@ -108,6 +119,9 @@ def test_nested_schema_groups_are_flattened():
     assert settings.persona_prompt == "自定义人格"
     assert settings.vision_enabled is False
     assert settings.generation_provider == "gpt"
+    assert settings.v3_composition_enabled is False
+    assert settings.reaction_media_enabled is True
+    assert settings.reaction_catalog_path == "/srv/groupmate/reactions"
     assert settings.spontaneous_hourly_limit == 3
     assert settings.spontaneous_cooldown_seconds == 120
 
@@ -169,3 +183,22 @@ def test_flatten_prefers_nested_over_duplicate_flat():
         }
     )
     assert flat["aliases"] == ["嵌套"]
+
+
+def test_reaction_media_cannot_enable_without_catalog_path():
+    settings = PluginSettings.from_mapping(
+        {"reaction_media_enabled": True, "reaction_catalog_path": "  "}
+    )
+
+    assert settings.reaction_media_enabled is False
+    assert settings.reaction_catalog_path == ""
+
+
+def test_schema_exposes_composition_and_reaction_controls():
+    schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    items = schema["media_group"]["items"]
+
+    assert items["v3_composition_enabled"]["default"] is True
+    assert items["reaction_media_enabled"]["default"] is False
+    assert items["reaction_catalog_path"]["default"] == ""
