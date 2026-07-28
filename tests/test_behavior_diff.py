@@ -158,6 +158,12 @@ def test_shareable_report_rejects_sensitive_keys_values_and_media():
         )
 
 
+def test_shareable_report_does_not_treat_schema_keys_as_export_values():
+    assert_shareable_report({"1": 3}, ("1",), ())
+    with pytest.raises(PrivacyViolation):
+        assert_shareable_report({"bucket": "1"}, ("1",), ())
+
+
 def test_json_and_markdown_are_deterministic(tmp_path):
     report = {
         "schema_version": 1,

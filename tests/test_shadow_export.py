@@ -1,5 +1,8 @@
 import inspect
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 from eval.shadow_export import main
 from tests.shadow_fixtures import message, write_export
@@ -19,10 +22,12 @@ def _args(root, tmp_path):
 
 
 def test_cli_writes_private_safe_reports_and_local_review(tmp_path):
+    short_numeric_name = message("m1", "10001", "小维", 1000)
+    short_numeric_name["sender"]["name"] = "1"
     root = write_export(
         tmp_path / "export",
         [
-            message("m1", "10001", "小维", 1000),
+            short_numeric_name,
             message("m2", "20002", "在", 2000),
             message("m3", "10002", "普通群聊长句", 3000),
         ],
@@ -110,3 +115,20 @@ def test_cli_and_projector_sources_exclude_effectful_modules():
         "memory_store",
     ):
         assert forbidden not in source
+
+
+def test_cli_import_isolated_from_workflow_and_site_packages():
+    root = Path(__file__).resolve().parents[1]
+    command = (
+        "import sys; "
+        "import eval.shadow_export; "
+        "assert 'groupmate.engine.workflow' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", command],
+        cwd=str(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    assert result.returncode == 0, result.stderr

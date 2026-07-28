@@ -260,7 +260,7 @@ def assert_shareable_report(
     raw_texts = tuple(value for value in forbidden_texts if len(value) >= 8)
 
     def check_string(value, path, is_key=False):
-        if value in identifiers:
+        if not is_key and value in identifiers:
             raise PrivacyViolation("export identifier at {}".format(path))
         if _MEDIA_VALUE.search(value):
             raise PrivacyViolation("media locator at {}".format(path))
