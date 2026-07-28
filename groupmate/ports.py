@@ -10,7 +10,14 @@ try:
 except ImportError:  # pragma: no cover
     from typing_extensions import Protocol
 
-from .models import ChatMessage, MemoryItem, ReplyPlan, SendResult, TopicSnapshot
+from .models import (
+    ChatMessage,
+    MemoryItem,
+    OutboundSegment,
+    ReplyPlan,
+    SendResult,
+    TopicSnapshot,
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,15 @@ class VisionPort(Protocol):
 
 
 class PlatformPort(Protocol):
+    async def send_outbound(
+        self,
+        group_id: str,
+        segments: Sequence[OutboundSegment],
+        decision_id: str,
+        quote_message_id: Optional[str] = None,
+    ) -> SendResult:
+        ...
+
     async def send_text(
         self,
         group_id: str,

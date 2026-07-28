@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from ..models import SegmentReceipt, SendReceiptKind, SendResult
+from ..models import (
+    OutboundKind,
+    OutboundSegment,
+    SegmentReceipt,
+    SendReceiptKind,
+    SendResult,
+)
 from ..persona.aemeath import AemeathPersonaProvider
 
 
@@ -115,6 +122,50 @@ class AstrBotPlatformPort:
                 return SendResult.failed("reply_component_unsupported")
             components.append(Reply(id=str(quote_message_id)))
         chain.message(text)
+        return await self._send_chain(group_id, chain)
+
+    async def send_outbound(
+        self,
+        group_id: str,
+        segments: Sequence[OutboundSegment],
+        decision_id: str,
+        quote_message_id: Optional[str] = None,
+    ) -> SendResult:
+        del decision_id
+        from astrbot.api.event import MessageChain
+        from astrbot.api.message_components import Image, Plain, Reply
+
+        outbound = tuple(segments or ())
+        if not outbound:
+            return SendResult.failed("empty_outbound")
+        chain = MessageChain()
+        components = getattr(chain, "chain", None)
+        if components is None:
+            return SendResult.failed("message_chain_unsupported")
+        if quote_message_id:
+            components.append(Reply(id=str(quote_message_id)))
+        try:
+            for segment in outbound:
+                if not isinstance(segment, OutboundSegment):
+                    return SendResult.failed("invalid_outbound_segment")
+                if segment.kind is OutboundKind.TEXT:
+                    components.append(Plain(segment.text))
+                    continue
+                media_ref = segment.media_ref
+                if media_ref.startswith(("http://", "https://")):
+                    components.append(Image.fromURL(media_ref))
+                    continue
+                media_path = Path(media_ref)
+                if not media_path.is_absolute() or not media_path.is_file():
+                    return SendResult.failed("invalid_media_ref")
+                components.append(Image.fromFileSystem(str(media_path)))
+        except Exception as exc:
+            return SendResult.failed(
+                "component_error", exc.__class__.__name__ + ":" + str(exc)
+            )
+        return await self._send_chain(group_id, chain)
+
+    async def _send_chain(self, group_id: str, chain: Any) -> SendResult:
         umo = self.umo_getter(group_id)
         sent = await self.context.send_message(umo, chain)
         if sent:
