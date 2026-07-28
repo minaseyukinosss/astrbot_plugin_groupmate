@@ -95,6 +95,45 @@ python3 -m eval.runner --mode model --judge --repetitions 3
 
 `eval/results/` 已被 Git 忽略。结果可能包含模型生成文本，不应提交仓库。
 
+## 导出记录影子对齐
+
+第三阶段工具只在本地读取 QQChatExporter 分片导出，提取“用户行为 -> 场景 ->
+是否回复 -> 行为类型”的保守参考标签，再用当前插件的纯决策组件做影子投影。它不调用
+模型或网络，不执行能力、发送和记忆副作用，也不改变线上插件配置。
+
+```bash
+export SHADOW_EXPORT_DIR="/absolute/path/to/local-export"
+export SHADOW_TARGET_UIN="local-target-uin"
+
+python3 -m eval.shadow_export \
+  --export-dir "$SHADOW_EXPORT_DIR" \
+  --target-uin "$SHADOW_TARGET_UIN" \
+  --target-alias "目标别名" \
+  --current-alias "爱弥斯" \
+  --id-salt-file eval/results/.shadow-id-salt \
+  --output eval/results/phase3-shadow.json \
+  --markdown-output eval/results/phase3-shadow.md \
+  --review-output eval/results/phase3-review.jsonl
+```
+
+可分享的 JSON/Markdown 报告只包含聚合统计、规则码和加盐匿名样本 ID。原始聊天
+片段只进入 `phase3-review.jsonl`，该文件仅供本机人工复核。`eval/results/`、复核
+文件和 `.shadow-id-salt` 都不得提交；盐一旦丢失，同一原始消息会得到不同匿名 ID。
+
+人工确认的复核项可通过 `--overrides path/to/overrides.jsonl` 提升为高置信标签。
+每行必须是完整 JSON 对象，只允许以下字段：
+
+```json
+{"sample_id":"sample-anonymous-id","scene":"direct_address","act":"answer"}
+```
+
+`act` 对观察到的沉默必须为 `null`。覆盖文件中的样本 ID 必须存在于当前运行，重复、
+未知或非法枚举会使整个运行失败。
+
+报告的 `overall` 和各类型总体占比只用于发现数据分布与实现差距。运行时行为必须继续
+由用户动作、指向关系、上下文和场景条件触发，禁止把目标占比转换成随机回复、随机引用
+或随机媒体概率。
+
 ## 场景数据治理
 
 场景必须：
