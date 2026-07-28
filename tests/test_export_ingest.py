@@ -288,9 +288,112 @@ def test_identical_duplicate_is_retained_once_and_counted_from_raw(tmp_path):
     assert result.summary.duplicate_records == 1
 
 
-def test_conflicting_duplicate_message_id_is_rejected(tmp_path):
-    first = message("m1", "10001", "first", 1000)
-    conflict = message("m1", "10001", "different", 1000)
+def test_presentation_only_duplicate_drift_is_retained_once_and_counted(
+    tmp_path,
+):
+    first = message("m1", "10001", "same behavior", 1000, recalled=True)
+    first["system"] = True
+    first["sender"]["name"] = "First display name"
+    first["content"]["text"] = "first rendered content"
+    first["content"]["html"] = "<p>first rendered content</p>"
+    first["content"]["mentions"] = [
+        {"uin": "10002", "name": "First mention display"}
+    ]
+    first["content"]["elements"].append(
+        {
+            "type": "system",
+            "data": {
+                "displayText": "first recalled display",
+                "senderName": "First system display",
+            },
+        }
+    )
+    first["content"]["resources"] = [
+        {"type": "image", "filename": "first.png", "url": "/first"}
+    ]
+    drift = json.loads(json.dumps(first))
+    drift["sender"]["name"] = "Second display name"
+    drift["content"]["text"] = "second rendered content"
+    drift["content"]["html"] = "<p>second rendered content</p>"
+    drift["content"]["mentions"][0]["name"] = "Second mention display"
+    drift["content"]["elements"][-1]["data"] = {
+        "displayText": "second recalled display",
+        "senderName": "Second system display",
+    }
+    drift["content"]["resources"][0].update(
+        {"filename": "second.png", "url": "/second"}
+    )
+    root = write_export(
+        tmp_path / "export",
+        [first, drift],
+        target_uin="10001",
+        chunk_size=1,
+    )
+
+    result = load_export(root, target_uin="10001")
+
+    assert len(result.events) == 1
+    assert result.events[0].sender_name == "First display name"
+    assert result.summary.target_records == 2
+    assert result.summary.duplicate_records == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda record: record.__setitem__("seq", "1001"),
+        lambda record: record.__setitem__("timestamp", 1001),
+        lambda record: record["sender"].__setitem__("uid", "other-uid"),
+        lambda record: record["sender"].__setitem__("uin", "10002"),
+        lambda record: record.__setitem__("type", "video"),
+        lambda record: record["content"]["elements"][1]["data"].__setitem__(
+            "text", "different text"
+        ),
+        lambda record: record["content"]["elements"].append(
+            {"type": "notice", "data": {}}
+        ),
+        lambda record: record["content"]["elements"][0]["data"].__setitem__(
+            "referencedMessageId", "other-reference"
+        ),
+        lambda record: record["content"]["elements"][0]["data"].__setitem__(
+            "senderUin", "10003"
+        ),
+        lambda record: record["content"].__setitem__(
+            "mentions", [{"uin": "10003"}]
+        ),
+        lambda record: record["content"].__setitem__(
+            "resources", [{"type": "image"}]
+        ),
+        lambda record: record.__setitem__("recalled", True),
+        lambda record: record.__setitem__("system", True),
+    ],
+    ids=(
+        "seq",
+        "timestamp",
+        "sender-key",
+        "sender-uin",
+        "message-type",
+        "text",
+        "element-types",
+        "reply-message-id",
+        "reply-sender-uin",
+        "mentions",
+        "media",
+        "recalled",
+        "system",
+    ),
+)
+def test_conflicting_duplicate_behavior_is_rejected(tmp_path, mutation):
+    first = message(
+        "m1",
+        "10001",
+        "same text",
+        1000,
+        reply_to="m-source",
+        reply_sender_uin="10002",
+    )
+    conflict = json.loads(json.dumps(first))
+    mutation(conflict)
     root = write_export(
         tmp_path / "export",
         [first, conflict],
@@ -413,8 +516,6 @@ def test_load_export_rejects_invalid_required_record_fields(
         ("resources", [{"type": 1}], "resource type.*non-empty string"),
         ("mentions", "10002", "mentions.*list"),
         ("mentions", ["10002"], "mention.*mapping"),
-        ("mentions", [{}], "mention.*uin or uid"),
-        ("mentions", [{"uin": 10002}], "mention uin.*string"),
     ],
 )
 def test_load_export_rejects_invalid_nested_collections(
@@ -429,7 +530,59 @@ def test_load_export_rejects_invalid_nested_collections(
         load_export(root, target_uin="10001")
 
 
-def test_reply_reference_zero_and_blank_normalize_to_absent(tmp_path):
+def test_mentions_keep_valid_string_ids_and_ignore_invalid_identifier_values(
+    tmp_path,
+):
+    record = message("m1", "10001", "mentions", 1000)
+    record["content"]["mentions"] = [
+        {"uin": "10002", "uid": None, "name": "display"},
+        {"uin": 10003, "uid": "uid-3"},
+        {"uin": None},
+        {"name": "display only"},
+        {"uin": " "},
+        {"uid": "uid-3"},
+    ]
+    root = write_export(tmp_path / "export", [record], target_uin="10001")
+
+    result = load_export(root, target_uin="10001")
+
+    assert result.events[0].mentions == ("10002", "uid-3")
+
+
+def test_null_referenced_message_id_falls_back_to_message_id(tmp_path):
+    record = message(
+        "m1",
+        "10001",
+        "reply",
+        1000,
+        reply_to="m-source",
+        reply_sender_uin="00100",
+    )
+    record["content"]["elements"][0]["data"]["referencedMessageId"] = None
+    root = write_export(tmp_path / "export", [record], target_uin="10001")
+
+    result = load_export(root, target_uin="10001")
+
+    assert result.events[0].reply_to_message_id == "m-source"
+    assert result.events[0].reply_to_sender_uin == "00100"
+
+
+def test_nonnull_nonstring_reply_reference_is_rejected(tmp_path):
+    record = message(
+        "m1", "10001", "reply", 1000, reply_to="m-source"
+    )
+    record["content"]["elements"][0]["data"]["referencedMessageId"] = 1
+    root = write_export(tmp_path / "export", [record], target_uin="10001")
+
+    with pytest.raises(
+        ExportValidationError, match="referencedMessageId.*string"
+    ):
+        load_export(root, target_uin="10001")
+
+
+def test_reply_reference_zero_and_blank_use_fallback_or_normalize_absent(
+    tmp_path,
+):
     zero = message(
         "m-zero",
         "10001",
@@ -464,7 +617,7 @@ def test_reply_reference_zero_and_blank_normalize_to_absent(tmp_path):
 
     result = load_export(root, target_uin="10001")
 
-    assert result.events[0].reply_to_message_id == ""
+    assert result.events[0].reply_to_message_id == "legacy-id"
     assert result.events[0].reply_to_sender_uin == "00100"
     assert result.events[1].reply_to_message_id == ""
     assert result.events[1].reply_to_sender_uin == "00200"

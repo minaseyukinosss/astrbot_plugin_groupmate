@@ -128,13 +128,23 @@ def _reply_fields(elements):
         if element_type != "reply":
             continue
         if "referencedMessageId" in data:
-            reply_id = _optional_reply_string(
-                data, "referencedMessageId", "reply referencedMessageId"
-            )
+            referenced = data["referencedMessageId"]
+            if referenced is not None and not isinstance(referenced, str):
+                raise ExportValidationError(
+                    "reply referencedMessageId must be a string or null"
+                )
+            if isinstance(referenced, str):
+                reply_id = referenced.strip()
+                if reply_id not in ("", "0"):
+                    sender_uin = _optional_reply_string(
+                        data, "senderUin", "reply senderUin"
+                    )
+                    return reply_id, sender_uin
+        legacy = data.get("messageId")
+        if isinstance(legacy, str):
+            reply_id = legacy.strip()
         else:
-            reply_id = _optional_reply_string(
-                data, "messageId", "reply messageId"
-            )
+            reply_id = ""
         if reply_id in ("", "0"):
             reply_id = ""
         sender_uin = _optional_reply_string(
@@ -156,26 +166,16 @@ def _parse_mentions(content):
     for index, raw_mention in enumerate(raw_mentions):
         label = "mention {}".format(index)
         mention = _required_mapping(raw_mention, label)
-        found_identifier = False
         for key in ("uin", "uid"):
-            if key not in mention:
-                continue
-            value = mention[key]
+            value = mention.get(key)
             if not isinstance(value, str):
-                raise ExportValidationError(
-                    "mention {} must be a string".format(key)
-                )
+                continue
             normalized = value.strip()
             if not normalized:
                 continue
-            found_identifier = True
             if normalized not in seen:
                 seen.add(normalized)
                 mentions.append(normalized)
-        if not found_identifier:
-            raise ExportValidationError(
-                "mention must contain a non-empty uin or uid"
-            )
     return tuple(mentions)
 
 
@@ -279,6 +279,25 @@ def _parse_event(raw, chunk_name, line_number):
         raise ExportValidationError("{} {}".format(location, exc)) from exc
 
 
+def _behavior_key(event):
+    return (
+        event.message_id,
+        event.seq,
+        event.timestamp_ms,
+        event.sender_key,
+        event.sender_uin,
+        event.message_type,
+        event.text,
+        event.element_types,
+        event.reply_to_message_id,
+        event.reply_to_sender_uin,
+        event.mentions,
+        event.has_media,
+        event.recalled,
+        event.system,
+    )
+
+
 def load_export(export_dir: Path, target_uin: str) -> IngestResult:
     """Load and strictly normalize one QQChatExporter export in memory."""
 
@@ -288,7 +307,7 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
     expected_total = manifest["statistics"]["totalMessages"]
     configured_target = str(target_uin)
 
-    raw_by_id = {}
+    event_by_id = {}
     events = []
     observed = 0
     duplicates = 0
@@ -315,9 +334,9 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
                     event = _parse_event(raw, chunk_path.name, line_number)
                     if event.sender_uin == configured_target:
                         target_records += 1
-                    previous = raw_by_id.get(event.message_id)
+                    previous = event_by_id.get(event.message_id)
                     if previous is not None:
-                        if previous != raw:
+                        if _behavior_key(previous) != _behavior_key(event):
                             raise ExportValidationError(
                                 "conflicting duplicate message id {}".format(
                                     event.message_id
@@ -325,7 +344,7 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
                             )
                         duplicates += 1
                         continue
-                    raw_by_id[event.message_id] = raw
+                    event_by_id[event.message_id] = event
                     events.append(event)
         except ExportValidationError:
             raise

@@ -72,7 +72,11 @@ The ingest layer:
 - verifies manifest and observed total record counts;
 - validates the configured target UIN against observed sender records;
 - orders records by timestamp, sequence, and message ID;
-- removes exact duplicate message IDs while counting duplicates;
+- retains the first behavior-equivalent duplicate message ID while counting
+  duplicates, permits presentation-only exporter drift, and rejects conflicts in
+  normalized behavioral fields;
+- falls back from null, blank, or `"0"` reply references to a valid legacy
+  message ID and retains only valid non-empty string mention identifiers;
 - marks system and recalled messages as excluded rather than treating them as
   dialogue;
 - rejects malformed JSON, missing required fields, invalid timestamps, and
@@ -214,8 +218,9 @@ local path.
   line location.
 - Manifest/observed count mismatch: fail integrity verification.
 - Configured target absent: fail with a count-only error.
-- Duplicate ID: retain the first identical record, count it, and fail if duplicate
-  records disagree.
+- Duplicate ID: retain the first behavior-equivalent record, count it, permit
+  presentation-only exporter drift, and fail when normalized behavioral fields
+  disagree.
 - Missing reply target or conflicting anchors: add a review item; do not guess.
 - Invalid local override: fail with the anonymous sample ID and field name.
 - Empty high-confidence set: produce ingestion counts and exit non-zero because no
@@ -230,7 +235,7 @@ temporary path. No production export text or identifiers are copied into tests.
 Required coverage:
 
 - manifest and multi-chunk parsing;
-- exact count validation and duplicate behavior;
+- exact count validation and behavior-equivalent duplicate handling;
 - explicit reply association;
 - conservative adjacent association and ambiguous review fallback;
 - target response-run grouping and split anchors;

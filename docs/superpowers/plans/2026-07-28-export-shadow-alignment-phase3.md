@@ -466,17 +466,20 @@ def test_load_export_rejects_chunk_path_escape(tmp_path):
         load_export(root, target_uin="20002")
 
 
-def test_identical_duplicate_is_counted_but_conflict_fails(tmp_path):
-    first = message("m1", "10001", "第一条", 1000)
-    root = write_export(tmp_path / "same", [first, first], chunk_size=1)
-    result = load_export(root, target_uin="20002")
+def test_behavior_equivalent_duplicate_is_counted_but_conflict_fails(tmp_path):
+    first = message("m1", "10001", "synthetic text", 1000)
+    drift = json.loads(json.dumps(first))
+    drift["sender"]["name"] = "Synthetic display variant"
+    drift["content"]["text"] = "synthetic rendered variant"
+    root = write_export(tmp_path / "same", [first, drift], chunk_size=1)
+    result = load_export(root, target_uin="10001")
     assert len(result.events) == 1
     assert result.summary.duplicate_records == 1
 
-    conflict = message("m1", "10001", "不同内容", 1000)
+    conflict = message("m1", "10001", "different normalized text", 1000)
     root = write_export(tmp_path / "conflict", [first, conflict], chunk_size=1)
     with pytest.raises(ExportValidationError, match="conflicting duplicate"):
-        load_export(root, target_uin="20002")
+        load_export(root, target_uin="10001")
 
 
 def test_malformed_json_reports_chunk_and_line(tmp_path):
@@ -508,12 +511,31 @@ class ExportValidationError(ValueError):
     pass
 
 
+def _behavior_key(event):
+    return (
+        event.message_id,
+        event.seq,
+        event.timestamp_ms,
+        event.sender_key,
+        event.sender_uin,
+        event.message_type,
+        event.text,
+        event.element_types,
+        event.reply_to_message_id,
+        event.reply_to_sender_uin,
+        event.mentions,
+        event.has_media,
+        event.recalled,
+        event.system,
+    )
+
+
 def load_export(export_dir: Path, target_uin: str) -> IngestResult:
     root = Path(export_dir).expanduser().resolve()
     manifest = _load_manifest(root / "manifest.json")
     chunks = _declared_chunks(root, manifest)
     expected_total = _required_int(manifest["statistics"], "totalMessages")
-    raw_by_id = {}
+    event_by_id = {}
     events = []
     observed = 0
     duplicates = 0
@@ -535,9 +557,9 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
                 event = _parse_event(raw, chunk_path.name, line_number)
                 if event.sender_uin == str(target_uin):
                     target_records += 1
-                previous = raw_by_id.get(event.message_id)
+                previous = event_by_id.get(event.message_id)
                 if previous is not None:
-                    if previous != raw:
+                    if _behavior_key(previous) != _behavior_key(event):
                         raise ExportValidationError(
                             "conflicting duplicate message id {}".format(
                                 event.message_id
@@ -545,7 +567,7 @@ def load_export(export_dir: Path, target_uin: str) -> IngestResult:
                         )
                     duplicates += 1
                     continue
-                raw_by_id[event.message_id] = raw
+                event_by_id[event.message_id] = event
                 events.append(event)
         if chunk_observed != declared_count:
             raise ExportValidationError(
@@ -590,12 +612,20 @@ The private helpers must enforce these exact boundaries:
 - `seq` accepts a decimal string or integer;
 - text is assembled only from `element.type == "text"` data, so exporter reply
   markers and image placeholders do not enter the dialogue text;
-- the first reply element's `data.messageId`/`data.referencedMessageId` and
-  `data.senderUin` supply referenced message and sender UIN; string `"0"` is
-  normalized to an absent reference;
+- the first reply element's non-empty, non-`"0"`
+  `data.referencedMessageId` supplies the reference; null, blank, and `"0"`
+  fall back to a valid string `data.messageId`, while a non-null non-string
+  referenced value fails validation;
+- `data.senderUin` supplies the referenced sender UIN, preserving its string
+  representation;
 - media is true for image elements/resources or message types `video`, `audio`,
   `file`, and `forward`;
-- mentions retain only string `uin`/`uid` values from `content.mentions` in memory;
+- mentions retain only non-empty string `uin`/`uid` values from mapping entries,
+  ignoring missing or non-string identifier values while rejecting scalar
+  mention collections and entries;
+- duplicate IDs retain the first event and count behavior-equivalent occurrences;
+  sender display names and other exporter rendering metadata may drift, but any
+  conflict in the normalized behavior key fails validation;
 - system exclusion is true when the top-level flag is true, the message type is
   `system`, or a system element is present.
 
