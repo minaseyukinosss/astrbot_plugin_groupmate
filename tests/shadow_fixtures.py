@@ -64,6 +64,12 @@ def message(
 
 
 def write_export(root, records, target_uin="20002", chunk_size=3):
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size <= 0
+    ):
+        raise ValueError("chunk_size must be a positive integer")
     root = Path(root)
     chunk_dir = root / "chunks"
     chunk_dir.mkdir(parents=True)

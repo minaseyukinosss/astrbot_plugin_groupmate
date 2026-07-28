@@ -10,6 +10,31 @@ from groupmate.core.response_act import ResponseAct
 from groupmate.models import InteractionScene
 
 
+def _sequence_tuple(value, name):
+    if isinstance(value, (str, bytes, bytearray)):
+        raise TypeError("{} must be a sequence, not a scalar string".format(name))
+    if value is None:
+        return ()
+    try:
+        return tuple(value)
+    except TypeError:
+        raise TypeError("{} must be a sequence".format(name))
+
+
+def _string_tuple(value, name):
+    values = _sequence_tuple(value, name)
+    if not all(isinstance(item, str) for item in values):
+        raise TypeError("{} must contain strings".format(name))
+    return tuple(item.strip() for item in values)
+
+
+def _require_instance(value, expected_type, name):
+    if not isinstance(value, expected_type):
+        raise TypeError(
+            "{} must be {}".format(name, expected_type.__name__)
+        )
+
+
 class AssociationConfidence(str, Enum):
     HIGH = "high"
     REVIEW = "review"
@@ -55,14 +80,29 @@ class ExportEvent:
                 name,
                 str(getattr(self, name) or "").strip(),
             )
-        object.__setattr__(self, "element_types", tuple(self.element_types or ()))
-        object.__setattr__(self, "mentions", tuple(self.mentions or ()))
+        object.__setattr__(
+            self,
+            "element_types",
+            _string_tuple(self.element_types, "element_types"),
+        )
+        object.__setattr__(
+            self,
+            "mentions",
+            _string_tuple(self.mentions, "mentions"),
+        )
 
     @property
     def content_eligible(self) -> bool:
         return not self.system and not self.recalled and bool(
             self.text or self.has_media or self.element_types
         )
+
+
+def _event_tuple(value, name):
+    values = _sequence_tuple(value, name)
+    if not all(isinstance(item, ExportEvent) for item in values):
+        raise TypeError("{} must contain ExportEvent values".format(name))
+    return values
 
 
 @dataclass(frozen=True)
@@ -82,6 +122,10 @@ class IngestResult:
     summary: ExportSummary
     target_uin: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "events", _event_tuple(self.events, "events"))
+        _require_instance(self.summary, ExportSummary, "summary")
+
 
 @dataclass(frozen=True)
 class ResponseRun:
@@ -91,6 +135,19 @@ class ResponseRun:
     confidence: AssociationConfidence
     reason_codes: Tuple[str, ...]
     review_reason: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "events", _event_tuple(self.events, "events"))
+        _require_instance(
+            self.confidence,
+            AssociationConfidence,
+            "confidence",
+        )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _string_tuple(self.reason_codes, "reason_codes"),
+        )
 
     @property
     def message_count(self) -> int:
@@ -119,6 +176,16 @@ class BehaviorExample:
     covered_context: bool
     review_reason: str
 
+    def __post_init__(self) -> None:
+        _require_instance(self.source, ExportEvent, "source")
+        object.__setattr__(
+            self,
+            "context",
+            _event_tuple(self.context, "context"),
+        )
+        if self.response_run is not None:
+            _require_instance(self.response_run, ResponseRun, "response_run")
+
 
 @dataclass(frozen=True)
 class LocalReviewItem:
@@ -127,6 +194,18 @@ class LocalReviewItem:
     source_events: Tuple[ExportEvent, ...]
     response_events: Tuple[ExportEvent, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_events",
+            _event_tuple(self.source_events, "source_events"),
+        )
+        object.__setattr__(
+            self,
+            "response_events",
+            _event_tuple(self.response_events, "response_events"),
+        )
+
 
 @dataclass(frozen=True)
 class ReferenceLabel:
@@ -134,6 +213,21 @@ class ReferenceLabel:
     act: Optional[ResponseAct]
     confidence: AssociationConfidence
     reason_codes: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_instance(self.scene, InteractionScene, "scene")
+        if self.act is not None:
+            _require_instance(self.act, ResponseAct, "act")
+        _require_instance(
+            self.confidence,
+            AssociationConfidence,
+            "confidence",
+        )
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _string_tuple(self.reason_codes, "reason_codes"),
+        )
 
 
 @dataclass(frozen=True)
@@ -151,3 +245,13 @@ class ShadowProjection:
     owner_count: int
     completion_claim_allowed: bool
     reason_codes: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_instance(self.scene, InteractionScene, "scene")
+        if self.act is not None:
+            _require_instance(self.act, ResponseAct, "act")
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _string_tuple(self.reason_codes, "reason_codes"),
+        )
