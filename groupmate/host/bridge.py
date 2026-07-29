@@ -378,7 +378,6 @@ class AstrBotBridge:
             ),
             humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
             max_reply_segments=MAX_REPLY_SEGMENTS,
-            v3_opportunity_enabled=bool(self._setting("v3_opportunity_enabled", True)),
             v3_memory_writer_enabled=bool(
                 self._setting("v3_memory_writer_enabled", True)
             ),

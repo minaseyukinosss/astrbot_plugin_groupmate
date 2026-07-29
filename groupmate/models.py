@@ -583,8 +583,6 @@ class GroupPolicy:
     humanize_delay_enabled: bool = True
     max_reply_segments: int = 2
 
-    # Phase 4：关闭后 soft 恢复「进模型 + SpeakContract」旧路径
-    v3_opportunity_enabled: bool = True
     # Phase 5：关闭后不再接受候选写入，只读既有 memories
     v3_memory_writer_enabled: bool = True
     # Phase 6：关闭后回退当前文本-only workflow。

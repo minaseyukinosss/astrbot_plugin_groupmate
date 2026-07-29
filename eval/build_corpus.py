@@ -142,7 +142,7 @@ def trigger_scenarios() -> Iterable[Dict]:
             action="sent",
             output="不会使用",
             outcome_reason="copied_at_tip",
-            required=["不能复制"],
+            required=["不算数"],
             tags=["copied_at"],
         )
 
@@ -163,7 +163,7 @@ def trigger_scenarios() -> Iterable[Dict]:
             trigger="alias_mention",
             action="silent",
             output="<SILENCE>",
-            outcome_reason="model_silence",
+            outcome_reason="inhibit:passing_alias_mention",
             tags=["soft_trigger"],
         )
 
@@ -191,7 +191,7 @@ def trigger_scenarios() -> Iterable[Dict]:
             trigger="candidate",
             action="silent",
             output="<SILENCE>",
-            outcome_reason="model_silence",
+            outcome_reason="no_open_motive",
             tags=["soft_trigger"],
         )
 
@@ -272,20 +272,20 @@ def guard_scenarios() -> Iterable[Dict]:
 
 def single_turn_scenarios() -> Iterable[Dict]:
     soft_cases = [
-        ("这把终于过了", "总算过了，挺厉害嘛。", "过了"),
-        ("今天全群都在复读", "你们怎么又排起队了。", "排"),
-        ("这个新角色真好看", "确实，配色挺漂亮的。", "漂亮"),
-        ("服务器又转圈了", "看起来又卡住了。", "卡"),
-        ("终于下班了", "辛苦了，快去歇会儿。", "歇"),
-        ("刚抽到想要的角色", "运气不错呀，恭喜。", "恭喜"),
-        ("这局差一点就赢了", "就差一点，确实可惜。", "可惜"),
-        ("大家今天都好安静", "可能都在忙吧。", "忙"),
+        ("有没有人知道这关怎么过？", "先看机制，再按阶段处理。", "机制"),
+        ("请问大家，群里复读太多怎么处理？", "先短提醒一下，别继续接复读。", "提醒"),
+        ("有人知道新角色怎么配队吗？", "先围绕主输出定位配队。", "配队"),
+        ("服务器一直转圈，有没有人知道怎么解决？", "先重连，再检查服务状态。", "重连"),
+        ("请教一下，怎么缓解下班后的疲惫？", "先吃饭休息，别硬撑呀。", "休息"),
+        ("有没有人知道怎么查抽卡记录？", "从历史记录入口查就行。", "记录"),
+        ("请问大家，这局总差一点怎么办？", "先复盘最后一段的失误。", "复盘"),
+        ("群里太安静了，有没有人知道怎么活跃？", "抛个具体话题会自然些。", "话题"),
     ]
     for index, (text, output, required) in enumerate(soft_cases, 1):
         yield scenario(
             "single-soft-{:02d}".format(index),
             "single_turn",
-            "有明确自然贡献时软候选可以短接一句",
+            "明确向群体求助时可以提供具体短答",
             [message(text)],
             trigger="candidate",
             action="sent",

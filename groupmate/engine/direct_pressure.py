@@ -48,6 +48,22 @@ class DirectAddressPressureTracker:
         self.pester_count = max(self.nudge_count + 1, int(pester_count))
         self._events: Dict[Tuple[str, str], Tuple[int, ...]] = {}
 
+    def configure(
+        self,
+        *,
+        window_seconds: int,
+        nudge_count: int,
+        pester_count: int,
+    ) -> None:
+        """configure（重新配置）：应用当前群策略的压力阈值。"""
+
+        self.window_seconds = max(1, int(window_seconds))
+        self.nudge_count = max(2, int(nudge_count))
+        self.pester_count = max(
+            self.nudge_count + 1,
+            int(pester_count),
+        )
+
     def observe(
         self,
         message: ChatMessage,

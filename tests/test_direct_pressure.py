@@ -154,3 +154,28 @@ def test_pressure_is_isolated_per_sender_and_expires_by_window():
 
     assert other.count == 1
     assert expired.count == 1
+
+
+def test_tracker_can_apply_group_policy_thresholds():
+    pressure = tracker()
+    pressure.configure(
+        window_seconds=300,
+        nudge_count=3,
+        pester_count=4,
+    )
+
+    first = pressure.observe(
+        message(timestamp=100),
+        TriggerKind.ALIAS_DIRECT,
+        now=100,
+        aliases=("爱弥斯",),
+    )
+    second = pressure.observe(
+        message(timestamp=120),
+        TriggerKind.ALIAS_DIRECT,
+        now=120,
+        aliases=("爱弥斯",),
+    )
+
+    assert first.level is DirectAddressPressureLevel.NORMAL
+    assert second.level is DirectAddressPressureLevel.NORMAL

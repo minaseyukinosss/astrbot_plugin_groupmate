@@ -37,7 +37,6 @@ from tests.fakes import (
 def _policy(**overrides) -> GroupPolicy:
     values = {
         "humanize_delay_enabled": False,
-        "v3_opportunity_enabled": False,
         "v3_memory_writer_enabled": True,
     }
     values.update(overrides)

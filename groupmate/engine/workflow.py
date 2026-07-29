@@ -16,7 +16,11 @@ from ..capabilities import (
 )
 from ..capabilities.contracts import validate_capability_name
 from ..core.addressee import AddresseeResolver
-from ..core.intent import max_chars_for_mode
+from ..core.intent import (
+    has_image_capability,
+    max_chars_for_mode,
+    select_reply_mode,
+)
 from ..core.response_act import (
     ResponseAct,
     ResponseActPlan,
@@ -24,12 +28,17 @@ from ..core.response_act import (
     TaskResolutionStatus,
 )
 from ..core.session import GroupSession, GroupSessionStore
-from ..core.scenes import classify_scene, policy_for_scene
+from ..core.scenes import classify_scene
 from ..core.speak_contract import SpeakContract
 from .composer import ResponseComposer
 from .copied_at import copied_at_tip, is_copied_at
 from .delivery import DeliveryService, build_delivery_plan
 from .opportunity import OpportunityArbiter
+from .participation import ParticipationDecisionEngine
+from .participation_types import (
+    ParticipationAction,
+    ParticipationObligation,
+)
 from .planner import ReplyIntentPlanner
 from ..models import (
     AddresseeKind,
@@ -40,7 +49,6 @@ from ..models import (
     InteractionScene,
     MemoryItem,
     MemoryKind,
-    OpportunityAction,
     ReplyMode,
     ReplyPlan,
     TargetingDecision,
@@ -61,6 +69,8 @@ from ..ports import (
 )
 from ..memory.memory_writer import MemoryWriter
 from ..media.reactions import LocalReactionCatalog, ReactionPolicy
+from ..persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
+from ..social.affinity import snapshot_for_relationship
 from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from .topics import select_active_messages
 
@@ -96,6 +106,7 @@ class CognitiveWorkflow:
         addressee_resolver: Optional[AddresseeResolver] = None,
         opportunity_arbiter: Optional[OpportunityArbiter] = None,
         intent_planner: Optional[ReplyIntentPlanner] = None,
+        participation_engine: Optional[ParticipationDecisionEngine] = None,
         budgets: Optional[BudgetTracker] = None,
         memory_writer: Optional[MemoryWriter] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
@@ -127,6 +138,9 @@ class CognitiveWorkflow:
         )
         self.memory_writer = memory_writer or MemoryWriter(memory)
         self.intent_planner = intent_planner or ReplyIntentPlanner()
+        self.participation_engine = (
+            participation_engine or ParticipationDecisionEngine()
+        )
         self.task_response_resolver = task_response_resolver
         self.capabilities = capabilities
         self.composer = composer or ResponseComposer()
@@ -171,7 +185,6 @@ class CognitiveWorkflow:
         decision_id = uuid4().hex
         now = self.clock.now()
         soft_trigger = trigger in _SOFT_TRIGGERS
-        opportunity_enabled = bool(getattr(policy, "v3_opportunity_enabled", True))
         composition_enabled = bool(getattr(policy, "v3_composition_enabled", True))
         self._record(decision_id, topic.group_id, "OBSERVE", trigger.value, now)
 
@@ -187,15 +200,7 @@ class CognitiveWorkflow:
             )
 
         scene = classify_scene(trigger, topic.latest)
-        scene_policy = policy_for_scene(scene)
         self._record(decision_id, topic.group_id, "SCENE", scene.value, now)
-
-        # Legacy soft path prechecks when opportunity arbiter disabled
-        if not opportunity_enabled:
-            if soft_trigger and now - topic.updated_at > policy.candidate_ttl_seconds:
-                return self._silent(decision_id, topic.group_id, "stale_topic", now)
-            if trigger is TriggerKind.CANDIDATE and not self.rate_limiter.allow(now):
-                return self._silent(decision_id, topic.group_id, "rate_limited", now)
 
         targeting = self._resolve_targeting(topic, trigger, policy)
         self._record(
@@ -209,102 +214,104 @@ class CognitiveWorkflow:
             now,
         )
 
-        reply_mode = ReplyMode.SHORT_SOCIAL
-        response_act = None
-        required_capabilities: Tuple[str, ...] = ()
-        contribution = ""
-        target_message_id = topic.latest.message_id if topic.latest else None
-        needs_vision = bool(self._topic_image_urls(topic))
-        urgency = Urgency.HIGH if not soft_trigger else Urgency.NORMAL
-
-        if opportunity_enabled:
-            opportunity = self.opportunity_arbiter.evaluate(
-                topic,
-                trigger,
-                policy,
-                targeting,
-                now=now,
-                recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-            )
+        relationship_state = self._relationship_state_for_target(topic, targeting)
+        affinity = snapshot_for_relationship(relationship_state)
+        task_resolution, task_resolution_reason = self._task_response_inputs(
+            scene,
+            topic.latest,
+            policy,
+        )
+        if task_resolution_reason:
             self._record(
                 decision_id,
                 topic.group_id,
-                "OPPORTUNITY",
-                ",".join(opportunity.reason_codes),
+                "TASK_RESOLUTION",
+                task_resolution_reason,
                 now,
             )
-            if opportunity.expires_at and now > opportunity.expires_at:
-                return self._silent(decision_id, topic.group_id, "opportunity_expired", now)
-            if opportunity.action is OpportunityAction.SILENCE:
-                reason = opportunity.reason_codes[-1] if opportunity.reason_codes else "opportunity_silence"
-                if reason.startswith("utility=") or reason.startswith("threshold="):
-                    reason = "opportunity_silence"
-                if opportunity.reason_codes and opportunity.reason_codes[0] == "prefilter":
-                    reason = "prefilter_" + (
-                        opportunity.reason_codes[1]
-                        if len(opportunity.reason_codes) > 1
-                        else "blocked"
-                    )
-                return self._silent(decision_id, topic.group_id, reason, now)
+        persona_profile = getattr(
+            self.persona,
+            "participation_profile",
+            AEMEATH_PARTICIPATION_PROFILE,
+        )
+        participation = self.participation_engine.decide(
+            topic=topic,
+            trigger=trigger,
+            policy=policy,
+            targeting=targeting,
+            now=now,
+            aliases=policy.aliases,
+            affinity=affinity,
+            persona=persona_profile,
+            recent_outputs=tuple(self._recent_outputs[topic.group_id]),
+            task_resolution=task_resolution,
+        )
+        self._record(
+            decision_id,
+            topic.group_id,
+            "PARTICIPATION",
+            ",".join(participation.reason_codes),
+            now,
+        )
+        if participation.action is ParticipationAction.SILENCE:
+            reason = (
+                participation.reason_codes[-1]
+                if participation.reason_codes
+                else "participation_silence"
+            )
+            return self._silent(decision_id, topic.group_id, reason, now)
 
-            task_resolution, task_resolution_reason = self._task_response_inputs(
-                scene, topic.latest, policy
-            )
-            if task_resolution_reason:
-                self._record(
-                    decision_id,
-                    topic.group_id,
-                    "TASK_RESOLUTION",
-                    task_resolution_reason,
-                    now,
-                )
-            intent = self.intent_planner.plan(
-                opportunity,
-                topic,
-                targeting,
-                decision_id=decision_id,
-                soft_trigger=soft_trigger,
-                scene=scene,
-                aliases=policy.aliases,
-                task_resolution=task_resolution,
-            )
-            if intent is None:
-                return self._silent(decision_id, topic.group_id, "intent_missing", now)
-            if intent.expires_at and now > intent.expires_at:
-                return self._silent(decision_id, topic.group_id, "intent_expired", now)
-            reply_mode = intent.mode
-            response_act = intent.response_act
-            required_capabilities = intent.required_capabilities
-            contribution = intent.contribution
-            target_message_id = intent.target_message_id or target_message_id
-            needs_vision = "vision" in intent.required_capabilities
-            self._record(
-                decision_id,
-                topic.group_id,
-                "INTENT",
-                "{}:{}".format(
-                    intent.mode.value,
-                    intent.response_act.act.value
-                    if intent.response_act is not None
-                    else "",
-                ),
-                now,
-            )
-            decision = Decision.respond(
-                contribution=contribution,
-                confidence=opportunity.confidence,
-                trigger=trigger,
-                reason_code="opportunity_speak",
-                target_message_id=target_message_id,
-                needs_vision=needs_vision,
-                urgency=urgency,
-            )
+        scene = participation.scene
+        if participation.act is ResponseAct.BOUNDARY:
+            reply_mode = ReplyMode.BOUNDARY
         else:
-            decision = self._build_decision(trigger, topic, soft_trigger)
-            contribution = decision.contribution
-            target_message_id = decision.target_message_id
-            needs_vision = decision.needs_vision
-            urgency = decision.urgency
+            reply_mode = select_reply_mode(
+                topic.latest.text if topic.latest is not None else "",
+                soft_trigger=soft_trigger,
+            )
+        response_act = ResponseActPlan(
+            act=participation.act,
+            scene=scene,
+            reason_codes=participation.reason_codes,
+            required_information=task_resolution.required_information,
+            capability_name=task_resolution.capability_name,
+        )
+        image_urls = self._topic_image_urls(topic)
+        needs_vision = bool(
+            policy.vision_enabled
+            and participation.act
+            in (ResponseAct.ANSWER, ResponseAct.VISUAL_REACTION)
+            and has_image_capability(image_urls, reply_mode)
+        )
+        required_capabilities = ("vision",) if needs_vision else ()
+        contribution = participation.contribution
+        target_message_id = (
+            targeting.reply_audience.target_message_id
+            or (topic.latest.message_id if topic.latest is not None else None)
+        )
+        urgency = (
+            Urgency.HIGH
+            if participation.obligation
+            is ParticipationObligation.DIRECT_REQUIRED
+            else Urgency.NORMAL
+        )
+        quote_mode = participation.quote_mode
+        self._record(
+            decision_id,
+            topic.group_id,
+            "INTENT",
+            "{}:{}".format(reply_mode.value, participation.act.value),
+            now,
+        )
+        decision = Decision.respond(
+            contribution=contribution,
+            confidence=1.0,
+            trigger=trigger,
+            reason_code="participation_speak",
+            target_message_id=target_message_id,
+            needs_vision=needs_vision,
+            urgency=urgency,
+        )
 
         if composition_enabled and response_act is not None:
             self._record(
@@ -418,7 +425,6 @@ class CognitiveWorkflow:
                 )
             )
         session = self.session_for(topic.group_id)
-        relationship_state = self._relationship_state_for_target(topic, targeting)
         assemble = getattr(self.persona, "assemble", None)
         assemble_kwargs = {
             "contribution": contribution or decision.contribution,
@@ -530,8 +536,9 @@ class CognitiveWorkflow:
         direct_wake = trigger in _HARD_TRIGGERS
         mode_max = max_chars_for_mode(reply_mode, policy_max=policy.max_reply_chars)
         quote_message_id = None
-        if scene_policy.should_quote(
-            interleaved=self._has_interleaved_context(topic, target_message_id)
+        if quote_mode.value == "always" or (
+            quote_mode.value == "when_interleaved"
+            and self._has_interleaved_context(topic, target_message_id)
         ):
             quote_message_id = target_message_id
         delivery = build_delivery_plan(

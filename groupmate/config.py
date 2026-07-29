@@ -109,7 +109,6 @@ class PluginSettings:
     humanize_delay_enabled: bool = HUMANIZE_DELAY_ENABLED
     max_reply_segments: int = MAX_REPLY_SEGMENTS
     v3_scheduler_enabled: bool = True
-    v3_opportunity_enabled: bool = True
     v3_memory_writer_enabled: bool = True
     v3_composition_enabled: bool = True
     reaction_media_enabled: bool = False
@@ -174,9 +173,6 @@ class PluginSettings:
             max_reply_segments=MAX_REPLY_SEGMENTS,
             v3_scheduler_enabled=_boolean(
                 data.get("v3_scheduler_enabled", True), True
-            ),
-            v3_opportunity_enabled=_boolean(
-                data.get("v3_opportunity_enabled", True), True
             ),
             v3_memory_writer_enabled=_boolean(
                 data.get("v3_memory_writer_enabled", True), True

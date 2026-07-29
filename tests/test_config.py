@@ -35,7 +35,7 @@ def test_defaults_are_balanced_and_safe():
     assert "persona_id" not in setting_names
     assert "persona_prompt" not in setting_names
     assert settings.v3_scheduler_enabled is True
-    assert settings.v3_opportunity_enabled is True
+    assert not hasattr(settings, "v3_opportunity_enabled")
     assert settings.v3_memory_writer_enabled is True
     assert settings.v3_composition_enabled is True
     assert settings.reaction_media_enabled is False
@@ -117,7 +117,7 @@ def test_nested_schema_groups_are_flattened():
     assert settings.handle_native_wake is False
     assert settings.continuation_seconds == 30
     assert settings.v3_scheduler_enabled is False
-    assert settings.v3_opportunity_enabled is False
+    assert not hasattr(settings, "v3_opportunity_enabled")
     assert settings.v3_memory_writer_enabled is False
     assert settings.group_brief == "这个群爱抽卡"
     assert settings.max_reply_chars == 48

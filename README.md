@@ -75,7 +75,7 @@ astrbot_plugin_groupmate/
 ## 唤醒路径
 
 1. **直接唤醒**：`@` / 回复 Bot / 句首别名 → 立即生成（可 SILENCE）
-2. **软提及 / 候选**：防抖 + 额度 → 主生成；`<SILENCE>` 则不发送
+2. **软提及 / 候选**：`ParticipationDecisionEngine（统一参与决策引擎）`按场景判断；路过提名、复读和无参与动机消息直接沉默，明确群体求助才允许短答
 3. **续聊**：窗口内同人；Session 注入近轮对话
 4. **指令**：旁路
 5. **联网例外**：交回 AstrBot Agent
@@ -87,7 +87,6 @@ astrbot_plugin_groupmate/
 | 配置项 | 回退行为 |
 |---|---|
 | `wake_group.v3_scheduler_enabled` | 关闭 V3 非阻塞调度，回退旧串行调度 |
-| `wake_group.v3_opportunity_enabled` | soft 路径回退到主模型 + SpeakContract |
 | `wake_group.v3_memory_writer_enabled` | 停止接受记忆候选，仅只读既有 memories |
 
 ## 管理命令

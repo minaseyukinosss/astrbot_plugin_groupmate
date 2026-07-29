@@ -48,6 +48,9 @@ def build_workflow(
     task_response_resolver=None,
     capabilities=None,
     reaction_catalog=None,
+    opportunity_arbiter=None,
+    intent_planner=None,
+    participation_engine=None,
 ):
     kwargs = {}
     if task_response_resolver is not None:
@@ -56,6 +59,12 @@ def build_workflow(
         kwargs["capabilities"] = capabilities
     if reaction_catalog is not None:
         kwargs["reaction_catalog"] = reaction_catalog
+    if opportunity_arbiter is not None:
+        kwargs["opportunity_arbiter"] = opportunity_arbiter
+    if intent_planner is not None:
+        kwargs["intent_planner"] = intent_planner
+    if participation_engine is not None:
+        kwargs["participation_engine"] = participation_engine
     return CognitiveWorkflow(
         generation_model=generator or StaticGenerationModel("这也太离谱了呀。"),
         vision=vision or NullVision(),
@@ -115,6 +124,14 @@ def _task_topic(message_factory, text="帮我翻译一下"):
     return TopicSnapshot("task-topic", "g1", (message,), 100, 100)
 
 
+def _open_help_topic(message_factory):
+    message = message_factory(
+        message_id="open-help",
+        text="有没有人知道这个要怎么配置？",
+    )
+    return TopicSnapshot("open-help-topic", "g1", (message,), 100, 100)
+
+
 def _resolution(status, capability_name="", required_information=()):
     return response_act_module.TaskResolution(
         status=getattr(response_act_module.TaskResolutionStatus, status),
@@ -123,7 +140,7 @@ def _resolution(status, capability_name="", required_information=()):
     )
 
 
-def test_generation_failure_fails_closed(topic_snapshot, balanced_policy):
+def test_generation_failure_fails_closed(message_factory, balanced_policy):
     class Boom(StaticGenerationModel):
         async def generate(self, plan, topic, memories):
             raise RuntimeError("provider unavailable")
@@ -132,7 +149,11 @@ def test_generation_failure_fails_closed(topic_snapshot, balanced_policy):
     workflow = build_workflow(generator=Boom("x"), platform=platform)
 
     outcome = asyncio.run(
-        workflow.evaluate(topic_snapshot, TriggerKind.CANDIDATE, balanced_policy)
+        workflow.evaluate(
+            _open_help_topic(message_factory),
+            TriggerKind.CANDIDATE,
+            balanced_policy,
+        )
     )
 
     assert outcome.sent is False
@@ -140,7 +161,7 @@ def test_generation_failure_fails_closed(topic_snapshot, balanced_policy):
     assert platform.sent == []
 
 
-def test_soft_path_generates_guards_and_sends(topic_snapshot, balanced_policy):
+def test_soft_path_generates_guards_and_sends(message_factory, balanced_policy):
     platform = FakePlatform()
     memory = FakeMemoryRepository()
     workflow = build_workflow(
@@ -150,7 +171,11 @@ def test_soft_path_generates_guards_and_sends(topic_snapshot, balanced_policy):
     )
 
     outcome = asyncio.run(
-        workflow.evaluate(topic_snapshot, TriggerKind.CANDIDATE, balanced_policy)
+        workflow.evaluate(
+            _open_help_topic(message_factory),
+            TriggerKind.CANDIDATE,
+            balanced_policy,
+        )
     )
 
     assert outcome.sent is True
@@ -159,7 +184,7 @@ def test_soft_path_generates_guards_and_sends(topic_snapshot, balanced_policy):
     assert any(state == "SEND" for _, _, state, _, _ in memory.transitions)
 
 
-def test_soft_path_silence_does_not_send(topic_snapshot, balanced_policy):
+def test_soft_path_silence_does_not_send(message_factory, balanced_policy):
     platform = FakePlatform()
     workflow = build_workflow(
         generator=StaticGenerationModel("<SILENCE>"),
@@ -167,7 +192,11 @@ def test_soft_path_silence_does_not_send(topic_snapshot, balanced_policy):
     )
 
     outcome = asyncio.run(
-        workflow.evaluate(topic_snapshot, TriggerKind.CANDIDATE, balanced_policy)
+        workflow.evaluate(
+            _open_help_topic(message_factory),
+            TriggerKind.CANDIDATE,
+            balanced_policy,
+        )
     )
 
     assert outcome.sent is False
@@ -739,7 +768,9 @@ def test_reply_to_bot_scene_quotes_anchor_message(message_factory, balanced_poli
     )
 
 
-def test_direct_address_scene_quotes_anchor_message(message_factory, balanced_policy):
+def test_direct_address_scene_does_not_quote_without_interleaving(
+    message_factory, balanced_policy
+):
     platform = FakePlatform()
     workflow = build_workflow(platform=platform)
     message = message_factory(message_id="direct-anchor", text="小爱，在吗")
@@ -750,17 +781,47 @@ def test_direct_address_scene_quotes_anchor_message(message_factory, balanced_po
     )
 
     assert outcome.sent is True
-    assert platform.sent[0]["quote_message_id"] == "direct-anchor"
+    assert platform.sent[0]["quote_message_id"] is None
+
+
+def test_workflow_does_not_call_legacy_participation_components(
+    message_factory,
+    balanced_policy,
+):
+    class LegacyArbiterMustNotRun:
+        def evaluate(self, *args, **kwargs):
+            raise AssertionError("legacy OpportunityArbiter was called")
+
+    class LegacyPlannerMustNotRun:
+        def plan(self, *args, **kwargs):
+            raise AssertionError("legacy ReplyIntentPlanner was called")
+
+    workflow = build_workflow(
+        opportunity_arbiter=LegacyArbiterMustNotRun(),
+        intent_planner=LegacyPlannerMustNotRun(),
+    )
+    message = message_factory(message_id="direct", text="小爱，在吗")
+    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
 
 
 def test_ambient_scene_does_not_quote_latest_message(
-    topic_snapshot, balanced_policy
+    message_factory, balanced_policy
 ):
     platform = FakePlatform()
     workflow = build_workflow(platform=platform)
 
     outcome = asyncio.run(
-        workflow.evaluate(topic_snapshot, TriggerKind.CANDIDATE, balanced_policy)
+        workflow.evaluate(
+            _open_help_topic(message_factory),
+            TriggerKind.CANDIDATE,
+            balanced_policy,
+        )
     )
 
     assert outcome.sent is True

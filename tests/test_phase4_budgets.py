@@ -120,7 +120,7 @@ def test_successful_candidate_consumes_send_and_generation():
                 group_id="g1",
                 sender_id="u1",
                 sender_name="Alice",
-                text="爱弥斯 这个怎么弄？",
+                text="有没有人知道这个要怎么弄？",
                 timestamp=100,
             ),
         ),

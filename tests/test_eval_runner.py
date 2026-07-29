@@ -40,7 +40,7 @@ def test_deterministic_runner_covers_trigger_silence_guard_and_multi_turn():
     assert report["summary"]["passed_runs"] == 4
     results = {item["scenario_id"]: item for item in report["results"]}
     assert results["trigger-prefix-01"]["trigger"] == "alias_direct"
-    assert results["trigger-candidate-01"]["outcome_reason"] == "model_silence"
+    assert results["trigger-candidate-01"]["outcome_reason"] == "no_open_motive"
     assert "decision_narration" in results["guard-reject-01"]["guard_codes"]
     multi_checks = {
         item["name"]: item for item in results["multi-retention-01"]["checks"]

@@ -153,28 +153,3 @@ def test_workflow_soft_silence_skips_generation():
     )
     assert outcome.sent is False
     assert model.calls == 0
-
-
-def test_flag_off_restores_legacy_soft_generation():
-    model = StaticGenerationModel("<SILENCE>")
-    workflow = CognitiveWorkflow(
-        generation_model=model,
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=FakeMemoryRepository(),
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(105),
-    )
-    topic = _topic(_msg(text="爱弥斯 路过一下", timestamp=100))
-    outcome = asyncio.run(
-        workflow.evaluate(
-            topic,
-            TriggerKind.ALIAS_MENTION,
-            _policy(v3_opportunity_enabled=False),
-        )
-    )
-    assert model.calls == 1
-    assert outcome.sent is False
-    assert outcome.reason == "model_silence"

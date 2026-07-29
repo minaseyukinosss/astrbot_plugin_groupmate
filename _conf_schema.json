@@ -45,12 +45,6 @@
         "default": true,
         "hint": "仅用于 Phase 1 故障回滚，正常保持开启。"
       },
-      "v3_opportunity_enabled": {
-        "description": "启用 V3 发言机会仲裁；关闭时 soft 恢复进模型 + SpeakContract 旧路径。",
-        "type": "bool",
-        "default": true,
-        "hint": "仅用于 Phase 4 故障回滚，正常保持开启。"
-      },
       "v3_memory_writer_enabled": {
         "description": "启用 V3 记忆候选抽取与仲裁写入；关闭后只读既有 memories，不再接受候选。",
         "type": "bool",
