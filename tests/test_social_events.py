@@ -1,4 +1,4 @@
-"""社会事件分类、幂等写入与关系重放。"""
+"""已验证社会事件的幂等写入与关系重放。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from groupmate.memory import SQLiteMemoryStore
 from groupmate.models import (
     AddresseeKind,
     ChatMessage,
+    SocialEvent,
     SocialEventKind,
     TopicSnapshot,
     TriggerKind,
 )
 from groupmate.persona.aemeath import AemeathOutputFirewall, AemeathPersonaProvider
-from groupmate.social.events import SocialEventClassifier
 from groupmate.social.projector import SocialStateProjector
 from tests.fakes import (
     FakeClock,
@@ -40,30 +40,59 @@ def _msg(**overrides):
     return ChatMessage(**values)
 
 
-def test_classifier_detects_thanks_and_harassment():
-    classifier = SocialEventClassifier()
-    thanks = classifier.classify(_msg(text="谢谢你呀"), user_id="u1")
-    assert thanks.kind is SocialEventKind.THANKS
-    bad = classifier.classify(_msg(text="你给我滚"), user_id="u1")
-    assert bad.kind is SocialEventKind.HARASSMENT
-
-
-def test_friendly_tease_does_not_crash_affinity():
-    projector = SocialStateProjector()
-    event = SocialEventClassifier().classify(
-        _msg(text="哈哈你傻"), user_id="u1", occurred_at=1
+def _event(kind, *, event_id="e1", occurred_at=1):
+    return SocialEvent(
+        event_id=event_id,
+        group_id="g1",
+        user_id="u1",
+        kind=kind,
+        source_message_id="m1",
+        confidence=1.0,
+        occurred_at=occurred_at,
+        decision_id="d1",
     )
-    assert event.kind is SocialEventKind.FRIENDLY_TEASE
-    state = projector.apply_event(None, event, now=1)
+
+
+def test_neutral_interaction_increases_familiarity_not_affinity():
+    projector = SocialStateProjector()
+
+    state = projector.apply_event(None, _event(SocialEventKind.NEUTRAL), now=1)
+
+    assert state.familiarity == 1
+    assert state.affinity == 0
+
+
+def test_verified_friendly_tease_can_increase_affinity_once():
+    projector = SocialStateProjector()
+
+    state = projector.apply_event(
+        None, _event(SocialEventKind.FRIENDLY_TEASE), now=1
+    )
+
     assert state.affinity == 1
     assert state.boundary_pressure == 0
 
 
+def test_apology_repairs_slowly_without_clearing_boundary_pressure():
+    projector = SocialStateProjector()
+    harmed = projector.apply_event(
+        None, _event(SocialEventKind.HARASSMENT, event_id="e1"), now=1
+    )
+
+    repaired = projector.apply_event(
+        harmed,
+        _event(SocialEventKind.APOLOGY, event_id="e2", occurred_at=2),
+        now=2,
+    )
+
+    assert repaired.affinity > harmed.affinity
+    assert repaired.affinity < 0
+    assert 0 < repaired.boundary_pressure < harmed.boundary_pressure
+
+
 def test_social_event_idempotent_and_replay(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "social.db")
-    event = SocialEventClassifier().classify(
-        _msg(text="谢谢"), user_id="u1", occurred_at=5, decision_id="d1"
-    )
+    event = _event(SocialEventKind.THANKS, occurred_at=5)
     first = store.record_social_interaction(event, soft_trigger=False, now=5)
     second = store.record_social_interaction(event, soft_trigger=False, now=6)
     assert first is not None
@@ -141,7 +170,10 @@ def test_workflow_records_social_only_after_send():
     )
     assert outcome.sent is True
     assert len(memory.social_events) == 1
-    assert memory.get_favorability("g1", "u1") == 2
+    state = memory.get_relationship_state("g1", "u1")
+    assert state is not None
+    assert state.familiarity == 1
+    assert state.affinity == 0
 
 
 def test_multi_mention_send_still_skips_personal_social_write():

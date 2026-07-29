@@ -2,28 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional, Tuple
+from typing import Iterable, Optional
 
-from ..core.favorability import SCORE_MAX, SCORE_MIN, clamp_score
 from ..models import RelationshipState, SocialEvent, SocialEventKind
+from .affinity import AFFINITY_MAX, clamp_affinity
 
-# 单次事件封顶：避免关键词大幅变脸
+# 事件必须由上游完整语境验证；普通互动只增加熟悉度。
 _DELTAS = {
     SocialEventKind.PRAISE: (1, 2, 0, 0),
     SocialEventKind.THANKS: (1, 2, 1, 0),
     SocialEventKind.HELP_REQUEST: (1, 0, 0, 0),
-    SocialEventKind.HELPED: (1, 2, 2, 0),
+    SocialEventKind.HELPED: (1, 3, 2, 0),
     SocialEventKind.FRIENDLY_TEASE: (1, 1, 0, 0),
-    SocialEventKind.CORRECTION: (0, -1, 0, 0),
-    SocialEventKind.BOUNDARY_PUSH: (0, -3, -1, 8),
-    SocialEventKind.HARASSMENT: (0, -8, -2, 15),
-    SocialEventKind.APOLOGY: (0, 1, 1, -5),
-    SocialEventKind.NEUTRAL: (1, 1, 0, 0),
+    SocialEventKind.CORRECTION: (1, 0, 0, 0),
+    SocialEventKind.BOUNDARY_PUSH: (0, -6, -2, 8),
+    SocialEventKind.HARASSMENT: (0, -15, -5, 20),
+    SocialEventKind.APOLOGY: (1, 2, 1, -5),
+    SocialEventKind.NEUTRAL: (1, 0, 0, 0),
 }
 
 
-def _clamp_dim(value: int) -> int:
-    return max(SCORE_MIN, min(SCORE_MAX, int(value)))
+def _clamp_signed(value: int) -> int:
+    return max(-AFFINITY_MAX, min(AFFINITY_MAX, int(value)))
+
+
+def _clamp_non_negative(value: int) -> int:
+    return max(0, min(AFFINITY_MAX, int(value)))
 
 
 class SocialStateProjector:
@@ -38,7 +42,7 @@ class SocialStateProjector:
         now: int = 0,
     ) -> RelationshipState:
         familiarity = 0
-        affinity = clamp_score(seed_affinity)
+        affinity = clamp_affinity(seed_affinity)
         trust = 0
         boundary = 0
         count = 0
@@ -47,11 +51,10 @@ class SocialStateProjector:
             if str(event.group_id) != str(group_id) or str(event.user_id) != str(user_id):
                 continue
             df, da, dt, db = _DELTAS.get(event.kind, (0, 0, 0, 0))
-            # soft NEUTRAL on soft_trigger historically +1; classifier already chose kind
-            familiarity = _clamp_dim(familiarity + df)
-            affinity = _clamp_dim(affinity + da)
-            trust = _clamp_dim(trust + dt)
-            boundary = _clamp_dim(boundary + db)
+            familiarity = _clamp_non_negative(familiarity + df)
+            affinity = clamp_affinity(affinity + da)
+            trust = _clamp_signed(trust + dt)
+            boundary = _clamp_non_negative(boundary + db)
             count += 1
             last_at = max(last_at, int(event.occurred_at or 0))
         return RelationshipState(
@@ -82,15 +85,14 @@ class SocialStateProjector:
             configured_relationship=configured_relationship,
         )
         df, da, dt, db = _DELTAS.get(event.kind, (0, 0, 0, 0))
-        if event.kind is SocialEventKind.NEUTRAL:
-            da = 1 if soft_trigger else 2
+        del soft_trigger
         return RelationshipState(
             group_id=base.group_id,
             user_id=base.user_id,
-            familiarity=_clamp_dim(base.familiarity + df),
-            affinity=_clamp_dim(base.affinity + da),
-            trust=_clamp_dim(base.trust + dt),
-            boundary_pressure=_clamp_dim(base.boundary_pressure + db),
+            familiarity=_clamp_non_negative(base.familiarity + df),
+            affinity=clamp_affinity(base.affinity + da),
+            trust=_clamp_signed(base.trust + dt),
+            boundary_pressure=_clamp_non_negative(base.boundary_pressure + db),
             interaction_count=int(base.interaction_count) + 1,
             last_interaction_at=max(
                 int(base.last_interaction_at or 0), int(event.occurred_at or 0)
@@ -102,17 +104,3 @@ class SocialStateProjector:
             ),
             updated_at=int(now or event.occurred_at or base.updated_at or 0),
         )
-
-
-def affinity_for_persona(
-    state: Optional[RelationshipState],
-    *,
-    configured_relationship: str = "",
-    relationships: Optional[Mapping[str, Tuple[str, str]]] = None,
-    user_id: str = "",
-) -> Optional[int]:
-    """Persona 只读 affinity 档位来源；人工配置不改数值，只影响展示。"""
-    del configured_relationship, relationships, user_id
-    if state is None:
-        return None
-    return int(state.affinity)
