@@ -21,6 +21,9 @@ def test_defaults_are_balanced_and_safe():
     assert settings.spontaneous_hourly_limit == 6
     assert settings.enabled_groups == ()
     assert settings.continuation_seconds == 90
+    assert settings.direct_pressure_window_seconds == 600
+    assert settings.direct_pressure_nudge_count == 2
+    assert settings.direct_pressure_pester_count == 3
     assert settings.topic_max_seconds == TOPIC_MAX_SECONDS
     assert settings.humanize_delay_enabled is HUMANIZE_DELAY_ENABLED
     assert settings.max_reply_segments == MAX_REPLY_SEGMENTS

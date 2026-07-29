@@ -577,6 +577,9 @@ class GroupPolicy:
     max_reply_chars: int = 60
     vision_enabled: bool = True
     continuation_seconds: int = 90
+    direct_pressure_window_seconds: int = 600
+    direct_pressure_nudge_count: int = 2
+    direct_pressure_pester_count: int = 3
     humanize_delay_enabled: bool = True
     max_reply_segments: int = 2
 

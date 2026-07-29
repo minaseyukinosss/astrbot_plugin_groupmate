@@ -97,6 +97,9 @@ class PluginSettings:
     vision_enabled: bool = True
     handle_native_wake: bool = True
     continuation_seconds: int = 90
+    direct_pressure_window_seconds: int = 600
+    direct_pressure_nudge_count: int = 2
+    direct_pressure_pester_count: int = 3
     relationships: Tuple[RelationshipEntry, ...] = ()
     group_brief: str = ""
     history_limit: int = HISTORY_LIMIT
@@ -142,6 +145,24 @@ class PluginSettings:
             handle_native_wake=_boolean(data.get("handle_native_wake", True), True),
             continuation_seconds=_bounded_int(
                 data.get("continuation_seconds", 90), 90, 0, 600
+            ),
+            direct_pressure_window_seconds=_bounded_int(
+                data.get("direct_pressure_window_seconds", 600),
+                600,
+                60,
+                3600,
+            ),
+            direct_pressure_nudge_count=_bounded_int(
+                data.get("direct_pressure_nudge_count", 2),
+                2,
+                2,
+                10,
+            ),
+            direct_pressure_pester_count=_bounded_int(
+                data.get("direct_pressure_pester_count", 3),
+                3,
+                3,
+                20,
             ),
             relationships=parse_relationships(data.get("relationships"), defaults=()),
             group_brief=str(data.get("group_brief", "") or "").strip(),

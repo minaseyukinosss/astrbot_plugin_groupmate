@@ -24,6 +24,21 @@
         "type": "int",
         "default": 90
       },
+      "direct_pressure_window_seconds": {
+        "description": "同一群友重复真实 @ 爱弥斯时，计算直接呼叫压力的时间窗口（秒）。",
+        "type": "int",
+        "default": 600
+      },
+      "direct_pressure_nudge_count": {
+        "description": "短窗口内空 @ 达到该次数后，进入轻戳姿态。",
+        "type": "int",
+        "default": 2
+      },
+      "direct_pressure_pester_count": {
+        "description": "短窗口内空 @ 达到该次数后，按好感档位进入边界或戏谑姿态。",
+        "type": "int",
+        "default": 3
+      },
       "v3_scheduler_enabled": {
         "description": "启用 V3 非阻塞调度器；关闭时临时回退旧串行调度。",
         "type": "bool",

@@ -367,6 +367,15 @@ class AstrBotBridge:
             max_reply_chars=int(self._setting("max_reply_chars", 60) or 60),
             vision_enabled=bool(self._setting("vision_enabled", True)),
             continuation_seconds=int(self._setting("continuation_seconds", 90)),
+            direct_pressure_window_seconds=int(
+                self._setting("direct_pressure_window_seconds", 600)
+            ),
+            direct_pressure_nudge_count=int(
+                self._setting("direct_pressure_nudge_count", 2)
+            ),
+            direct_pressure_pester_count=int(
+                self._setting("direct_pressure_pester_count", 3)
+            ),
             humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
             max_reply_segments=MAX_REPLY_SEGMENTS,
             v3_opportunity_enabled=bool(self._setting("v3_opportunity_enabled", True)),
