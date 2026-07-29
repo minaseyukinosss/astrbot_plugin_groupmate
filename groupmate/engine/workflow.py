@@ -27,6 +27,7 @@ from ..core.session import GroupSession, GroupSessionStore
 from ..core.scenes import classify_scene, policy_for_scene
 from ..core.speak_contract import SpeakContract
 from .composer import ResponseComposer
+from .copied_at import copied_at_tip, is_copied_at
 from .delivery import DeliveryService, build_delivery_plan
 from .opportunity import OpportunityArbiter
 from .planner import ReplyIntentPlanner
@@ -180,7 +181,7 @@ class CognitiveWorkflow:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
         if trigger is TriggerKind.NATIVE_DIRECT and not policy.handle_native_wake:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
-        if trigger is TriggerKind.COPIED_AT:
+        if is_copied_at(trigger):
             return await self._send_copied_at_tip(
                 decision_id, topic, trigger_alias, now, still_valid
             )
@@ -977,8 +978,7 @@ class CognitiveWorkflow:
         now: int,
         still_valid: Optional[Callable[[], bool]] = None,
     ) -> WorkflowOutcome:
-        alias = (trigger_alias or "").strip() or "我"
-        text = "AT{} 不能复制哦，复制的@为纯文本而非有效@".format(alias)
+        text = copied_at_tip(trigger_alias)
         self._record(decision_id, topic.group_id, "GATE", "copied_plain_at", now)
         delivery = build_delivery_plan(
             decision_id=decision_id,

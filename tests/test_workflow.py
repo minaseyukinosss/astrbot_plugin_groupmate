@@ -809,7 +809,9 @@ def test_copied_at_sends_tip_without_llm(topic_snapshot, balanced_policy):
 
     assert outcome.sent is True
     assert outcome.reason == "copied_at_tip"
-    assert platform.sent[0]["text"] == "AT爱弥斯 不能复制哦，复制的@为纯文本而非有效@"
+    assert platform.sent[0]["text"] == (
+        "复制出来的 @ 不算数哦，要叫爱弥斯的话，用真正的 @。"
+    )
     assert generator.calls == 0
     assert memory.outbox[outcome.decision_id]["status"] == "sent"
     assert len(memory.messages) == 1
