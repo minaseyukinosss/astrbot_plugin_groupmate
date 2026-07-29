@@ -10,7 +10,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 from .groupmate.host import AstrBotBridge, TurnOwner
-from .groupmate.config import PluginSettings
+from .groupmate.host.config import AstrBotConfigParser
 from .groupmate.host.web_api import GroupmateWebAPI
 
 
@@ -18,7 +18,7 @@ class GroupmatePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
         self.context = context
-        self.config = PluginSettings.from_mapping(config)
+        self.config = AstrBotConfigParser().parse(config)
         data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
         self.bridge = AstrBotBridge(context, self.config, data_dir)
         self.web_api = GroupmateWebAPI(self.bridge)

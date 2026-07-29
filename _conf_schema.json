@@ -1,111 +1,67 @@
 {
-  "wake_group": {
-    "description": "唤醒与观察范围",
+  "scope_group": {
+    "description": "启用范围",
     "type": "object",
-    "hint": "控制哪些群启用、如何被叫到。",
+    "hint": "只决定插件在哪些 QQ 群工作。",
     "items": {
       "enabled_groups": {
-        "description": "允许观察的 QQ 群号；留空表示所有群。",
+        "description": "启用群列表",
         "type": "list",
-        "default": []
-      },
-      "aliases": {
-        "description": "Bot 的昵称和直接称呼。",
-        "type": "list",
-        "default": ["爱弥斯", "小爱", "飞行雪绒"]
-      },
-      "handle_native_wake": {
-        "description": "是否由 Groupmate 接管群聊 @ 机器人与回复 Bot；开启后抑制 AstrBot 默认 LLM。明显需联网的问题仍交回 AstrBot Agent。",
-        "type": "bool",
-        "default": true
-      },
-      "continuation_seconds": {
-        "description": "直接呼叫成功后，同一发送者无需再叫名字即可续聊的秒数；0 表示关闭。",
-        "type": "int",
-        "default": 90
-      },
-      "direct_pressure_window_seconds": {
-        "description": "同一群友重复真实 @ 爱弥斯时，计算直接呼叫压力的时间窗口（秒）。",
-        "type": "int",
-        "default": 600
-      },
-      "direct_pressure_nudge_count": {
-        "description": "短窗口内空 @ 达到该次数后，进入轻戳姿态。",
-        "type": "int",
-        "default": 2
-      },
-      "direct_pressure_pester_count": {
-        "description": "短窗口内空 @ 达到该次数后，按好感档位进入边界或戏谑姿态。",
-        "type": "int",
-        "default": 3
-      },
-      "v3_scheduler_enabled": {
-        "description": "启用 V3 非阻塞调度器；关闭时临时回退旧串行调度。",
-        "type": "bool",
-        "default": true,
-        "hint": "仅用于 Phase 1 故障回滚，正常保持开启。"
-      },
-      "v3_memory_writer_enabled": {
-        "description": "启用 V3 记忆候选抽取与仲裁写入；关闭后只读既有 memories，不再接受候选。",
-        "type": "bool",
-        "default": true,
-        "hint": "仅用于 Phase 5 故障回滚，正常保持开启。"
+        "default": [],
+        "hint": "填写 QQ 群号；留空表示所有群。"
       }
     }
   },
   "persona_group": {
-    "description": "爱弥斯行为与群聊约束",
+    "description": "人格部署配置",
     "type": "object",
-    "hint": "身份固定为爱弥斯；这里只配置群氛围与输出护栏。",
+    "hint": "称呼和初始关系按人格隔离；切换人格时不会混用。",
     "items": {
-      "group_brief": {
-        "description": "一句话群氛围说明，写入稳定 system（不含具体成员关系）。",
-        "type": "text",
-        "default": "",
-        "editor_mode": true,
-        "editor_language": "markdown"
+      "persona_aliases": {
+        "description": "分人格称呼配置",
+        "type": "object",
+        "hint": "这些称呼用于判断群友是否在叫当前人格；允许配置为空，不会自动补回默认值。",
+        "items": {
+          "aemeath": {
+            "description": "爱弥斯的称呼",
+            "type": "list",
+            "default": ["爱弥斯", "小爱", "飞行雪绒"]
+          }
+        }
       },
-      "max_reply_chars": {
-        "description": "单条回复最大字数（输出护栏）。",
-        "type": "int",
-        "default": 60,
-        "hint": "建议 40–80；过长容易变成小说腔。"
-      }
-    }
-  },
-  "relationship_group": {
-    "description": "成员关系映射",
-    "type": "object",
-    "hint": "按 QQ 号配置关系与建议称呼；留空使用内置默认。模型只看到关系标签与称呼，看不到 QQ 号。",
-    "items": {
       "relationships": {
-        "description": "关系表（可增删行）",
-        "type": "template_list",
-        "default": [],
-        "templates": {
-          "member": {
-            "name": "群成员",
-            "hint": "一条 = 一个 QQ 号的关系分寸",
-            "display_item": "id",
-            "hide_hint_in_list": true,
-            "items": {
-              "id": {
-                "description": "QQ 号",
-                "type": "string",
-                "default": ""
-              },
-              "relationship": {
-                "description": "关系标签",
-                "type": "string",
-                "default": "普通群友",
-                "hint": "常用：普通群友 / 闺蜜 / 最亲近",
-                "options": ["普通群友", "闺蜜", "最亲近"]
-              },
-              "address": {
-                "description": "建议称呼",
-                "type": "string",
-                "default": "",
-                "hint": "可空；空则用对方群昵称。"
+        "description": "分人格初始关系配置",
+        "type": "object",
+        "hint": "只为尚无状态的群友设置初始关系；不会覆盖已有好感度和关系状态。",
+        "items": {
+          "aemeath": {
+            "description": "爱弥斯的初始关系",
+            "type": "template_list",
+            "default": [],
+            "templates": {
+              "member": {
+                "name": "群成员",
+                "display_item": "id",
+                "hide_hint_in_list": true,
+                "items": {
+                  "id": {
+                    "description": "QQ 号",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "relationship": {
+                    "description": "初始关系",
+                    "type": "string",
+                    "default": "普通群友",
+                    "options": ["普通群友", "闺蜜", "最亲近"]
+                  },
+                  "address": {
+                    "description": "建议称呼",
+                    "type": "string",
+                    "default": "",
+                    "hint": "留空时使用对方当前群昵称。"
+                  }
+                }
               }
             }
           }
@@ -114,66 +70,28 @@
     }
   },
   "provider_group": {
-    "description": "模型 Provider",
+    "description": "模型配置",
     "type": "object",
+    "hint": "显式选择的模型优先；留空时跟随当前群聊模型。",
     "items": {
       "generation_provider": {
-        "description": "自主回复模型；留空时使用当前群聊天模型。",
+        "description": "文本生成模型",
         "type": "string",
         "_special": "select_provider",
-        "default": ""
-      },
-      "vision_provider": {
-        "description": "按需图片理解模型；留空时复用回复模型。",
-        "type": "string",
-        "_special": "select_provider",
-        "default": ""
+        "default": "",
+        "hint": "留空时使用当前群聊天模型；显式模型不可用时不会静默切换。"
       },
       "vision_enabled": {
-        "description": "是否允许在被询问或上下文需要时理解图片。",
+        "description": "图片理解开关",
         "type": "bool",
         "default": true
-      }
-    }
-  },
-  "media_group": {
-    "description": "场景编排与反应素材",
-    "type": "object",
-    "hint": "反应素材只在明确允许的社交场景中使用，不按概率随机发送。",
-    "items": {
-      "v3_composition_enabled": {
-        "description": "启用场景驱动的响应动作与结构化回复编排。",
-        "type": "bool",
-        "default": true,
-        "hint": "关闭时回退当前文本回复路径。"
       },
-      "reaction_media_enabled": {
-        "description": "允许在互惠、玩笑和纯视觉反应场景使用本地素材。",
-        "type": "bool",
-        "default": false,
-        "hint": "还必须配置素材目录；边界、任务和目标不明确场景始终禁用。"
-      },
-      "reaction_catalog_path": {
-        "description": "本地反应素材目录。",
+      "vision_provider": {
+        "description": "图片理解模型",
         "type": "string",
+        "_special": "select_provider",
         "default": "",
-        "hint": "留空时反应素材功能保持关闭。"
-      }
-    }
-  },
-  "limits_group": {
-    "description": "自主发言限额",
-    "type": "object",
-    "items": {
-      "spontaneous_hourly_limit": {
-        "description": "每群每小时最多自主发言次数。",
-        "type": "int",
-        "default": 6
-      },
-      "spontaneous_cooldown_seconds": {
-        "description": "两次自主发言之间的最短间隔（秒）。",
-        "type": "int",
-        "default": 600
+        "hint": "留空时复用实际使用的文本生成模型；不可用时跳过图片理解并继续文本处理。"
       }
     }
   }
