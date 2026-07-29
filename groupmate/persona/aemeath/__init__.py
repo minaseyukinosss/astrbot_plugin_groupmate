@@ -3,6 +3,17 @@
 from pathlib import Path
 
 from ...ports import GuardResult
+from .behavior_profile import (
+    AEMEATH_PARTICIPATION_PROFILE,
+    AffinityParticipationRule,
+    BoundaryPolicy,
+    ParticipationInhibition,
+    ParticipationMotive,
+    PersonaParticipationProfile,
+    QuestionPolicy,
+    RelationshipPolicy,
+    TurnPolicy,
+)
 from .output_firewall import AemeathOutputFirewall
 from .provider import AemeathPersonaProvider, CHARACTER_NAME
 from .relationships import (
@@ -18,6 +29,15 @@ __all__ = [
     "CHARACTER_NAME",
     "AemeathOutputFirewall",
     "AemeathPersonaProvider",
+    "AEMEATH_PARTICIPATION_PROFILE",
+    "AffinityParticipationRule",
+    "BoundaryPolicy",
+    "ParticipationInhibition",
+    "ParticipationMotive",
+    "PersonaParticipationProfile",
+    "QuestionPolicy",
+    "RelationshipPolicy",
+    "TurnPolicy",
     "GuardResult",
     "DEFAULT_RELATIONSHIPS",
     "RelationshipEntry",

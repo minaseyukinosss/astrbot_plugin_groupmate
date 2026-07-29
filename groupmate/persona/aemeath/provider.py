@@ -10,6 +10,10 @@ from ...core.response_act import ResponseActPlan
 from ...core.relationships import RelationshipEntry
 from ...core.session import GroupSession
 from ...models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
+from .behavior_profile import (
+    AEMEATH_PARTICIPATION_PROFILE,
+    PersonaParticipationProfile,
+)
 from .relationships import DEFAULT_RELATIONSHIPS
 
 PACK_DIR = Path(__file__).resolve().parent
@@ -118,3 +122,9 @@ class AemeathPersonaProvider:
     @property
     def assembly(self) -> ContextAssembly:
         return self._assembly
+
+    @property
+    def participation_profile(self) -> PersonaParticipationProfile:
+        """participation_profile（人格参与档案）：固定只读契约。"""
+
+        return AEMEATH_PARTICIPATION_PROFILE
