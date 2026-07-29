@@ -33,13 +33,12 @@ from ..core.speak_contract import SpeakContract
 from .composer import ResponseComposer
 from .copied_at import copied_at_tip, is_copied_at
 from .delivery import DeliveryService, build_delivery_plan
-from .opportunity import OpportunityArbiter
+from .direct_fallback import DirectFallbackComposer
 from .participation import ParticipationDecisionEngine
 from .participation_types import (
     ParticipationAction,
     ParticipationObligation,
 )
-from .planner import ReplyIntentPlanner
 from ..models import (
     AddresseeKind,
     ChatMessage,
@@ -104,9 +103,8 @@ class CognitiveWorkflow:
         character_name: str = "角色",
         delivery_service: Optional[DeliveryService] = None,
         addressee_resolver: Optional[AddresseeResolver] = None,
-        opportunity_arbiter: Optional[OpportunityArbiter] = None,
-        intent_planner: Optional[ReplyIntentPlanner] = None,
         participation_engine: Optional[ParticipationDecisionEngine] = None,
+        direct_fallback: Optional[DirectFallbackComposer] = None,
         budgets: Optional[BudgetTracker] = None,
         memory_writer: Optional[MemoryWriter] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
@@ -133,14 +131,11 @@ class CognitiveWorkflow:
         )
         self.addressee_resolver = addressee_resolver or AddresseeResolver()
         self.budgets = budgets or BudgetTracker(rate_limiter)
-        self.opportunity_arbiter = opportunity_arbiter or OpportunityArbiter(
-            budgets=self.budgets, send_limiter=rate_limiter
-        )
         self.memory_writer = memory_writer or MemoryWriter(memory)
-        self.intent_planner = intent_planner or ReplyIntentPlanner()
         self.participation_engine = (
             participation_engine or ParticipationDecisionEngine()
         )
+        self.direct_fallback = direct_fallback or DirectFallbackComposer()
         self.task_response_resolver = task_response_resolver
         self.capabilities = capabilities
         self.composer = composer or ResponseComposer()
@@ -488,20 +483,50 @@ class CognitiveWorkflow:
         )
         self._record(decision_id, topic.group_id, "PLAN", plan.contribution, now)
 
-        if not self.budgets.allow_generation(now):
-            return self._silent(
-                decision_id, topic.group_id, "generation_budget_exhausted", now
+        direct_required = (
+            participation.obligation
+            is ParticipationObligation.DIRECT_REQUIRED
+        )
+        fallback_used = False
+
+        def fallback_text(reason: str) -> str:
+            self._record(decision_id, topic.group_id, "FALLBACK", reason, now)
+            return self.direct_fallback.compose(
+                participation.act,
+                participation.posture,
             )
-        try:
-            text = await self.generation_model.generate(plan, topic, memories)
-        except Exception:
-            return self._silent(decision_id, topic.group_id, "generation_error", now)
-        self.budgets.record_generation(now)
+
+        if not self.budgets.allow_generation(now):
+            if not direct_required:
+                return self._silent(
+                    decision_id,
+                    topic.group_id,
+                    "generation_budget_exhausted",
+                    now,
+                )
+            text = fallback_text("generation_budget_exhausted")
+            fallback_used = True
+        else:
+            try:
+                text = await self.generation_model.generate(plan, topic, memories)
+            except Exception:
+                if not direct_required:
+                    return self._silent(
+                        decision_id, topic.group_id, "generation_error", now
+                    )
+                text = fallback_text("generation_error")
+                fallback_used = True
+            else:
+                self.budgets.record_generation(now)
 
         speak = SpeakContract.resolve(text)
         if not speak.should_send:
             self._record(decision_id, topic.group_id, "SPEAK", speak.reason, now)
-            return self._silent(decision_id, topic.group_id, speak.reason, now)
+            if not direct_required:
+                return self._silent(decision_id, topic.group_id, speak.reason, now)
+            text = fallback_text(speak.reason)
+            fallback_used = True
+            speak = SpeakContract.resolve(text)
 
         guarded = self._validate_output(
             speak.text,
@@ -509,20 +534,43 @@ class CognitiveWorkflow:
             reply_mode,
             response_act if composition_enabled else None,
             capability_status,
+            ignore_recent=fallback_used,
         )
-        if not guarded.accepted and guarded.repairable:
+        if not guarded.accepted and guarded.repairable and not fallback_used:
             try:
                 repaired = await self.generation_model.repair(speak.text, guarded.codes)
             except Exception:
-                return self._silent(decision_id, topic.group_id, "repair_error", now)
+                if not direct_required:
+                    return self._silent(
+                        decision_id, topic.group_id, "repair_error", now
+                    )
+                fallback_used = True
+                repaired = fallback_text("repair_error")
             if SpeakContract.resolve(repaired).should_send is False:
-                return self._silent(decision_id, topic.group_id, "model_silence", now)
+                if not direct_required:
+                    return self._silent(
+                        decision_id, topic.group_id, "model_silence", now
+                    )
+                fallback_used = True
+                repaired = fallback_text("repair_silence")
             guarded = self._validate_output(
                 repaired,
                 topic.group_id,
                 reply_mode,
                 response_act if composition_enabled else None,
                 capability_status,
+                ignore_recent=fallback_used,
+            )
+        if not guarded.accepted and direct_required and not fallback_used:
+            fallback_used = True
+            fallback = fallback_text("guard_rejected")
+            guarded = self._validate_output(
+                fallback,
+                topic.group_id,
+                reply_mode,
+                response_act if composition_enabled else None,
+                capability_status,
+                ignore_recent=True,
             )
         if not guarded.accepted:
             return self._silent(
@@ -793,9 +841,11 @@ class CognitiveWorkflow:
         reply_mode: ReplyMode,
         response_act: Optional[ResponseActPlan],
         capability_status: str,
+        *,
+        ignore_recent: bool = False,
     ):
         validate = self.output_guard.validate
-        recent = tuple(self._recent_outputs[group_id])
+        recent = () if ignore_recent else tuple(self._recent_outputs[group_id])
         try:
             return validate(
                 text,

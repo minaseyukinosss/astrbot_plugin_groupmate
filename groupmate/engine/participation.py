@@ -108,6 +108,15 @@ class ParticipationDecisionEngine:
                 reason_codes=("bypassed_trigger", trigger.value),
                 posture=affinity.response_posture,
             )
+        if (
+            targeting.reply_audience.kind.value == "ambiguous"
+            or targeting.social_target.kind.value == "ambiguous"
+        ):
+            return ParticipationDecision.silence(
+                scene=scene,
+                reason_codes=("inhibit:ambiguous_target",),
+                posture=affinity.response_posture,
+            )
         if trigger in _DIRECT_TRIGGERS:
             return self._direct_decision(
                 topic=topic,

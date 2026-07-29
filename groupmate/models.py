@@ -149,11 +149,6 @@ class SocialEventKind(StringEnum):
     NEUTRAL = "NEUTRAL"
 
 
-class OpportunityAction(StringEnum):
-    SPEAK = "speak"
-    SILENCE = "silence"
-
-
 class InteractionScene(StringEnum):
     DIRECT_ADDRESS = "direct_address"
     REPLY_TO_BOT = "reply_to_bot"
@@ -217,38 +212,6 @@ class RelationshipState:
     last_interaction_at: int = 0
     configured_relationship: Optional[str] = None
     updated_at: int = 0
-
-
-@dataclass(frozen=True)
-class SpeakOpportunity:
-    opportunity_id: str
-    group_id: str
-    action: OpportunityAction
-    trigger: TriggerKind
-    audience_ids: Tuple[str, ...]
-    target_message_id: Optional[str]
-    contribution: str
-    confidence: float
-    interruption_cost: float
-    created_at: int
-    expires_at: int
-    reason_codes: Tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ReplyIntent:
-    decision_id: str
-    opportunity_id: str
-    group_id: str
-    audience_ids: Tuple[str, ...]
-    target_message_id: Optional[str]
-    mode: ReplyMode
-    contribution: str
-    required_capabilities: Tuple[str, ...]
-    evidence_message_ids: Tuple[str, ...]
-    created_at: int
-    expires_at: int
-    response_act: Optional["ResponseActPlan"] = None
 
 
 @dataclass(frozen=True)
@@ -487,7 +450,6 @@ class ReplyPlan:
     soft_trigger: bool = False
     image_urls: Tuple[str, ...] = ()
     reply_mode: ReplyMode = ReplyMode.SHORT_SOCIAL
-    opportunity_id: str = ""
     response_act: Optional["ResponseActPlan"] = None
     required_capabilities: Tuple[str, ...] = ()
 

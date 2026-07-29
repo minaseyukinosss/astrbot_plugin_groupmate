@@ -48,9 +48,9 @@ def build_workflow(
     task_response_resolver=None,
     capabilities=None,
     reaction_catalog=None,
-    opportunity_arbiter=None,
-    intent_planner=None,
     participation_engine=None,
+    budgets=None,
+    direct_fallback=None,
 ):
     kwargs = {}
     if task_response_resolver is not None:
@@ -59,12 +59,12 @@ def build_workflow(
         kwargs["capabilities"] = capabilities
     if reaction_catalog is not None:
         kwargs["reaction_catalog"] = reaction_catalog
-    if opportunity_arbiter is not None:
-        kwargs["opportunity_arbiter"] = opportunity_arbiter
-    if intent_planner is not None:
-        kwargs["intent_planner"] = intent_planner
     if participation_engine is not None:
         kwargs["participation_engine"] = participation_engine
+    if budgets is not None:
+        kwargs["budgets"] = budgets
+    if direct_fallback is not None:
+        kwargs["direct_fallback"] = direct_fallback
     return CognitiveWorkflow(
         generation_model=generator or StaticGenerationModel("这也太离谱了呀。"),
         vision=vision or NullVision(),
@@ -480,7 +480,7 @@ def test_unsupported_task_completion_claim_is_repaired_before_send(
     assert generator.repairs == 1
 
 
-def test_false_completion_after_repair_fails_closed(
+def test_false_completion_after_repair_uses_safe_direct_fallback(
     message_factory, balanced_policy
 ):
     generator = RepairingGenerationModel(
@@ -498,9 +498,9 @@ def test_false_completion_after_repair_fails_closed(
         )
     )
 
-    assert outcome.sent is False
-    assert outcome.reason.startswith("guard_rejected:false_task_completion")
-    assert platform.sent == []
+    assert outcome.sent is True
+    assert outcome.text == "这个我现在做不了。"
+    assert platform.sent[0]["text"] == "这个我现在做不了。"
 
 
 def test_composition_flag_off_keeps_legacy_text_only_path(
@@ -784,30 +784,11 @@ def test_direct_address_scene_does_not_quote_without_interleaving(
     assert platform.sent[0]["quote_message_id"] is None
 
 
-def test_workflow_does_not_call_legacy_participation_components(
-    message_factory,
-    balanced_policy,
-):
-    class LegacyArbiterMustNotRun:
-        def evaluate(self, *args, **kwargs):
-            raise AssertionError("legacy OpportunityArbiter was called")
+def test_workflow_constructor_has_no_legacy_participation_injection_points():
+    parameters = signature(CognitiveWorkflow).parameters
 
-    class LegacyPlannerMustNotRun:
-        def plan(self, *args, **kwargs):
-            raise AssertionError("legacy ReplyIntentPlanner was called")
-
-    workflow = build_workflow(
-        opportunity_arbiter=LegacyArbiterMustNotRun(),
-        intent_planner=LegacyPlannerMustNotRun(),
-    )
-    message = message_factory(message_id="direct", text="小爱，在吗")
-    topic = TopicSnapshot("t1", "g1", (message,), 100, 100)
-
-    outcome = asyncio.run(
-        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
-    )
-
-    assert outcome.sent is True
+    assert "opportunity_arbiter" not in parameters
+    assert "intent_planner" not in parameters
 
 
 def test_ambient_scene_does_not_quote_latest_message(

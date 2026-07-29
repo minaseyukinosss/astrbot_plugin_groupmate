@@ -222,6 +222,18 @@ def test_reply_to_bot_requires_response_and_quote():
     assert decision.quote_mode is QuoteMode.ALWAYS
 
 
+def test_ambiguous_multi_user_target_overrides_direct_trigger():
+    decision = decide(
+        engine(),
+        "@Bob @Carol 你们看",
+        trigger=TriggerKind.ALIAS_DIRECT,
+        mentioned_user_ids=("u2", "u3"),
+    )
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("inhibit:ambiguous_target",)
+
+
 def decide_topic(
     engine,
     messages,

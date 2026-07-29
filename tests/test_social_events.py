@@ -241,7 +241,7 @@ def test_first_ambiguous_romantic_address_does_not_create_negative_event():
     assert memory.relationship_state == {}
 
 
-def test_multi_mention_send_still_skips_personal_social_write():
+def test_multi_mention_silence_skips_personal_social_write():
     memory = FakeMemoryRepository()
     workflow = CognitiveWorkflow(
         generation_model=StaticGenerationModel("嗯。"),
@@ -277,6 +277,7 @@ def test_multi_mention_send_still_skips_personal_social_write():
             topic, TriggerKind.ALIAS_DIRECT, GroupPolicy(humanize_delay_enabled=False)
         )
     )
-    assert outcome.sent is True
+    assert outcome.sent is False
+    assert outcome.reason == "inhibit:ambiguous_target"
     assert memory.social_events == []
     assert memory.relationship_state == {}
