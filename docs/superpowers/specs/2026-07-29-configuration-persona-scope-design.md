@@ -235,6 +235,8 @@ groupmate.db.pre-migrate-v10-to-v11.<timestamp>
 
 正式结构变化在单个 `BEGIN IMMEDIATE`（立即事务）中完成。任何建表、复制、计数验证、索引验证或提交失败都必须回滚。迁移失败后插件停止启动，不允许使用半迁移数据库继续运行。
 
+空数据库直接通过 `_bootstrap_v11`（创建第 11 版新数据库）建立最终结构，不再先创建包含 `favorability`（旧好感度表）等历史结构的 v5 数据库再逐级迁移。已有 v5 至 v10 数据库继续沿用可验证的增量迁移链，最终统一进入 v11；每个非空旧数据库都必须在升级前备份。
+
 ### 8.2 Existing Data Ownership（现有数据归属）
 
 所有 v10 现有记录迁移为：
@@ -247,7 +249,7 @@ persona_id = "aemeath"
 
 ### 8.3 Persona-Scoped Tables（人格隔离表）
 
-下列表增加非空 `persona_id`，并将主键、唯一约束和查询索引扩展到人格维度：
+下列表增加非空 `persona_id`，所有人格状态查询必须包含该字段：
 
 - `messages`（消息记录）；
 - `profiles`（成员资料）；
@@ -261,7 +263,17 @@ persona_id = "aemeath"
 - `memory_candidates`（候选记忆）；
 - `memory_tombstones`（记忆删除标记）。
 
-SQLite 不能直接修改已有主键和唯一约束，因此需要使用 `create-copy-verify-swap`（新建、复制、验证、替换）方式重建相关表：
+语义自然键和语义唯一约束必须扩展到人格维度，例如：
+
+- `messages` 使用 `persona_id + group_id + message_id`；
+- `profiles` 使用 `persona_id + group_id + subject_id`；
+- `relationship_state` 使用 `persona_id + group_id + user_id`；
+- `social_events` 的来源消息唯一约束包含 `persona_id`；
+- `memory_candidates` 和 `memory_tombstones` 的声明唯一约束包含 `persona_id`。
+
+`decisions.id`（决策流水号）、`memory_id`（记忆 UUID）、`decision_id`（决策 UUID）和 `grant_id`（续聊许可 UUID）等全局唯一代理键可以保持原主键形态，但对应表必须保存 `persona_id`，查询索引与读取语句必须包含人格范围。人格隔离不依赖调用方碰巧生成不重复 UUID。
+
+SQLite 不能直接修改已有主键、非空约束和唯一约束，因此使用 `create-copy-verify-swap`（新建、复制、验证、替换）方式重建所有新增人格字段的表，避免永久保留 `DEFAULT 'aemeath'`（默认爱弥斯）并让未来缺失人格的写入悄悄成功：
 
 1. 创建带 v11 约束的新表；
 2. 使用 `INSERT ... SELECT 'aemeath', ...` 复制旧数据；
@@ -409,6 +421,7 @@ AstrBotEvent（AstrBot事件）
 ### 12.4 Migration Tests（迁移测试）
 
 - v10 数据库迁移前生成完整备份；
+- 空数据库直接创建 v11，已有 v5 至 v10 数据库均能安全进入 v11；
 - 所有旧行被标记为 `aemeath`，行数和关键字段不丢失；
 - 主键、唯一约束和索引包含人格范围；
 - `favorability` 迁移完成后消失；
