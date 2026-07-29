@@ -1,4 +1,6 @@
 import json
+from dataclasses import fields
+from inspect import signature
 from pathlib import Path
 
 from groupmate.config import (
@@ -24,8 +26,11 @@ def test_defaults_are_balanced_and_safe():
     assert settings.max_reply_segments == MAX_REPLY_SEGMENTS
     assert settings.handle_native_wake is True
     assert settings.relationships == ()
-    assert settings.character_name == "爱弥斯"
     assert settings.max_reply_chars == 60
+    setting_names = {item.name for item in fields(PluginSettings)}
+    assert "character_name" not in setting_names
+    assert "persona_id" not in setting_names
+    assert "persona_prompt" not in setting_names
     assert settings.v3_scheduler_enabled is True
     assert settings.v3_social_enabled is True
     assert settings.v3_opportunity_enabled is True
@@ -88,6 +93,7 @@ def test_nested_schema_groups_are_flattened():
                 "character_name": "飞行雪绒",
                 "group_brief": "这个群爱抽卡",
                 "max_reply_chars": 48,
+                "persona_id": "legacy-persona",
                 "persona_prompt": "自定义人格",
             },
             "provider_group": {
@@ -113,10 +119,11 @@ def test_nested_schema_groups_are_flattened():
     assert settings.v3_social_enabled is False
     assert settings.v3_opportunity_enabled is False
     assert settings.v3_memory_writer_enabled is False
-    assert settings.character_name == "飞行雪绒"
     assert settings.group_brief == "这个群爱抽卡"
     assert settings.max_reply_chars == 48
-    assert settings.persona_prompt == "自定义人格"
+    assert not hasattr(settings, "character_name")
+    assert not hasattr(settings, "persona_id")
+    assert not hasattr(settings, "persona_prompt")
     assert settings.vision_enabled is False
     assert settings.generation_provider == "gpt"
     assert settings.v3_composition_enabled is False
@@ -153,10 +160,12 @@ def test_template_list_relationships_are_parsed():
     )
 
 
-def test_legacy_flat_keys_still_work():
+def test_legacy_identity_override_keys_are_ignored_but_other_flat_keys_work():
     settings = PluginSettings.from_mapping(
         {
             "aliases": ["爱弥斯"],
+            "character_name": "别的角色",
+            "persona_id": "legacy-persona",
             "persona_prompt": "旧扁平覆盖",
             "relationships": [
                 {"id": "1", "relationship": "闺蜜", "address": "A"},
@@ -165,7 +174,9 @@ def test_legacy_flat_keys_still_work():
         }
     )
     assert settings.aliases == ("爱弥斯",)
-    assert settings.persona_prompt == "旧扁平覆盖"
+    assert not hasattr(settings, "character_name")
+    assert not hasattr(settings, "persona_id")
+    assert not hasattr(settings, "persona_prompt")
     assert settings.relationships[0].sender_id == "1"
     assert settings.max_reply_chars == 80
 
@@ -202,3 +213,19 @@ def test_schema_exposes_composition_and_reaction_controls():
     assert items["v3_composition_enabled"]["default"] is True
     assert items["reaction_media_enabled"]["default"] is False
     assert items["reaction_catalog_path"]["default"] == ""
+
+
+def test_schema_keeps_behavior_controls_without_identity_overrides():
+    schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    items = schema["persona_group"]["items"]
+
+    assert set(items) == {"group_brief", "max_reply_chars"}
+
+
+def test_aemeath_provider_constructor_has_no_identity_override_parameters():
+    from groupmate.persona.aemeath import AemeathPersonaProvider
+
+    parameters = set(signature(AemeathPersonaProvider).parameters)
+    assert "override_prompt" not in parameters
+    assert "character_name" not in parameters

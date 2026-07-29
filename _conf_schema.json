@@ -51,16 +51,10 @@
     }
   },
   "persona_group": {
-    "description": "人格（常用 + 高级）",
+    "description": "爱弥斯行为与群聊约束",
     "type": "object",
-    "hint": "常用项改称呼与氛围；高级区可整份覆盖内置爱弥斯 Pack。优先级：本地覆盖文本 > AstrBot 人格 > 内置 Pack。",
+    "hint": "身份固定为爱弥斯；这里只配置群氛围与输出护栏。",
     "items": {
-      "character_name": {
-        "description": "角色展示名（Session / 口吻锚点里自称）。",
-        "type": "string",
-        "default": "爱弥斯",
-        "hint": "默认爱弥斯；一般与别名对应，不必等于 QQ 昵称。"
-      },
       "group_brief": {
         "description": "一句话群氛围说明，写入稳定 system（不含具体成员关系）。",
         "type": "text",
@@ -73,20 +67,6 @@
         "type": "int",
         "default": 60,
         "hint": "建议 40–80；过长容易变成小说腔。"
-      },
-      "persona_id": {
-        "description": "【高级】AstrBot 人格 ID；留空则用内置爱弥斯 Pack。",
-        "type": "string",
-        "_special": "select_persona",
-        "default": ""
-      },
-      "persona_prompt": {
-        "description": "【高级】整份人格覆盖文本；非空时优先于 AstrBot 人格与内置 Pack。",
-        "type": "text",
-        "default": "",
-        "editor_mode": true,
-        "editor_language": "markdown",
-        "hint": "只写「我是谁、怎么说话」；不要塞系统/插件说明书。留空=不覆盖。"
       }
     }
   },

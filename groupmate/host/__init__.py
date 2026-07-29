@@ -3,7 +3,6 @@
 from .bridge import AstrBotBridge, TurnOwner
 from .llm import (
     AstrBotGenerationModel,
-    AstrBotPersonaProvider,
     AstrBotPlatformPort,
     AstrBotVisionPort,
 )
@@ -13,7 +12,6 @@ __all__ = [
     "AstrBotBridge",
     "TurnOwner",
     "AstrBotGenerationModel",
-    "AstrBotPersonaProvider",
     "AstrBotPlatformPort",
     "AstrBotVisionPort",
     "NapCatHistoryPort",

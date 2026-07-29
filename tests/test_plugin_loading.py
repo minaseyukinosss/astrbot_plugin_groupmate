@@ -1,6 +1,49 @@
 import subprocess
 import sys
+import types
+from inspect import signature
 from pathlib import Path
+
+
+def test_host_does_not_export_override_persona_provider():
+    import groupmate.host as host
+    from groupmate.persona.aemeath import AemeathPersonaProvider
+
+    assert not hasattr(host, "AstrBotPersonaProvider")
+    parameters = set(signature(AemeathPersonaProvider).parameters)
+    assert "override_prompt" not in parameters
+    assert "character_name" not in parameters
+
+
+def test_status_api_uses_fixed_aemeath_name(monkeypatch):
+    from groupmate.host.web_api import GroupmateWebAPI
+    from groupmate.persona.aemeath import CHARACTER_NAME
+
+    web = types.ModuleType("astrbot.api.web")
+    web.json_response = lambda payload: payload
+    monkeypatch.setitem(sys.modules, "astrbot.api.web", web)
+    settings = types.SimpleNamespace(
+        character_name="别的角色",
+        persona_id="legacy-persona",
+        persona_prompt="旧覆盖",
+        aliases=("小爱",),
+        group_brief="群氛围",
+        max_reply_chars=48,
+        relationships=(),
+        handle_native_wake=True,
+        vision_enabled=True,
+        spontaneous_hourly_limit=6,
+    )
+    bridge = types.SimpleNamespace(
+        settings=settings,
+        status=lambda: {"paused": False, "bootstrapped": []},
+    )
+
+    payload = __import__("asyncio").run(GroupmateWebAPI(bridge).status())
+
+    assert payload["config"]["character_name"] == CHARACTER_NAME
+    assert "persona_id" not in payload["config"]
+    assert "persona_prompt_set" not in payload["config"]
 
 
 def test_main_loads_via_astrbot_module_path(tmp_path):

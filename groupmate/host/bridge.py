@@ -34,7 +34,6 @@ from ..persona.aemeath import (
 )
 from .llm import (
     AstrBotGenerationModel,
-    AstrBotPersonaProvider,
     AstrBotPlatformPort,
     AstrBotVisionPort,
 )
@@ -107,7 +106,6 @@ class AstrBotBridge:
         prompt = AemeathPersonaProvider(
             relationships=self._relationships(),
             group_brief=str(self._setting("group_brief", "") or ""),
-            character_name=str(self._setting("character_name", CHARACTER_NAME) or CHARACTER_NAME),
         ).build_user_context(topic, memories)
         if self.should_defer_native_wake_to_astrbot(event):
             prompt = (
@@ -191,9 +189,7 @@ class AstrBotBridge:
         clock = _SystemClock()
         projector = StateProjector(
             self.memory,
-            character_name=str(
-                self._setting("character_name", CHARACTER_NAME) or CHARACTER_NAME
-            ),
+            character_name=CHARACTER_NAME,
         )
         snapshot = projector.rebuild(group_id, now=clock.now(), policy=policy)
         projector.apply(
@@ -284,16 +280,9 @@ class AstrBotBridge:
         }
 
     def _workflow_for(self, group_id: str):
-        character_name = str(
-            self._setting("character_name", CHARACTER_NAME) or CHARACTER_NAME
-        ).strip() or CHARACTER_NAME
-        persona = AstrBotPersonaProvider(
-            self.context,
-            persona_id=self._setting("persona_id", ""),
-            override_prompt=self._setting("persona_prompt", ""),
+        persona = AemeathPersonaProvider(
             relationships=self._relationships(),
             group_brief=str(self._setting("group_brief", "") or ""),
-            character_name=character_name,
         )
         getter = lambda gid: self._provider_by_group.get(
             gid,
@@ -342,7 +331,7 @@ class AstrBotBridge:
                 policy.spontaneous_cooldown_seconds,
             ),
             clock=_SystemClock(),
-            character_name=character_name,
+            character_name=CHARACTER_NAME,
             task_response_resolver=(
                 resolve_task if policy.v3_composition_enabled else None
             ),

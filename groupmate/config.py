@@ -15,7 +15,6 @@ TOPIC_MAX_SECONDS = 12
 HUMANIZE_DELAY_ENABLED = True
 MAX_REPLY_SEGMENTS = 2
 DEFAULT_MAX_REPLY_CHARS = 60
-DEFAULT_CHARACTER_NAME = "爱弥斯"
 DEFAULT_ALIASES = ("爱弥斯", "小爱", "飞行雪绒")
 
 _NESTED_GROUPS = (
@@ -92,9 +91,6 @@ class PluginSettings:
     aliases: Tuple[str, ...] = DEFAULT_ALIASES
     generation_provider: str = ""
     vision_provider: str = ""
-    persona_id: str = ""
-    persona_prompt: str = ""
-    character_name: str = DEFAULT_CHARACTER_NAME
     max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS
     spontaneous_hourly_limit: int = 6
     spontaneous_cooldown_seconds: int = 600
@@ -120,9 +116,6 @@ class PluginSettings:
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> "PluginSettings":
         data = flatten_plugin_config(_as_mapping(raw))
-        character_name = str(
-            data.get("character_name", DEFAULT_CHARACTER_NAME) or DEFAULT_CHARACTER_NAME
-        ).strip() or DEFAULT_CHARACTER_NAME
         reaction_catalog_path = str(
             data.get("reaction_catalog_path", "") or ""
         ).strip()
@@ -134,9 +127,6 @@ class PluginSettings:
             ),
             generation_provider=str(data.get("generation_provider", "") or "").strip(),
             vision_provider=str(data.get("vision_provider", "") or "").strip(),
-            persona_id=str(data.get("persona_id", "") or "").strip(),
-            persona_prompt=str(data.get("persona_prompt", "") or "").strip(),
-            character_name=character_name,
             max_reply_chars=_bounded_int(
                 data.get("max_reply_chars", DEFAULT_MAX_REPLY_CHARS),
                 DEFAULT_MAX_REPLY_CHARS,

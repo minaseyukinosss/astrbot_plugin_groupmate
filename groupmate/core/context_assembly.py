@@ -78,13 +78,11 @@ class ContextAssembly:
         self,
         pack_dir: Path,
         relationships: Sequence[RelationshipEntry] = (),
-        identity_override: str = "",
         character_name: str = "角色",
         group_brief: str = "",
     ) -> None:
         self.pack_dir = Path(pack_dir)
         self.character_name = character_name.strip() or "角色"
-        self.identity_override = (identity_override or "").strip()
         self.group_brief = (group_brief or "").strip()
         self._relationships: Dict[str, Tuple[str, str]] = relationship_map(
             tuple(relationships)
@@ -97,16 +95,10 @@ class ContextAssembly:
     def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
         self._relationships = relationship_map(tuple(relationships))
 
-    def set_identity_override(self, text: str) -> None:
-        self.identity_override = (text or "").strip()
-        self._identity_cache = None
-
     def set_group_brief(self, text: str) -> None:
         self.group_brief = (text or "").strip()
 
     def identity_text(self) -> str:
-        if self.identity_override:
-            return self.identity_override
         if self._identity_cache is None:
             path = self.pack_dir / "persona.md"
             self._identity_cache = (

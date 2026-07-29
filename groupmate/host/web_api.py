@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..persona.aemeath import CHARACTER_NAME
+
 PLUGIN_NAME = "astrbot_plugin_groupmate"
 
 
@@ -33,12 +35,10 @@ class GroupmateWebAPI:
 
         settings = self.bridge.settings
         config = {
-            "character_name": getattr(settings, "character_name", ""),
+            "character_name": CHARACTER_NAME,
             "aliases": list(getattr(settings, "aliases", ()) or ()),
             "group_brief": getattr(settings, "group_brief", ""),
             "max_reply_chars": getattr(settings, "max_reply_chars", 60),
-            "persona_id": getattr(settings, "persona_id", ""),
-            "persona_prompt_set": bool(getattr(settings, "persona_prompt", "")),
             "relationship_count": len(getattr(settings, "relationships", ()) or ()),
             "handle_native_wake": bool(getattr(settings, "handle_native_wake", True)),
             "vision_enabled": bool(getattr(settings, "vision_enabled", True)),

@@ -118,6 +118,15 @@ def test_assembly_contract_uses_relationship_state_not_mood_or_score():
     assert "mood" not in DYNAMIC_BLOCK_ORDER
 
 
+def test_core_assembly_has_no_identity_override_bypass():
+    names = set(signature(ContextAssembly).parameters)
+    assembly = _assembly()
+
+    assert "identity_override" not in names
+    assert not hasattr(assembly, "identity_override")
+    assert not hasattr(assembly, "set_identity_override")
+
+
 def test_relationship_line_uses_discrete_chinese_posture_without_score():
     state = RelationshipState(
         group_id="g1",

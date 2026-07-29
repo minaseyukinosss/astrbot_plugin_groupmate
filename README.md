@@ -1,6 +1,6 @@
 # AstrBot Groupmate 群聊伙伴插件
 
-基于 **Companion Core** 的 AstrBot 群聊伙伴：观察 QQ 群、按开口契约决定是否说话，并以 Persona Pack（默认爱弥斯）自然短回复。
+基于 **Companion Core** 的 AstrBot 群聊伙伴：观察 QQ 群、按开口契约决定是否说话，并以固定爱弥斯 Persona Pack 自然短回复。
 
 面向 **AstrBot 4.24+** 与 **NapCat/OneBot v11**。
 
@@ -18,8 +18,8 @@ astrbot_plugin_groupmate/
 ├── metadata.yaml / _conf_schema.json
 ├── docs/superpowers/
 ├── groupmate/
-│   ├── core/                 # 装配 / 投影 / 归属 / Session / SILENCE / 口吻 / 情绪
-│   ├── persona/aemeath/      # Persona Pack（persona / constraints / voice / moods）
+│   ├── core/                 # 装配 / 投影 / 归属 / Session / SILENCE / 口吻
+│   ├── persona/aemeath/      # Persona Pack（persona / constraints / voice）
 │   ├── engine/               # workflow / runtime / opportunity / delivery …
 │   ├── memory/               # SQLite ledger / 投影 / 记忆候选 / 隐私仲裁
 │   ├── social/               # 社会事件与关系投影
@@ -30,7 +30,7 @@ astrbot_plugin_groupmate/
 ## 核心能力
 
 - 稳定 system + 固定顺序动态 user
-- 每轮 voice_anchor、mood、好感档位关系行；可召回自我情景
+- 每轮 voice_anchor 与五档好感关系姿态；可召回自我情景
 - SpeakContract（`<SILENCE>`）；OutputFirewall
 - 每群 Actor：非阻塞观察、防抖、直接唤醒、续聊
 - 统一 Delivery / Outbox：正常回复、copied-at、发送失败和未知回执同一路径
@@ -56,11 +56,8 @@ astrbot_plugin_groupmate/
 | `wake_group.aliases` | 直接称呼 | 爱弥斯、小爱、飞行雪绒 |
 | `wake_group.handle_native_wake` | Groupmate 接管 `@`/回复 Bot | `true` |
 | `wake_group.continuation_seconds` | 直接呼叫后同人续聊秒数 | `90` |
-| `persona_group.character_name` | 展示名（Session / 口吻） | 爱弥斯 |
 | `persona_group.group_brief` | 一句话群氛围（进稳定 system） | 空 |
 | `persona_group.max_reply_chars` | 单条回复字数护栏 | `60` |
-| `persona_group.persona_id` | 【高级】AstrBot 人格 | 空 |
-| `persona_group.persona_prompt` | 【高级】整份人格覆盖文本 | 空 |
 | `relationship_group.relationships` | QQ / 关系 / 称呼（可视化增删） | 内置默认 |
 | `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
 | `provider_group.vision_provider` | 看图模型；空=复用回复模型 | 空 |
@@ -71,9 +68,7 @@ astrbot_plugin_groupmate/
 ## 配置入口
 
 1. **插件 Pages（本插件页）**：WebUI → 插件 →「群聊伙伴 Groupmate」详情 → 打开 **settings** 页（运行状态 / 暂停恢复 / 当前配置摘要）。
-2. **可视化配置（齿轮）**：同一插件详情里的 **配置**，改别名、人格、关系表、字数护栏等（`_conf_schema.json`）。
-
-人格优先级：`persona_prompt`（非空）> `persona_id` > 内置 `persona/aemeath/` Pack。
+2. **可视化配置（齿轮）**：同一插件详情里的 **配置**，改别名、群氛围、关系表、字数护栏等（`_conf_schema.json`）。身份固定为爱弥斯。
 
 改完 schema 或 `pages/` 后请在 WebUI **重载插件**；仅改静态页通常刷新即可。
 

@@ -31,22 +31,17 @@ class AemeathPersonaProvider:
 
     def __init__(
         self,
-        override_prompt: str = "",
         relationships: Optional[Sequence[RelationshipEntry]] = None,
         pack_dir: Optional[Path] = None,
         group_brief: str = "",
-        character_name: str = "",
     ) -> None:
         entries = (
             tuple(relationships) if relationships is not None else DEFAULT_RELATIONSHIPS
         )
-        self.override_prompt = (override_prompt or "").strip()
-        name = (character_name or "").strip() or CHARACTER_NAME
         self._assembly = ContextAssembly(
             pack_dir=pack_dir or PACK_DIR,
             relationships=entries,
-            identity_override=self.override_prompt,
-            character_name=name,
+            character_name=CHARACTER_NAME,
             group_brief=group_brief,
         )
 
