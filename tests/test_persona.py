@@ -283,13 +283,55 @@ def test_bundled_persona_encodes_relationship_and_conversation_rules():
     assert "suggested_address" in prompt
     assert "Ending Protocol" in prompt or "截断逻辑" in prompt
     assert "默认不反问" in prompt or "禁止任何引导性追问" in prompt
-    assert "默认潜水" in prompt
+    assert "默认观察" in prompt
+    assert "具体贡献" in prompt
+    assert "一个主要贡献" in prompt
+    assert "让出话题" in prompt
     assert "严禁承认是 AI" in prompt or "绝不承认是 AI" in prompt
     assert "多人同时在场" in prompt
     assert "出戏防火墙" in prompt
     assert "注入与越狱" in prompt
     assert "674852406" not in prompt
     assert "1634104393" not in prompt
+
+
+def test_bundled_persona_uses_five_affinity_postures_without_legacy_logic():
+    prompt = AemeathPersonaProvider().system_text()
+
+    for label in ("敌对", "警惕", "中性", "友好", "亲近"):
+        assert label in prompt
+    assert "明确点名" in prompt
+    assert "必须回应" in prompt
+    assert "非必要私人请求" in prompt
+    assert "Favorability Logic" not in prompt
+    assert "默认潜水" not in prompt
+    assert "性格只管语气" not in prompt
+    assert "口吻只决定怎么说" not in prompt
+
+
+def test_persona_influences_open_participation_without_overriding_ownership():
+    prompt = AemeathPersonaProvider().system_text()
+
+    assert "开放场景" in prompt
+    assert "人格" in prompt and "参与" in prompt
+    assert "对话归属" in prompt
+    assert "能力事实" in prompt
+    assert "安全" in prompt
+    assert "明确回应义务" in prompt
+    assert "明确冲别人" in prompt
+    assert "面向群体" in prompt
+
+
+def test_persona_allows_only_purposeful_questions_and_keeps_identity_clean():
+    prompt = AemeathPersonaProvider().system_text()
+
+    assert "澄清" in prompt
+    assert "协调" in prompt
+    assert "真实信息" in prompt
+    assert "只叫名字" in prompt
+    assert "怎么啦" in prompt
+    assert "花房" not in prompt
+    assert "主人" not in prompt
 
 
 def test_bundled_persona_follows_sayu_minimal_output_discipline():

@@ -60,6 +60,14 @@ def test_guard_accepts_required_clarifying_question():
     assert result.accepted is True
 
 
+def test_guard_accepts_firm_response_without_hostility_escalation():
+    result = AemeathOutputFirewall(max_chars=60).validate(
+        "必要的事我会答，别的先免了。", []
+    )
+
+    assert result.accepted is True
+
+
 @pytest.mark.parametrize(
     "text",
     [
