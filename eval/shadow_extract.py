@@ -65,7 +65,13 @@ def normalize_alias(text: str, target_alias: str, current_alias: str) -> str:
     current = str(current_alias or "").strip()
     if not target or not current:
         raise ValueError("both aliases are required")
-    return str(text or "").replace(target, current)
+    source = str(text or "")
+    if target == current:
+        return source
+    return current.join(
+        part.replace(current, "原群其他角色")
+        for part in source.split(target)
+    )
 
 
 def _positive_window(value: int, name: str) -> int:

@@ -208,6 +208,14 @@ def test_local_salt_is_reused_private_and_alias_copy_is_non_mutating(tmp_path):
     assert source == "小维，在吗"
 
 
+def test_alias_normalization_protects_preexisting_current_alias():
+    source = "爱弥斯呢，小维在吗"
+
+    assert normalize_alias(source, "小维", "爱弥斯") == (
+        "原群其他角色呢，爱弥斯在吗"
+    )
+
+
 @pytest.mark.parametrize("salt", [b"short", "a" * 32, bytearray(b"a" * 32)])
 def test_hasher_rejects_invalid_salt(salt):
     with pytest.raises(ValueError):

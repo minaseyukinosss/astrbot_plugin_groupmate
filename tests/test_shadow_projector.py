@@ -53,6 +53,14 @@ def test_copied_at_projects_as_guard_bypass(projector):
     assert projected.reason_codes == ("copied_at_bypassed",)
 
 
+def test_preexisting_current_alias_does_not_wake_shadow_target(projector):
+    projected = projector.project(example("爱弥斯呢", replied=False))
+
+    assert projected.trigger == "candidate"
+    assert projected.would_reply is False
+    assert projected.reason_codes == ("no_open_motive",)
+
+
 def test_external_knowledge_native_wake_has_one_agent_owner(projector):
     projected = projector.project(
         example("搜索今天发布的公告", mentions_target=True)
