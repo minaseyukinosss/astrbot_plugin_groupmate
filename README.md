@@ -87,7 +87,6 @@ astrbot_plugin_groupmate/
 | 配置项 | 回退行为 |
 |---|---|
 | `wake_group.v3_scheduler_enabled` | 关闭 V3 非阻塞调度，回退旧串行调度 |
-| `wake_group.v3_social_enabled` | 停止自动 social_events 写入，回退旧 favorability 增量 |
 | `wake_group.v3_opportunity_enabled` | soft 路径回退到主模型 + SpeakContract |
 | `wake_group.v3_memory_writer_enabled` | 停止接受记忆候选，仅只读既有 memories |
 

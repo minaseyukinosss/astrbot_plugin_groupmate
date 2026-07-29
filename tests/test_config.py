@@ -32,7 +32,6 @@ def test_defaults_are_balanced_and_safe():
     assert "persona_id" not in setting_names
     assert "persona_prompt" not in setting_names
     assert settings.v3_scheduler_enabled is True
-    assert settings.v3_social_enabled is True
     assert settings.v3_opportunity_enabled is True
     assert settings.v3_memory_writer_enabled is True
     assert settings.v3_composition_enabled is True
@@ -85,7 +84,6 @@ def test_nested_schema_groups_are_flattened():
                 "handle_native_wake": False,
                 "continuation_seconds": 30,
                 "v3_scheduler_enabled": False,
-                "v3_social_enabled": False,
                 "v3_opportunity_enabled": False,
                 "v3_memory_writer_enabled": False,
             },
@@ -116,7 +114,6 @@ def test_nested_schema_groups_are_flattened():
     assert settings.handle_native_wake is False
     assert settings.continuation_seconds == 30
     assert settings.v3_scheduler_enabled is False
-    assert settings.v3_social_enabled is False
     assert settings.v3_opportunity_enabled is False
     assert settings.v3_memory_writer_enabled is False
     assert settings.group_brief == "这个群爱抽卡"
@@ -221,6 +218,21 @@ def test_schema_keeps_behavior_controls_without_identity_overrides():
     items = schema["persona_group"]["items"]
 
     assert set(items) == {"group_brief", "max_reply_chars"}
+
+
+def test_legacy_social_fallback_switch_is_absent_everywhere():
+    from groupmate.models import GroupPolicy
+
+    root = Path(__file__).resolve().parents[1]
+    setting_names = {item.name for item in fields(PluginSettings)}
+    policy_names = {item.name for item in fields(GroupPolicy)}
+    schema = (root / "_conf_schema.json").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    assert "v3_social_enabled" not in setting_names
+    assert "v3_social_enabled" not in policy_names
+    assert "v3_social_enabled" not in schema
+    assert "v3_social_enabled" not in readme
 
 
 def test_aemeath_provider_constructor_has_no_identity_override_parameters():

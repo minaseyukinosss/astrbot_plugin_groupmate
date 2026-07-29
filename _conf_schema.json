@@ -30,12 +30,6 @@
         "default": true,
         "hint": "仅用于 Phase 1 故障回滚，正常保持开启。"
       },
-      "v3_social_enabled": {
-        "description": "启用 V3 社会事件与关系投影；关闭时回退旧 favorability 增量，新表只读。",
-        "type": "bool",
-        "default": true,
-        "hint": "仅用于 Phase 3 故障回滚，正常保持开启。"
-      },
       "v3_opportunity_enabled": {
         "description": "启用 V3 发言机会仲裁；关闭时 soft 恢复进模型 + SpeakContract 旧路径。",
         "type": "bool",

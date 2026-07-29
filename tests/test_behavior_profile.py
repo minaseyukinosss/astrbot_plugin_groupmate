@@ -9,6 +9,7 @@ from groupmate.persona.aemeath import (
     AffinityParticipationRule,
     AemeathPersonaProvider,
     ParticipationMotive,
+    ParticipationInhibition,
     PersonaParticipationProfile,
 )
 from groupmate.social import AffinityBand, ResponsePosture
@@ -104,3 +105,16 @@ def test_provider_exposes_fixed_profile_read_only():
     assert provider.participation_profile is AEMEATH_PARTICIPATION_PROFILE
     with pytest.raises(AttributeError):
         provider.participation_profile = AEMEATH_PARTICIPATION_PROFILE
+
+
+def test_affinity_rules_cover_all_declared_motives_without_monopoly():
+    profile = AEMEATH_PARTICIPATION_PROFILE
+    covered = {
+        motive for rule in profile.affinity_rules for motive in rule.allowed_motives
+    }
+    close = profile.rule_for_affinity(AffinityBand.CLOSE)
+
+    assert covered == set(profile.motives)
+    assert ParticipationMotive.CARE_WITH_EVIDENCE in close.allowed_motives
+    assert ParticipationMotive.PLAY_WHEN_INVITED in close.allowed_motives
+    assert ParticipationInhibition.AVOID_MONOPOLY in profile.inhibitions

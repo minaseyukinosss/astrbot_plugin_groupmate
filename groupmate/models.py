@@ -580,8 +580,6 @@ class GroupPolicy:
     humanize_delay_enabled: bool = True
     max_reply_segments: int = 2
 
-    # Phase 3：关闭后停止 social_events 写入，回退旧 favorability 增量
-    v3_social_enabled: bool = True
     # Phase 4：关闭后 soft 恢复「进模型 + SpeakContract」旧路径
     v3_opportunity_enabled: bool = True
     # Phase 5：关闭后不再接受候选写入，只读既有 memories

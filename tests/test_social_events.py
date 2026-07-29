@@ -92,6 +92,23 @@ def test_apology_repairs_slowly_without_clearing_boundary_pressure():
     assert 0 < repaired.boundary_pressure < harmed.boundary_pressure
 
 
+def test_only_explicit_verified_boundary_event_reduces_affinity():
+    projector = SocialStateProjector()
+    neutral = projector.apply_event(
+        None, _event(SocialEventKind.NEUTRAL, event_id="neutral"), now=1
+    )
+
+    crossed = projector.apply_event(
+        neutral,
+        _event(SocialEventKind.BOUNDARY_PUSH, event_id="boundary", occurred_at=2),
+        now=2,
+    )
+
+    assert neutral.affinity == 0
+    assert crossed.affinity < neutral.affinity
+    assert crossed.boundary_pressure > neutral.boundary_pressure
+
+
 def test_social_event_idempotent_and_replay(tmp_path):
     path = tmp_path / "social.db"
     store = SQLiteMemoryStore(path)
@@ -190,6 +207,38 @@ def test_workflow_does_not_infer_social_event_after_send():
     assert outcome.sent is True
     assert memory.social_events == []
     assert memory.get_relationship_state("g1", "u1") is None
+
+
+def test_first_ambiguous_romantic_address_does_not_create_negative_event():
+    memory = FakeMemoryRepository()
+    workflow = CognitiveWorkflow(
+        generation_model=StaticGenerationModel("别乱叫呀。"),
+        vision=NullVision(),
+        platform=FakePlatform(),
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+        output_guard=AemeathOutputFirewall(max_chars=60),
+        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
+        clock=FakeClock(200),
+    )
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯 老婆"),),
+        created_at=100,
+        updated_at=100,
+    )
+    from groupmate.models import GroupPolicy
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic, TriggerKind.ALIAS_DIRECT, GroupPolicy(humanize_delay_enabled=False)
+        )
+    )
+
+    assert outcome.sent is True
+    assert memory.social_events == []
+    assert memory.relationship_state == {}
 
 
 def test_multi_mention_send_still_skips_personal_social_write():
