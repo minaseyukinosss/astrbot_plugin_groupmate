@@ -2,7 +2,7 @@
 
 ## 1. Goal（目标）
 
-实现 `ParticipationDecisionEngine`（统一参与决策引擎），用全新的确定性机制替代旧 `OpportunityArbiter`（机会仲裁器）的连续效用分数。新机制一次性决定：
+实现 `ParticipationDecisionEngine`（统一参与决策引擎），用全新的确定性机制替代并废弃旧 `OpportunityArbiter`（机会仲裁器）的连续效用分数。旧参与机制不作为长期兼容路径、不作为回退路径、不继续影响线上是否发言。新机制一次性决定：
 
 - 是否参与；
 - 因为什么参与；
@@ -45,7 +45,7 @@
 
 ### 3.3 Option C：新建 `ParticipationDecisionEngine`（统一参与决策引擎）
 
-采用。保留 `TriggerRouter`（触发路由器）、`AddresseeResolver`（对象解析器）、`PresenceProjection`（在场投影）和 `PersonaParticipationProfile`（人格参与档案）这类可观察输入组件，但移除旧 `_score_utility`（效用打分）在线上决策中的作用。
+采用。保留 `TriggerRouter`（触发路由器）、`AddresseeResolver`（对象解析器）、`PresenceProjection`（在场投影）和 `PersonaParticipationProfile`（人格参与档案）这类可观察输入组件，但废弃旧 `_score_utility`（效用打分）和旧 `OpportunityArbiter.evaluate`（机会仲裁评估）的线上决策作用。
 
 ## 4. Decision Contract（决策契约）
 
@@ -85,7 +85,7 @@
 - `reason_codes`（原因码）：可审计的离散原因；
 - `expires_at`（过期时间）：候选回复时效。
 
-实施期可以先提供兼容转换器，让 `CognitiveWorkflow.evaluate`（认知工作流评估）少改动；稳定后删除旧 `SpeakOpportunity`（发言机会）和 `ReplyIntent`（回复意图）的重复判断。
+实施期可以保留只读数据适配器，让 `CognitiveWorkflow.evaluate`（认知工作流评估）少改动；但适配器只能搬运 `ParticipationDecision`（参与决策）结果，不能调用旧 `OpportunityArbiter`（机会仲裁器）或旧 `ReplyIntentPlanner`（回复意图规划器）重新判断是否发言。
 
 ## 5. Decision Order（决策顺序）
 
@@ -106,9 +106,24 @@
 
 人格和好感不得覆盖对话归属。
 
-### 5.3 `DirectObligationGate`（明确回应义务门）
+### 5.3 `CopiedAtGuard`（复制文本 @ 旁路）
 
-平台真实 @、复制文本 @、句首别名、回复爱弥斯、有效续聊都属于 `DIRECT_REQUIRED`（明确点名必答）。除系统旁路外，不因低好感、无心情或普通沉默策略跳过。
+`COPIED_AT`（复制文本 @）不进入 `ParticipationDecisionEngine`（统一参与决策引擎）。原因是群友经常复读整段消息，复制出来的文本 @ 不能被当成真实呼叫，否则会把复读行为误引入好感、过度 @、续聊和开放参与判断。
+
+处理规则：
+
+- 不生成 `DIRECT_REQUIRED`（明确点名必答）；
+- 不进入 `DirectAddressPressure`（直接呼叫压力）计数；
+- 不读取或改变 `AffinityBand`（好感档位）；
+- 不开启 `Continuation`（续聊授权）；
+- 不进入模型生成；
+- 可由 `CopiedAtTipHandler`（复制 @ 提示处理器）返回固定短提示，或在短窗口重复出现时直接沉默。
+
+这保留复制文本 @ 的特殊处理，同时避免它污染新决策机制。
+
+### 5.4 `DirectObligationGate`（明确回应义务门）
+
+平台真实 @、句首别名、回复爱弥斯、有效续聊都属于 `DIRECT_REQUIRED`（明确点名必答）。复制文本 @ 已在 `CopiedAtGuard`（复制文本 @ 旁路）中处理，不属于明确回应义务。除系统旁路外，真实明确呼叫不因低好感、无心情或普通沉默策略跳过。
 
 直接回应分三类：
 
@@ -116,7 +131,7 @@
 2. `bare_direct`（空点名/只叫名字）：短应声，不扩展话题；
 3. `over_direct`（过度直接呼叫）：根据好感档位和过度程度改变姿态。
 
-### 5.4 `DirectAddressPressure`（直接呼叫压力）
+### 5.5 `DirectAddressPressure`（直接呼叫压力）
 
 `DirectAddressPressure`（直接呼叫压力）描述同一用户短时间内重复 @ 爱弥斯的程度。它不是情绪值，而是可观察行为状态。
 
@@ -129,13 +144,14 @@
 
 计数规则：
 
-- 只统计 `NATIVE_DIRECT`（平台 @）、`ALIAS_DIRECT`（别名句首）、`COPIED_AT`（复制 @）和 `REPLY_TO_BOT`（回复机器人）；
+- 只统计 `NATIVE_DIRECT`（平台 @）、`ALIAS_DIRECT`（别名句首）和 `REPLY_TO_BOT`（回复机器人）；
+- 明确排除 `COPIED_AT`（复制文本 @），复制文本 @ 由 `CopiedAtGuard`（复制文本 @ 旁路）处理；
 - 带完整问题、任务对象或新信息的 @ 不算过度 @；
 - 用户提出新事实或新任务后重置压力；
 - 超过 10 分钟无同类行为后重置压力；
 - 计数按 `group_id + sender_id`（群 ID + 发送者 ID）隔离。
 
-### 5.5 `AffinityPostureResolver`（好感姿态解析器）
+### 5.6 `AffinityPostureResolver`（好感姿态解析器）
 
 `AffinityPostureResolver`（好感姿态解析器）把 `AffinityBand`（好感档位）、`DirectAddressPressure`（直接呼叫压力）和 `ResponseAct`（回应动作）合成回复姿态。它用于所有直接回应：正常 @ 时决定冷静、疏离、礼貌、温暖或亲近；过度 @ 时再把姿态放大为边界或戏谑。
 
@@ -149,7 +165,7 @@
 
 这实现用户确认的效果：低好感过度 @ 会表现出“有情绪”的冷淡或边界；高好感过度 @ 可以像熟人一样戏谑接住。但该“情绪”来自可审计的好感档位和行为压力，不恢复旧 `mood_key`（情绪键）或随机心情。
 
-### 5.6 `OpenParticipationGate`（开放参与门）
+### 5.7 `OpenParticipationGate`（开放参与门）
 
 普通群消息不再通过分数阈值。必须满足至少一个 `ParticipationMotive`（人格参与动机），且没有 `ParticipationInhibition`（人格参与抑制）。
 
@@ -200,17 +216,19 @@
 建议新增：
 
 - `groupmate/engine/participation.py`：`ParticipationDecisionEngine`（统一参与决策引擎）主流程；
+- `groupmate/engine/copied_at.py`：`CopiedAtGuard`（复制文本 @ 旁路）和 `CopiedAtTipHandler`（复制 @ 提示处理器）；
 - `groupmate/engine/direct_pressure.py`：`DirectAddressPressureTracker`（直接呼叫压力跟踪器）；
 - `groupmate/engine/participation_types.py`：`ParticipationInput`（参与输入）和 `ParticipationDecision`（参与决策）；
+- `tests/test_copied_at_guard.py`：复制文本 @ 旁路测试；
 - `tests/test_participation_decision.py`：参与决策单元测试；
 - `tests/test_direct_pressure.py`：过度 @ 与好感姿态测试；
 - `tests/test_workflow_participation.py`：`CognitiveWorkflow.evaluate`（认知工作流评估）集成测试。
 
 建议修改：
 
-- `groupmate/engine/workflow.py`：调用新引擎，停止直接调用 `OpportunityArbiter.evaluate`（机会仲裁评估）；
-- `groupmate/engine/opportunity.py`：第一阶段保留兼容，后续删除；
-- `groupmate/engine/planner.py`：第一阶段保留兼容，后续将动作计划迁入新引擎；
+- `groupmate/engine/workflow.py`：先处理 `CopiedAtGuard`（复制文本 @ 旁路），再调用新引擎，并停止直接调用 `OpportunityArbiter.evaluate`（机会仲裁评估）；
+- `groupmate/engine/opportunity.py`：从线上路径删除旧机会仲裁；如文件暂留，只能服务历史测试迁移，不得被 `CognitiveWorkflow.evaluate`（认知工作流评估）调用；
+- `groupmate/engine/planner.py`：从线上路径删除旧回复意图规划；回应动作由 `ParticipationDecisionEngine`（统一参与决策引擎）产出；
 - `groupmate/core/scenes.py`：扩展场景证据；
 - `eval/shadow_projector.py`：使用新引擎投影；
 - `eval/results/phase3-shadow.md`：重新生成，作为效果对比。
@@ -219,6 +237,7 @@
 
 ```text
 TriggerRouter（触发路由器）
+    -> CopiedAtGuard（复制文本 @ 旁路；仅 COPIED_AT 提前返回）
     -> AddresseeResolver（对象解析器）
     -> ParticipationDecisionEngine（统一参与决策引擎）
     -> ReplyPlan（回复计划）
@@ -257,9 +276,13 @@ TriggerRouter（触发路由器）
 
 ### 10.1 Direct Required（明确点名必答）
 
-覆盖：平台 @ 带问题必须发言、别名句首只叫名字应声、回复机器人必须回应、复制文本 @ 按明确点名处理、机器人自身消息/命令/空内容沉默、直接回应生成失败时使用人格化最小降级。
+覆盖：平台 @ 带问题必须发言、别名句首只叫名字应声、回复机器人必须回应、机器人自身消息/命令/空内容沉默、直接回应生成失败时使用人格化最小降级。
 
-### 10.2 Over Direct And Affinity（过度 @ 与好感）
+### 10.2 Copied At Guard（复制文本 @ 旁路）
+
+覆盖：复制文本 @ 不进入 `ParticipationDecisionEngine`（统一参与决策引擎）、不产生 `DIRECT_REQUIRED`（明确点名必答）、不增加 `DirectAddressPressure`（直接呼叫压力）、不读取好感档位、不开启续聊；短窗口重复复制文本 @ 时沉默或只返回固定提示。
+
+### 10.3 Over Direct And Affinity（过度 @ 与好感）
 
 覆盖：
 
@@ -270,15 +293,15 @@ TriggerRouter（触发路由器）
 - `CLOSE`（亲近）用户三次空 @：`PLAYFUL_REPLY`（轻玩笑）+ `CLOSE`（亲近）；
 - 用户带新问题或新任务：压力重置，不按过度 @ 处理。
 
-### 10.3 Open Participation（开放参与）
+### 10.4 Open Participation（开放参与）
 
 覆盖：面向别人的问题沉默、面向群体且有具体帮助可发言、只能空附和沉默、机器人近期密度高沉默、关系证据不足的泛化关心沉默、高好感用户明确邀请玩笑可轻玩笑、低好感用户未点名闲聊默认不主动靠近。
 
-### 10.4 Quote And Media（引用与媒体）
+### 10.5 Quote And Media（引用与媒体）
 
 覆盖：句首点名默认不引用、真实 reply 或多人交错时引用、边界场景禁止装饰媒体、歧义目标禁止装饰媒体、视觉反应按图片证据允许。
 
-### 10.5 Shadow Evaluation（影子评估）
+### 10.6 Shadow Evaluation（影子评估）
 
 重新运行 `eval.shadow_export`（导出影子评估）后，重点观察：
 
@@ -293,28 +316,32 @@ TriggerRouter（触发路由器）
 本阶段完成后应满足：
 
 1. 线上参与决策不再读取 `UTILITY_THRESHOLD`（效用阈值）或旧 `_score_utility`（效用打分）；
-2. 明确点名、回复爱弥斯和有效续聊稳定回应；
-3. 明确点名不会被开放参与预算或旧回退开关取消，生成失败时仍有最小人格化回应；
-4. 普通群消息必须有明确 `ParticipationMotive`（人格参与动机）才参与；
-5. `AffinityBand`（好感档位）影响开放参与类型和直接回应姿态，但不变成分数加成；
-6. 过度 @ 被 `DirectAddressPressure`（直接呼叫压力）识别，并按好感档位输出边界、应声或戏谑；
-7. 爱弥斯仍保持爱弥斯人格，不复制小维身份、口癖、素材或媒体；
-8. 所有新增文档中的函数名和关键字都配中文说明；
-9. 单元测试和影子评估能解释每一个主要回复/沉默差异。
+2. 旧 `OpportunityArbiter`（机会仲裁器）、旧 `_score_utility`（效用打分）和旧 `ReplyIntentPlanner`（回复意图规划器）不再作为线上决策源；
+3. 明确点名、回复爱弥斯和有效续聊稳定回应；
+4. 复制文本 @ 由 `CopiedAtGuard`（复制文本 @ 旁路）特殊处理，不进入参与决策、好感姿态、过度 @ 计数或续聊授权；
+5. 明确点名不会被开放参与预算或旧回退开关取消，生成失败时仍有最小人格化回应；
+6. 普通群消息必须有明确 `ParticipationMotive`（人格参与动机）才参与；
+7. `AffinityBand`（好感档位）影响开放参与类型和直接回应姿态，但不变成分数加成；
+8. 过度 @ 被 `DirectAddressPressure`（直接呼叫压力）识别，并按好感档位输出边界、应声或戏谑；
+9. 爱弥斯仍保持爱弥斯人格，不复制小维身份、口癖、素材或媒体；
+10. 所有新增文档中的函数名和关键字都配中文说明；
+11. 单元测试和影子评估能解释每一个主要回复/沉默差异。
 
 ## 12. Implementation Sequence（实施顺序）
 
 后续实施计划应按以下顺序展开：
 
-1. 写失败测试：`DirectAddressPressure`（直接呼叫压力）和好感姿态；
-2. 实现 `DirectAddressPressureTracker`（直接呼叫压力跟踪器）；
-3. 写失败测试：`ParticipationDecisionEngine`（统一参与决策引擎）的明确点名门；
-4. 实现明确回应义务；
-5. 写失败测试：开放参与动机与抑制；
-6. 实现开放参与门；
-7. 写失败测试：引用策略；
-8. 实现新版引用策略；
-9. 接入 `CognitiveWorkflow.evaluate`（认知工作流评估）；
-10. 更新 `eval.shadow_projector`（影子投影器）；
-11. 运行测试与影子评估；
-12. 删除或停用旧 `OpportunityArbiter`（机会仲裁器）运行路径。
+1. 写失败测试：`CopiedAtGuard`（复制文本 @ 旁路）；
+2. 实现 `CopiedAtGuard`（复制文本 @ 旁路）和 `CopiedAtTipHandler`（复制 @ 提示处理器）；
+3. 写失败测试：`DirectAddressPressure`（直接呼叫压力）和好感姿态；
+4. 实现 `DirectAddressPressureTracker`（直接呼叫压力跟踪器）；
+5. 写失败测试：`ParticipationDecisionEngine`（统一参与决策引擎）的明确点名门；
+6. 实现明确回应义务；
+7. 写失败测试：开放参与动机与抑制；
+8. 实现开放参与门；
+9. 写失败测试：引用策略；
+10. 实现新版引用策略；
+11. 接入 `CognitiveWorkflow.evaluate`（认知工作流评估）；
+12. 更新 `eval.shadow_projector`（影子投影器）；
+13. 运行测试与影子评估；
+14. 删除或停用旧 `OpportunityArbiter`（机会仲裁器）运行路径。
