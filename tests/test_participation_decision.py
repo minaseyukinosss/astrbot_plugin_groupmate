@@ -220,3 +220,116 @@ def test_reply_to_bot_requires_response_and_quote():
     assert decision.action is ParticipationAction.SPEAK
     assert decision.scene is InteractionScene.REPLY_TO_BOT
     assert decision.quote_mode is QuoteMode.ALWAYS
+
+
+def decide_topic(
+    engine,
+    messages,
+    *,
+    trigger=TriggerKind.CANDIDATE,
+    affinity=None,
+):
+    topic = TopicSnapshot(
+        topic_id="t-open",
+        group_id="g1",
+        messages=tuple(messages),
+        created_at=messages[0].timestamp,
+        updated_at=messages[-1].timestamp,
+    )
+    targeting = AddresseeResolver().resolve(
+        topic,
+        trigger,
+        aliases=("爱弥斯",),
+    )
+    return engine.decide(
+        topic=topic,
+        trigger=trigger,
+        policy=GroupPolicy(),
+        targeting=targeting,
+        now=messages[-1].timestamp,
+        aliases=("爱弥斯",),
+        affinity=affinity
+        or AffinitySnapshot(AffinityBand.NEUTRAL, ResponsePosture.POLITE),
+        persona=AEMEATH_PARTICIPATION_PROFILE,
+        recent_outputs=(),
+    )
+
+
+def test_open_group_concrete_help_request_can_speak():
+    decision = decide(
+        engine(),
+        "有没有人知道这个插件怎么重载？",
+        trigger=TriggerKind.CANDIDATE,
+    )
+
+    assert decision.action is ParticipationAction.SPEAK
+    assert decision.obligation is ParticipationObligation.OPEN_OPTIONAL
+    assert decision.act is ResponseAct.ANSWER
+    assert decision.reason_codes == ("motive:help_when_concrete",)
+
+
+def test_empty_echo_candidate_silences():
+    decision = decide(
+        engine(),
+        "哈哈哈",
+        trigger=TriggerKind.CANDIDATE,
+    )
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("inhibit:empty_echo",)
+
+
+def test_passing_alias_mention_does_not_become_open_help():
+    decision = decide(
+        engine(),
+        "爱弥斯好像也不知道怎么弄吧？",
+        trigger=TriggerKind.ALIAS_MENTION,
+    )
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("inhibit:passing_alias_mention",)
+
+
+def test_reply_to_other_user_silences_even_when_it_contains_help_words():
+    previous = message(
+        "你会配置吗？",
+        timestamp=100,
+        sender_id="u2",
+    )
+    latest = message(
+        "这个要怎么弄？",
+        timestamp=110,
+        reply_to_message_id=previous.message_id,
+        reply_to_bot=False,
+    )
+
+    decision = decide_topic(engine(), (previous, latest))
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("inhibit:owned_by_other_user",)
+
+
+def test_recent_bot_density_suppresses_open_participation():
+    messages = (
+        message(
+            "先看配置。",
+            timestamp=100,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "再重载。",
+            timestamp=101,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "有没有人知道这个插件怎么重载？",
+            timestamp=102,
+        ),
+    )
+
+    decision = decide_topic(engine(), messages)
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("inhibit:avoid_monopoly",)

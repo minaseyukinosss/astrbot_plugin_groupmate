@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Sequence
 
 from ..core.intent import select_reply_mode
+from ..core.presence import project_presence
 from ..core.response_act import ResponseAct, TaskResolution, plan_response_act
 from ..core.scenes import classify_scene
 from ..models import (
@@ -15,7 +17,10 @@ from ..models import (
     TopicSnapshot,
     TriggerKind,
 )
-from ..persona.aemeath.behavior_profile import PersonaParticipationProfile
+from ..persona.aemeath.behavior_profile import (
+    ParticipationMotive,
+    PersonaParticipationProfile,
+)
 from ..social.affinity import AffinityBand, AffinitySnapshot, ResponsePosture
 from .direct_pressure import (
     DirectAddressPressureLevel,
@@ -32,6 +37,22 @@ _DIRECT_TRIGGERS = frozenset(
         TriggerKind.NATIVE_DIRECT,
         TriggerKind.ALIAS_DIRECT,
         TriggerKind.CONTINUATION,
+    }
+)
+_EMPTY_ECHO = re.compile(r"^(?:哈+|哈哈+|确实|好耶|草|笑死|是的|对)$")
+_OPEN_HELP = re.compile(
+    r"(?:有没有人|有人知道|谁知道|求助|请教一下|请问大家|群里).{0,32}"
+    r"(?:怎么|如何|为什么|怎么办|办法|配置|处理|解决|重载|安装|使用)"
+)
+_OTHER_OWNER_REASONS = frozenset(
+    {
+        "reply_chain",
+        "platform_mention",
+        "leading_address",
+        "participant_alias",
+        "adjacent_qa",
+        "multi_mention",
+        "multi_name_call",
     }
 )
 
@@ -93,10 +114,13 @@ class ParticipationDecisionEngine:
                 persona=persona,
                 task_resolution=task_resolution,
             )
-        return ParticipationDecision.silence(
-            scene=scene,
-            reason_codes=("open_participation_not_implemented",),
-            posture=affinity.response_posture,
+        return self._open_decision(
+            topic=topic,
+            trigger=trigger,
+            targeting=targeting,
+            affinity=affinity,
+            persona=persona,
+            now=now,
         )
 
     def _direct_decision(
@@ -159,6 +183,78 @@ class ParticipationDecisionEngine:
             quote_mode=self._quote_mode(trigger, latest.reply_to_bot),
             media_policy=self._media_policy(act, ambiguous),
             pressure=pressure,
+        )
+
+    @staticmethod
+    def _open_decision(
+        *,
+        topic: TopicSnapshot,
+        trigger: TriggerKind,
+        targeting: TargetingDecision,
+        affinity: AffinitySnapshot,
+        persona: PersonaParticipationProfile,
+        now: int,
+    ) -> ParticipationDecision:
+        latest = topic.latest
+        if latest is None:
+            return ParticipationDecision.silence(
+                scene=InteractionScene.AMBIENT_CONTRIBUTION,
+                reason_codes=("empty_topic",),
+            )
+        scene = classify_scene(trigger, latest)
+        if trigger is TriggerKind.ALIAS_MENTION:
+            return ParticipationDecision.silence(
+                scene=scene,
+                reason_codes=("inhibit:passing_alias_mention",),
+                posture=affinity.response_posture,
+            )
+        owner_reasons = set(targeting.reply_audience.reason_codes)
+        if (
+            latest.reply_to_message_id
+            and not latest.reply_to_bot
+        ) or latest.mentioned_user_ids or owner_reasons.intersection(
+            _OTHER_OWNER_REASONS
+        ):
+            return ParticipationDecision.silence(
+                scene=scene,
+                reason_codes=("inhibit:owned_by_other_user",),
+                posture=affinity.response_posture,
+            )
+        text = str(latest.text or "").strip()
+        if _EMPTY_ECHO.fullmatch(text):
+            return ParticipationDecision.silence(
+                scene=scene,
+                reason_codes=("inhibit:empty_echo",),
+                posture=affinity.response_posture,
+            )
+        presence = project_presence(topic.messages, now=now)
+        if presence.bot_message_count >= 2:
+            return ParticipationDecision.silence(
+                scene=scene,
+                reason_codes=("inhibit:avoid_monopoly",),
+                posture=affinity.response_posture,
+            )
+        rule = persona.rule_for_affinity(affinity.band)
+        if (
+            trigger is TriggerKind.CANDIDATE
+            and _OPEN_HELP.search(text)
+            and ParticipationMotive.HELP_WHEN_CONCRETE
+            in rule.allowed_motives
+        ):
+            return ParticipationDecision.speak(
+                scene=scene,
+                act=ResponseAct.ANSWER,
+                posture=affinity.response_posture,
+                obligation=ParticipationObligation.OPEN_OPTIONAL,
+                reason_codes=("motive:help_when_concrete",),
+                contribution="给出与群体问题直接相关的具体短答",
+                quote_mode=QuoteMode.NEVER,
+                media_policy=MediaPolicy(),
+            )
+        return ParticipationDecision.silence(
+            scene=scene,
+            reason_codes=("no_open_motive",),
+            posture=affinity.response_posture,
         )
 
     @staticmethod
