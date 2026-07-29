@@ -2,7 +2,6 @@
 
 from .context_assembly import DYNAMIC_BLOCK_ORDER, AssembledPrompt, ContextAssembly
 from .history_format import format_history_block, select_active_messages
-from .mood import infer_mood
 from .relationships import RelationshipEntry, parse_relationships, resolve_speaker
 from .session import DialogueTurn, GroupSession, GroupSessionStore
 from .speak_contract import SILENCE_MARKERS, SpeakContract, is_silence
@@ -19,7 +18,6 @@ __all__ = [
     "SILENCE_MARKERS",
     "SpeakContract",
     "format_history_block",
-    "infer_mood",
     "is_silence",
     "load_voice_anchor",
     "parse_relationships",

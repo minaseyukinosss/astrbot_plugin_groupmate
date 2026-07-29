@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
 
-from ..models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
+from ..models import (
+    MemoryItem,
+    RelationshipState,
+    ReplyMode,
+    TargetingDecision,
+    TopicSnapshot,
+)
 from .history_format import (
     focus_speaker,
     format_history_block,
@@ -15,8 +21,7 @@ from .history_format import (
     select_active_messages,
 )
 from .intent import constraints_for, speak_note_for
-from .mood import describe_mood, infer_mood, load_mood_descriptions
-from .relationships import RelationshipEntry, relationship_map, resolve_speaker
+from .relationships import RelationshipEntry, relationship_map
 from .response_act import ResponseAct, ResponseActPlan
 from .self_episodes import format_self_episodes, needs_self_recall
 from .session import DialogueTurn, GroupSession
@@ -35,7 +40,6 @@ ROLE_PLAYING_START = """## 角色扮演
 DYNAMIC_BLOCK_ORDER = (
     "recent_messages",
     "session_turns",
-    "mood",
     "relationship_line",
     "voice_anchor",
     "self_episodes",
@@ -55,7 +59,6 @@ class AssembledPrompt:
     system: str
     user: str
     soft_trigger: bool
-    mood_key: str = "neutral"
 
 
 class ContextAssembly:
@@ -64,10 +67,10 @@ class ContextAssembly:
 
     SYSTEM：
       ROLE_START → persona.md → constraints → group_brief → 收尾人格钉
-      （不含 mood / per-user 关系）
+      （不含 per-user 关系）
 
     USER（固定顺序，见 DYNAMIC_BLOCK_ORDER）：
-      history → session → mood → relationship_line → voice_anchor
+      history → session → relationship_line → voice_anchor
       → self_episodes → memories → memory_guide → speak_note → reply_task
     """
 
@@ -89,7 +92,6 @@ class ContextAssembly:
         self._identity_cache: Optional[str] = None
         self._constraints_cache: Optional[str] = None
         self._voice_cache: Dict[str, str] = {}
-        self._mood_descriptions = load_mood_descriptions(self.pack_dir)
         self._memory_guide_cache: Optional[str] = None
 
     def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
@@ -162,8 +164,7 @@ class ContextAssembly:
         contribution: str = "",
         soft_trigger: bool = False,
         session: Optional[GroupSession] = None,
-        mood_key: Optional[str] = None,
-        favorability: Optional[int] = None,
+        relationship_state: Optional[RelationshipState] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseActPlan] = None,
@@ -178,16 +179,7 @@ class ContextAssembly:
             targeting is not None
             and targeting.social_target.kind.value == "ambiguous"
         )
-        _, relationship, _ = resolve_speaker(
-            sender_id, sender_name, self._relationships
-        )
         latest_text = active[-1].text if active else ""
-        resolved_mood = mood_key or infer_mood(
-            soft_trigger=soft_trigger,
-            latest_text=latest_text,
-            relationship="" if ambiguous else relationship,
-            favorability=None if ambiguous else favorability,
-        )
         mode = reply_mode or ReplyMode.SHORT_SOCIAL
         mode_constr = constraints_for(mode)
 
@@ -205,10 +197,6 @@ class ContextAssembly:
                 ["<session_turns>", "\n".join(session_lines), "</session_turns>"]
             )
 
-        sections.append(
-            "<mood>{}</mood>".format(describe_mood(resolved_mood, self._mood_descriptions))
-        )
-
         if sender_id or sender_name:
             sections.append(
                 "<relationship_line>{}</relationship_line>".format(
@@ -216,7 +204,9 @@ class ContextAssembly:
                         sender_id,
                         sender_name,
                         self._relationships,
-                        favorability=None if ambiguous else favorability,
+                        relationship_state=(
+                            None if ambiguous else relationship_state
+                        ),
                         allow_intimate_address=not ambiguous,
                     )
                 )
@@ -283,32 +273,13 @@ class ContextAssembly:
         contribution: str = "",
         soft_trigger: bool = False,
         session: Optional[GroupSession] = None,
-        mood_key: Optional[str] = None,
-        favorability: Optional[int] = None,
+        relationship_state: Optional[RelationshipState] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseActPlan] = None,
         capability_facts: Sequence[str] = (),
         capability_status: str = "",
     ) -> AssembledPrompt:
-        active = select_active_messages(
-            topic.messages, topic_created_at=topic.created_at
-        )
-        sender_id, sender_name = self._focus_from_targeting(active, targeting)
-        ambiguous = bool(
-            targeting is not None
-            and targeting.social_target.kind.value == "ambiguous"
-        )
-        _, relationship, _ = resolve_speaker(
-            sender_id, sender_name, self._relationships
-        )
-        latest_text = active[-1].text if active else ""
-        resolved_mood = mood_key or infer_mood(
-            soft_trigger=soft_trigger,
-            latest_text=latest_text,
-            relationship="" if ambiguous else relationship,
-            favorability=None if ambiguous else favorability,
-        )
         return AssembledPrompt(
             system=self.build_system(),
             user=self.build_user(
@@ -317,8 +288,7 @@ class ContextAssembly:
                 contribution=contribution,
                 soft_trigger=soft_trigger,
                 session=session,
-                mood_key=resolved_mood,
-                favorability=favorability,
+                relationship_state=relationship_state,
                 targeting=targeting,
                 reply_mode=reply_mode,
                 response_act=response_act,
@@ -326,7 +296,6 @@ class ContextAssembly:
                 capability_status=capability_status,
             ),
             soft_trigger=soft_trigger,
-            mood_key=resolved_mood,
         )
 
     @staticmethod

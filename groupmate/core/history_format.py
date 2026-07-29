@@ -5,7 +5,8 @@ from __future__ import annotations
 import html
 from typing import Optional, Sequence, Tuple
 
-from ..models import ChatMessage
+from ..models import ChatMessage, RelationshipState
+from ..social.affinity import AffinityBand, ResponsePosture, snapshot_for_relationship
 from .relationships import resolve_speaker
 
 ACTIVE_CONTEXT_MAX_MESSAGES = 8
@@ -110,13 +111,11 @@ def format_relationship_line(
     sender_id: str,
     sender_name: str,
     relationships: dict,
-    favorability: Optional[int] = None,
     *,
+    relationship_state: Optional[RelationshipState] = None,
     allow_intimate_address: bool = True,
 ) -> str:
-    """Current-focus speaker relationship + favorability tier (no IDs)."""
-    from .favorability import format_favorability_perception
-
+    """format_relationship_line（关系行）：输出离散关系姿态，不输出分数。"""
     speaker, relationship, suggested_address = resolve_speaker(
         sender_id, sender_name, relationships
     )
@@ -124,11 +123,33 @@ def format_relationship_line(
     if not allow_intimate_address:
         suggested_address = ""
         relationship = relationship if relationship == "普通群友" else "普通群友"
-    return format_favorability_perception(
-        favorability,
-        relationship=relationship,
-        suggested_address=suggested_address,
+    snapshot = snapshot_for_relationship(
+        relationship_state,
+        configured_relationship=relationship,
     )
+    band_label = {
+        AffinityBand.HOSTILE: "敌对",
+        AffinityBand.WARY: "警惕",
+        AffinityBand.NEUTRAL: "中性",
+        AffinityBand.FRIENDLY: "友好",
+        AffinityBand.CLOSE: "亲近",
+    }[snapshot.band]
+    posture_label = {
+        ResponsePosture.FIRM: "坚定边界",
+        ResponsePosture.RESERVED: "礼貌疏离",
+        ResponsePosture.POLITE: "友好有分寸",
+        ResponsePosture.WARM: "温暖松弛",
+        ResponsePosture.CLOSE: "亲近柔和",
+    }[snapshot.response_posture]
+    parts = [
+        "当前关系：" + html.escape(relationship),
+        "好感状态：" + band_label,
+        "回应姿态：" + posture_label,
+    ]
+    if suggested_address:
+        parts.append("建议称呼：" + html.escape(suggested_address))
+    parts.append("按关系证据保持分寸，不要复述内部状态")
+    return "（" + "；".join(parts) + "。）"
 
 
 def focus_speaker(messages: Sequence[ChatMessage]) -> Tuple[str, str]:

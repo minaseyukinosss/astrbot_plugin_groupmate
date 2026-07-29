@@ -9,7 +9,13 @@ from ...core.context_assembly import AssembledPrompt, ContextAssembly
 from ...core.response_act import ResponseActPlan
 from ...core.relationships import RelationshipEntry
 from ...core.session import GroupSession
-from ...models import MemoryItem, ReplyMode, TargetingDecision, TopicSnapshot
+from ...models import (
+    MemoryItem,
+    RelationshipState,
+    ReplyMode,
+    TargetingDecision,
+    TopicSnapshot,
+)
 from .behavior_profile import (
     AEMEATH_PARTICIPATION_PROFILE,
     PersonaParticipationProfile,
@@ -65,8 +71,7 @@ class AemeathPersonaProvider:
         contribution: str = "",
         soft_trigger: bool = False,
         session: Optional[GroupSession] = None,
-        mood_key: Optional[str] = None,
-        favorability: Optional[int] = None,
+        relationship_state: Optional[RelationshipState] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseActPlan] = None,
@@ -79,8 +84,7 @@ class AemeathPersonaProvider:
             contribution=contribution,
             soft_trigger=soft_trigger,
             session=session,
-            mood_key=mood_key,
-            favorability=favorability,
+            relationship_state=relationship_state,
             targeting=targeting,
             reply_mode=reply_mode,
             response_act=response_act,
@@ -96,8 +100,7 @@ class AemeathPersonaProvider:
         contribution: str = "",
         soft_trigger: bool = False,
         session: Optional[GroupSession] = None,
-        mood_key: Optional[str] = None,
-        favorability: Optional[int] = None,
+        relationship_state: Optional[RelationshipState] = None,
         targeting: Optional[TargetingDecision] = None,
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseActPlan] = None,
@@ -110,8 +113,7 @@ class AemeathPersonaProvider:
             contribution=contribution,
             soft_trigger=soft_trigger,
             session=session,
-            mood_key=mood_key,
-            favorability=favorability,
+            relationship_state=relationship_state,
             targeting=targeting,
             reply_mode=reply_mode,
             response_act=response_act,

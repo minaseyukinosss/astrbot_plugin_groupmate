@@ -1,9 +1,23 @@
-"""Core 单元测试：装配分层与 Session。"""
+"""Core 单元测试：装配分层、关系姿态与 Session。"""
 
-from groupmate.core.context_assembly import DYNAMIC_BLOCK_ORDER, ContextAssembly
+from dataclasses import fields
+from inspect import signature
+
+from groupmate.core.context_assembly import (
+    DYNAMIC_BLOCK_ORDER,
+    AssembledPrompt,
+    ContextAssembly,
+)
+from groupmate.core.history_format import format_relationship_line
 from groupmate.core.response_act import ResponseAct, ResponseActPlan
 from groupmate.core.session import GroupSession
-from groupmate.models import InteractionScene
+from groupmate.models import (
+    AddresseeKind,
+    AddresseeResolution,
+    InteractionScene,
+    RelationshipState,
+    TargetingDecision,
+)
 from groupmate.persona.aemeath import (
     DEFAULT_RELATIONSHIPS,
     PACK_DIR,
@@ -53,7 +67,7 @@ def test_assembly_user_includes_speak_note_and_voice_anchor(topic_snapshot):
     assert "<SILENCE>" in user
     assert "<session_turns>" in user
     assert "刚才那句" in user
-    assert "<mood>" in user
+    assert "<mood>" not in user
     assert "<relationship_line>" in user
     assert "soft" in user.lower() or "路过" in user or "开口纪律" in user
 
@@ -67,7 +81,11 @@ def test_dynamic_block_order_is_locked(topic_snapshot):
         contribution="接一下",
         soft_trigger=False,
         session=session,
-        mood_key="bright",
+        relationship_state=RelationshipState(
+            group_id="g1",
+            user_id="u1",
+            affinity=35,
+        ),
     )
     positions = []
     for name in DYNAMIC_BLOCK_ORDER:
@@ -87,6 +105,76 @@ def test_dynamic_block_order_is_locked(topic_snapshot):
     assert positions == sorted(positions)
     assert DYNAMIC_BLOCK_ORDER[0] == "recent_messages"
     assert DYNAMIC_BLOCK_ORDER[-1] == "reply_task"
+
+
+def test_assembly_contract_uses_relationship_state_not_mood_or_score():
+    names = set(signature(ContextAssembly.build_user).parameters)
+    assembled_fields = {item.name for item in fields(AssembledPrompt)}
+
+    assert "relationship_state" in names
+    assert "mood_key" not in names
+    assert "favorability" not in names
+    assert "mood_key" not in assembled_fields
+    assert "mood" not in DYNAMIC_BLOCK_ORDER
+
+
+def test_relationship_line_uses_discrete_chinese_posture_without_score():
+    state = RelationshipState(
+        group_id="g1",
+        user_id="u1",
+        affinity=80,
+        boundary_pressure=0,
+    )
+
+    line = format_relationship_line(
+        "u1",
+        "Alice",
+        {},
+        relationship_state=state,
+    )
+
+    assert "普通群友" in line
+    assert "亲近" in line
+    assert "亲近柔和" in line
+    assert "80" not in line
+    assert "AffinityBand" not in line
+    assert "ResponsePosture" not in line
+
+
+def test_ambiguous_target_does_not_inject_personal_relationship_state(
+    topic_snapshot,
+):
+    ambiguous = AddresseeResolution(kind=AddresseeKind.AMBIGUOUS)
+    targeting = TargetingDecision(
+        reply_audience=ambiguous,
+        memory_subject=ambiguous,
+        social_target=ambiguous,
+    )
+    state = RelationshipState(
+        group_id="g1",
+        user_id="u1",
+        affinity=90,
+        configured_relationship="最亲近",
+    )
+
+    user = _assembly().build_user(
+        topic_snapshot,
+        [],
+        relationship_state=state,
+        targeting=targeting,
+    )
+
+    assert "<relationship_line>" not in user
+    assert "亲近柔和" not in user
+
+
+def test_voice_anchor_has_no_core_behavior_policy():
+    from groupmate.core import voice_anchor
+
+    assert not hasattr(voice_anchor, "VOICE_BEHAVIOR_NOTE")
+    block = voice_anchor.format_voice_anchor_block("短、自然", "任意角色")
+    assert "短、自然" in block
+    assert "口吻只决定怎么说" not in block
 
 
 def test_response_act_and_capability_facts_are_escaped_before_reply_mode(
