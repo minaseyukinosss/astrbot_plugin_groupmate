@@ -32,14 +32,25 @@ def test_direct_social_boundary_and_vision_task_projection(projector):
 
     assert direct.trigger == "alias_direct"
     assert direct.act is ResponseAct.ACKNOWLEDGE
-    assert direct.quote_allowed is True
+    assert direct.quote_allowed is False
     assert social.scene is InteractionScene.SOCIAL_RESPONSE
     assert social.decorative_media_allowed is True
     assert boundary.act is ResponseAct.BOUNDARY
     assert boundary.decorative_media_allowed is False
     assert visual_task.scene is InteractionScene.TASK_REQUEST
     assert visual_task.act is ResponseAct.TASK_HANDOFF
-    assert visual_task.capability_media_allowed is False
+    assert visual_task.capability_media_allowed is True
+    assert visual_task.completion_claim_allowed is False
+
+
+def test_copied_at_projects_as_guard_bypass(projector):
+    projected = projector.project(example("@小维看看", replied=False))
+
+    assert projected.trigger == "copied_at"
+    assert projected.owner == "copied_at_guard"
+    assert projected.would_reply is False
+    assert projected.act is None
+    assert projected.reason_codes == ("copied_at_bypassed",)
 
 
 def test_external_knowledge_native_wake_has_one_agent_owner(projector):

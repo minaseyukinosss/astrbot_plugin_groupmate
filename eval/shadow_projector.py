@@ -8,24 +8,25 @@ from eval.shadow_extract import LocalIdHasher, normalize_alias
 from eval.shadow_models import BehaviorExample, ShadowProjection
 from groupmate.core.addressee import AddresseeResolver
 from groupmate.core.response_act import TaskResolution, TaskResolutionStatus
-from groupmate.core.scenes import classify_scene, policy_for_scene
+from groupmate.core.scenes import classify_scene
+from groupmate.engine.copied_at import is_copied_at
+from groupmate.engine.direct_pressure import DirectAddressPressureTracker
 from groupmate.engine.external_knowledge import needs_external_knowledge
-from groupmate.engine.opportunity import OpportunityArbiter
-from groupmate.engine.planner import ReplyIntentPlanner
-from groupmate.engine.rate_limit import SlidingWindowRateLimiter
+from groupmate.engine.participation import ParticipationDecisionEngine
+from groupmate.engine.participation_types import ParticipationAction
 from groupmate.engine.topics import select_active_messages
 from groupmate.engine.triggers import TriggerRouter
-from groupmate.media.reactions import ReactionPolicy
 from groupmate.models import (
-    AddresseeKind,
     ChatMessage,
     GroupPolicy,
     InteractionScene,
-    OpportunityAction,
+    QuoteMode,
     TopicSnapshot,
     TriggerKind,
 )
 from groupmate.core.response_act import ResponseAct
+from groupmate.persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
+from groupmate.social.affinity import snapshot_for_relationship
 
 
 class ShadowProjector:
@@ -53,14 +54,9 @@ class ShadowProjector:
         self.target_alias = old_alias
         self.current_alias = alias
         self.addressee = AddresseeResolver()
-        self.arbiter = OpportunityArbiter(
-            send_limiter=SlidingWindowRateLimiter(
-                hourly_limit=max(100000, policy.spontaneous_hourly_limit),
-                cooldown_seconds=0,
-            )
+        self.participation = ParticipationDecisionEngine(
+            pressure=DirectAddressPressureTracker()
         )
-        self.planner = ReplyIntentPlanner()
-        self.reactions = ReactionPolicy()
 
     def project(self, example: BehaviorExample) -> ShadowProjection:
         if not isinstance(example, BehaviorExample):
@@ -70,6 +66,22 @@ class ShadowProjector:
         if latest is None:
             raise ValueError("behavior example context must not be empty")
         trigger = TriggerRouter(self.policy).classify(latest)
+        if is_copied_at(trigger.kind):
+            return ShadowProjection(
+                sample_id=example.sample_id,
+                owner="copied_at_guard",
+                would_reply=False,
+                trigger=trigger.kind.value,
+                scene=InteractionScene.AMBIENT_CONTRIBUTION,
+                act=None,
+                quote_allowed=False,
+                decorative_media_allowed=False,
+                capability_media_allowed=False,
+                ambiguous_target=False,
+                owner_count=1,
+                completion_claim_allowed=False,
+                reason_codes=("copied_at_bypassed",),
+            )
         if (
             trigger.kind is TriggerKind.NATIVE_DIRECT
             and needs_external_knowledge(latest.text)
@@ -98,37 +110,36 @@ class ShadowProjector:
             bot_id="__target_bot__",
             relationships={},
         )
-        opportunity = self.arbiter.evaluate(
-            topic,
-            trigger.kind,
-            self.policy,
-            targeting,
-            now=latest.timestamp,
-            recent_outputs=(),
-        )
         task_resolution = self._task_resolution(scene, latest)
-        intent = self.planner.plan(
-            opportunity,
-            topic,
-            targeting,
-            decision_id=example.sample_id,
-            scene=scene,
+        participation = self.participation.decide(
+            topic=topic,
+            trigger=trigger.kind,
+            policy=self.policy,
+            targeting=targeting,
+            now=latest.timestamp,
             aliases=self.policy.aliases,
+            affinity=snapshot_for_relationship(None),
+            persona=AEMEATH_PARTICIPATION_PROFILE,
+            recent_outputs=(),
             task_resolution=task_resolution,
         )
-        act = intent.response_act.act if intent and intent.response_act else None
+        act = participation.act
         ambiguous = bool(
-            targeting.reply_audience.kind is AddresseeKind.AMBIGUOUS
-            or targeting.social_target.kind is AddresseeKind.AMBIGUOUS
+            targeting.reply_audience.kind.value == "ambiguous"
+            or targeting.social_target.kind.value == "ambiguous"
         )
-        quote_allowed = policy_for_scene(scene).should_quote(
-            interleaved=self._interleaved(topic, opportunity.target_message_id)
+        quote_allowed = bool(
+            participation.quote_mode is QuoteMode.ALWAYS
+            or (
+                participation.quote_mode is QuoteMode.WHEN_INTERLEAVED
+                and self._interleaved(
+                    topic,
+                    targeting.reply_audience.target_message_id,
+                )
+            )
         )
-        decorative = bool(
-            act is not None and self.reactions.allowed(act, scene, ambiguous)
-        )
-        would_reply = opportunity.action is OpportunityAction.SPEAK
-        reasons = tuple(opportunity.reason_codes)
+        would_reply = participation.action is ParticipationAction.SPEAK
+        reasons = tuple(participation.reason_codes)
         if needs_external_knowledge(latest.text):
             reasons += ("external_knowledge_groupmate_owned",)
         return ShadowProjection(
@@ -136,11 +147,15 @@ class ShadowProjector:
             owner=("groupmate" if would_reply else "observe_only"),
             would_reply=would_reply,
             trigger=trigger.kind.value,
-            scene=scene,
+            scene=participation.scene,
             act=act,
             quote_allowed=quote_allowed,
-            decorative_media_allowed=decorative,
-            capability_media_allowed=False,
+            decorative_media_allowed=(
+                participation.media_policy.decorative_allowed
+            ),
+            capability_media_allowed=(
+                participation.media_policy.capability_media_allowed
+            ),
             ambiguous_target=ambiguous,
             owner_count=1,
             completion_claim_allowed=False,

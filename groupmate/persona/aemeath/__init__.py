@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from ...ports import GuardResult
 from .behavior_profile import (
     AEMEATH_PARTICIPATION_PROFILE,
     AffinityParticipationRule,
@@ -14,15 +13,35 @@ from .behavior_profile import (
     RelationshipPolicy,
     TurnPolicy,
 )
-from .output_firewall import AemeathOutputFirewall
-from .provider import AemeathPersonaProvider, CHARACTER_NAME
-from .relationships import (
-    DEFAULT_RELATIONSHIPS,
-    RelationshipEntry,
-    parse_relationships,
-)
 
 PACK_DIR = Path(__file__).resolve().parent
+CHARACTER_NAME = "爱弥斯"
+
+
+def __getattr__(name):
+    """按需加载生成侧组件，保持行为档案可被纯决策工具独立导入。"""
+
+    if name == "GuardResult":
+        from ...ports import GuardResult
+
+        return GuardResult
+    if name == "AemeathOutputFirewall":
+        from .output_firewall import AemeathOutputFirewall
+
+        return AemeathOutputFirewall
+    if name == "AemeathPersonaProvider":
+        from .provider import AemeathPersonaProvider
+
+        return AemeathPersonaProvider
+    if name in {
+        "DEFAULT_RELATIONSHIPS",
+        "RelationshipEntry",
+        "parse_relationships",
+    }:
+        from . import relationships
+
+        return getattr(relationships, name)
+    raise AttributeError(name)
 
 __all__ = [
     "PACK_DIR",
