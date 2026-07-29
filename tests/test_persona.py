@@ -1,4 +1,8 @@
+from inspect import signature
+
+from groupmate.core.relationships import RelationshipEntry
 from groupmate.models import ChatMessage, MemoryItem, MemoryKind, TopicSnapshot
+from groupmate.persona import default_persona_registry
 from groupmate.persona.aemeath import AemeathPersonaProvider
 
 
@@ -53,7 +57,12 @@ def test_dynamic_context_maps_special_relationships_without_exposing_ids():
         updated_at=101,
     )
 
-    prompt = AemeathPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider(
+        relationships=(
+            RelationshipEntry("674852406", "最亲近", "Minase"),
+            RelationshipEntry("1634104393", "闺蜜", ""),
+        )
+    ).build_user_context(topic, [])
 
     assert (
         '<message speaker="会变化的群名片" relationship="最亲近" '
@@ -132,7 +141,12 @@ def test_dynamic_context_hides_special_relationship_ids_used_as_names():
     )
     topic = TopicSnapshot("t1", "g1", (minase, friend), 100, 101)
 
-    prompt = AemeathPersonaProvider().build_user_context(topic, [])
+    prompt = AemeathPersonaProvider(
+        relationships=(
+            RelationshipEntry("674852406", "最亲近", "Minase"),
+            RelationshipEntry("1634104393", "闺蜜", ""),
+        )
+    ).build_user_context(topic, [])
 
     assert (
         '<message speaker="Minase" relationship="最亲近" '
@@ -320,6 +334,37 @@ def test_persona_influences_open_participation_without_overriding_ownership():
     assert "明确回应义务" in prompt
     assert "明确冲别人" in prompt
     assert "面向群体" in prompt
+
+
+def test_registry_resolves_aemeath_with_configured_aliases_and_no_default_relationships():
+    context = default_persona_registry().resolve(
+        "aemeath",
+        aliases=("爱弥斯", "小爱"),
+        relationships=(),
+    )
+
+    assert context.persona_id == "aemeath"
+    assert context.display_name == "爱弥斯"
+    assert context.aliases == ("爱弥斯", "小爱")
+    assert context.relationship_seeds == ()
+
+
+def test_registry_preserves_explicit_empty_aliases():
+    context = default_persona_registry().resolve(
+        "aemeath",
+        aliases=(),
+        relationships=(),
+    )
+
+    assert context.aliases == ()
+
+
+def test_aemeath_system_prompt_has_no_group_brief_slot():
+    parameters = set(signature(AemeathPersonaProvider).parameters)
+
+    assert "group_brief" not in parameters
+    system = AemeathPersonaProvider(relationships=()).system_text()
+    assert "当前群氛围" not in system
 
 
 def test_persona_allows_only_purposeful_questions_and_keeps_identity_clean():

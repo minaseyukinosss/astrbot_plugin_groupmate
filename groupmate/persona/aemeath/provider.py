@@ -20,7 +20,6 @@ from .behavior_profile import (
     AEMEATH_PARTICIPATION_PROFILE,
     PersonaParticipationProfile,
 )
-from .relationships import DEFAULT_RELATIONSHIPS
 
 PACK_DIR = Path(__file__).resolve().parent
 CHARACTER_NAME = "爱弥斯"
@@ -31,25 +30,17 @@ class AemeathPersonaProvider:
 
     def __init__(
         self,
-        relationships: Optional[Sequence[RelationshipEntry]] = None,
+        relationships: Sequence[RelationshipEntry] = (),
         pack_dir: Optional[Path] = None,
-        group_brief: str = "",
     ) -> None:
-        entries = (
-            tuple(relationships) if relationships is not None else DEFAULT_RELATIONSHIPS
-        )
         self._assembly = ContextAssembly(
             pack_dir=pack_dir or PACK_DIR,
-            relationships=entries,
+            relationships=tuple(relationships),
             character_name=CHARACTER_NAME,
-            group_brief=group_brief,
         )
 
     def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
         self._assembly.set_relationships(relationships)
-
-    def set_group_brief(self, text: str) -> None:
-        self._assembly.set_group_brief(text)
 
     def system_text(self) -> str:
         return self._assembly.build_system()

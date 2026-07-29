@@ -29,8 +29,6 @@ from ..persona.aemeath import (
     CHARACTER_NAME,
     AemeathOutputFirewall,
     AemeathPersonaProvider,
-    DEFAULT_RELATIONSHIPS,
-    parse_relationships,
 )
 from .llm import (
     AstrBotGenerationModel,
@@ -105,7 +103,6 @@ class AstrBotBridge:
         )
         prompt = AemeathPersonaProvider(
             relationships=self._relationships(),
-            group_brief=str(self._setting("group_brief", "") or ""),
         ).build_user_context(topic, memories)
         if self.should_defer_native_wake_to_astrbot(event):
             prompt = (
@@ -282,7 +279,6 @@ class AstrBotBridge:
     def _workflow_for(self, group_id: str):
         persona = AemeathPersonaProvider(
             relationships=self._relationships(),
-            group_brief=str(self._setting("group_brief", "") or ""),
         )
         getter = lambda gid: self._provider_by_group.get(
             gid,
@@ -340,15 +336,15 @@ class AstrBotBridge:
         )
 
     def _relationships(self):
-        configured = getattr(self.settings, "relationships", None)
-        if configured:
+        resolver = getattr(self.settings, "relationships_for", None)
+        if callable(resolver):
+            return resolver("aemeath")
+        configured = getattr(self.settings, "relationships", ())
+        if isinstance(configured, tuple) and (
+            not configured or hasattr(configured[0], "sender_id")
+        ):
             return configured
-        raw = self._setting("relationships", None)
-        if raw is None or raw == () or raw == []:
-            return DEFAULT_RELATIONSHIPS
-        if isinstance(raw, tuple) and raw and hasattr(raw[0], "sender_id"):
-            return raw
-        return parse_relationships(raw)
+        return ()
 
     def _policy_for(self, group_id: str) -> GroupPolicy:
         del group_id

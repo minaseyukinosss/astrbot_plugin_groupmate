@@ -19,7 +19,6 @@ from groupmate.models import (
     TargetingDecision,
 )
 from groupmate.persona.aemeath import (
-    DEFAULT_RELATIONSHIPS,
     PACK_DIR,
     AemeathPersonaProvider,
 )
@@ -28,7 +27,7 @@ from groupmate.persona.aemeath import (
 def _assembly(**kwargs) -> ContextAssembly:
     return ContextAssembly(
         pack_dir=PACK_DIR,
-        relationships=DEFAULT_RELATIONSHIPS,
+        relationships=(),
         character_name="爱弥斯",
         **kwargs,
     )
@@ -45,10 +44,14 @@ def test_assembly_system_separates_identity_and_constraints():
     assert "<mood>" not in system
 
 
-def test_assembly_system_includes_group_brief():
-    system = _assembly(group_brief="这个群爱聊游戏和抽卡。").build_system()
-    assert "当前群氛围" in system
-    assert "抽卡" in system
+def test_assembly_has_no_group_brief_mutation_path():
+    names = set(signature(ContextAssembly).parameters)
+    assembly = _assembly()
+
+    assert "group_brief" not in names
+    assert not hasattr(assembly, "group_brief")
+    assert not hasattr(assembly, "set_group_brief")
+    assert "当前群氛围" not in assembly.build_system()
 
 
 def test_assembly_user_includes_speak_note_and_voice_anchor(topic_snapshot):

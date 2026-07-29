@@ -33,14 +33,6 @@ def __getattr__(name):
         from .provider import AemeathPersonaProvider
 
         return AemeathPersonaProvider
-    if name in {
-        "DEFAULT_RELATIONSHIPS",
-        "RelationshipEntry",
-        "parse_relationships",
-    }:
-        from . import relationships
-
-        return getattr(relationships, name)
     raise AttributeError(name)
 
 __all__ = [
@@ -58,7 +50,4 @@ __all__ = [
     "RelationshipPolicy",
     "TurnPolicy",
     "GuardResult",
-    "DEFAULT_RELATIONSHIPS",
-    "RelationshipEntry",
-    "parse_relationships",
 ]

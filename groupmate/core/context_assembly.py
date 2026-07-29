@@ -66,7 +66,7 @@ class ContextAssembly:
     慢变进 system，快变进 user。
 
     SYSTEM：
-      ROLE_START → persona.md → constraints → group_brief → 收尾人格钉
+      ROLE_START → persona.md → constraints → 收尾人格钉
       （不含 per-user 关系）
 
     USER（固定顺序，见 DYNAMIC_BLOCK_ORDER）：
@@ -79,11 +79,9 @@ class ContextAssembly:
         pack_dir: Path,
         relationships: Sequence[RelationshipEntry] = (),
         character_name: str = "角色",
-        group_brief: str = "",
     ) -> None:
         self.pack_dir = Path(pack_dir)
         self.character_name = character_name.strip() or "角色"
-        self.group_brief = (group_brief or "").strip()
         self._relationships: Dict[str, Tuple[str, str]] = relationship_map(
             tuple(relationships)
         )
@@ -94,9 +92,6 @@ class ContextAssembly:
 
     def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
         self._relationships = relationship_map(tuple(relationships))
-
-    def set_group_brief(self, text: str) -> None:
-        self.group_brief = (text or "").strip()
 
     def identity_text(self) -> str:
         if self._identity_cache is None:
@@ -132,8 +127,6 @@ class ContextAssembly:
         constraints = self.constraints_text()
         if constraints:
             parts.append(constraints)
-        if self.group_brief:
-            parts.append("## 当前群氛围\n" + self.group_brief)
         parts.append(
             "\n".join(
                 [
