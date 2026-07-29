@@ -44,6 +44,10 @@ def test_cli_writes_private_safe_reports_and_local_review(tmp_path):
     report = json.loads(payload)
     assert report["counts"]["manifest_records"] == 3
     assert report["counts"]["examples"] == 2
+    assert (
+        report["configuration"]["mechanics_version"]
+        == "unified-participation-v1"
+    )
     for private in ("20002", "10001", "小维", "普通群聊长句"):
         assert private not in payload
         assert private not in markdown.read_text(encoding="utf-8")

@@ -176,7 +176,7 @@ def main(argv=None) -> int:
             review_count=len(all_reviews),
             configuration={
                 "pipeline_version": "phase3-v1",
-                "mechanics_version": "phase2-scene-act-v1",
+                "mechanics_version": "unified-participation-v1",
                 "run_gap_ms": 15000,
                 "adjacent_gap_ms": 20000,
                 "directed_gap_ms": 60000,
