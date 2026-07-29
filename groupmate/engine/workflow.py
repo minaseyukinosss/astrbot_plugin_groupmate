@@ -26,8 +26,6 @@ from ..core.response_act import (
 from ..core.session import GroupSession, GroupSessionStore
 from ..core.scenes import classify_scene, policy_for_scene
 from ..core.speak_contract import SpeakContract
-from ..core.favorability import seed_score_for_relationship
-from ..core.relationships import resolve_speaker
 from .composer import ResponseComposer
 from .delivery import DeliveryService, build_delivery_plan
 from .opportunity import OpportunityArbiter
@@ -60,7 +58,6 @@ from ..ports import (
     TraceSink,
     VisionPort,
 )
-from ..social.events import SocialEventClassifier
 from ..memory.memory_writer import MemoryWriter
 from ..media.reactions import LocalReactionCatalog, ReactionPolicy
 from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
@@ -96,7 +93,6 @@ class CognitiveWorkflow:
         character_name: str = "角色",
         delivery_service: Optional[DeliveryService] = None,
         addressee_resolver: Optional[AddresseeResolver] = None,
-        social_classifier: Optional[SocialEventClassifier] = None,
         opportunity_arbiter: Optional[OpportunityArbiter] = None,
         intent_planner: Optional[ReplyIntentPlanner] = None,
         budgets: Optional[BudgetTracker] = None,
@@ -124,7 +120,6 @@ class CognitiveWorkflow:
             character_name=self.character_name
         )
         self.addressee_resolver = addressee_resolver or AddresseeResolver()
-        self.social_classifier = social_classifier or SocialEventClassifier()
         self.budgets = budgets or BudgetTracker(rate_limiter)
         self.opportunity_arbiter = opportunity_arbiter or OpportunityArbiter(
             budgets=self.budgets, send_limiter=rate_limiter
@@ -213,7 +208,6 @@ class CognitiveWorkflow:
             now,
         )
 
-        favorability_early = self._peek_favorability(topic, targeting)
         reply_mode = ReplyMode.SHORT_SOCIAL
         response_act = None
         required_capabilities: Tuple[str, ...] = ()
@@ -230,7 +224,6 @@ class CognitiveWorkflow:
                 targeting,
                 now=now,
                 recent_outputs=tuple(self._recent_outputs[topic.group_id]),
-                favorability=favorability_early,
             )
             self._record(
                 decision_id,
@@ -424,13 +417,13 @@ class CognitiveWorkflow:
                 )
             )
         session = self.session_for(topic.group_id)
-        favorability = self._ensure_favorability(topic, targeting, now)
+        relationship_state = self._relationship_state_for_target(topic, targeting)
         assemble = getattr(self.persona, "assemble", None)
         assemble_kwargs = {
             "contribution": contribution or decision.contribution,
             "soft_trigger": soft_trigger,
             "session": session,
-            "favorability": favorability,
+            "relationship_state": relationship_state,
             "targeting": targeting,
             "reply_mode": reply_mode,
         }
@@ -450,7 +443,7 @@ class CognitiveWorkflow:
                     contribution=decision.contribution,
                     soft_trigger=soft_trigger,
                     session=session,
-                    favorability=favorability,
+                    relationship_state=relationship_state,
                 )
             persona_prompt = assembled.system
             user_prompt = assembled.user
@@ -467,7 +460,7 @@ class CognitiveWorkflow:
                         contribution=decision.contribution,
                         soft_trigger=soft_trigger,
                         session=session,
-                        favorability=favorability,
+                        relationship_state=relationship_state,
                     )
                 except TypeError:
                     user_prompt = build_user(topic, memories)
@@ -614,14 +607,6 @@ class CognitiveWorkflow:
             if segment.media_id:
                 self._recent_media_ids[topic.group_id].append(segment.media_id)
         self._remember_session_turns(topic, outcome.text, send_now)
-        self._record_social_success(
-            topic,
-            targeting,
-            soft_trigger=soft_trigger,
-            decision_id=decision_id,
-            now=send_now,
-            social_enabled=bool(getattr(policy, "v3_social_enabled", True)),
-        )
         try:
             self.memory_writer.schedule_after_send(
                 topic,
@@ -866,22 +851,6 @@ class CognitiveWorkflow:
             relationships=relationships,
         )
 
-    def _peek_favorability(
-        self,
-        topic: TopicSnapshot,
-        targeting: TargetingDecision,
-    ) -> Optional[int]:
-        get = getattr(self.memory, "get_favorability", None)
-        if get is None:
-            return None
-        if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
-            return None
-        user_id = self._social_user_id(targeting)
-        if not user_id:
-            return None
-        score = get(topic.group_id, user_id)
-        return int(score) if score is not None else None
-
     def _build_decision(
         self,
         trigger: TriggerKind,
@@ -927,139 +896,20 @@ class CognitiveWorkflow:
             return None
         return str(target.target_user_ids[0])
 
-    def _ensure_favorability(
+    def _relationship_state_for_target(
         self,
         topic: TopicSnapshot,
         targeting: TargetingDecision,
-        now: int,
-    ) -> Optional[int]:
-        get = getattr(self.memory, "get_favorability", None)
-        if get is None:
-            return None
+    ):
         if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
             return None
-        sender_id = self._social_user_id(targeting)
-        if not sender_id:
-            return None
-        get_state = getattr(self.memory, "get_relationship_state", None)
-        if get_state is not None:
-            state = get_state(topic.group_id, sender_id)
-            if state is not None:
-                return int(state.affinity)
-        score = get(topic.group_id, sender_id)
-        if score is not None:
-            return int(score)
-        relationships = {}
-        assembly = getattr(self.persona, "assembly", None)
-        if assembly is not None:
-            relationships = getattr(assembly, "_relationships", {}) or {}
-        active = select_active_messages(
-            topic.messages, topic_created_at=topic.created_at
-        )
-        sender_name = ""
-        for message in reversed(active):
-            if message.sender_id == sender_id:
-                sender_name = message.sender_name or ""
-                break
-        _, relationship, _ = resolve_speaker(sender_id, sender_name, relationships)
-        seed = seed_score_for_relationship(relationship)
-        value = 0 if seed is None else int(seed)
-        set_fav = getattr(self.memory, "set_favorability", None)
-        if set_fav is not None:
-            return int(set_fav(topic.group_id, sender_id, value, now))
-        return value
-
-    def _record_social_success(
-        self,
-        topic: TopicSnapshot,
-        targeting: TargetingDecision,
-        *,
-        soft_trigger: bool,
-        decision_id: str,
-        now: int,
-        social_enabled: bool = True,
-    ) -> None:
-        if targeting.social_target.kind is AddresseeKind.AMBIGUOUS:
-            self._record(
-                decision_id,
-                topic.group_id,
-                "SOCIAL",
-                "skipped_ambiguous",
-                now,
-            )
-            return
         user_id = self._social_user_id(targeting)
         if not user_id:
-            return
-        if not social_enabled:
-            from ..core.favorability import delta_for_turn
-
-            adjust = getattr(self.memory, "adjust_favorability", None)
-            if adjust is None:
-                return
-            active = select_active_messages(
-                topic.messages, topic_created_at=topic.created_at
-            )
-            latest_text = active[-1].text if active else ""
-            delta = delta_for_turn(
-                sent=True, soft_trigger=soft_trigger, latest_text=latest_text
-            )
-            if delta:
-                adjust(topic.group_id, user_id, delta, now, default=0)
-            self._record(decision_id, topic.group_id, "SOCIAL", "legacy_delta", now)
-            return
-        record = getattr(self.memory, "record_social_interaction", None)
-        if record is None:
-            adjust = getattr(self.memory, "adjust_favorability", None)
-            if adjust is None:
-                return
-            adjust(
-                topic.group_id,
-                user_id,
-                1 if soft_trigger else 2,
-                now,
-                default=0,
-            )
-            return
-        active = select_active_messages(
-            topic.messages, topic_created_at=topic.created_at
-        )
-        source = None
-        for message in reversed(active):
-            if message.sender_id == user_id and not message.is_bot:
-                source = message
-                break
-        if source is None:
-            source = topic.latest
-        if source is None or source.is_bot:
-            return
-        relationships = {}
-        assembly = getattr(self.persona, "assembly", None)
-        if assembly is not None:
-            relationships = getattr(assembly, "_relationships", {}) or {}
-        configured = None
-        if user_id in relationships:
-            configured = relationships[user_id][0]
-        event = self.social_classifier.classify(
-            source,
-            user_id=user_id,
-            soft_trigger=soft_trigger,
-            decision_id=decision_id,
-            occurred_at=now,
-        )
-        record(
-            event,
-            soft_trigger=soft_trigger,
-            configured_relationship=configured,
-            now=now,
-        )
-        self._record(
-            decision_id,
-            topic.group_id,
-            "SOCIAL",
-            event.kind.value,
-            now,
-        )
+            return None
+        get_state = getattr(self.memory, "get_relationship_state", None)
+        if get_state is None:
+            return None
+        return get_state(topic.group_id, user_id)
 
     def _remember_session_turns(
         self,

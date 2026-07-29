@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from pathlib import Path
 
 from groupmate.core.addressee import AddresseeResolver
 from groupmate.engine.rate_limit import SlidingWindowRateLimiter
@@ -91,10 +93,11 @@ def test_apology_repairs_slowly_without_clearing_boundary_pressure():
 
 
 def test_social_event_idempotent_and_replay(tmp_path):
-    store = SQLiteMemoryStore(tmp_path / "social.db")
+    path = tmp_path / "social.db"
+    store = SQLiteMemoryStore(path)
     event = _event(SocialEventKind.THANKS, occurred_at=5)
-    first = store.record_social_interaction(event, soft_trigger=False, now=5)
-    second = store.record_social_interaction(event, soft_trigger=False, now=6)
+    first = store.record_social_interaction(event, now=5)
+    second = store.record_social_interaction(event, now=6)
     assert first is not None
     assert second is not None
     assert first.affinity == second.affinity
@@ -106,6 +109,22 @@ def test_social_event_idempotent_and_replay(tmp_path):
     assert rebuilt.affinity == wiped.affinity
     assert rebuilt.interaction_count == wiped.interaction_count
     store.close()
+
+    db = sqlite3.connect(str(path))
+    legacy_rows = db.execute("SELECT COUNT(*) FROM favorability").fetchone()[0]
+    db.close()
+    assert legacy_rows == 0
+
+
+def test_legacy_runtime_interfaces_and_keyword_classifier_are_removed():
+    store_methods = set(dir(SQLiteMemoryStore))
+
+    assert "get_favorability" not in store_methods
+    assert "set_favorability" not in store_methods
+    assert "adjust_favorability" not in store_methods
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "groupmate" / "core" / "favorability.py").exists()
+    assert not (root / "groupmate" / "social" / "events.py").exists()
 
 
 def test_ambiguous_and_silence_do_not_write_personal_state():
@@ -140,10 +159,10 @@ def test_ambiguous_and_silence_do_not_write_personal_state():
     )
     assert outcome.sent is False
     assert memory.social_events == []
-    assert memory.favorability == {}
+    assert memory.relationship_state == {}
 
 
-def test_workflow_records_social_only_after_send():
+def test_workflow_does_not_infer_social_event_after_send():
     memory = FakeMemoryRepository()
     workflow = CognitiveWorkflow(
         generation_model=StaticGenerationModel("在呢。"),
@@ -169,11 +188,8 @@ def test_workflow_records_social_only_after_send():
         workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, policy)
     )
     assert outcome.sent is True
-    assert len(memory.social_events) == 1
-    state = memory.get_relationship_state("g1", "u1")
-    assert state is not None
-    assert state.familiarity == 1
-    assert state.affinity == 0
+    assert memory.social_events == []
+    assert memory.get_relationship_state("g1", "u1") is None
 
 
 def test_multi_mention_send_still_skips_personal_social_write():
@@ -214,37 +230,4 @@ def test_multi_mention_send_still_skips_personal_social_write():
     )
     assert outcome.sent is True
     assert memory.social_events == []
-    assert memory.favorability == {}
-
-
-def test_social_flag_off_uses_legacy_favorability_delta():
-    memory = FakeMemoryRepository()
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("在呢。"),
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(200),
-    )
-    topic = TopicSnapshot(
-        topic_id="t1",
-        group_id="g1",
-        messages=(_msg(text="爱弥斯 在吗"),),
-        created_at=100,
-        updated_at=100,
-    )
-    from groupmate.models import GroupPolicy
-
-    outcome = asyncio.run(
-        workflow.evaluate(
-            topic,
-            TriggerKind.ALIAS_DIRECT,
-            GroupPolicy(humanize_delay_enabled=False, v3_social_enabled=False),
-        )
-    )
-    assert outcome.sent is True
-    assert memory.social_events == []
-    assert memory.get_favorability("g1", "u1") == 2
+    assert memory.relationship_state == {}

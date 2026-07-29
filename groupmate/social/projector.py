@@ -77,7 +77,6 @@ class SocialStateProjector:
         *,
         configured_relationship: Optional[str] = None,
         now: int = 0,
-        soft_trigger: bool = False,
     ) -> RelationshipState:
         base = state or RelationshipState(
             group_id=event.group_id,
@@ -85,7 +84,6 @@ class SocialStateProjector:
             configured_relationship=configured_relationship,
         )
         df, da, dt, db = _DELTAS.get(event.kind, (0, 0, 0, 0))
-        del soft_trigger
         return RelationshipState(
             group_id=base.group_id,
             user_id=base.user_id,

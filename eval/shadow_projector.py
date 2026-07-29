@@ -105,7 +105,6 @@ class ShadowProjector:
             targeting,
             now=latest.timestamp,
             recent_outputs=(),
-            favorability=None,
         )
         task_resolution = self._task_resolution(scene, latest)
         intent = self.planner.plan(

@@ -1293,56 +1293,6 @@ class SQLiteMemoryStore:
             latest_by_sender.values(), key=lambda item: int(item["granted_at"])
         )
 
-    def get_favorability(self, group_id: str, user_id: str) -> Optional[int]:
-        row = self._db.execute(
-            "SELECT score FROM favorability WHERE group_id = ? AND user_id = ?",
-            (str(group_id), str(user_id)),
-        ).fetchone()
-        return int(row["score"]) if row else None
-
-    def set_favorability(
-        self,
-        group_id: str,
-        user_id: str,
-        score: int,
-        updated_at: int,
-    ) -> int:
-        from ..core.favorability import clamp_score
-
-        value = clamp_score(score)
-        def operation(db):
-            db.execute(
-                """
-                INSERT INTO favorability(group_id, user_id, score, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(group_id, user_id) DO UPDATE SET
-                    score = excluded.score,
-                    updated_at = excluded.updated_at
-                """,
-                (str(group_id), str(user_id), value, int(updated_at)),
-            )
-        self._write(operation)
-        return value
-
-    def adjust_favorability(
-        self,
-        group_id: str,
-        user_id: str,
-        delta: int,
-        updated_at: int,
-        *,
-        default: int = 0,
-    ) -> int:
-        current = self.get_favorability(group_id, user_id)
-        from ..core.favorability import apply_delta
-
-        return self.set_favorability(
-            group_id,
-            user_id,
-            apply_delta(current, delta, default=default),
-            updated_at,
-        )
-
     def append_social_event(self, event: SocialEvent) -> bool:
         kind = event.kind
         if not isinstance(kind, SocialEventKind):
@@ -1489,30 +1439,28 @@ class SQLiteMemoryStore:
             now=int(now),
         )
         self.upsert_relationship_state(state)
-        self.set_favorability(
-            group_id, user_id, state.affinity, state.updated_at or now
-        )
         return state
 
     def record_social_interaction(
         self,
         event: SocialEvent,
         *,
-        soft_trigger: bool = False,
         configured_relationship: Optional[str] = None,
         now: int = 0,
     ) -> Optional[RelationshipState]:
         """幂等写入事件并增量投影；重复 source 返回已有状态且不双计。"""
+        from ..social.affinity import initial_affinity_for_relationship
         from ..social.projector import SocialStateProjector
 
         inserted = self.append_social_event(event)
         current = self.get_relationship_state(event.group_id, event.user_id)
         if current is None:
-            fav = self.get_favorability(event.group_id, event.user_id)
             current = RelationshipState(
                 group_id=event.group_id,
                 user_id=event.user_id,
-                affinity=int(fav) if fav is not None else 0,
+                affinity=initial_affinity_for_relationship(
+                    configured_relationship or ""
+                ),
                 configured_relationship=configured_relationship,
                 updated_at=int(now or event.occurred_at),
             )
@@ -1523,12 +1471,8 @@ class SQLiteMemoryStore:
             event,
             configured_relationship=configured_relationship,
             now=int(now or event.occurred_at),
-            soft_trigger=soft_trigger,
         )
         self.upsert_relationship_state(state)
-        self.set_favorability(
-            event.group_id, event.user_id, state.affinity, state.updated_at
-        )
         return state
 
     def close(self) -> None:

@@ -11,7 +11,6 @@ class FakeMemoryRepository:
         self.transitions = []
         self.outbox = {}
         self.memories = []
-        self.favorability = {}
         self.messages = []
         self.social_events = []
         self.relationship_state = {}
@@ -55,25 +54,6 @@ class FakeMemoryRepository:
     def mark_outbox_sent(self, decision_id, sent_at):
         self.outbox[decision_id]["sent_at"] = sent_at
         self.outbox[decision_id]["status"] = "sent"
-
-    def get_favorability(self, group_id, user_id):
-        return self.favorability.get((str(group_id), str(user_id)))
-
-    def set_favorability(self, group_id, user_id, score, updated_at):
-        from groupmate.core.favorability import clamp_score
-
-        del updated_at
-        value = clamp_score(score)
-        self.favorability[(str(group_id), str(user_id))] = value
-        return value
-
-    def adjust_favorability(self, group_id, user_id, delta, updated_at, *, default=0):
-        from groupmate.core.favorability import apply_delta
-
-        current = self.get_favorability(group_id, user_id)
-        return self.set_favorability(
-            group_id, user_id, apply_delta(current, delta, default=default), updated_at
-        )
 
     def append_social_event(self, event):
         key = (event.group_id, event.source_message_id, event.kind.value)
@@ -120,28 +100,28 @@ class FakeMemoryRepository:
             now=now,
         )
         self.upsert_relationship_state(state)
-        self.set_favorability(group_id, user_id, state.affinity, state.updated_at or now)
         return state
 
     def record_social_interaction(
         self,
         event,
         *,
-        soft_trigger=False,
         configured_relationship=None,
         now=0,
     ):
         from groupmate.models import RelationshipState
+        from groupmate.social.affinity import initial_affinity_for_relationship
         from groupmate.social.projector import SocialStateProjector
 
         inserted = self.append_social_event(event)
         current = self.get_relationship_state(event.group_id, event.user_id)
         if current is None:
-            fav = self.get_favorability(event.group_id, event.user_id)
             current = RelationshipState(
                 group_id=event.group_id,
                 user_id=event.user_id,
-                affinity=int(fav) if fav is not None else 0,
+                affinity=initial_affinity_for_relationship(
+                    configured_relationship or ""
+                ),
                 configured_relationship=configured_relationship,
                 updated_at=int(now or event.occurred_at),
             )
@@ -152,12 +132,8 @@ class FakeMemoryRepository:
             event,
             configured_relationship=configured_relationship,
             now=int(now or event.occurred_at),
-            soft_trigger=soft_trigger,
         )
         self.upsert_relationship_state(state)
-        self.set_favorability(
-            event.group_id, event.user_id, state.affinity, state.updated_at
-        )
         return state
 
 class StaticGenerationModel:

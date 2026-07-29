@@ -14,8 +14,10 @@ from .models import (
     ChatMessage,
     MemoryItem,
     OutboundSegment,
+    RelationshipState,
     ReplyPlan,
     SendResult,
+    SocialEvent,
     TopicSnapshot,
 )
 
@@ -110,26 +112,7 @@ class MemoryRepository(Protocol):
     ) -> Sequence[MemoryItem]:
         ...
 
-    def get_favorability(self, group_id: str, user_id: str) -> Optional[int]:
-        ...
-
-    def set_favorability(
-        self, group_id: str, user_id: str, score: int, updated_at: int
-    ) -> int:
-        ...
-
-    def adjust_favorability(
-        self,
-        group_id: str,
-        user_id: str,
-        delta: int,
-        updated_at: int,
-        *,
-        default: int = 0,
-    ) -> int:
-        ...
-
-    def append_social_event(self, event) -> bool:
+    def append_social_event(self, event: SocialEvent) -> bool:
         ...
 
     def list_social_events(
@@ -137,10 +120,12 @@ class MemoryRepository(Protocol):
     ):
         ...
 
-    def get_relationship_state(self, group_id: str, user_id: str):
+    def get_relationship_state(
+        self, group_id: str, user_id: str
+    ) -> Optional[RelationshipState]:
         ...
 
-    def upsert_relationship_state(self, state) -> None:
+    def upsert_relationship_state(self, state: RelationshipState) -> None:
         ...
 
     def rebuild_relationship_state(
@@ -158,7 +143,6 @@ class MemoryRepository(Protocol):
         self,
         event,
         *,
-        soft_trigger: bool = False,
         configured_relationship: Optional[str] = None,
         now: int = 0,
     ):

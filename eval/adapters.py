@@ -19,7 +19,8 @@ class InMemoryRepository:
         self.outbox: Dict[str, Dict[str, Any]] = {}
         self.memories: List[Any] = []
         self.messages: List[Any] = []
-        self.favorability: Dict[tuple, int] = {}
+        self.social_events: List[Any] = []
+        self.relationship_state: Dict[tuple, Any] = {}
 
     def save_message(self, message) -> bool:
         if any(item.identity == message.identity for item in self.messages):
@@ -87,86 +88,73 @@ class InMemoryRepository:
     def mark_outbox_sent(self, decision_id: str, sent_at: int) -> None:
         self.outbox[decision_id]["sent_at"] = int(sent_at)
 
-    def get_favorability(self, group_id: str, user_id: str) -> Optional[int]:
-        return self.favorability.get((str(group_id), str(user_id)))
-
-    def set_favorability(
-        self, group_id: str, user_id: str, score: int, updated_at: int
-    ) -> int:
-        from groupmate.core.favorability import clamp_score
-
-        del updated_at
-        value = clamp_score(score)
-        self.favorability[(str(group_id), str(user_id))] = value
-        return value
-
-    def adjust_favorability(
-        self,
-        group_id: str,
-        user_id: str,
-        delta: int,
-        updated_at: int,
-        *,
-        default: int = 0,
-    ) -> int:
-        from groupmate.core.favorability import apply_delta
-
-        current = self.get_favorability(group_id, user_id)
-        return self.set_favorability(
-            group_id,
-            user_id,
-            apply_delta(current, delta, default=default),
-            updated_at,
-        )
-
     def append_social_event(self, event) -> bool:
         key = (event.group_id, event.source_message_id, str(event.kind))
         if any(
             (e.group_id, e.source_message_id, str(e.kind)) == key
-            for e in getattr(self, "social_events", [])
+            for e in self.social_events
         ):
             return False
-        self.social_events = getattr(self, "social_events", [])
         self.social_events.append(event)
         return True
 
     def list_social_events(self, group_id, user_id=None, limit=200):
         items = [
             e
-            for e in getattr(self, "social_events", [])
+            for e in self.social_events
             if e.group_id == str(group_id)
             and (user_id is None or e.user_id == str(user_id))
         ]
         return items[:limit]
 
     def get_relationship_state(self, group_id, user_id):
-        return getattr(self, "relationship_state", {}).get(
-            (str(group_id), str(user_id))
+        return self.relationship_state.get((str(group_id), str(user_id)))
+
+    def upsert_relationship_state(self, state) -> None:
+        self.relationship_state[(state.group_id, state.user_id)] = state
+
+    def rebuild_relationship_state(
+        self,
+        group_id,
+        user_id,
+        *,
+        configured_relationship=None,
+        seed_affinity=0,
+        now=0,
+    ):
+        from groupmate.social.projector import SocialStateProjector
+
+        state = SocialStateProjector().project(
+            self.list_social_events(group_id, user_id=user_id, limit=5000),
+            group_id=group_id,
+            user_id=user_id,
+            configured_relationship=configured_relationship,
+            seed_affinity=seed_affinity,
+            now=now,
         )
+        self.upsert_relationship_state(state)
+        return state
 
     def record_social_interaction(
         self,
         event,
         *,
-        soft_trigger=False,
         configured_relationship=None,
         now=0,
     ):
         from groupmate.models import RelationshipState
+        from groupmate.social.affinity import initial_affinity_for_relationship
         from groupmate.social.projector import SocialStateProjector
 
-        if not hasattr(self, "relationship_state"):
-            self.relationship_state = {}
-        if not hasattr(self, "social_events"):
-            self.social_events = []
         inserted = self.append_social_event(event)
         current = self.get_relationship_state(event.group_id, event.user_id)
         if current is None:
-            fav = self.get_favorability(event.group_id, event.user_id)
             current = RelationshipState(
                 group_id=event.group_id,
                 user_id=event.user_id,
-                affinity=int(fav) if fav is not None else 0,
+                affinity=initial_affinity_for_relationship(
+                    configured_relationship or ""
+                ),
                 configured_relationship=configured_relationship,
                 updated_at=int(now or event.occurred_at),
             )
@@ -177,12 +165,8 @@ class InMemoryRepository:
             event,
             configured_relationship=configured_relationship,
             now=int(now or event.occurred_at),
-            soft_trigger=soft_trigger,
         )
-        self.relationship_state[(state.group_id, state.user_id)] = state
-        self.set_favorability(
-            event.group_id, event.user_id, state.affinity, state.updated_at
-        )
+        self.upsert_relationship_state(state)
         return state
 
 

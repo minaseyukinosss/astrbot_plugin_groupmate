@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from inspect import signature
 
 import pytest
 
@@ -14,6 +15,7 @@ from groupmate.core import response_act as response_act_module
 from groupmate.core.speak_contract import SpeakContract, is_silence
 from groupmate.models import (
     OutboundKind,
+    RelationshipState,
     ReplyMode,
     SendResult,
     TopicSnapshot,
@@ -181,6 +183,48 @@ def test_alias_direct_sends(topic_snapshot, balanced_policy):
     )
 
     assert outcome.sent is True
+
+
+def test_workflow_has_no_keyword_social_classifier_dependency():
+    assert "social_classifier" not in signature(CognitiveWorkflow).parameters
+
+
+def test_workflow_reads_relationship_state_without_mutating_it(
+    message_factory, balanced_policy
+):
+    memory = FakeMemoryRepository()
+    state = RelationshipState(
+        group_id="g1",
+        user_id="u1",
+        affinity=-10,
+        familiarity=4,
+        interaction_count=4,
+        updated_at=90,
+    )
+    memory.upsert_relationship_state(state)
+    generator = RecordingGenerationModel("在呢。")
+    message = message_factory(
+        message_id="direct",
+        sender_id="u1",
+        sender_name="Alice",
+        text="爱弥斯 在吗",
+        timestamp=100,
+    )
+    topic = TopicSnapshot("direct-topic", "g1", (message,), 100, 100)
+    workflow = build_workflow(
+        generator=generator,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert "好感状态：警惕" in generator.plans[-1].user_prompt
+    assert memory.get_relationship_state("g1", "u1") == state
+    assert memory.social_events == []
 
 
 def test_task_request_clarifies_when_resolver_reports_missing_information(

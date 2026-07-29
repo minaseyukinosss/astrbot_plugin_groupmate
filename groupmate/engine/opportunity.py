@@ -60,7 +60,6 @@ class OpportunityArbiter:
         now: int,
         recent_outputs: Sequence[str] = (),
         hard_busy: bool = False,
-        favorability: Optional[int] = None,
     ) -> SpeakOpportunity:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
@@ -121,7 +120,6 @@ class OpportunityArbiter:
             latest_text=(latest.text if latest else ""),
             presence=presence,
             recent_outputs=recent_outputs,
-            favorability=favorability,
             aliases=policy.aliases,
         )
         reason_codes = tuple(parts) + (
@@ -211,7 +209,6 @@ class OpportunityArbiter:
         latest_text: str,
         presence: PresenceProjection,
         recent_outputs: Sequence[str],
-        favorability: Optional[int],
         aliases: Sequence[str],
     ):
         parts = []
@@ -239,11 +236,6 @@ class OpportunityArbiter:
                 topic_relevance = 0.25
                 break
         parts.append("topic={:.2f}".format(topic_relevance))
-
-        relationship_relevance = 0.05
-        if favorability is not None and favorability >= 50:
-            relationship_relevance = 0.15
-        parts.append("rel={:.2f}".format(relationship_relevance))
 
         novelty = 0.2
         for prev in recent_outputs:
@@ -278,7 +270,6 @@ class OpportunityArbiter:
             addressedness
             + contribution_value
             + topic_relevance
-            + relationship_relevance
             + novelty
             - interruption_cost
             - density_penalty

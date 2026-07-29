@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from inspect import signature
 
 from groupmate.core.addressee import AddresseeResolver
 from groupmate.engine.opportunity import OpportunityArbiter, UTILITY_THRESHOLD
@@ -66,6 +67,28 @@ def test_hard_trigger_always_speaks_without_utility():
     assert opp.action is OpportunityAction.SPEAK
     assert "hard_trigger" in opp.reason_codes
     assert opp.confidence == 1.0
+
+
+def test_opportunity_arbiter_has_no_continuous_affinity_input():
+    parameters = signature(OpportunityArbiter.evaluate).parameters
+
+    assert "favorability" not in parameters
+
+
+def test_opportunity_reasons_have_no_relationship_score_bonus():
+    arbiter = OpportunityArbiter(
+        budgets=BudgetTracker(
+            SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0)
+        )
+    )
+    topic = _topic(_msg(text="爱弥斯 这个怎么弄？"))
+    targeting = AddresseeResolver().resolve(topic, TriggerKind.ALIAS_MENTION)
+
+    opportunity = arbiter.evaluate(
+        topic, TriggerKind.ALIAS_MENTION, _policy(), targeting, now=100
+    )
+
+    assert not any(reason.startswith("rel=") for reason in opportunity.reason_codes)
 
 
 def test_soft_passing_mention_tends_to_silence():
