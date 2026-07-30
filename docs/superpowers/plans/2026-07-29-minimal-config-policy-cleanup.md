@@ -10,6 +10,12 @@
 
 **Design Spec:** `docs/superpowers/specs/2026-07-29-configuration-persona-scope-design.md`
 
+**Execution Status:** Completed on 2026-07-30.
+
+**Delivered By:** `238bdde`（严格六项配置）, `16c7968`（显式 Aemeath PersonaRegistry）, and `181bf14`（策略、运行时、评测、文档与残留清理）.
+
+**Completion Evidence:** `pytest` 601 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; production residual scans and `git diff --check` passed.
+
 **Execution Order:** Complete this plan before `docs/superpowers/plans/2026-07-29-persona-scoped-state-v11.md`.
 
 ---
@@ -41,7 +47,7 @@
 - Rewrite: `tests/test_config.py`
 - Modify: `tests/test_plugin_loading.py`
 
-- [ ] **Step 1: Replace legacy configuration tests with the new contract**
+- [x] **Step 1: Replace legacy configuration tests with the new contract**
 
 Write tests that assert the exact dataclass fields, per-persona lookup, explicit empty aliases, strict QQ validation, duplicate relationship rejection, and diagnostics:
 
@@ -107,13 +113,13 @@ def test_legacy_keys_are_diagnosed_and_never_applied():
     )
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_config.py -q`
 
 Expected: collection fails because `groupmate.host.config` does not exist.
 
-- [ ] **Step 3: Implement the strict parser and immutable settings**
+- [x] **Step 3: Implement the strict parser and immutable settings**
 
 Use tuple-backed persona mappings so the frozen object cannot expose mutable dictionaries:
 
@@ -157,13 +163,13 @@ self.config = AstrBotConfigParser().parse(config)
 self.bridge = AstrBotBridge(context, self.config, data_dir)
 ```
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_config.py tests/test_plugin_loading.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/config.py groupmate/host/__init__.py main.py tests/test_config.py tests/test_plugin_loading.py
@@ -176,7 +182,7 @@ git commit -m "refactor: add strict deployment settings"
 - Modify: `_conf_schema.json`
 - Test: `tests/test_config.py`
 
-- [ ] **Step 1: Add a schema-shape regression test**
+- [x] **Step 1: Add a schema-shape regression test**
 
 ```python
 def test_schema_exposes_exactly_six_settings():
@@ -197,13 +203,13 @@ def test_schema_exposes_exactly_six_settings():
     assert schema["scope_group"]["items"]["enabled_groups"]["default"] == []
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_config.py::test_schema_exposes_exactly_six_settings -q`
 
 Expected: FAIL because the old schema exposes additional items.
 
-- [ ] **Step 3: Replace the schema groups**
+- [x] **Step 3: Replace the schema groups**
 
 Keep only `scope_group`（启用范围）, `persona_group`（人格部署配置）, and `provider_group`（模型配置）. Represent `persona_aliases` and `relationships` as nested `aemeath` objects in the UI while preserving the logical parser shape:
 
@@ -223,13 +229,13 @@ Keep only `scope_group`（启用范围）, `persona_group`（人格部署配置�
 
 Preserve clear Chinese `description` and `hint` strings when expanding this compact structure in the actual file.
 
-- [ ] **Step 4: Verify GREEN and JSON validity**
+- [x] **Step 4: Verify GREEN and JSON validity**
 
 Run: `./.venv/bin/python -m pytest tests/test_config.py -q`
 
 Expected: all configuration tests pass and JSON loading succeeds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add _conf_schema.json tests/test_config.py
@@ -248,7 +254,7 @@ git commit -m "refactor: reduce AstrBot config to six settings"
 - Test: `tests/test_persona.py`
 - Test: `tests/test_core_assembly.py`
 
-- [ ] **Step 1: Write persona resolution and prompt-cleanliness tests**
+- [x] **Step 1: Write persona resolution and prompt-cleanliness tests**
 
 ```python
 def test_registry_resolves_aemeath_with_configured_aliases_and_no_default_relationships():
@@ -270,13 +276,13 @@ def test_aemeath_system_prompt_has_no_group_brief_slot():
     assert "当前群氛围" not in system
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona.py tests/test_core_assembly.py -q`
 
 Expected: FAIL because the registry is missing and group brief/default relationships remain.
 
-- [ ] **Step 3: Implement the registry and remove hidden defaults**
+- [x] **Step 3: Implement the registry and remove hidden defaults**
 
 Create these immutable types:
 
@@ -308,13 +314,13 @@ class PersonaContext:
 
 Register only `aemeath`. `resolve`（解析人格） must reject unknown IDs and must use the supplied aliases exactly, including an empty tuple. Make `AemeathPersonaProvider(relationships=())` default to an empty tuple, remove `group_brief`, remove `set_group_brief`, remove `DEFAULT_RELATIONSHIPS`, and remove the group-brief branch from `ContextAssembly.build_system`（构建稳定提示词）.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona.py tests/test_core_assembly.py tests/test_behavior_profile.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/persona groupmate/core/context_assembly.py tests/test_persona.py tests/test_core_assembly.py
@@ -342,7 +348,7 @@ git commit -m "refactor: resolve Aemeath through persona registry"
 - Modify: `tests/test_reply_mode.py`
 - Modify: `tests/test_guardrails.py`
 
-- [ ] **Step 1: Add policy-contract tests**
+- [x] **Step 1: Add policy-contract tests**
 
 ```python
 def test_behavior_policy_contains_only_focused_internal_policies():
@@ -364,13 +370,13 @@ def test_reply_length_comes_from_reply_mode_not_global_policy():
 
 Change trigger tests to construct `TriggerRouter(aliases=("爱弥斯", "小爱"))`, and participation tests to pass `policy=BehaviorPolicy().participation` rather than `GroupPolicy`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_triggers.py tests/test_participation_decision.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_reply_mode.py tests/test_guardrails.py -q`
 
 Expected: FAIL because focused policies and new signatures do not exist.
 
-- [ ] **Step 3: Add the policy types**
+- [x] **Step 3: Add the policy types**
 
 ```python
 @dataclass(frozen=True)
@@ -416,7 +422,7 @@ Remove `GroupPolicy` from `groupmate/models.py`. Pass `PersonaContext.aliases` i
 
 Change `max_chars_for_mode(mode)`（按回复模式取字数上限） to accept only the reply mode and return `ModeConstraints.max_chars`（模式长度约束）. Construct `AemeathOutputFirewall()`（爱弥斯输出防火墙） without a configured global maximum; its `validate` method continues to apply the selected reply-mode constraints. Delivery uses `behavior.reply.max_reply_segments`, `behavior.reply.humanize_delay_enabled`, and `behavior.conversation.candidate_ttl_seconds`.
 
-- [ ] **Step 4: Migrate runtime and projection signatures**
+- [x] **Step 4: Migrate runtime and projection signatures**
 
 The stable signatures after this task are:
 
@@ -431,13 +437,13 @@ CognitiveWorkflow.evaluate(topic, trigger, behavior, trigger_alias="", still_val
 
 Update all selected fixtures to use one `BehaviorPolicy()` and one resolved Aemeath `PersonaContext`; do not introduce a compatibility `GroupPolicy` alias.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_triggers.py tests/test_participation_decision.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_workflow.py tests/test_reply_mode.py tests/test_guardrails.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/policies.py groupmate/models.py groupmate/engine/triggers.py groupmate/engine/participation.py groupmate/engine/runtime.py groupmate/engine/workflow.py groupmate/core/projections.py groupmate/core/intent.py groupmate/persona/aemeath/output_firewall.py tests/conftest.py tests/test_triggers.py tests/test_participation_decision.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_workflow.py tests/test_reply_mode.py tests/test_guardrails.py
@@ -454,7 +460,7 @@ git commit -m "refactor: replace mixed group policy"
 - Modify: `tests/test_memory_writer.py`
 - Modify: `tests/test_workflow.py`
 
-- [ ] **Step 1: Add absence and behavior tests**
+- [x] **Step 1: Add absence and behavior tests**
 
 ```python
 def test_runtime_has_no_legacy_scheduler_switch():
@@ -472,13 +478,13 @@ async def test_memory_writer_is_always_scheduled_after_confirmed_send(
     assert "enabled" not in signature(memory_writer.schedule_after_send).parameters
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_phase1_runtime.py tests/test_memory_writer.py tests/test_workflow.py -q`
 
 Expected: FAIL because switchable branches remain.
 
-- [ ] **Step 3: Delete rollback parameters and branches**
+- [x] **Step 3: Delete rollback parameters and branches**
 
 Remove `_v3_scheduler_enabled`, serial evaluation branches, scheduler status labels, `composition_enabled`, `v3_memory_writer_enabled`, `v3_composition_enabled`, compatibility assembly calls, and the conditional task resolver. Always launch the current non-blocking scheduler, always build `ResponseActPlan`, always execute the current capability/composer pipeline, and call:
 
@@ -494,13 +500,13 @@ self.memory_writer.schedule_after_send(
 
 Remove the `enabled` parameter from `MemoryWriter.schedule_after_send`（发送后安排记忆写入） and its callers. Keep exception isolation so memory writing never turns a confirmed reply into failure.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_phase1_runtime.py tests/test_memory_writer.py tests/test_workflow.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/engine/runtime.py groupmate/engine/workflow.py groupmate/host/bridge.py tests/test_phase1_runtime.py tests/test_memory_writer.py tests/test_workflow.py
@@ -521,7 +527,7 @@ git commit -m "refactor: remove phased runtime fallbacks"
 - Modify: `tests/test_workflow.py`
 - Modify: `tests/test_phase2_projections.py`
 
-- [ ] **Step 1: Replace reaction tests with a capability-media boundary test**
+- [x] **Step 1: Replace reaction tests with a capability-media boundary test**
 
 ```python
 def test_composer_accepts_safe_capability_media_but_has_no_reaction_argument(tmp_path):
@@ -540,25 +546,25 @@ def test_composer_accepts_safe_capability_media_but_has_no_reaction_argument(tmp
     assert [segment.kind for segment in draft.segments] == [OutboundKind.TEXT, OutboundKind.IMAGE]
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_composer.py tests/test_workflow.py tests/test_phase2_projections.py -q`
 
 Expected: FAIL because the composer and workflow still expose local reactions.
 
-- [ ] **Step 3: Remove only decorative reaction code**
+- [x] **Step 3: Remove only decorative reaction code**
 
 Delete `reaction` from `ResponseComposer.compose`, `_safe_reaction`, `_DECORATIVE_ACTS`, workflow reaction catalog/policy fields, `_select_reaction`, recent reaction-media hydration, and bridge directory loading. Preserve `CapabilityResult.media_candidates`, `_safe_capability_media`, `OutboundSegment(IMAGE)`, delivery metadata, platform image sending, and stable media IDs.
 
 `ResponseAct.VISUAL_REACTION` remains valid for a text reaction to visual content; it must not select a local decorative asset.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_composer.py tests/test_workflow.py tests/test_platform_port.py tests/test_capability_contracts.py tests/test_phase2_projections.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/media/reactions.py groupmate/media/__init__.py groupmate/engine/composer.py groupmate/engine/workflow.py groupmate/core/projections.py groupmate/host/bridge.py tests/test_reaction_media.py tests/test_composer.py tests/test_workflow.py tests/test_phase2_projections.py
@@ -573,7 +579,7 @@ git commit -m "refactor: remove legacy local reactions"
 - Modify: `tests/test_phase4_budgets.py`
 - Modify: `tests/test_direct_fallback.py`
 
-- [ ] **Step 1: Add open-versus-direct budget tests**
+- [x] **Step 1: Add open-versus-direct budget tests**
 
 ```python
 async def test_open_participation_stops_before_generation_when_send_budget_is_exhausted(
@@ -594,13 +600,13 @@ async def test_direct_required_bypasses_open_send_budget(
     assert outcome.sent is True
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_phase4_budgets.py tests/test_direct_fallback.py -q`
 
 Expected: the open-participation test fails because `allow_send` is not called.
 
-- [ ] **Step 3: Add the deterministic safety gate**
+- [x] **Step 3: Add the deterministic safety gate**
 
 Immediately after `ParticipationDecisionEngine.decide` returns `SPEAK`, before memory retrieval, capability execution, or generation:
 
@@ -619,13 +625,13 @@ if (
 
 Continue recording the send only after confirmed delivery and only for `OPEN_OPTIONAL`; never turn the budget into a probability or an invitation to speak.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_phase4_budgets.py tests/test_direct_fallback.py tests/test_workflow.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/engine/workflow.py groupmate/engine/rate_limit.py tests/test_phase4_budgets.py tests/test_direct_fallback.py
@@ -645,7 +651,7 @@ git commit -m "fix: enforce open participation send budget"
 - Modify: `tests/test_plugin_page_assets.py`
 - Create: `tests/test_provider_resolution.py`
 
-- [ ] **Step 1: Add provider precedence and status tests**
+- [x] **Step 1: Add provider precedence and status tests**
 
 ```python
 async def test_explicit_generation_provider_wins_over_current_group_provider(tmp_path):
@@ -670,13 +676,13 @@ def test_status_reports_health_without_removed_values(bridge):
     assert "max_reply_chars" not in repr(payload)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_provider_resolution.py tests/test_plugin_loading.py tests/test_plugin_page_assets.py -q`
 
 Expected: FAIL because current group Provider overwrites explicit configuration and status exposes old fields.
 
-- [ ] **Step 3: Wire typed configuration and persona context**
+- [x] **Step 3: Wire typed configuration and persona context**
 
 Remove `_setting` from `AstrBotBridge`. Resolve the configured persona once with:
 
@@ -693,17 +699,17 @@ In `_prepare_actor`, use configured text Provider without asking AstrBot for a r
 
 Always handle native wake events that belong to Groupmate; preserve existing external-knowledge handoff to the AstrBot Agent.
 
-- [ ] **Step 4: Replace status and page fields**
+- [x] **Step 4: Replace status and page fields**
 
 Return `active_persona`, `enabled_scope`, `alias_count`, `relationship_seed_count`, `generation_provider_mode`, `vision_status`, `database_schema`, `config_health`, and `ignored_legacy_keys`. Remove scheduler version, group brief, global max chars, wake switch, and spontaneous-limit display. Update HTML IDs and JavaScript rendering to match.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_provider_resolution.py tests/test_plugin_loading.py tests/test_native_wake_suppress.py tests/test_plugin_page_assets.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/host pages/settings tests/test_provider_resolution.py tests/test_plugin_loading.py tests/test_native_wake_suppress.py tests/test_plugin_page_assets.py
@@ -726,7 +732,7 @@ git commit -m "refactor: enforce provider and status contract"
 - Modify: `README.md`
 - Delete: `groupmate/config.py`
 
-- [ ] **Step 1: Add a repository residual test**
+- [x] **Step 1: Add a repository residual test**
 
 ```python
 REMOVED_PRODUCTION_NAMES = (
@@ -759,13 +765,13 @@ def test_removed_configuration_and_fallbacks_are_absent_from_production():
         assert name not in production
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_config.py::test_removed_configuration_and_fallbacks_are_absent_from_production -q`
 
 Expected: FAIL until all production references are removed.
 
-- [ ] **Step 3: Migrate evaluation contracts and evaluation fixtures**
+- [x] **Step 3: Migrate evaluation contracts and evaluation fixtures**
 
 Replace `EvaluationScenario.group_policy` with `behavior_policy` returning `BehaviorPolicy`; keep only scenario-level values that still represent legitimate test inputs. Alias variation belongs in a `PersonaContext` fixture, not in behavior policy. Remove scenario schema keys for deleted configuration fields; preserve `constraints.max_chars` because it is an expected-output assertion, not a plugin setting.
 
@@ -781,11 +787,11 @@ behavior = BehaviorPolicy()
 projector = ShadowProjector(behavior=behavior, persona_context=persona)
 ```
 
-- [ ] **Step 4: Update current documentation and delete the old parser**
+- [x] **Step 4: Update current documentation and delete the old parser**
 
 README must list exactly the six configuration keys with Chinese explanations, document empty-group semantics, Provider precedence, ignored legacy keys, and `aemeath` state ownership. Delete `groupmate/config.py` only after `rg` shows no import remains.
 
-- [ ] **Step 5: Run the residual audit**
+- [x] **Step 5: Run the residual audit**
 
 Run:
 
@@ -795,7 +801,7 @@ rg -n "PluginSettings|GroupPolicy|group_brief|v3_scheduler_enabled|v3_memory_wri
 
 Expected: no production/config/current-documentation matches; test matches are limited to the explicit absence-test string tuple and historical `docs/superpowers` is outside the command.
 
-- [ ] **Step 6: Run complete verification**
+- [x] **Step 6: Run complete verification**
 
 Run:
 
@@ -808,7 +814,7 @@ git diff --check
 
 Expected: full pytest passes, both deterministic evaluations report every run passed, and `git diff --check` emits no output.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add groupmate/config.py eval/schema.py eval/runner.py eval/shadow_projector.py eval/shadow_export.py eval/build_corpus.py eval/scenarios/baseline.jsonl eval/scenarios/phase2_behavior.jsonl tests/test_eval_schema.py tests/test_eval_runner.py tests/test_shadow_projector.py tests/test_config.py README.md

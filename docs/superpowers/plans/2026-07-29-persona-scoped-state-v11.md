@@ -10,6 +10,12 @@
 
 **Design Spec:** `docs/superpowers/specs/2026-07-29-configuration-persona-scope-design.md`
 
+**Execution Status:** Completed on 2026-07-30.
+
+**Delivered By:** `181bf14`（schema v11、全链路人格隔离、真实 shadow 回归与恢复文档）.
+
+**Completion Evidence:** `pytest` 601 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; real export shadow processed 11,304 records with zero safety violations and no reply/silence regression; `git diff --check` passed.
+
 **Prerequisite:** `docs/superpowers/plans/2026-07-29-minimal-config-policy-cleanup.md` is complete and all tests pass.
 
 ---
@@ -39,7 +45,7 @@
 - Modify: `tests/test_phase5_migrations.py`
 - Modify: `tests/test_phase6_migrations.py`
 
-- [ ] **Step 1: Write v11 bootstrap and migration tests**
+- [x] **Step 1: Write v11 bootstrap and migration tests**
 
 ```python
 PERSONA_TABLES = {
@@ -101,13 +107,13 @@ def test_failed_v11_verification_rolls_back_v10_database(tmp_path, monkeypatch):
 
 `build_v10_fixture_with_one_row_per_table`（构造 v10 完整夹具） must call existing `_bootstrap_v5` through `_v9_to_v10`, insert valid linked sample rows into all 11 tables, and insert a legacy `favorability` row already represented in `relationship_state`.
 
-- [ ] **Step 2: Run the migration tests and verify RED**
+- [x] **Step 2: Run the migration tests and verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_migrations.py -q`
 
 Expected: FAIL because schema version is still 10 and `persona_id` columns do not exist.
 
-- [ ] **Step 3: Add `_bootstrap_v11`（直接创建 v11）**
+- [x] **Step 3: Add `_bootstrap_v11`（直接创建 v11）**
 
 Set `SCHEMA_VERSION = 11`. Create the complete current schema directly for empty databases. Every listed table has `persona_id TEXT NOT NULL` without a default. Use these semantic constraints:
 
@@ -122,7 +128,7 @@ UNIQUE (persona_id, group_id, subject_id, claim_hash)            -- memory_tombs
 
 Keep globally unique surrogate keys (`memory_id`, `candidate_id`, `decision_id`, `grant_id`, tombstone ID, decision row ID) in their current primary-key form. Add persona-leading indexes for every query pattern, including messages by ingest time, open topics, continuation by sender/time, memories by subject/status, decisions by decision ID, and outbox by status/time.
 
-- [ ] **Step 4: Implement `_v10_to_v11` with table rebuilds**
+- [x] **Step 4: Implement `_v10_to_v11` with table rebuilds**
 
 For each persona table, create `<table>_v11` with the exact v11 definition, copy every old column while inserting `'aemeath'`, verify row count and non-empty persona IDs, then swap names. Use one helper with explicit SQL supplied by the caller:
 
@@ -145,7 +151,7 @@ def _rebuild_with_persona(db, *, table, create_sql, insert_columns, select_colum
 
 All table names and column lists passed to this internal helper are compile-time constants from the migration module; never accept user input. Drop `favorability` only after relationship row counts and affinity backfill are verified. Recreate indexes after all swaps, call `_verify_v11`, update the schema version, then commit.
 
-- [ ] **Step 5: Route empty and legacy databases correctly**
+- [x] **Step 5: Route empty and legacy databases correctly**
 
 In `migrate_database`（迁移数据库）:
 
@@ -160,13 +166,13 @@ else:
 
 Create a backup for every non-empty database whose version is below 11. Update old migration tests to expect final version 11 and backup names ending in `to-v11`.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_migrations.py tests/test_phase1_migrations.py tests/test_phase2_migrations.py tests/test_phase3_migrations.py tests/test_phase5_migrations.py tests/test_phase6_migrations.py -q`
 
 Expected: all migration tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add groupmate/memory/migrations.py tests/test_persona_scope_migrations.py tests/test_phase1_migrations.py tests/test_phase2_migrations.py tests/test_phase3_migrations.py tests/test_phase5_migrations.py tests/test_phase6_migrations.py
@@ -182,7 +188,7 @@ git commit -m "feat: migrate state database to persona-scoped v11"
 - Modify: `tests/test_delivery_service.py`
 - Modify: `tests/test_phase2_projections.py`
 
-- [ ] **Step 1: Add cross-persona ledger and outbox tests**
+- [x] **Step 1: Add cross-persona ledger and outbox tests**
 
 ```python
 def test_same_platform_message_is_isolated_by_persona(store, message):
@@ -205,13 +211,13 @@ def test_empty_persona_id_is_rejected_before_sql(store, message):
         store.save_message("", message)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py -q`
 
 Expected: FAIL because store methods do not accept persona IDs.
 
-- [ ] **Step 3: Add one strict persona validator**
+- [x] **Step 3: Add one strict persona validator**
 
 ```python
 def _require_persona_id(value: str) -> str:
@@ -223,7 +229,7 @@ def _require_persona_id(value: str) -> str:
 
 Every public state method calls this before SQL. Do not default missing values to `aemeath`.
 
-- [ ] **Step 4: Scope foundational store APIs**
+- [x] **Step 4: Scope foundational store APIs**
 
 Change message/profile/decision/outbox methods to begin with `persona_id`, insert it, and include it in every predicate:
 
@@ -246,13 +252,13 @@ pending_outbox(persona_id, now)
 
 Pass persona ID through `_message_params`, `_insert_message`, and asynchronous static helpers. Startup/shutdown recovery may update all personas only in an explicitly named `mark_all_sending_unknown_async` operational method; persona runtime methods must stay scoped.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py tests/test_memory.py tests/test_delivery_service.py -q`
 
 Expected: selected tests pass after callers supply `"aemeath"` explicitly.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/memory/store.py tests/test_persona_scope_store.py tests/test_memory.py tests/test_delivery_service.py
@@ -270,7 +276,7 @@ git commit -m "refactor: scope ledger and outbox by persona"
 - Modify: `tests/test_memory_arbiter.py`
 - Modify: `tests/test_persona_scope_store.py`
 
-- [ ] **Step 1: Add memory-isolation tests**
+- [x] **Step 1: Add memory-isolation tests**
 
 ```python
 def test_memories_with_same_group_and_subject_do_not_cross_personas(store, memory):
@@ -286,13 +292,13 @@ def test_same_claim_can_be_candidate_for_two_personas(store, candidate):
     assert len(store.list_memory_candidates("future", "g1")) == 1
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py -q`
 
 Expected: memory isolation fails because queries are only group-scoped.
 
-- [ ] **Step 3: Scope every memory API**
+- [x] **Step 3: Scope every memory API**
 
 Use explicit signatures and `WHERE persona_id=?` in every query/update:
 
@@ -313,7 +319,7 @@ is_tombstoned(persona_id, group_id, subject_id, claim_hash)
 
 Supersede and delete updates must include both persona ID and memory ID. Candidate conflict lookup includes `persona_id + group_id + subject_id + claim_hash`.
 
-- [ ] **Step 4: Thread persona through writer and arbiter**
+- [x] **Step 4: Thread persona through writer and arbiter**
 
 `MemoryWriter`（记忆写入器） receives `persona_id` in its constructor and passes it to every candidate, conflict, accept, and memory lookup. Keep `MemoryItem` and `MemoryCandidate` as content values; the store method remains the mandatory ownership boundary.
 
@@ -328,13 +334,13 @@ MemoryWriter(
 )
 ```
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py tests/test_memory.py tests/test_memory_writer.py tests/test_memory_arbiter.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/memory/store.py groupmate/memory/memory_writer.py groupmate/memory/arbiter.py tests/test_persona_scope_store.py tests/test_memory.py tests/test_memory_writer.py tests/test_memory_arbiter.py
@@ -350,7 +356,7 @@ git commit -m "refactor: isolate memories by persona"
 - Modify: `tests/test_affinity.py`
 - Modify: `tests/test_persona_scope_store.py`
 
-- [ ] **Step 1: Add relationship-isolation and seed tests**
+- [x] **Step 1: Add relationship-isolation and seed tests**
 
 ```python
 def test_same_user_has_independent_affinity_per_persona(store, social_event):
@@ -370,13 +376,13 @@ def test_existing_state_is_not_overwritten_by_changed_seed(store, social_event):
     assert current == first
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py tests/test_social_events.py -q`
 
 Expected: FAIL because events and relationship state are not persona-scoped.
 
-- [ ] **Step 3: Scope the social APIs**
+- [x] **Step 3: Scope the social APIs**
 
 ```python
 append_social_event(persona_id, event)
@@ -389,17 +395,17 @@ record_social_interaction(persona_id, event, *, configured_relationship=None, no
 
 All event deduplication and relationship upserts include persona ID. Initial affinity is applied only when no state exists in the current persona scope. Once a row exists, later configuration changes do not replace it.
 
-- [ ] **Step 4: Pass workflow persona ID to social reads and writes**
+- [x] **Step 4: Pass workflow persona ID to social reads and writes**
 
 Use `self.persona_context.persona_id` for relationship lookup and interaction recording. The relationship seed lookup uses `self.persona_context.relationship_seeds`; no global or hard-coded fallback is allowed.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_persona_scope_store.py tests/test_social_events.py tests/test_affinity.py tests/test_participation_decision.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/memory/store.py groupmate/engine/workflow.py tests/test_persona_scope_store.py tests/test_social_events.py tests/test_affinity.py tests/test_participation_decision.py
@@ -418,7 +424,7 @@ git commit -m "refactor: isolate relationship state by persona"
 - Modify: `tests/test_phase2_projections.py`
 - Modify: `tests/test_persona_scope_store.py`
 
-- [ ] **Step 1: Add conversation-state isolation tests**
+- [x] **Step 1: Add conversation-state isolation tests**
 
 ```python
 def test_continuation_grants_are_persona_scoped(store):
@@ -445,17 +451,17 @@ async def test_runtime_actors_are_separate_per_persona(manager, contexts):
     assert future.window.snapshot().messages == ()
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_direct_pressure.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_persona_scope_store.py -q`
 
 Expected: isolation tests fail because keys only contain group/user.
 
-- [ ] **Step 3: Scope topic and continuation store methods**
+- [x] **Step 3: Scope topic and continuation store methods**
 
 Add `persona_id` to `latest_open_topic_epoch`, `open_topic_epoch`, `close_topic_epoch`, async helpers, `grant_continuation`, `latest_continuation_grant`, and `list_active_continuation_grants`. Every open-topic close/update and sender lookup includes persona ID.
 
-- [ ] **Step 4: Scope in-memory pressure and actors**
+- [x] **Step 4: Scope in-memory pressure and actors**
 
 `DirectAddressPressureTracker.observe`（记录直接呼叫压力） takes persona ID and keys counters by `(persona_id, group_id, sender_id)`. `GroupRuntimeManager` keys actors by `(persona_id, group_id)` and accepts a resolved `PersonaContext`:
 
@@ -466,17 +472,17 @@ async def actor_for(self, group_id: str, persona_context: PersonaContext) -> Gro
 
 Different persona contexts always create different actors and fresh short-term windows. Returning to the same key restores that persona actor while it remains alive.
 
-- [ ] **Step 5: Scope projections**
+- [x] **Step 5: Scope projections**
 
 Add `persona_id` to `ProjectionSnapshot`; change `StateProjector.rebuild(persona_id, group_id, now=now, policy=behavior.conversation)` to call only persona-scoped ledger, topic, continuation, bot-delivery and spontaneous-send methods. Remove recent decorative media projection if it survived Plan 1.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_direct_pressure.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_persona_scope_store.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add groupmate/memory/store.py groupmate/engine/direct_pressure.py groupmate/engine/runtime.py groupmate/core/projections.py tests/test_direct_pressure.py tests/test_runtime.py tests/test_phase2_projections.py tests/test_persona_scope_store.py
@@ -495,7 +501,7 @@ git commit -m "refactor: isolate conversation state by persona"
 - Modify: `tests/test_delivery_service.py`
 - Modify: `tests/test_plugin_loading.py`
 
-- [ ] **Step 1: Add end-to-end persona forwarding tests**
+- [x] **Step 1: Add end-to-end persona forwarding tests**
 
 ```python
 async def test_workflow_reads_only_current_persona_memory(workflows, store, topic):
@@ -516,17 +522,17 @@ def test_status_reports_schema_and_active_persona(bridge):
     assert status["database_schema"] == 11
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_workflow.py tests/test_delivery_service.py tests/test_plugin_loading.py -q`
 
 Expected: failures identify unscoped store calls.
 
-- [ ] **Step 3: Make workflow ownership explicit**
+- [x] **Step 3: Make workflow ownership explicit**
 
 Store `persona_context` on `CognitiveWorkflow`. Pass `persona_context.persona_id` to memory search, relationship lookup, social writes, memory writer, decision records and session projection. Replace any `try/except TypeError` compatibility calls around store APIs with one exact v11 signature.
 
-- [ ] **Step 4: Scope delivery operations**
+- [x] **Step 4: Scope delivery operations**
 
 `DeliveryService` receives `persona_id` at construction and passes it through enqueue, transition, finalize and record methods. Bot delivery messages remain ordinary `ChatMessage` values; the store operation supplies their ownership.
 
@@ -540,17 +546,17 @@ DeliveryService(
 )
 ```
 
-- [ ] **Step 5: Scope bridge bootstrap and shutdown**
+- [x] **Step 5: Scope bridge bootstrap and shutdown**
 
 Bridge calls `runtime.actor_for(group_id, self.persona_context)`, `StateProjector.rebuild(self.persona_context.persona_id, group_id, now=now, policy=self.behavior.conversation)`, persona-scoped status queries, and explicit all-persona recovery only for process-level unknown sends. No bridge or store call may inject `"aemeath"` directly; only the registry supplies the current ID.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
 Run: `./.venv/bin/python -m pytest tests/test_workflow.py tests/test_delivery_service.py tests/test_plugin_loading.py tests/test_phase2_projections.py -q`
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add groupmate/engine/workflow.py groupmate/engine/delivery.py groupmate/host/bridge.py groupmate/host/web_api.py main.py tests/test_workflow.py tests/test_delivery_service.py tests/test_plugin_loading.py tests/test_phase2_projections.py
@@ -568,7 +574,7 @@ git commit -m "refactor: thread persona scope through runtime"
 - Modify: `tests/test_shadow_export.py`
 - Modify: `README.md`
 
-- [ ] **Step 1: Add explicit-persona evaluation tests**
+- [x] **Step 1: Add explicit-persona evaluation tests**
 
 ```python
 def test_shadow_projector_requires_persona_context():
@@ -581,17 +587,17 @@ def test_shadow_projection_state_is_scoped_to_aemeath(projector):
     assert projector.persona_context.aliases == ("爱弥斯",)
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `./.venv/bin/python -m pytest tests/test_eval_runner.py tests/test_shadow_projector.py tests/test_shadow_export.py -q`
 
 Expected: evaluation adapters still call old unscoped store/runtime signatures.
 
-- [ ] **Step 3: Update evaluation adapters**
+- [x] **Step 3: Update evaluation adapters**
 
 Every deterministic and shadow run resolves an explicit Aemeath context and creates isolated temporary v11 storage. Pass the context to workflow/runtime/projector constructors. The exported report may include public `persona_id="aemeath"`, but must not expose relationship details or raw QQ IDs.
 
-- [ ] **Step 4: Add a state-API residual scan**
+- [x] **Step 4: Add a state-API residual scan**
 
 Create a test that inspects `SQLiteMemoryStore` signatures and fails if any state method lacks `persona_id`:
 
@@ -610,7 +616,7 @@ for name in STATE_METHODS:
 
 Also search SQL strings in `store.py` and verify every query against a persona table contains `persona_id`, except the explicitly named all-persona startup/shutdown recovery method and schema inspection.
 
-- [ ] **Step 5: Run focused persona verification**
+- [x] **Step 5: Run focused persona verification**
 
 Run:
 
@@ -620,7 +626,7 @@ Run:
 
 Expected: all persona migration and isolation tests pass.
 
-- [ ] **Step 6: Run full verification**
+- [x] **Step 6: Run full verification**
 
 Run:
 
@@ -633,7 +639,7 @@ git diff --check
 
 Expected: full pytest passes, both deterministic evaluations report every run passed, and `git diff --check` emits no output.
 
-- [ ] **Step 7: Run the real export shadow regression**
+- [x] **Step 7: Run the real export shadow regression**
 
 Run:
 
@@ -643,7 +649,7 @@ Run:
 
 Expected: command exits 0, safety violations remain 0, copied-text @ remains excluded, and the reply/silence confusion matrix does not regress from the last accepted shadow baseline without a documented scene-level reason.
 
-- [ ] **Step 8: Update README and commit**
+- [x] **Step 8: Update README and commit**
 
 Document schema v11 backup behavior, existing-data ownership by `aemeath`, future-persona isolation, and recovery location using `identifier（中文说明）` wording.
 
