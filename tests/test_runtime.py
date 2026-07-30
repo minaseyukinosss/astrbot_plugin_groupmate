@@ -2,7 +2,7 @@ import asyncio
 
 from groupmate.engine.runtime import GroupActor, GroupRuntimeManager
 from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
-from tests.fakes import RecordingWorkflow, persona_context
+from tests.fakes import FakeMemoryRepository, RecordingWorkflow, persona_context
 
 
 def persona():
@@ -265,6 +265,8 @@ def test_direct_requests_are_serialized_without_invalidating_first(message_facto
             self.completed = []
             self.first_started = asyncio.Event()
             self.release_first = asyncio.Event()
+            self.memory = FakeMemoryRepository()
+            self.character_name = "爱弥斯"
 
         async def evaluate(
             self, topic, trigger, policy, trigger_alias="", still_valid=None

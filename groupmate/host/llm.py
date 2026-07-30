@@ -8,8 +8,6 @@ from typing import Any, Callable, Optional, Sequence
 from ..models import (
     OutboundKind,
     OutboundSegment,
-    SegmentReceipt,
-    SendReceiptKind,
     SendResult,
 )
 from ..persona.aemeath import AemeathPersonaProvider
@@ -52,27 +50,15 @@ class AstrBotGenerationModel:
         provider_id = self.provider_getter(topic.group_id)
         if not provider_id:
             raise RuntimeError("generation provider missing")
-        user_prompt = getattr(plan, "user_prompt", "") or ""
+        user_prompt = plan.user_prompt or ""
         if not user_prompt:
-            assemble = getattr(self.persona, "assemble", None)
-            if assemble is not None:
-                assembled = assemble(
-                    topic,
-                    memories,
-                    contribution=plan.contribution,
-                    soft_trigger=bool(getattr(plan, "soft_trigger", False)),
-                )
-                user_prompt = assembled.user
-            else:
-                user_prompt = "\n".join(
-                    [
-                        self.persona.build_user_context(topic, memories),
-                        "<reply_task>",
-                        "你可以补充：" + plan.contribution,
-                        "只输出最终群聊回复或 <SILENCE>，不要解释过程。",
-                        "</reply_task>",
-                    ]
-                )
+            assembled = self.persona.assemble(
+                topic,
+                memories,
+                contribution=plan.contribution,
+                soft_trigger=bool(plan.soft_trigger),
+            )
+            user_prompt = assembled.user
         response = await self.context.llm_generate(
             chat_provider_id=provider_id,
             prompt=user_prompt,
@@ -102,27 +88,6 @@ class AstrBotPlatformPort:
     def __init__(self, context: Any, umo_getter: Callable[[str], str]) -> None:
         self.context = context
         self.umo_getter = umo_getter
-
-    async def send_text(
-        self,
-        group_id: str,
-        text: str,
-        decision_id: str,
-        quote_message_id: Optional[str] = None,
-    ) -> SendResult:
-        del decision_id
-        from astrbot.api.event import MessageChain
-
-        chain = MessageChain()
-        if quote_message_id:
-            from astrbot.api.message_components import Reply
-
-            components = getattr(chain, "chain", None)
-            if components is None:
-                return SendResult.failed("reply_component_unsupported")
-            components.append(Reply(id=str(quote_message_id)))
-        chain.message(text)
-        return await self._send_chain(group_id, chain)
 
     async def send_outbound(
         self,
@@ -187,31 +152,3 @@ class AstrBotPlatformPort:
         if receipt is True:
             return SendResult.confirmed()
         return SendResult.unknown("fallback_without_receipt")
-
-    async def send_segments(
-        self,
-        group_id: str,
-        segments: Sequence[str],
-        decision_id: str,
-        quote_message_id: Optional[str] = None,
-    ) -> SendResult:
-        receipts = []
-        for index, segment in enumerate(segments):
-            text = str(segment or "").strip()
-            if text:
-                result = await self.send_text(
-                    group_id,
-                    text,
-                    decision_id,
-                    quote_message_id=quote_message_id if index == 0 else None,
-                )
-                if result.kind is not SendReceiptKind.CONFIRMED:
-                    if receipts:
-                        return SendResult.unknown(
-                            "partial_send",
-                            result.error_detail,
-                            tuple(receipts),
-                        )
-                    return result
-                receipts.append(SegmentReceipt(len(receipts)))
-        return SendResult(SendReceiptKind.CONFIRMED, tuple(receipts))

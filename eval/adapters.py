@@ -73,6 +73,65 @@ class InMemoryRepository:
         self._memory_personas[id(memory)] = str(persona_id)
         self.memories.append(memory)
 
+    def list_memories(
+        self,
+        persona_id,
+        group_id,
+        *,
+        now,
+        limit=20,
+        subject_id=None,
+        status_accepted_only=True,
+        **kwargs,
+    ):
+        del now, status_accepted_only, kwargs
+        items = [
+            item
+            for item in self.memories
+            if item.group_id == str(group_id)
+            and self._memory_personas.get(id(item)) == str(persona_id)
+            and (subject_id is None or item.subject_id == str(subject_id))
+        ]
+        return items[: max(0, int(limit))]
+
+    def append_memory_candidate(self, persona_id, candidate):
+        del persona_id
+        return candidate
+
+    def decide_candidate(
+        self,
+        persona_id,
+        candidate_id,
+        status,
+        *,
+        reason="",
+        decided_at,
+    ) -> None:
+        del persona_id, candidate_id, status, reason, decided_at
+
+    def accept_candidate_memory(
+        self,
+        persona_id,
+        candidate_id,
+        memory,
+        *,
+        reason,
+        decided_at,
+        superseded_memory_id=None,
+    ) -> None:
+        del candidate_id, reason, decided_at, superseded_memory_id
+        self.add_memory(persona_id, memory)
+
+    def has_tombstone(
+        self,
+        persona_id,
+        group_id,
+        subject_id,
+        claim_hash_value,
+    ) -> bool:
+        del persona_id, group_id, subject_id, claim_hash_value
+        return False
+
     def record_transition(
         self,
         persona_id: str,
@@ -106,9 +165,78 @@ class InMemoryRepository:
         }
         return True
 
-    def mark_outbox_sent(self, persona_id: str, decision_id: str, sent_at: int) -> None:
-        del persona_id
-        self.outbox[decision_id]["sent_at"] = int(sent_at)
+    async def enqueue_outbox_async(
+        self,
+        persona_id: str,
+        decision_id: str,
+        group_id: str,
+        text: str,
+        created_at: int,
+        expires_at: Optional[int] = None,
+        **kwargs,
+    ) -> bool:
+        del kwargs
+        return self.enqueue_outbox(
+            persona_id,
+            decision_id,
+            group_id,
+            text,
+            created_at,
+            expires_at,
+        )
+
+    async def transition_outbox_async(
+        self,
+        persona_id: str,
+        decision_id: str,
+        expected: str,
+        status: str,
+        *,
+        failure_code: str = "",
+        failure_detail: str = "",
+        increment_attempt: bool = False,
+    ) -> bool:
+        del persona_id, failure_detail
+        row = self.outbox.get(decision_id)
+        if row is None or row.get("status", "pending") != expected:
+            return False
+        row["status"] = status
+        row["failure_code"] = failure_code
+        if increment_attempt:
+            row["attempt"] = int(row.get("attempt", 0)) + 1
+        return True
+
+    async def finalize_delivery_async(
+        self,
+        persona_id: str,
+        decision_id: str,
+        sent_at: int,
+        bot_message,
+        reason: str = "sent",
+    ) -> bool:
+        row = self.outbox.get(decision_id)
+        if row is None or row.get("status") != "sending":
+            return False
+        row["status"] = "sent"
+        row["sent_at"] = int(sent_at)
+        self.save_message(persona_id, bot_message)
+        self.record_transition(
+            persona_id,
+            decision_id,
+            bot_message.group_id,
+            "SEND",
+            reason,
+            sent_at,
+        )
+        self.record_transition(
+            persona_id,
+            decision_id,
+            bot_message.group_id,
+            "END",
+            reason,
+            sent_at,
+        )
+        return True
 
     def append_social_event(self, persona_id, event) -> bool:
         key = (
@@ -218,38 +346,27 @@ class RecordingPlatform:
     def __init__(self) -> None:
         self.sent: List[Dict[str, Any]] = []
 
-    async def send_text(self, group_id: str, text: str, decision_id: str) -> None:
-        self.sent.append(
-            {
-                "group_id": str(group_id),
-                "text": str(text),
-                "decision_id": str(decision_id),
-                "quote_message_id": None,
-            }
-        )
-        from groupmate.models import SendResult
-
-        return SendResult.confirmed()
-
-    async def send_segments(
+    async def send_outbound(
         self,
         group_id: str,
-        segments,
+        outbound,
         decision_id: str,
         quote_message_id: Optional[str] = None,
     ):
-        for segment in segments:
+        from groupmate.models import OutboundKind, SendResult
+
+        for segment in outbound:
+            if segment.kind is not OutboundKind.TEXT:
+                continue
             self.sent.append(
                 {
                     "group_id": str(group_id),
-                    "text": str(segment),
+                    "text": segment.text,
                     "decision_id": str(decision_id),
                     "quote_message_id": quote_message_id,
                 }
             )
-        from groupmate.models import SendResult
-
-        return SendResult.confirmed(len(tuple(segments)))
+        return SendResult.confirmed(len(tuple(outbound)))
 
 
 class NullVision:

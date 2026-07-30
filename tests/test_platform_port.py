@@ -64,24 +64,37 @@ class FakeStarTools:
 def test_platform_port_uses_event_message_chain(monkeypatch):
     event_module = types.ModuleType("astrbot.api.event")
     event_module.MessageChain = FakeMessageChain
+    component_module = types.ModuleType("astrbot.api.message_components")
+    component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
     star_module = types.ModuleType("astrbot.api.star")
     star_module.StarTools = FakeStarTools
 
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", component_module
+    )
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star_module)
 
     context = FakeContext()
     port = AstrBotPlatformPort(context, lambda group_id: "aiocqhttp:GroupMessage:" + group_id)
 
     async def scenario():
-        return await port.send_text("912113397", "在呢。", "decision-1")
+        return await port.send_outbound(
+            "912113397",
+            (OutboundSegment(OutboundKind.TEXT, text="在呢。"),),
+            "decision-1",
+        )
 
     result = asyncio.run(scenario())
 
     assert len(context.calls) == 1
     _, umo, chain = context.calls[0]
     assert umo == "aiocqhttp:GroupMessage:912113397"
-    assert chain.messages == ["在呢。"]
+    assert [item.text for item in chain.chain if isinstance(item, FakePlain)] == [
+        "在呢。"
+    ]
     assert FakeStarTools.calls == []
     assert result.kind is SendReceiptKind.CONFIRMED
 
@@ -89,11 +102,18 @@ def test_platform_port_uses_event_message_chain(monkeypatch):
 def test_platform_port_falls_back_to_group_id_send(monkeypatch):
     event_module = types.ModuleType("astrbot.api.event")
     event_module.MessageChain = FakeMessageChain
+    component_module = types.ModuleType("astrbot.api.message_components")
+    component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
     star_module = types.ModuleType("astrbot.api.star")
     star_module.StarTools = FakeStarTools
     FakeStarTools.calls = []
 
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", component_module
+    )
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star_module)
 
     class MissingPlatformContext(FakeContext):
@@ -105,7 +125,11 @@ def test_platform_port_falls_back_to_group_id_send(monkeypatch):
     port = AstrBotPlatformPort(context, lambda group_id: "broken:GroupMessage:" + group_id)
 
     async def scenario():
-        return await port.send_text("912113397", "在呢。", "decision-2")
+        return await port.send_outbound(
+            "912113397",
+            (OutboundSegment(OutboundKind.TEXT, text="在呢。"),),
+            "decision-2",
+        )
 
     result = asyncio.run(scenario())
 
@@ -116,11 +140,13 @@ def test_platform_port_falls_back_to_group_id_send(monkeypatch):
     assert result.kind is SendReceiptKind.UNKNOWN
 
 
-def test_platform_port_quotes_only_first_segment(monkeypatch):
+def test_platform_port_quotes_ordered_text_segments_once(monkeypatch):
     event_module = types.ModuleType("astrbot.api.event")
     event_module.MessageChain = FakeMessageChain
     component_module = types.ModuleType("astrbot.api.message_components")
     component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
     star_module = types.ModuleType("astrbot.api.star")
     star_module.StarTools = FakeStarTools
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
@@ -134,18 +160,27 @@ def test_platform_port_quotes_only_first_segment(monkeypatch):
     )
 
     async def scenario():
-        return await port.send_segments(
-            "912113397", ("第一句", "第二句"), "decision-quote", "778899"
+        return await port.send_outbound(
+            "912113397",
+            (
+                OutboundSegment(OutboundKind.TEXT, text="第一句"),
+                OutboundSegment(OutboundKind.TEXT, text="第二句"),
+            ),
+            "decision-quote",
+            "778899",
         )
 
     result = asyncio.run(scenario())
 
-    first_chain = context.calls[0][2]
-    second_chain = context.calls[1][2]
-    assert [item.id for item in first_chain.chain if isinstance(item, FakeReply)] == [
+    assert len(context.calls) == 1
+    chain = context.calls[0][2].chain
+    assert [item.id for item in chain if isinstance(item, FakeReply)] == [
         "778899"
     ]
-    assert not any(isinstance(item, FakeReply) for item in second_chain.chain)
+    assert [item.text for item in chain if isinstance(item, FakePlain)] == [
+        "第一句",
+        "第二句",
+    ]
     assert result.kind is SendReceiptKind.CONFIRMED
 
 

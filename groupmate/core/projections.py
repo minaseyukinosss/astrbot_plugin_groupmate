@@ -59,10 +59,7 @@ class StateProjector:
         messages = tuple(
             self.store.list_ledger_messages(persona_id, group_id, limit=limit)
         )
-        epoch = None
-        latest_open = getattr(self.store, "latest_open_topic_epoch", None)
-        if latest_open is not None:
-            epoch = latest_open(persona_id, group_id)
+        epoch = self.store.latest_open_topic_epoch(persona_id, group_id)
 
         if epoch:
             topic_id = str(epoch["topic_id"])
@@ -87,12 +84,9 @@ class StateProjector:
         recent_outputs = tuple(
             item.text for item in bot_deliveries if (item.text or "").strip()
         )
-        spontaneous = ()
-        list_spontaneous = getattr(self.store, "list_spontaneous_sent_at", None)
-        if list_spontaneous is not None:
-            spontaneous = tuple(
-                list_spontaneous(persona_id, group_id, now - 3600)
-            )
+        spontaneous = tuple(
+            self.store.list_spontaneous_sent_at(persona_id, group_id, now - 3600)
+        )
         last_bot = bot_deliveries[-1].timestamp if bot_deliveries else None
         return ProjectionSnapshot(
             persona_id=persona_id,
@@ -128,9 +122,10 @@ class StateProjector:
         )
         session.hydrate(snapshot.session_turns)
         rate_limiter.replace(snapshot.spontaneous_sent_at, now=snapshot.rebuilt_at)
-        hydrate_outputs = getattr(workflow, "hydrate_recent_outputs", None)
-        if hydrate_outputs is not None:
-            hydrate_outputs(snapshot.group_id, snapshot.recent_outputs)
+        workflow.hydrate_recent_outputs(
+            snapshot.group_id,
+            snapshot.recent_outputs,
+        )
         set_continuation("", 0)
         continuations = snapshot.continuations
         if not continuations and snapshot.continuation is not None:
@@ -188,34 +183,20 @@ class StateProjector:
     def _continuations(
         self, persona_id: str, group_id: str, now: int
     ) -> Tuple[ContinuationProjection, ...]:
-        list_active = getattr(self.store, "list_active_continuation_grants", None)
-        if list_active is not None:
-            rows = list_active(persona_id, group_id, now)
-            return tuple(
-                ContinuationProjection(
-                    sender_id=str(row["sender_id"]),
-                    expires_at=min(
-                        int(row["expires_at"]), int(row["absolute_deadline_at"])
-                    ),
-                    grant_id=str(row["grant_id"]),
-                    absolute_deadline_at=int(row["absolute_deadline_at"]),
-                )
-                for row in rows
-            )
-        latest = getattr(self.store, "latest_continuation_grant", None)
-        if latest is None:
-            return ()
-        row = latest(persona_id, group_id, now)
-        if not row:
-            return ()
-        expires = min(int(row["expires_at"]), int(row["absolute_deadline_at"]))
-        if expires < int(now):
-            return ()
-        return (
+        rows = self.store.list_active_continuation_grants(
+            persona_id,
+            group_id,
+            now,
+        )
+        return tuple(
             ContinuationProjection(
                 sender_id=str(row["sender_id"]),
-                expires_at=expires,
+                expires_at=min(
+                    int(row["expires_at"]),
+                    int(row["absolute_deadline_at"]),
+                ),
                 grant_id=str(row["grant_id"]),
                 absolute_deadline_at=int(row["absolute_deadline_at"]),
-            ),
+            )
+            for row in rows
         )

@@ -255,32 +255,25 @@ class MemoryWriter:
     def _arbitrate(
         self, candidate: MemoryCandidate, *, now: int, authority: int
     ) -> MemoryCandidate:
-        append = getattr(self.store, "append_memory_candidate", None)
-        decide = getattr(self.store, "decide_candidate", None)
-        accept = getattr(self.store, "accept_candidate_memory", None)
-        has_tombstone = getattr(self.store, "has_tombstone", None)
-        list_memories = getattr(self.store, "list_memories", None)
-
         hashed = candidate.claim_hash or claim_hash(candidate.claim)
-        blocked = False
-        if has_tombstone is not None:
-            blocked = bool(
-                has_tombstone(
-                    self.persona_id, candidate.group_id, candidate.subject_id, hashed
-                )
+        blocked = bool(
+            self.store.has_tombstone(
+                self.persona_id,
+                candidate.group_id,
+                candidate.subject_id,
+                hashed,
             )
-        existing = []
-        if list_memories is not None:
-            existing = list(
-                list_memories(
-                    self.persona_id,
-                    candidate.group_id,
-                    now=now,
-                    limit=50,
-                    subject_id=candidate.subject_id,
-                    status_accepted_only=True,
-                )
+        )
+        existing = list(
+            self.store.list_memories(
+                self.persona_id,
+                candidate.group_id,
+                now=now,
+                limit=50,
+                subject_id=candidate.subject_id,
+                status_accepted_only=True,
             )
+        )
         decision = self.arbiter.decide(
             candidate,
             existing=existing,
@@ -289,26 +282,14 @@ class MemoryWriter:
             authority=int(authority),
         )
         if decision.status is CandidateStatus.ACCEPTED and decision.memory is not None:
-            if accept is not None:
-                accept(
-                    self.persona_id,
-                    candidate.candidate_id,
-                    decision.memory,
-                    reason=decision.reason,
-                    decided_at=now,
-                    superseded_memory_id=decision.superseded_memory_id,
-                )
-            elif decide is not None:
-                decide(
-                    self.persona_id,
-                    candidate.candidate_id,
-                    CandidateStatus.ACCEPTED,
-                    reason=decision.reason,
-                    decided_at=now,
-                )
-                add = getattr(self.store, "add_memory", None)
-                if add is not None:
-                    add(self.persona_id, decision.memory)
+            self.store.accept_candidate_memory(
+                self.persona_id,
+                candidate.candidate_id,
+                decision.memory,
+                reason=decision.reason,
+                decided_at=now,
+                superseded_memory_id=decision.superseded_memory_id,
+            )
             return MemoryCandidate(
                 candidate_id=candidate.candidate_id,
                 group_id=candidate.group_id,
@@ -327,14 +308,13 @@ class MemoryWriter:
                 decision_reason=decision.reason,
                 claim_hash=hashed,
             )
-        if decide is not None:
-            decide(
-                self.persona_id,
-                candidate.candidate_id,
-                decision.status,
-                reason=decision.reason,
-                decided_at=now,
-            )
+        self.store.decide_candidate(
+            self.persona_id,
+            candidate.candidate_id,
+            decision.status,
+            reason=decision.reason,
+            decided_at=now,
+        )
         return MemoryCandidate(
             candidate_id=candidate.candidate_id,
             group_id=candidate.group_id,
@@ -357,11 +337,8 @@ class MemoryWriter:
     def _persist_candidate(
         self, candidate: MemoryCandidate
     ) -> Optional[MemoryCandidate]:
-        append = getattr(self.store, "append_memory_candidate", None)
-        if append is None:
-            return candidate
         # 预标 rejected 的也入库便于审计
-        return append(self.persona_id, candidate)
+        return self.store.append_memory_candidate(self.persona_id, candidate)
 
     def _candidate(
         self,

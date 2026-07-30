@@ -1,3 +1,5 @@
+import asyncio
+
 from groupmate.memory import SQLiteMemoryStore
 from groupmate.models import MemoryItem, MemoryKind
 
@@ -55,6 +57,8 @@ def test_outbox_is_idempotent_by_decision_id(tmp_path):
     assert store.enqueue_outbox("aemeath", "d1", "g", "你好", created_at=10) is True
     assert store.enqueue_outbox("aemeath", "d1", "g", "重复", created_at=11) is False
     assert store.pending_outbox("aemeath", now=12)[0]["text"] == "你好"
-    store.mark_outbox_sent("aemeath", "d1", sent_at=13)
+    assert asyncio.run(
+        store.transition_outbox_async("aemeath", "d1", "pending", "sent")
+    )
     assert store.pending_outbox("aemeath", now=14) == []
     store.close()

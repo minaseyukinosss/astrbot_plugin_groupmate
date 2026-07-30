@@ -12,10 +12,10 @@ class ReceiptPlatform:
         self.result = result
         self.calls = 0
 
-    async def send_segments(
-        self, group_id, segments, decision_id, quote_message_id=None
+    async def send_outbound(
+        self, group_id, outbound, decision_id, quote_message_id=None
     ):
-        del group_id, segments, decision_id, quote_message_id
+        del group_id, outbound, decision_id, quote_message_id
         self.calls += 1
         return self.result
 
@@ -173,7 +173,7 @@ def test_cancellation_during_send_marks_unknown(tmp_path):
         def __init__(self):
             self.started = asyncio.Event()
 
-        async def send_segments(self, *args, **kwargs):
+        async def send_outbound(self, *args, **kwargs):
             del args, kwargs
             self.started.set()
             await asyncio.Event().wait()
@@ -195,7 +195,7 @@ def test_cancellation_during_send_marks_unknown(tmp_path):
 
 def test_definite_platform_error_marks_failed(tmp_path):
     class FailedPlatform:
-        async def send_segments(self, *args, **kwargs):
+        async def send_outbound(self, *args, **kwargs):
             del args, kwargs
             raise ValueError("rejected")
 
@@ -214,7 +214,7 @@ def test_definite_platform_error_marks_failed(tmp_path):
 
 def test_platform_timeout_marks_unknown(tmp_path):
     class TimeoutPlatform:
-        async def send_segments(self, *args, **kwargs):
+        async def send_outbound(self, *args, **kwargs):
             del args, kwargs
             raise asyncio.TimeoutError()
 

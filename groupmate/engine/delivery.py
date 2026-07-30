@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import re
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
@@ -230,9 +229,15 @@ class DeliveryService:
                 False,
                 "send_error:" + exc.__class__.__name__,
             )
-        result = self._normalize_result(
-            result, len(plan.outbound) if plan.outbound else len(plan.segments)
-        )
+        if not isinstance(result, SendResult):
+            await self._transition(
+                plan.decision_id,
+                OutboxStatus.SENDING,
+                OutboxStatus.FAILED,
+                failure_code="invalid_platform_result",
+                failure_detail=type(result).__name__,
+            )
+            return WorkflowOutcome(plan.decision_id, False, "send_failed")
         if result.kind is SendReceiptKind.FAILED:
             await self._transition(
                 plan.decision_id,
@@ -297,70 +302,20 @@ class DeliveryService:
         return WorkflowOutcome(plan.decision_id, True, sent_reason, text)
 
     async def _send(self, plan: DeliveryPlan):
-        if plan.outbound:
-            rich_sender = getattr(self.platform, "send_outbound", None)
-            if rich_sender is not None:
-                return await rich_sender(
-                    plan.group_id,
-                    plan.outbound,
-                    plan.decision_id,
-                    plan.quote_message_id,
-                )
-            if any(
-                item.kind is OutboundKind.IMAGE for item in plan.outbound
-            ):
-                return SendResult.failed("rich_media_unsupported")
-            text_segments = tuple(
-                item.text
-                for item in plan.outbound
-                if item.kind is OutboundKind.TEXT
-            )
-        else:
-            text_segments = plan.segments
-        sender = getattr(self.platform, "send_segments", None)
-        if sender is not None:
-            return await sender(
-                plan.group_id,
-                text_segments,
-                plan.decision_id,
-                plan.quote_message_id,
-            )
-        results = []
-        for segment in text_segments:
-            results.append(
-                await self.platform.send_text(
-                    plan.group_id, segment, plan.decision_id
-                )
-            )
-        if all(
-            self._normalize_result(item, 1).kind is SendReceiptKind.CONFIRMED
-            for item in results
-        ):
-            return SendResult.confirmed(len(results))
-        return SendResult.unknown("partial_or_missing_receipt")
+        outbound = plan.outbound or tuple(
+            OutboundSegment(OutboundKind.TEXT, text=segment)
+            for segment in plan.segments
+        )
+        return await self.platform.send_outbound(
+            plan.group_id,
+            outbound,
+            plan.decision_id,
+            plan.quote_message_id,
+        )
 
     async def _enqueue(self, plan: DeliveryPlan, text: str, kind: str) -> bool:
-        method = getattr(self.memory, "enqueue_outbox_async", None)
-        if method is not None:
-            return bool(
-                await method(
-                    self.persona_id,
-                    plan.decision_id,
-                    plan.group_id,
-                    text,
-                    self.clock.now(),
-                    plan.expires_at,
-                    quote_message_id=plan.quote_message_id,
-                    segments=plan.segments,
-                    outbound=plan.outbound,
-                    kind=kind,
-                )
-            )
-        method = getattr(self.memory, "enqueue_outbox", None)
-        if method is None:
-            return True
-        try:
-            value = method(
+        return bool(
+            await self.memory.enqueue_outbox_async(
                 self.persona_id,
                 plan.decision_id,
                 plan.group_id,
@@ -372,16 +327,7 @@ class DeliveryService:
                 outbound=plan.outbound,
                 kind=kind,
             )
-        except TypeError:
-            value = method(
-                self.persona_id,
-                plan.decision_id,
-                plan.group_id,
-                text,
-                self.clock.now(),
-                plan.expires_at,
-            )
-        return bool(await value) if inspect.isawaitable(value) else bool(value)
+        )
 
     @staticmethod
     def _text_for_plan(plan: DeliveryPlan) -> str:
@@ -394,80 +340,23 @@ class DeliveryService:
         return "\n".join(plan.segments)
 
     async def _transition(self, decision_id, expected, status, **kwargs) -> bool:
-        method = getattr(self.memory, "transition_outbox_async", None)
-        if method is not None:
-            return bool(
-                await method(
-                    self.persona_id,
-                    decision_id,
-                    expected.value,
-                    status.value,
-                    **kwargs,
-                )
+        return bool(
+            await self.memory.transition_outbox_async(
+                self.persona_id,
+                decision_id,
+                expected.value,
+                status.value,
+                **kwargs,
             )
-        row = getattr(self.memory, "outbox", {}).get(decision_id)
-        if row is None:
-            return True
-        current = row.get("status", "pending")
-        if current != expected.value:
-            return False
-        row["status"] = status.value
-        if kwargs.get("increment_attempt"):
-            row["attempt"] = int(row.get("attempt", 0)) + 1
-        row["failure_code"] = kwargs.get("failure_code", "")
-        return True
+        )
 
     async def _finalize(self, decision_id, sent_at, bot_message, reason) -> bool:
-        method = getattr(self.memory, "finalize_delivery_async", None)
-        if method is not None:
-            return bool(
-                await method(
-                    self.persona_id, decision_id, sent_at, bot_message, reason
-                )
-            )
-        mark = getattr(self.memory, "mark_outbox_sent", None)
-        if mark is not None:
-            value = mark(self.persona_id, decision_id, sent_at)
-            if inspect.isawaitable(value):
-                await value
-        save = getattr(self.memory, "save_message", None)
-        if save is not None:
-            value = save(self.persona_id, bot_message)
-            if inspect.isawaitable(value):
-                await value
-        record = getattr(self.memory, "record_transition", None)
-        if record is not None:
-            value = record(
+        return bool(
+            await self.memory.finalize_delivery_async(
                 self.persona_id,
                 decision_id,
-                bot_message.group_id,
-                "SEND",
-                reason,
                 sent_at,
-            )
-            if inspect.isawaitable(value):
-                await value
-            value = record(
-                self.persona_id,
-                decision_id,
-                bot_message.group_id,
-                "END",
+                bot_message,
                 reason,
-                sent_at,
             )
-            if inspect.isawaitable(value):
-                await value
-        return True
-
-    @staticmethod
-    def _normalize_result(result, count: int) -> SendResult:
-        # Temporary adapter for N-1 PlatformPort implementations.
-        if result is None:
-            return SendResult.confirmed(count)
-        if isinstance(result, SendResult):
-            return result
-        if result is True:
-            return SendResult.confirmed(count)
-        if result is False:
-            return SendResult.failed("platform_rejected")
-        return SendResult.unknown("unrecognized_receipt")
+        )

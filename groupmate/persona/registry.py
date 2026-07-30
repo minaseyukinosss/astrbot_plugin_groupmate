@@ -45,7 +45,12 @@ class PersonaContext:
 class PersonaRegistry:
     """Resolve explicit persona IDs without cross-persona fallback."""
 
-    def __init__(self, definitions: Sequence[PersonaDefinition]) -> None:
+    def __init__(
+        self,
+        definitions: Sequence[PersonaDefinition],
+        *,
+        current_persona_id: str,
+    ) -> None:
         registry: Dict[str, PersonaDefinition] = {}
         for definition in definitions:
             persona_id = str(definition.persona_id or "").strip()
@@ -55,6 +60,14 @@ class PersonaRegistry:
                 raise ValueError(f"duplicate persona_id: {persona_id}")
             registry[persona_id] = definition
         self._definitions = registry
+        normalized_current = str(current_persona_id or "").strip()
+        if normalized_current not in registry:
+            raise ValueError(f"unknown current persona_id: {normalized_current}")
+        self._current_persona_id = normalized_current
+
+    @property
+    def current_persona_id(self) -> str:
+        return self._current_persona_id
 
     def resolve(
         self,
@@ -92,7 +105,8 @@ _DEFAULT_REGISTRY = PersonaRegistry(
                 relationships=relationships
             ),
         ),
-    )
+    ),
+    current_persona_id="aemeath",
 )
 
 

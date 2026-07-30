@@ -93,6 +93,10 @@ class ContextAssembly:
     def set_relationships(self, relationships: Sequence[RelationshipEntry]) -> None:
         self._relationships = relationship_map(tuple(relationships))
 
+    @property
+    def relationships(self) -> Dict[str, Tuple[str, str]]:
+        return dict(self._relationships)
+
     def identity_text(self) -> str:
         if self._identity_cache is None:
             path = self.pack_dir / "persona.md"

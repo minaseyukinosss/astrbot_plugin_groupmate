@@ -353,24 +353,17 @@ class CognitiveWorkflow:
                 )
             )
             include_user_in_group = True
-        search_kwargs = {
-            "persona_id": self.persona_context.persona_id,
-            "group_id": topic.group_id,
-            "query": query,
-            "now": now,
-            "limit": 8,
-            "include_user_in_group": include_user_in_group,
-        }
-        try:
-            memories = list(
-                self.memory.search_memories(subject_ids=subject_ids, **search_kwargs)
+        memories = list(
+            self.memory.search_memories(
+                self.persona_context.persona_id,
+                topic.group_id,
+                query,
+                now,
+                8,
+                subject_ids=subject_ids,
+                include_user_in_group=include_user_in_group,
             )
-        except TypeError:
-            try:
-                memories = list(self.memory.search_memories(**search_kwargs))
-            except TypeError:
-                search_kwargs.pop("include_user_in_group", None)
-                memories = list(self.memory.search_memories(**search_kwargs))
+        )
         self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
 
         capability_result = None
@@ -407,7 +400,6 @@ class CognitiveWorkflow:
             )
         )
         session = self.session_for(topic.group_id)
-        assemble = getattr(self.persona, "assemble", None)
         assemble_kwargs = {
             "contribution": contribution or decision.contribution,
             "soft_trigger": soft_trigger,
@@ -421,37 +413,9 @@ class CognitiveWorkflow:
             capability_facts=capability_facts,
             capability_status=capability_status,
         )
-        if assemble is not None:
-            try:
-                assembled = assemble(topic, memories, **assemble_kwargs)
-            except TypeError:
-                assembled = assemble(
-                    topic,
-                    memories,
-                    contribution=decision.contribution,
-                    soft_trigger=soft_trigger,
-                    session=session,
-                    relationship_state=relationship_state,
-                )
-            persona_prompt = assembled.system
-            user_prompt = assembled.user
-        else:
-            persona_prompt = await self.persona.system_prompt(topic.group_id)
-            build_user = self.persona.build_user_context
-            try:
-                user_prompt = build_user(topic, memories, **assemble_kwargs)
-            except TypeError:
-                try:
-                    user_prompt = build_user(
-                        topic,
-                        memories,
-                        contribution=decision.contribution,
-                        soft_trigger=soft_trigger,
-                        session=session,
-                        relationship_state=relationship_state,
-                    )
-                except TypeError:
-                    user_prompt = build_user(topic, memories)
+        assembled = self.persona.assemble(topic, memories, **assemble_kwargs)
+        persona_prompt = assembled.system
+        user_prompt = assembled.user
 
         plan = ReplyPlan(
             decision_id=decision_id,
@@ -667,20 +631,9 @@ class CognitiveWorkflow:
             )
         if value is None:
             return TaskResolution(), "resolver_none"
-        if isinstance(value, TaskResolution):
-            resolution = value
-        elif self._is_legacy_task_resolution(value):
-            supported, required_information = value
-            resolution = TaskResolution(
-                status=(
-                    TaskResolutionStatus.SUPPORTED
-                    if supported
-                    else TaskResolutionStatus.UNSUPPORTED
-                ),
-                required_information=required_information,
-            )
-        else:
+        if not isinstance(value, TaskResolution):
             return TaskResolution(), "resolver_invalid"
+        resolution = value
         if resolution.required_information:
             reason = "needs_information"
         elif resolution.status is TaskResolutionStatus.SUPPORTED:
@@ -692,17 +645,6 @@ class CognitiveWorkflow:
         if resolution.capability_name:
             reason += ":" + resolution.capability_name
         return resolution, reason
-
-    @staticmethod
-    def _is_legacy_task_resolution(value: object) -> bool:
-        if not isinstance(value, tuple) or len(value) != 2:
-            return False
-        supported, required_information = value
-        return (
-            isinstance(supported, bool)
-            and isinstance(required_information, Sequence)
-            and not isinstance(required_information, (str, bytes))
-        )
 
     @staticmethod
     def _capability_name(
@@ -813,35 +755,21 @@ class CognitiveWorkflow:
         *,
         ignore_recent: bool = False,
     ):
-        validate = self.output_guard.validate
         recent = () if ignore_recent else tuple(self._recent_outputs[group_id])
-        try:
-            return validate(
-                text,
-                recent_outputs=recent,
-                reply_mode=reply_mode,
-                response_act=response_act.act if response_act is not None else None,
-                capability_status=capability_status,
-            )
-        except TypeError:
-            try:
-                return validate(
-                    text,
-                    recent_outputs=recent,
-                    reply_mode=reply_mode,
-                )
-            except TypeError:
-                return validate(text, recent_outputs=recent)
+        return self.output_guard.validate(
+            text,
+            recent_outputs=recent,
+            reply_mode=reply_mode,
+            response_act=response_act.act if response_act is not None else None,
+            capability_status=capability_status,
+        )
 
     def _resolve_targeting(
         self,
         topic: TopicSnapshot,
         trigger: TriggerKind,
     ) -> TargetingDecision:
-        relationships = {}
-        assembly = getattr(self.persona, "assembly", None)
-        if assembly is not None:
-            relationships = getattr(assembly, "_relationships", {}) or {}
+        relationships = self.persona.assembly.relationships
         return self.addressee_resolver.resolve(
             topic,
             trigger,
@@ -904,10 +832,7 @@ class CognitiveWorkflow:
         user_id = self._social_user_id(targeting)
         if not user_id:
             return None
-        get_state = getattr(self.memory, "get_relationship_state", None)
-        if get_state is None:
-            return None
-        return get_state(
+        return self.memory.get_relationship_state(
             self.persona_context.persona_id,
             topic.group_id,
             user_id,
@@ -1033,13 +958,11 @@ class CognitiveWorkflow:
         if sink is not None:
             sink.record(decision_id, group_id, state, reason, timestamp)
             return
-        record = getattr(self.memory, "record_transition", None)
-        if record:
-            record(
-                self.persona_context.persona_id,
-                decision_id,
-                group_id,
-                state,
-                reason,
-                timestamp,
-            )
+        self.memory.record_transition(
+            self.persona_context.persona_id,
+            decision_id,
+            group_id,
+            state,
+            reason,
+            timestamp,
+        )

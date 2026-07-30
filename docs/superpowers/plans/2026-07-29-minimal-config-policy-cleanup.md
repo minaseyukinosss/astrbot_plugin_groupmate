@@ -14,7 +14,7 @@
 
 **Delivered By:** `238bdde`（严格六项配置）, `16c7968`（显式 Aemeath PersonaRegistry）, and `181bf14`（策略、运行时、评测、文档与残留清理）.
 
-**Completion Evidence:** `pytest` 601 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; production residual scans and `git diff --check` passed.
+**Completion Evidence:** `pytest` 602 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; runtime residual cleanup scan, host pause, Phase 2 projection, production residual scans, and `git diff --check` passed.
 
 **Execution Order:** Complete this plan before `docs/superpowers/plans/2026-07-29-persona-scoped-state-v11.md`.
 

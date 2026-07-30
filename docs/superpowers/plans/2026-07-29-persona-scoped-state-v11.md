@@ -14,7 +14,7 @@
 
 **Delivered By:** `181bf14`（schema v11、全链路人格隔离、真实 shadow 回归与恢复文档）.
 
-**Completion Evidence:** `pytest` 601 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; real export shadow processed 11,304 records with zero safety violations and no reply/silence regression; `git diff --check` passed.
+**Completion Evidence:** `pytest` 602 passed; deterministic baseline 120/120 passed; Phase 2 behavior evaluation 10/10 passed; runtime residual cleanup scan, host pause, Phase 2 projection, real export shadow processed 11,304 records with zero safety violations and no reply/silence regression; `git diff --check` passed.
 
 **Prerequisite:** `docs/superpowers/plans/2026-07-29-minimal-config-policy-cleanup.md` is complete and all tests pass.
 

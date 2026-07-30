@@ -16,6 +16,8 @@ class FakeMemoryRepository:
         self.relationship_state = {}
         self._message_personas = set()
         self._social_event_personas = {}
+        self._topic_epochs = {}
+        self.continuation_grants = []
 
     def save_message(self, persona_id, message):
         key = (str(persona_id), message.identity)
@@ -24,6 +26,12 @@ class FakeMemoryRepository:
         self._message_personas.add(key)
         self.messages.append(message)
         return True
+
+    async def save_message_async(self, persona_id, message):
+        return self.save_message(persona_id, message)
+
+    async def flush_async(self):
+        return None
 
     def search_memories(
         self,
@@ -42,6 +50,104 @@ class FakeMemoryRepository:
     def add_memory(self, persona_id, memory):
         del persona_id
         self.memories.append(memory)
+
+    def list_memories(
+        self,
+        persona_id,
+        group_id,
+        *,
+        now,
+        limit=20,
+        subject_id=None,
+        status_accepted_only=True,
+        **kwargs,
+    ):
+        del persona_id, now, status_accepted_only, kwargs
+        items = [
+            item
+            for item in self.memories
+            if item.group_id == str(group_id)
+            and (subject_id is None or item.subject_id == str(subject_id))
+        ]
+        return items[:limit]
+
+    def append_memory_candidate(self, persona_id, candidate):
+        del persona_id
+        return candidate
+
+    def decide_candidate(
+        self,
+        persona_id,
+        candidate_id,
+        status,
+        *,
+        reason="",
+        decided_at,
+    ):
+        del persona_id, candidate_id, status, reason, decided_at
+
+    def accept_candidate_memory(
+        self,
+        persona_id,
+        candidate_id,
+        memory,
+        *,
+        reason,
+        decided_at,
+        superseded_memory_id=None,
+    ):
+        del candidate_id, reason, decided_at, superseded_memory_id
+        self.add_memory(persona_id, memory)
+
+    def has_tombstone(
+        self,
+        persona_id,
+        group_id,
+        subject_id,
+        claim_hash_value,
+    ):
+        del persona_id, group_id, subject_id, claim_hash_value
+        return False
+
+    def latest_open_topic_epoch(self, persona_id, group_id):
+        return self._topic_epochs.get((str(persona_id), str(group_id)))
+
+    async def open_topic_epoch_async(
+        self,
+        persona_id,
+        group_id,
+        topic_id,
+        opened_at,
+        last_message_id=None,
+        close_existing_reason="HARD_WAKE",
+    ):
+        del close_existing_reason
+        self._topic_epochs[(str(persona_id), str(group_id))] = {
+            "topic_id": str(topic_id),
+            "opened_at": int(opened_at),
+            "last_message_id": last_message_id,
+        }
+        return True
+
+    async def close_topic_epoch_async(
+        self,
+        persona_id,
+        group_id,
+        topic_id,
+        closed_at,
+        close_reason,
+        last_message_id=None,
+    ):
+        del closed_at, close_reason, last_message_id
+        key = (str(persona_id), str(group_id))
+        current = self._topic_epochs.get(key)
+        if current and current["topic_id"] == str(topic_id):
+            self._topic_epochs.pop(key, None)
+        return True
+
+    async def grant_continuation_async(self, **kwargs):
+        self.continuation_grants.append(dict(kwargs))
+        return True
 
     def record_transition(
         self, persona_id, decision_id, group_id, state, reason, timestamp
@@ -63,10 +169,78 @@ class FakeMemoryRepository:
         }
         return True
 
-    def mark_outbox_sent(self, persona_id, decision_id, sent_at):
-        del persona_id
-        self.outbox[decision_id]["sent_at"] = sent_at
-        self.outbox[decision_id]["status"] = "sent"
+    async def enqueue_outbox_async(
+        self,
+        persona_id,
+        decision_id,
+        group_id,
+        text,
+        created_at,
+        expires_at=None,
+        **kwargs,
+    ):
+        return self.enqueue_outbox(
+            persona_id,
+            decision_id,
+            group_id,
+            text,
+            created_at,
+            expires_at,
+            **kwargs,
+        )
+
+    async def transition_outbox_async(
+        self,
+        persona_id,
+        decision_id,
+        expected,
+        status,
+        *,
+        failure_code="",
+        failure_detail="",
+        increment_attempt=False,
+    ):
+        del persona_id, failure_detail
+        row = self.outbox.get(decision_id)
+        if row is None or row.get("status") != expected:
+            return False
+        row["status"] = status
+        if increment_attempt:
+            row["attempt"] = int(row.get("attempt", 0)) + 1
+        row["failure_code"] = failure_code
+        return True
+
+    async def finalize_delivery_async(
+        self,
+        persona_id,
+        decision_id,
+        sent_at,
+        bot_message,
+        reason="sent",
+    ):
+        row = self.outbox.get(decision_id)
+        if row is None or row.get("status") != "sending":
+            return False
+        self.save_message(persona_id, bot_message)
+        row["sent_at"] = sent_at
+        row["status"] = "sent"
+        self.record_transition(
+            persona_id,
+            decision_id,
+            bot_message.group_id,
+            "SEND",
+            reason,
+            sent_at,
+        )
+        self.record_transition(
+            persona_id,
+            decision_id,
+            bot_message.group_id,
+            "END",
+            reason,
+            sent_at,
+        )
+        return True
 
     def append_social_event(self, persona_id, event):
         key = (
@@ -190,34 +364,46 @@ class FakePlatform:
     def __init__(self):
         self.sent = []
 
-    async def send_text(self, group_id, text, decision_id):
-        self.sent.append(
-            {"group_id": group_id, "text": text, "decision_id": decision_id}
-        )
-        from groupmate.models import SendResult
-
-        return SendResult.confirmed()
-
-    async def send_segments(
-        self, group_id, segments, decision_id, quote_message_id=None
+    async def send_outbound(
+        self, group_id, outbound, decision_id, quote_message_id=None
     ):
-        for index, segment in enumerate(segments):
-            await self.send_text(group_id, segment, decision_id)
-            self.sent[-1]["quote_message_id"] = (
-                quote_message_id if index == 0 else None
-            )
-        from groupmate.models import SendResult
+        from groupmate.models import OutboundKind, SendResult
 
-        return SendResult.confirmed(len(segments))
+        for index, segment in enumerate(outbound):
+            if segment.kind is not OutboundKind.TEXT:
+                continue
+            self.sent.append(
+                {
+                    "group_id": group_id,
+                    "text": segment.text,
+                    "decision_id": decision_id,
+                    "quote_message_id": quote_message_id if index == 0 else None,
+                }
+            )
+        return SendResult.confirmed(len(outbound))
 
 
 class StaticPersona:
+    class _Assembly:
+        relationships = {}
+
+    assembly = _Assembly()
+
     async def system_prompt(self, group_id):
         return "你是爱弥斯。"
 
     def build_user_context(self, topic, memories, **kwargs):
         del kwargs
         return "<group_context>test</group_context>"
+
+    def assemble(self, topic, memories, **kwargs):
+        from groupmate.core.context_assembly import AssembledPrompt
+
+        return AssembledPrompt(
+            system="你是爱弥斯。",
+            user=self.build_user_context(topic, memories, **kwargs),
+            soft_trigger=bool(kwargs.get("soft_trigger")),
+        )
 
 
 def persona_context(
@@ -256,6 +442,8 @@ class RecordingWorkflow:
         self.evaluations = []
         self.sent = sent
         self.text = text
+        self.memory = FakeMemoryRepository()
+        self.character_name = "爱弥斯"
 
     async def evaluate(self, topic, trigger, policy, trigger_alias=""):
         del trigger_alias

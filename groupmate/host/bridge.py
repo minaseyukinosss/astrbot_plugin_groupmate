@@ -56,10 +56,12 @@ class AstrBotBridge:
         self._bootstrapped = set()
         self._bootstrap_locks: Dict[tuple, asyncio.Lock] = {}
         self._paused = False
-        self.persona_context = default_persona_registry().resolve(
-            "aemeath",
-            aliases=settings.aliases_for("aemeath"),
-            relationships=settings.relationships_for("aemeath"),
+        persona_registry = default_persona_registry()
+        persona_id = persona_registry.current_persona_id
+        self.persona_context = persona_registry.resolve(
+            persona_id,
+            aliases=settings.aliases_for(persona_id),
+            relationships=settings.relationships_for(persona_id),
         )
         self.behavior = BehaviorPolicy()
         self.runtime = GroupRuntimeManager(
@@ -236,9 +238,8 @@ class AstrBotBridge:
         now = int(time.time())
         topic = actor.window.snapshot()
         last_id = topic.latest.message_id if topic.latest else None
-        close = getattr(self.memory, "close_topic_epoch_async", None)
-        if close is not None and topic.topic_id:
-            await close(
+        if topic.topic_id:
+            await self.memory.close_topic_epoch_async(
                 self.persona_context.persona_id,
                 group_id,
                 topic.topic_id,
@@ -247,15 +248,13 @@ class AstrBotBridge:
                 last_id,
             )
         new_id = actor.window.reset_topic()
-        open_epoch = getattr(self.memory, "open_topic_epoch_async", None)
-        if open_epoch is not None:
-            await open_epoch(
-                self.persona_context.persona_id,
-                group_id,
-                new_id,
-                now,
-                last_id,
-            )
+        await self.memory.open_topic_epoch_async(
+            self.persona_context.persona_id,
+            group_id,
+            new_id,
+            now,
+            last_id,
+        )
         actor.set_dispatch_enabled(was_dispatch and not self.paused)
 
     def _message_from_event(self, event: Any) -> ChatMessage:

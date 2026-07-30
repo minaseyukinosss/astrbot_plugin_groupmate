@@ -94,7 +94,13 @@ def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
         created_at=now - 5,
         kind="candidate",
     )
-    store.mark_outbox_sent("aemeath", "cand-1", sent_at=now - 5)
+    store._write(
+        lambda db: db.execute(
+            "UPDATE outbox SET status='sent', sent_at=? "
+            "WHERE persona_id=? AND decision_id=?",
+            (now - 5, "aemeath", "cand-1"),
+        )
+    )
 
     projector = StateProjector(store)
     snapshot = projector.rebuild(
@@ -173,6 +179,9 @@ def test_projection_does_not_restore_decorative_media_ids(tmp_path):
     )
 
     class WorkflowStub:
+        def hydrate_recent_outputs(self, group_id, outputs):
+            del group_id, outputs
+
         def hydrate_recent_media_ids(self, group_id, media_ids):
             raise AssertionError("decorative media state must not be hydrated")
 
@@ -300,7 +309,11 @@ def test_rebuild_restores_active_continuations_for_each_sender(tmp_path):
         window=TopicWindow("g1"),
         session=GroupSession("g1"),
         rate_limiter=SlidingWindowRateLimiter(6, 0),
-        workflow=type("Workflow", (), {})(),
+        workflow=type(
+            "Workflow",
+            (),
+            {"hydrate_recent_outputs": lambda self, group_id, outputs: None},
+        )(),
         set_continuation=set_continuation,
     )
     store.close()

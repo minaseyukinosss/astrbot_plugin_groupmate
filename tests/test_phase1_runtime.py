@@ -19,6 +19,22 @@ class AsyncMemory:
     async def flush_async(self):
         return None
 
+    def latest_open_topic_epoch(self, persona_id, group_id):
+        del persona_id, group_id
+        return None
+
+    async def open_topic_epoch_async(self, *args, **kwargs):
+        del args, kwargs
+        return True
+
+    async def close_topic_epoch_async(self, *args, **kwargs):
+        del args, kwargs
+        return True
+
+    async def grant_continuation_async(self, **kwargs):
+        del kwargs
+        return True
+
 
 class BlockingWorkflow:
     def __init__(self):
@@ -27,6 +43,7 @@ class BlockingWorkflow:
         self.release = asyncio.Event()
         self.cancelled = 0
         self.triggers = []
+        self.character_name = "爱弥斯"
 
     async def evaluate(self, topic, trigger, policy, **kwargs):
         del topic, policy, kwargs

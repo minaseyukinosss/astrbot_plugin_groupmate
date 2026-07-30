@@ -265,9 +265,9 @@ def test_task_request_clarifies_when_resolver_reports_missing_information(
     generator = RecordingGenerationModel()
     workflow = build_workflow(
         generator=generator,
-        task_response_resolver=lambda scene, message: (
-            True,
-            ("待翻译文本",),
+        task_response_resolver=lambda scene, message: _resolution(
+            "SUPPORTED",
+            required_information=("待翻译文本",),
         ),
     )
 
@@ -292,7 +292,7 @@ def test_task_request_hands_off_when_resolver_reports_supported(
     generator = RecordingGenerationModel()
     workflow = build_workflow(
         generator=generator,
-        task_response_resolver=lambda scene, message: (True, ()),
+        task_response_resolver=lambda scene, message: _resolution("SUPPORTED"),
     )
 
     outcome = asyncio.run(

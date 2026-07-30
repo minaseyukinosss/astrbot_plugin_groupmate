@@ -135,9 +135,7 @@ class GroupActor:
             ) or any(not task.done() for task in self._evaluation_tasks):
                 continue
             break
-        flush = getattr(getattr(self.workflow, "memory", None), "flush_async", None)
-        if flush is not None:
-            await flush()
+        await self.workflow.memory.flush_async()
 
     async def close(self) -> None:
         if self._closed:
@@ -201,14 +199,10 @@ class GroupActor:
         message = item.message
         appended = self.window.append(message)
         if appended:
-            memory = getattr(self.workflow, "memory", None)
-            save_async = getattr(memory, "save_message_async", None)
-            if save_async is not None:
-                await save_async(self.persona_context.persona_id, message)
-            else:
-                save = getattr(memory, "save_message", None)
-                if save:
-                    save(self.persona_context.persona_id, message)
+            await self.workflow.memory.save_message_async(
+                self.persona_context.persona_id,
+                message,
+            )
         if not item.schedule or not self._dispatch_enabled:
             return
 
@@ -450,42 +444,24 @@ class GroupActor:
         granted_at = int(latest.timestamp)
         expires_at = granted_at + seconds
         self._continuations[latest.sender_id] = expires_at
-        memory = getattr(self.workflow, "memory", None)
-        grant = getattr(memory, "grant_continuation_async", None)
-        if grant is not None:
-            await grant(
-                persona_id=self.persona_context.persona_id,
-                grant_id=uuid4().hex,
-                group_id=self.group_id,
-                sender_id=latest.sender_id,
-                opened_by_decision_id=outcome.decision_id,
-                opened_by_message_id=latest.message_id,
-                trigger_kind=trigger.name,
-                granted_at=granted_at,
-                expires_at=expires_at,
-                max_total_seconds=seconds,
-            )
-        else:
-            grant_sync = getattr(memory, "grant_continuation", None)
-            if grant_sync is not None:
-                grant_sync(
-                    persona_id=self.persona_context.persona_id,
-                    grant_id=uuid4().hex,
-                    group_id=self.group_id,
-                    sender_id=latest.sender_id,
-                    opened_by_decision_id=outcome.decision_id,
-                    opened_by_message_id=latest.message_id,
-                    trigger_kind=trigger.name,
-                    granted_at=granted_at,
-                    expires_at=expires_at,
-                    max_total_seconds=seconds,
-                )
+        await self.workflow.memory.grant_continuation_async(
+            persona_id=self.persona_context.persona_id,
+            grant_id=uuid4().hex,
+            group_id=self.group_id,
+            sender_id=latest.sender_id,
+            opened_by_decision_id=outcome.decision_id,
+            opened_by_message_id=latest.message_id,
+            trigger_kind=trigger.name,
+            granted_at=granted_at,
+            expires_at=expires_at,
+            max_total_seconds=seconds,
+        )
 
     def _append_bot_projection(self, outcome: WorkflowOutcome) -> None:
         topic = self.window.snapshot()
         latest = topic.latest
         stamp = int(latest.timestamp) + 1 if latest else 0
-        character = getattr(self.workflow, "character_name", "爱弥斯")
+        character = self.workflow.character_name
         bot_message = ChatMessage(
             message_id="bot-" + outcome.decision_id,
             group_id=self.group_id,
@@ -534,73 +510,44 @@ class GroupActor:
         return replace(message, origin=origin, ingested_at=ingested_at)
 
     async def _rotate_topic_epoch(self, close_reason: str) -> None:
-        memory = getattr(self.workflow, "memory", None)
         topic = self.window.snapshot()
         now = int(time.time())
         last_id = topic.latest.message_id if topic.latest else None
-        close = getattr(memory, "close_topic_epoch_async", None)
-        if close is not None:
-            await close(
-                self.persona_context.persona_id,
-                self.group_id,
-                topic.topic_id,
-                now,
-                close_reason,
-                last_id,
-            )
-        else:
-            close_sync = getattr(memory, "close_topic_epoch", None)
-            if close_sync is not None:
-                close_sync(
-                    self.persona_context.persona_id,
-                    self.group_id,
-                    topic.topic_id,
-                    now,
-                    close_reason,
-                    last_id,
-                )
+        await self.workflow.memory.close_topic_epoch_async(
+            self.persona_context.persona_id,
+            self.group_id,
+            topic.topic_id,
+            now,
+            close_reason,
+            last_id,
+        )
         new_topic_id = self.window.reset_topic()
-        open_epoch = getattr(memory, "open_topic_epoch_async", None)
-        if open_epoch is not None:
-            await open_epoch(
-                self.persona_context.persona_id,
-                self.group_id,
-                new_topic_id,
-                now,
-                last_id,
-                close_existing_reason=close_reason,
-            )
-        else:
-            open_sync = getattr(memory, "open_topic_epoch", None)
-            if open_sync is not None:
-                open_sync(
-                    self.persona_context.persona_id,
-                    self.group_id,
-                    new_topic_id,
-                    now,
-                    last_id,
-                )
+        await self.workflow.memory.open_topic_epoch_async(
+            self.persona_context.persona_id,
+            self.group_id,
+            new_topic_id,
+            now,
+            last_id,
+            close_existing_reason=close_reason,
+        )
 
     async def _close_open_epoch(self, close_reason: str) -> None:
-        memory = getattr(self.workflow, "memory", None)
-        latest_open = getattr(memory, "latest_open_topic_epoch", None)
-        if latest_open is None:
-            return
-        epoch = latest_open(self.persona_context.persona_id, self.group_id)
+        epoch = self.workflow.memory.latest_open_topic_epoch(
+            self.persona_context.persona_id,
+            self.group_id,
+        )
         if not epoch:
             return
         topic = self.window.snapshot()
         last_id = topic.latest.message_id if topic.latest else epoch.get("last_message_id")
-        close = getattr(memory, "close_topic_epoch_async", None)
-        if close is not None:
-            await close(
-                self.persona_context.persona_id,
-                self.group_id,
-                epoch["topic_id"],
-                int(time.time()),
-                close_reason,
-                last_id,
-            )
+        await self.workflow.memory.close_topic_epoch_async(
+            self.persona_context.persona_id,
+            self.group_id,
+            epoch["topic_id"],
+            int(time.time()),
+            close_reason,
+            last_id,
+        )
 
     def _cancel_debounce(self) -> None:
         if self._debounce_task is not None and not self._debounce_task.done():

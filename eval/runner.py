@@ -71,8 +71,9 @@ async def run_scenario(
 ) -> EvaluationResult:
     topic = scenario.topic_snapshot()
     behavior = scenario.behavior_policy()
-    persona = default_persona_registry().resolve(
-        "aemeath",
+    persona_registry = default_persona_registry()
+    persona = persona_registry.resolve(
+        persona_registry.current_persona_id,
         aliases=("爱弥斯", "小爱", "飞行雪绒"),
         relationships=(),
     )

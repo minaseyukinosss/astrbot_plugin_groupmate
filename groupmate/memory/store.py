@@ -1001,18 +1001,6 @@ class SQLiteMemoryStore:
         ).fetchone()
         return dict(row) if row else None
 
-    def mark_outbox_sent(
-        self, persona_id: str, decision_id: str, sent_at: int
-    ) -> None:
-        persona_id = _require_persona_id(persona_id)
-        self._write(
-            lambda db: db.execute(
-                "UPDATE outbox SET sent_at = ?, status='sent' "
-                "WHERE persona_id = ? AND decision_id = ?",
-                (int(sent_at), persona_id, decision_id),
-            )
-        )
-
     async def transition_outbox_async(
         self,
         persona_id: str,

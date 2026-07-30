@@ -152,8 +152,9 @@ def main(argv=None) -> int:
         label_reviews = collect_label_reviews(examples, labels)
         all_reviews = _dedupe_reviews(extraction_reviews + label_reviews)
 
-        persona = default_persona_registry().resolve(
-            "aemeath",
+        persona_registry = default_persona_registry()
+        persona = persona_registry.resolve(
+            persona_registry.current_persona_id,
             aliases=(args.current_alias,),
             relationships=(),
         )
