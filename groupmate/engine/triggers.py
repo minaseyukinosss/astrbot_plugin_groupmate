@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Sequence
 
-from ..models import ChatMessage, GroupPolicy, TriggerKind
+from ..models import ChatMessage, TriggerKind
 
 
 @dataclass(frozen=True)
@@ -32,8 +33,8 @@ class TriggerRouter:
 
     _SUMMON_RE_TEMPLATE = r"(?:叫|喊|问问){alias}"
 
-    def __init__(self, policy: GroupPolicy) -> None:
-        self.policy = policy
+    def __init__(self, aliases: Sequence[str]) -> None:
+        self.aliases = tuple(str(alias).strip() for alias in aliases if str(alias).strip())
 
     def classify(self, message: ChatMessage) -> TriggerResult:
         if message.is_bot or not message.has_content:
@@ -47,7 +48,7 @@ class TriggerRouter:
         if not text:
             return TriggerResult(TriggerKind.IGNORE, "ignored_sender_or_empty")
 
-        for alias in sorted(self.policy.aliases, key=len, reverse=True):
+        for alias in sorted(self.aliases, key=len, reverse=True):
             alias = alias.strip()
             if not alias:
                 continue

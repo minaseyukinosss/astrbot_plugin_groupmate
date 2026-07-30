@@ -100,11 +100,9 @@ def speak_note_for(
 
 def max_chars_for_mode(
     mode: Optional[ReplyMode],
-    *,
-    policy_max: int = 60,
 ) -> int:
     if mode is None:
-        return max(1, int(policy_max))
+        return constraints_for(ReplyMode.SHORT_SOCIAL).max_chars
     return max(1, constraints_for(mode).max_chars)
 
 

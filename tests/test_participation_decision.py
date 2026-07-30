@@ -16,13 +16,13 @@ from groupmate.engine.participation_types import (
 )
 from groupmate.models import (
     ChatMessage,
-    GroupPolicy,
     InteractionScene,
     QuoteMode,
     TopicSnapshot,
     TriggerKind,
 )
 from groupmate.persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
+from groupmate.policies import BehaviorPolicy
 from groupmate.social.affinity import (
     AffinityBand,
     AffinitySnapshot,
@@ -125,9 +125,10 @@ def decide(
         aliases=("爱弥斯",),
     )
     return engine.decide(
+        persona_id="aemeath",
         topic=topic,
         trigger=trigger,
-        policy=GroupPolicy(),
+        policy=BehaviorPolicy().participation,
         targeting=targeting,
         now=timestamp,
         aliases=("爱弥斯",),
@@ -254,9 +255,10 @@ def decide_topic(
         aliases=("爱弥斯",),
     )
     return engine.decide(
+        persona_id="aemeath",
         topic=topic,
         trigger=trigger,
-        policy=GroupPolicy(),
+        policy=BehaviorPolicy().participation,
         targeting=targeting,
         now=messages[-1].timestamp,
         aliases=("爱弥斯",),

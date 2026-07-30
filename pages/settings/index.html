@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">GROUPMATE</p>
           <h1>群聊伙伴</h1>
-          <p class="lede">运行状态与爱弥斯行为配置入口。详细项在 AstrBot 插件「配置」里改。</p>
+          <p class="lede">运行状态与人格部署摘要。详细项在 AstrBot 插件「配置」里改。</p>
         </div>
         <span id="badge" class="badge" data-tone="neutral">读取中</span>
       </header>
@@ -27,8 +27,10 @@
         <dl class="kv" id="runtime-kv">
           <div><dt>状态</dt><dd id="paused-text">—</dd></div>
           <div><dt>已初始化群</dt><dd id="group-count">—</dd></div>
-          <div><dt>展示名</dt><dd id="character-name">—</dd></div>
-          <div><dt>字数护栏</dt><dd id="max-chars">—</dd></div>
+          <div><dt>当前人格</dt><dd id="active-persona">—</dd></div>
+          <div><dt>文本模型模式</dt><dd id="provider-mode">—</dd></div>
+          <div><dt>图片理解</dt><dd id="vision-status">—</dd></div>
+          <div><dt>配置健康</dt><dd id="config-health">—</dd></div>
         </dl>
         <div class="actions">
           <button id="pause" class="btn" type="button">暂停观察</button>
@@ -38,12 +40,12 @@
 
       <section class="card">
         <div class="card-head">
-          <h2>爱弥斯行为与关系配置</h2>
+          <h2>部署摘要</h2>
         </div>
         <p class="muted">
-          别名、群氛围、关系表和字数护栏，请到 WebUI
+          启用群、分人格称呼、初始关系和模型，请到 WebUI
           <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>
-          （齿轮）里可视化编辑。运行时身份固定为爱弥斯。
+          （齿轮）里编辑。当前只注册爱弥斯人格。
         </p>
         <pre id="config-preview" class="preview">加载中…</pre>
       </section>

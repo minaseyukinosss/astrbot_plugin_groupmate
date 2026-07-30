@@ -39,34 +39,20 @@ def _media(
     )
 
 
-def test_composer_keeps_normal_dialogue_in_one_ordered_draft(tmp_path):
-    image = tmp_path / "warm.png"
-    image.write_bytes(b"image")
+def test_composer_keeps_normal_dialogue_as_text():
     draft = ResponseComposer().compose(
         text="谢谢你呀",
         act_plan=_act(ResponseAct.RECIPROCATE),
         quote_message_id="m1",
-        reaction=_media(
-            "warm-1",
-            str(image),
-            source="local_reaction_catalog",
-            purpose="decorative_reaction",
-            safety_label="catalog_approved",
-            semantic_label="warm",
-        ),
     )
 
-    assert [item.kind for item in draft.segments] == [
-        OutboundKind.TEXT,
-        OutboundKind.IMAGE,
-    ]
+    assert [item.kind for item in draft.segments] == [OutboundKind.TEXT]
     assert draft.segments[0].text == "谢谢你呀"
-    assert draft.segments[1].media_id == "warm-1"
     assert draft.quote_message_id == "m1"
     assert draft.response_act is ResponseAct.RECIPROCATE
 
 
-def test_task_success_media_is_kept_but_boundary_reaction_is_dropped(tmp_path):
+def test_task_success_media_is_kept_and_boundary_stays_text_only(tmp_path):
     task_image = tmp_path / "result.png"
     task_image.write_bytes(b"image")
     capability = CapabilityResult(
@@ -89,13 +75,6 @@ def test_task_success_media_is_kept_but_boundary_reaction_is_dropped(tmp_path):
         text="不行。",
         act_plan=_act(ResponseAct.BOUNDARY),
         quote_message_id="m3",
-        reaction=_media(
-            "decorative",
-            str(task_image),
-            source="local_reaction_catalog",
-            purpose="decorative_reaction",
-            safety_label="catalog_approved",
-        ),
     )
 
     assert [
@@ -148,21 +127,27 @@ def test_composer_drops_approved_media_with_unsafe_locator():
     assert [item.kind for item in draft.segments] == [OutboundKind.TEXT]
 
 
-def test_composer_allows_safe_image_only_draft(tmp_path):
-    image = tmp_path / "reaction.png"
+def test_composer_allows_safe_capability_image_only_draft(tmp_path):
+    image = tmp_path / "result.png"
     image.write_bytes(b"image")
+    capability = CapabilityResult(
+        CapabilityStatus.SUCCESS,
+        "vision",
+        facts=("结果",),
+        media_candidates=(_media("result-1", str(image)),),
+    )
 
     draft = ResponseComposer().compose(
         text="",
         act_plan=_act(ResponseAct.VISUAL_REACTION, InteractionScene.DIRECT_ADDRESS),
         quote_message_id="m4",
-        reaction=_media(
-            "visual-1",
-            str(image),
-            source="local_reaction_catalog",
-            purpose="decorative_reaction",
-            safety_label="catalog_approved",
-        ),
+        capability_result=capability,
     )
 
     assert [item.kind for item in draft.segments] == [OutboundKind.IMAGE]
+
+
+def test_composer_has_no_local_reaction_argument():
+    from inspect import signature
+
+    assert "reaction" not in signature(ResponseComposer.compose).parameters

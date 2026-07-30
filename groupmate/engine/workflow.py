@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from dataclasses import replace
-from typing import Callable, DefaultDict, Deque, List, Optional, Sequence, Tuple
+from typing import Callable, DefaultDict, Deque, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from ..capabilities import (
@@ -44,10 +44,7 @@ from ..models import (
     ChatMessage,
     Decision,
     DecisionAction,
-    GroupPolicy,
     InteractionScene,
-    MemoryItem,
-    MemoryKind,
     ReplyMode,
     ReplyPlan,
     TargetingDecision,
@@ -56,19 +53,18 @@ from ..models import (
     Urgency,
     WorkflowOutcome,
 )
+from ..persona.registry import PersonaContext
+from ..policies import BehaviorPolicy
 from ..ports import (
     Clock,
     GenerationModelPort,
     MemoryRepository,
     OutputGuard,
-    PersonaProvider,
     PlatformPort,
     TraceSink,
     VisionPort,
 )
 from ..memory.memory_writer import MemoryWriter
-from ..media.reactions import LocalReactionCatalog, ReactionPolicy
-from ..persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
 from ..social.affinity import snapshot_for_relationship
 from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from .topics import select_active_messages
@@ -82,7 +78,7 @@ _HARD_TRIGGERS = frozenset(
     }
 )
 TaskResponseResolver = Callable[
-    [InteractionScene, ChatMessage, GroupPolicy],
+    [InteractionScene, ChatMessage],
     object,
 ]
 
@@ -94,7 +90,9 @@ class CognitiveWorkflow:
         vision: VisionPort,
         platform: PlatformPort,
         memory: MemoryRepository,
-        persona: PersonaProvider,
+        persona_context: PersonaContext,
+        behavior: BehaviorPolicy,
+        vision_enabled: bool,
         output_guard: OutputGuard,
         rate_limiter: SlidingWindowRateLimiter,
         clock: Clock,
@@ -110,28 +108,35 @@ class CognitiveWorkflow:
         task_response_resolver: Optional[TaskResponseResolver] = None,
         capabilities: Optional[CapabilityRegistry] = None,
         composer: Optional[ResponseComposer] = None,
-        reaction_policy: Optional[ReactionPolicy] = None,
-        reaction_catalog: Optional[LocalReactionCatalog] = None,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
         self.platform = platform
         self.memory = memory
-        self.persona = persona
+        self.persona_context = persona_context
+        self.persona = persona_context.prompt_provider
+        self.behavior = behavior
+        self.vision_enabled = bool(vision_enabled)
         self.output_guard = output_guard
         self.rate_limiter = rate_limiter
         self.clock = clock
         self.trace = trace
         self.character_name = (character_name or "角色").strip() or "角色"
         self.delivery_service = delivery_service or DeliveryService(
-            platform, memory, clock, self.character_name
+            platform,
+            memory,
+            clock,
+            persona_id=persona_context.persona_id,
+            character_name=self.character_name,
         )
         self.sessions = sessions or GroupSessionStore(
             character_name=self.character_name
         )
         self.addressee_resolver = addressee_resolver or AddresseeResolver()
         self.budgets = budgets or BudgetTracker(rate_limiter)
-        self.memory_writer = memory_writer or MemoryWriter(memory)
+        self.memory_writer = memory_writer or MemoryWriter(
+            memory, persona_id=persona_context.persona_id
+        )
         self.participation_engine = (
             participation_engine or ParticipationDecisionEngine()
         )
@@ -139,12 +144,7 @@ class CognitiveWorkflow:
         self.task_response_resolver = task_response_resolver
         self.capabilities = capabilities
         self.composer = composer or ResponseComposer()
-        self.reaction_policy = reaction_policy or ReactionPolicy()
-        self.reaction_catalog = reaction_catalog
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
-            lambda: deque(maxlen=20)
-        )
-        self._recent_media_ids: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
 
@@ -156,16 +156,6 @@ class CognitiveWorkflow:
             if cleaned:
                 bucket.append(cleaned)
 
-    def hydrate_recent_media_ids(
-        self, group_id: str, media_ids: Sequence[str]
-    ) -> None:
-        bucket = self._recent_media_ids[str(group_id)]
-        bucket.clear()
-        for media_id in media_ids:
-            cleaned = str(media_id or "").strip()
-            if cleaned:
-                bucket.append(cleaned)
-
     def session_for(self, group_id: str) -> GroupSession:
         return self.sessions.get(group_id)
 
@@ -173,21 +163,18 @@ class CognitiveWorkflow:
         self,
         topic: TopicSnapshot,
         trigger: TriggerKind,
-        policy: GroupPolicy,
+        behavior: BehaviorPolicy,
         trigger_alias: str = "",
         still_valid: Optional[Callable[[], bool]] = None,
     ) -> WorkflowOutcome:
         decision_id = uuid4().hex
         now = self.clock.now()
         soft_trigger = trigger in _SOFT_TRIGGERS
-        composition_enabled = bool(getattr(policy, "v3_composition_enabled", True))
         self._record(decision_id, topic.group_id, "OBSERVE", trigger.value, now)
 
         if not topic.messages:
             return self._silent(decision_id, topic.group_id, "empty_topic", now)
         if trigger in (TriggerKind.IGNORE, TriggerKind.COMMAND):
-            return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
-        if trigger is TriggerKind.NATIVE_DIRECT and not policy.handle_native_wake:
             return self._silent(decision_id, topic.group_id, "bypassed_trigger", now)
         if is_copied_at(trigger):
             return await self._send_copied_at_tip(
@@ -197,7 +184,7 @@ class CognitiveWorkflow:
         scene = classify_scene(trigger, topic.latest)
         self._record(decision_id, topic.group_id, "SCENE", scene.value, now)
 
-        targeting = self._resolve_targeting(topic, trigger, policy)
+        targeting = self._resolve_targeting(topic, trigger)
         self._record(
             decision_id,
             topic.group_id,
@@ -210,11 +197,15 @@ class CognitiveWorkflow:
         )
 
         relationship_state = self._relationship_state_for_target(topic, targeting)
-        affinity = snapshot_for_relationship(relationship_state)
+        affinity = snapshot_for_relationship(
+            relationship_state,
+            configured_relationship=self._configured_relationship_for(
+                self._social_user_id(targeting)
+            ),
+        )
         task_resolution, task_resolution_reason = self._task_response_inputs(
             scene,
             topic.latest,
-            policy,
         )
         if task_resolution_reason:
             self._record(
@@ -224,18 +215,15 @@ class CognitiveWorkflow:
                 task_resolution_reason,
                 now,
             )
-        persona_profile = getattr(
-            self.persona,
-            "participation_profile",
-            AEMEATH_PARTICIPATION_PROFILE,
-        )
+        persona_profile = self.persona_context.definition.participation_profile
         participation = self.participation_engine.decide(
+            persona_id=self.persona_context.persona_id,
             topic=topic,
             trigger=trigger,
-            policy=policy,
+            policy=behavior.participation,
             targeting=targeting,
             now=now,
-            aliases=policy.aliases,
+            aliases=self.persona_context.aliases,
             affinity=affinity,
             persona=persona_profile,
             recent_outputs=tuple(self._recent_outputs[topic.group_id]),
@@ -256,6 +244,17 @@ class CognitiveWorkflow:
             )
             return self._silent(decision_id, topic.group_id, reason, now)
 
+        if (
+            participation.obligation is ParticipationObligation.OPEN_OPTIONAL
+            and not self.budgets.allow_send(now)
+        ):
+            return self._silent(
+                decision_id,
+                topic.group_id,
+                "open_send_budget_exhausted",
+                now,
+            )
+
         scene = participation.scene
         if participation.act is ResponseAct.BOUNDARY:
             reply_mode = ReplyMode.BOUNDARY
@@ -273,7 +272,7 @@ class CognitiveWorkflow:
         )
         image_urls = self._topic_image_urls(topic)
         needs_vision = bool(
-            policy.vision_enabled
+            self.vision_enabled
             and participation.act
             in (ResponseAct.ANSWER, ResponseAct.VISUAL_REACTION)
             and has_image_capability(image_urls, reply_mode)
@@ -308,14 +307,13 @@ class CognitiveWorkflow:
             urgency=urgency,
         )
 
-        if composition_enabled and response_act is not None:
-            self._record(
-                decision_id,
-                topic.group_id,
-                "ACT",
-                response_act.act.value,
-                now,
-            )
+        self._record(
+            decision_id,
+            topic.group_id,
+            "ACT",
+            response_act.act.value,
+            now,
+        )
 
         self._record(
             decision_id,
@@ -356,6 +354,7 @@ class CognitiveWorkflow:
             )
             include_user_in_group = True
         search_kwargs = {
+            "persona_id": self.persona_context.persona_id,
             "group_id": topic.group_id,
             "query": query,
             "now": now,
@@ -378,12 +377,11 @@ class CognitiveWorkflow:
         capability_name = self._capability_name(
             response_act, required_capabilities
         )
-        if composition_enabled and capability_name and self.capabilities is not None:
+        if capability_name and self.capabilities is not None:
             capability_result = await self._execute_capability(
                 decision_id,
                 topic,
                 capability_name,
-                policy,
                 now,
             )
             if capability_result.status is CapabilityStatus.SUCCESS:
@@ -392,14 +390,6 @@ class CognitiveWorkflow:
                 contribution = self._incomplete_capability_contribution(
                     response_act, capability_result
                 )
-        else:
-            # Compatibility path for deployments that have not enabled composition.
-            if needs_vision and not self.budgets.allow_cost(now):
-                needs_vision = False
-                decision = replace(decision, needs_vision=False)
-            memories = await self._add_visual_context(
-                decision_id, topic, decision, policy, memories, now
-            )
 
         capability_facts = (
             capability_result.facts
@@ -407,18 +397,15 @@ class CognitiveWorkflow:
             and capability_result.status is CapabilityStatus.SUCCESS
             else ()
         )
-        capability_status = ""
-        if composition_enabled:
-            capability_status = (
-                capability_result.status.value
-                if capability_result is not None
-                else (
-                    CapabilityStatus.UNSUPPORTED.value
-                    if response_act is not None
-                    and response_act.act is ResponseAct.TASK_UNSUPPORTED
-                    else ""
-                )
+        capability_status = (
+            capability_result.status.value
+            if capability_result is not None
+            else (
+                CapabilityStatus.UNSUPPORTED.value
+                if response_act.act is ResponseAct.TASK_UNSUPPORTED
+                else ""
             )
+        )
         session = self.session_for(topic.group_id)
         assemble = getattr(self.persona, "assemble", None)
         assemble_kwargs = {
@@ -429,12 +416,11 @@ class CognitiveWorkflow:
             "targeting": targeting,
             "reply_mode": reply_mode,
         }
-        if composition_enabled:
-            assemble_kwargs.update(
-                response_act=response_act,
-                capability_facts=capability_facts,
-                capability_status=capability_status,
-            )
+        assemble_kwargs.update(
+            response_act=response_act,
+            capability_facts=capability_facts,
+            capability_status=capability_status,
+        )
         if assemble is not None:
             try:
                 assembled = assemble(topic, memories, **assemble_kwargs)
@@ -532,7 +518,7 @@ class CognitiveWorkflow:
             speak.text,
             topic.group_id,
             reply_mode,
-            response_act if composition_enabled else None,
+            response_act,
             capability_status,
             ignore_recent=fallback_used,
         )
@@ -557,7 +543,7 @@ class CognitiveWorkflow:
                 repaired,
                 topic.group_id,
                 reply_mode,
-                response_act if composition_enabled else None,
+                response_act,
                 capability_status,
                 ignore_recent=fallback_used,
             )
@@ -568,7 +554,7 @@ class CognitiveWorkflow:
                 fallback,
                 topic.group_id,
                 reply_mode,
-                response_act if composition_enabled else None,
+                response_act,
                 capability_status,
                 ignore_recent=True,
             )
@@ -582,7 +568,7 @@ class CognitiveWorkflow:
         self._record(decision_id, topic.group_id, "GUARD", "accepted", now)
 
         direct_wake = trigger in _HARD_TRIGGERS
-        mode_max = max_chars_for_mode(reply_mode, policy_max=policy.max_reply_chars)
+        mode_max = max_chars_for_mode(reply_mode)
         quote_message_id = None
         if quote_mode.value == "always" or (
             quote_mode.value == "when_interleaved"
@@ -595,42 +581,31 @@ class CognitiveWorkflow:
             text=guarded.text,
             urgency=urgency,
             now=now,
-            ttl_seconds=policy.candidate_ttl_seconds,
+            ttl_seconds=behavior.conversation.candidate_ttl_seconds,
             max_chars=mode_max,
-            max_segments=policy.max_reply_segments,
-            humanize_delay=policy.humanize_delay_enabled,
+            max_segments=behavior.reply.max_reply_segments,
+            humanize_delay=behavior.reply.humanize_delay_enabled,
             direct_wake=direct_wake,
             quote_message_id=quote_message_id,
         )
-        if composition_enabled and response_act is not None:
-            reaction = self._select_reaction(
-                topic.group_id,
-                response_act.act,
-                scene,
-                targeting,
-                policy,
-            )
-            draft = self.composer.compose(
-                text=guarded.text,
-                act_plan=response_act,
-                quote_message_id=quote_message_id,
-                capability_result=capability_result,
-                reaction=reaction,
-            )
-            delivery = replace(delivery, outbound=draft.segments)
-            media_ids = tuple(
-                item.media_id for item in draft.segments if item.media_id
-            )
-            self._record(
-                decision_id,
-                topic.group_id,
-                "COMPOSE",
-                "act={};media={}".format(
-                    response_act.act.value,
-                    ",".join(media_ids) if media_ids else "0",
-                ),
-                now,
-            )
+        draft = self.composer.compose(
+            text=guarded.text,
+            act_plan=response_act,
+            quote_message_id=quote_message_id,
+            capability_result=capability_result,
+        )
+        delivery = replace(delivery, outbound=draft.segments)
+        media_ids = tuple(item.media_id for item in draft.segments if item.media_id)
+        self._record(
+            decision_id,
+            topic.group_id,
+            "COMPOSE",
+            "act={};media={}".format(
+                response_act.act.value,
+                ",".join(media_ids) if media_ids else "0",
+            ),
+            now,
+        )
         if not delivery.segments and not delivery.outbound:
             return self._silent(decision_id, topic.group_id, "empty_delivery", now)
         self._record(
@@ -656,12 +631,9 @@ class CognitiveWorkflow:
                 decision_id, topic.group_id, "END", outcome.reason, send_now
             )
             return outcome
-        if trigger is TriggerKind.CANDIDATE:
+        if participation.obligation is ParticipationObligation.OPEN_OPTIONAL:
             self.budgets.record_send(send_now)
         self._recent_outputs[topic.group_id].append(outcome.text)
-        for segment in delivery.outbound:
-            if segment.media_id:
-                self._recent_media_ids[topic.group_id].append(segment.media_id)
         self._remember_session_turns(topic, outcome.text, send_now)
         try:
             self.memory_writer.schedule_after_send(
@@ -670,7 +642,6 @@ class CognitiveWorkflow:
                 decision_id=decision_id,
                 now=send_now,
                 reply_text=outcome.text or "",
-                enabled=bool(getattr(policy, "v3_memory_writer_enabled", True)),
             )
         except Exception:  # noqa: BLE001 — MemoryWriter 不得影响主回复
             self._record(
@@ -682,14 +653,13 @@ class CognitiveWorkflow:
         self,
         scene: InteractionScene,
         message: Optional[ChatMessage],
-        policy: GroupPolicy,
     ) -> Tuple[TaskResolution, str]:
         if scene is not InteractionScene.TASK_REQUEST or message is None:
             return TaskResolution(), ""
         if self.task_response_resolver is None:
             return TaskResolution(), "resolver_missing"
         try:
-            value = self.task_response_resolver(scene, message, policy)
+            value = self.task_response_resolver(scene, message)
         except Exception as exc:  # noqa: BLE001 - capability boundary fails closed
             return (
                 TaskResolution(),
@@ -758,10 +728,9 @@ class CognitiveWorkflow:
         decision_id: str,
         topic: TopicSnapshot,
         capability_name: str,
-        policy: GroupPolicy,
         now: int,
     ) -> CapabilityResult:
-        if capability_name == "vision" and not policy.vision_enabled:
+        if capability_name == "vision" and not self.vision_enabled:
             result = CapabilityResult(
                 CapabilityStatus.UNSUPPORTED,
                 capability_name,
@@ -864,39 +833,10 @@ class CognitiveWorkflow:
             except TypeError:
                 return validate(text, recent_outputs=recent)
 
-    def _select_reaction(
-        self,
-        group_id: str,
-        act: ResponseAct,
-        scene: InteractionScene,
-        targeting: TargetingDecision,
-        policy: GroupPolicy,
-    ):
-        if not policy.reaction_media_enabled or self.reaction_catalog is None:
-            return None
-        ambiguous = (
-            targeting.reply_audience.kind is AddresseeKind.AMBIGUOUS
-            or targeting.social_target.kind is AddresseeKind.AMBIGUOUS
-        )
-        if not self.reaction_policy.allowed(act, scene, ambiguous):
-            return None
-        tags = {
-            ResponseAct.RECIPROCATE: ("warm",),
-            ResponseAct.PLAYFUL_REPLY: ("playful",),
-            ResponseAct.VISUAL_REACTION: ("visual",),
-        }.get(act)
-        if not tags:
-            return None
-        return self.reaction_catalog.select(
-            tags,
-            tuple(self._recent_media_ids[group_id]),
-        )
-
     def _resolve_targeting(
         self,
         topic: TopicSnapshot,
         trigger: TriggerKind,
-        policy: GroupPolicy,
     ) -> TargetingDecision:
         relationships = {}
         assembly = getattr(self.persona, "assembly", None)
@@ -905,7 +845,7 @@ class CognitiveWorkflow:
         return self.addressee_resolver.resolve(
             topic,
             trigger,
-            aliases=policy.aliases,
+            aliases=self.persona_context.aliases,
             relationships=relationships,
         )
 
@@ -967,7 +907,20 @@ class CognitiveWorkflow:
         get_state = getattr(self.memory, "get_relationship_state", None)
         if get_state is None:
             return None
-        return get_state(topic.group_id, user_id)
+        return get_state(
+            self.persona_context.persona_id,
+            topic.group_id,
+            user_id,
+        )
+
+    def _configured_relationship_for(self, user_id: Optional[str]) -> str:
+        target = str(user_id or "")
+        if not target:
+            return ""
+        for entry in self.persona_context.relationship_seeds:
+            if str(entry.sender_id) == target:
+                return str(entry.relationship or "")
+        return ""
 
     def _remember_session_turns(
         self,
@@ -990,42 +943,6 @@ class CognitiveWorkflow:
             timestamp,
             speaker=self.character_name,
         )
-
-    async def _add_visual_context(
-        self,
-        decision_id: str,
-        topic: TopicSnapshot,
-        decision: Decision,
-        policy: GroupPolicy,
-        memories: List[MemoryItem],
-        now: int,
-    ) -> List[MemoryItem]:
-        if not decision.needs_vision or not policy.vision_enabled:
-            return memories
-        image_urls = self._topic_image_urls(topic)
-        if not image_urls:
-            return memories
-        try:
-            description = (await self.vision.describe(image_urls)).strip()
-        except Exception:
-            description = ""
-        if description:
-            self.budgets.record_cost(now)
-            memories.append(
-                MemoryItem(
-                    memory_id=decision_id + "-vision",
-                    group_id=topic.group_id,
-                    subject_id="group",
-                    kind=MemoryKind.EPISODIC,
-                    text="本轮图片内容：" + description,
-                    created_at=now,
-                    expires_at=now + 60,
-                    confidence=0.8,
-                    importance=0.5,
-                )
-            )
-            self._record(decision_id, topic.group_id, "VISION", "described", now)
-        return memories
 
     async def _send_copied_at_tip(
         self,
@@ -1118,4 +1035,11 @@ class CognitiveWorkflow:
             return
         record = getattr(self.memory, "record_transition", None)
         if record:
-            record(decision_id, group_id, state, reason, timestamp)
+            record(
+                self.persona_context.persona_id,
+                decision_id,
+                group_id,
+                state,
+                reason,
+                timestamp,
+            )

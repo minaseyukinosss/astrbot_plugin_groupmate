@@ -3,7 +3,7 @@ import asyncio
 from groupmate.core.response_act import ResponseAct
 from groupmate.engine.direct_fallback import DirectFallbackComposer
 from groupmate.engine.rate_limit import BudgetTracker, SlidingWindowRateLimiter
-from groupmate.models import GroupPolicy, TopicSnapshot, TriggerKind
+from groupmate.models import TopicSnapshot, TriggerKind
 from groupmate.social.affinity import ResponsePosture
 from tests.fakes import StaticGenerationModel
 from tests.test_workflow import build_workflow

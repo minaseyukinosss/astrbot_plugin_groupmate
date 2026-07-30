@@ -33,10 +33,10 @@ def test_v9_database_migrates_to_v10_with_outbound_json(tmp_path):
     columns = {
         row[1] for row in store._db.execute("PRAGMA table_info(outbox)").fetchall()
     }
-    row = store.outbox_record("legacy")
+    row = store.outbox_record("aemeath", "legacy")
 
-    assert store.schema_version() == 10
+    assert store.schema_version() == 11
     assert "outbound_json" in columns
     assert row["outbound_json"] == "[]"
     store.close()
-    assert list(tmp_path.glob("legacy-v9.db.pre-migrate-v9-to-v10.*"))
+    assert list(tmp_path.glob("legacy-v9.db.pre-migrate-v9-to-v11.*"))

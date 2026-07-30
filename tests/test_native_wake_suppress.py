@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from groupmate.host import AstrBotBridge
 from groupmate.host.bridge import TurnOwner
-from groupmate.config import PluginSettings
+from groupmate.host.config import AstrBotConfigParser
 from groupmate.core.response_act import TaskResolutionStatus
 from groupmate.models import ChatMessage, InteractionScene
 
@@ -68,9 +68,29 @@ class _FakeEvent:
 
 
 def _bridge(tmp_path: Path, **settings) -> AstrBotBridge:
+    raw = {
+        "scope_group": {
+            "enabled_groups": settings.pop("enabled_groups", []),
+        },
+        "persona_group": {
+            "persona_aliases": {
+                "aemeath": settings.pop(
+                    "aliases",
+                    ["爱弥斯", "小爱", "飞行雪绒"],
+                )
+            },
+            "relationships": {"aemeath": []},
+        },
+        "provider_group": {
+            "generation_provider": settings.pop("generation_provider", ""),
+            "vision_enabled": settings.pop("vision_enabled", True),
+            "vision_provider": settings.pop("vision_provider", ""),
+        },
+    }
+    assert not settings
     return AstrBotBridge(
         context=SimpleNamespace(),
-        settings=PluginSettings.from_mapping(settings),
+        settings=AstrBotConfigParser().parse(raw),
         data_dir=tmp_path,
     )
 
@@ -79,12 +99,6 @@ def test_should_take_native_wake_on_at(tmp_path):
     bridge = _bridge(tmp_path)
     event = _FakeEvent(at_bot=True)
     assert bridge.should_take_native_wake(event) is True
-
-
-def test_should_not_take_when_native_wake_disabled(tmp_path):
-    bridge = _bridge(tmp_path, handle_native_wake=False)
-    event = _FakeEvent(at_bot=True)
-    assert bridge.should_take_native_wake(event) is False
 
 
 def test_suppress_polarity_matches_astrbot_process_stage(tmp_path):
@@ -163,8 +177,14 @@ def test_pause_still_observes_without_dispatch(tmp_path):
         event = _FakeEvent(at_bot=False, text="暂停期间也要记住")
         await bridge.handle_event(event)
         await bridge.runtime.drain()
-        messages = bridge.memory.recent_messages(event.get_group_id(), 10)
-        snapshot = bridge.runtime.snapshots()[event.get_group_id()]
+        messages = bridge.memory.recent_messages(
+            bridge.persona_context.persona_id,
+            event.get_group_id(),
+            10,
+        )
+        snapshot = bridge.runtime.snapshots(
+            bridge.persona_context.persona_id
+        )[event.get_group_id()]
         await bridge.close()
         return messages, snapshot
 
@@ -176,7 +196,7 @@ def test_pause_still_observes_without_dispatch(tmp_path):
 
 def test_bridge_registers_policy_scoped_vision_capability(tmp_path):
     bridge = _bridge(tmp_path, vision_enabled=True)
-    workflow = bridge._workflow_for("g1")
+    workflow = bridge._workflow_for("g1", bridge.persona_context)
     message = ChatMessage(
         message_id="m1",
         group_id="g1",
@@ -190,7 +210,6 @@ def test_bridge_registers_policy_scoped_vision_capability(tmp_path):
     resolution = workflow.task_response_resolver(
         InteractionScene.TASK_REQUEST,
         message,
-        bridge._policy_for("g1"),
     )
 
     assert workflow.capabilities is not None
@@ -200,7 +219,7 @@ def test_bridge_registers_policy_scoped_vision_capability(tmp_path):
 
 def test_bridge_does_not_route_text_only_tasks_to_arbitrary_capabilities(tmp_path):
     bridge = _bridge(tmp_path, vision_enabled=True)
-    workflow = bridge._workflow_for("g1")
+    workflow = bridge._workflow_for("g1", bridge.persona_context)
     message = ChatMessage(
         message_id="m1",
         group_id="g1",
@@ -213,7 +232,6 @@ def test_bridge_does_not_route_text_only_tasks_to_arbitrary_capabilities(tmp_pat
     resolution = workflow.task_response_resolver(
         InteractionScene.TASK_REQUEST,
         message,
-        bridge._policy_for("g1"),
     )
 
     assert resolution.status is TaskResolutionStatus.UNSUPPORTED

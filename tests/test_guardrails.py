@@ -37,7 +37,7 @@ from groupmate.persona.aemeath import AemeathOutputFirewall
     ],
 )
 def test_aemeath_guard_rejects_known_failures(text, code):
-    result = AemeathOutputFirewall(max_chars=60).validate(text, recent_outputs=[])
+    result = AemeathOutputFirewall().validate(text, recent_outputs=[])
 
     assert result.accepted is False
     assert code in result.codes
@@ -49,19 +49,19 @@ def test_guard_rejects_screenshot_style_rp_blob():
         "(擦了擦汗，顺手拿起水瓶喝了一大口)\n"
         "体能课真是要命 我现在只想躺平"
     )
-    result = AemeathOutputFirewall(max_chars=60).validate(text, [])
+    result = AemeathOutputFirewall().validate(text, [])
     assert result.accepted is False
     assert "decision_narration" in result.codes or "too_many_sentences" in result.codes
 
 
 def test_guard_accepts_required_clarifying_question():
-    result = AemeathOutputFirewall(max_chars=60).validate("你用的是哪个版本？", [])
+    result = AemeathOutputFirewall().validate("你用的是哪个版本？", [])
 
     assert result.accepted is True
 
 
 def test_guard_accepts_firm_response_without_hostility_escalation():
-    result = AemeathOutputFirewall(max_chars=60).validate(
+    result = AemeathOutputFirewall().validate(
         "必要的事我会答，别的先免了。", []
     )
 
@@ -78,7 +78,7 @@ def test_guard_accepts_firm_response_without_hostility_escalation():
     ],
 )
 def test_guard_accepts_specific_clarifying_questions(text):
-    result = AemeathOutputFirewall(max_chars=60).validate(text, recent_outputs=[])
+    result = AemeathOutputFirewall().validate(text, recent_outputs=[])
 
     assert result.accepted is True
 
@@ -92,13 +92,13 @@ def test_guard_accepts_specific_clarifying_questions(text):
     ],
 )
 def test_guard_accepts_natural_persona_replies(text):
-    result = AemeathOutputFirewall(max_chars=60).validate(text, recent_outputs=[])
+    result = AemeathOutputFirewall().validate(text, recent_outputs=[])
 
     assert result.accepted is True
 
 
 def test_guard_accepts_short_natural_reply():
-    result = AemeathOutputFirewall(max_chars=60).validate(
+    result = AemeathOutputFirewall().validate(
         "这也太离谱了呀。", recent_outputs=[]
     )
 
@@ -107,7 +107,7 @@ def test_guard_accepts_short_natural_reply():
 
 
 def test_guard_rejects_recent_duplicate():
-    result = AemeathOutputFirewall(max_chars=60).validate(
+    result = AemeathOutputFirewall().validate(
         "这也太离谱了呀。", recent_outputs=["这也太离谱了呀。"]
     )
 
@@ -126,7 +126,7 @@ def test_guard_rejects_recent_duplicate():
     ),
 )
 def test_guard_rejects_false_task_completion_before_success(act, status):
-    result = AemeathOutputFirewall(max_chars=60).validate(
+    result = AemeathOutputFirewall().validate(
         "已经帮你查好了。",
         (),
         response_act=act,
@@ -139,7 +139,7 @@ def test_guard_rejects_false_task_completion_before_success(act, status):
 
 
 def test_guard_allows_completion_fact_after_capability_success():
-    result = AemeathOutputFirewall(max_chars=60).validate(
+    result = AemeathOutputFirewall().validate(
         "已经识别好了，图里是一盆花。",
         (),
         response_act=ResponseAct.TASK_HANDOFF,

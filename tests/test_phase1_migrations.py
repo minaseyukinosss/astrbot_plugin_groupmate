@@ -23,10 +23,10 @@ def test_v5_database_is_backed_up_and_migrated(tmp_path):
     db.close()
 
     store = SQLiteMemoryStore(path)
-    assert store.schema_version() == 10
-    assert store.outbox_record("sent-one")["status"] == "sent"
+    assert store.schema_version() == 11
+    assert store.outbox_record("aemeath", "sent-one")["status"] == "sent"
     store.close()
-    assert list(tmp_path.glob("legacy.db.pre-migrate-v5-to-v10.*"))
+    assert list(tmp_path.glob("legacy.db.pre-migrate-v5-to-v11.*"))
 
 
 def test_newer_database_is_rejected(tmp_path):
@@ -64,7 +64,7 @@ def test_failed_migration_rolls_back_and_keeps_backup(tmp_path, monkeypatch):
     db.close()
     assert version == "5"
     assert "temporary_column" not in columns
-    assert list(tmp_path.glob("broken.db.pre-migrate-v5-to-v10.*"))
+    assert list(tmp_path.glob("broken.db.pre-migrate-v5-to-v11.*"))
 
 
 def test_single_writer_serializes_concurrent_groups(tmp_path, message_factory):
@@ -79,12 +79,12 @@ def test_single_writer_serializes_concurrent_groups(tmp_path, message_factory):
             for index in range(80)
         ]
         results = await asyncio.gather(
-            *(store.save_message_async(message) for message in messages)
+            *(store.save_message_async("aemeath", message) for message in messages)
         )
         await store.flush_async()
         counts = (
-            len(store.recent_messages("g0", 100)),
-            len(store.recent_messages("g1", 100)),
+            len(store.recent_messages("aemeath", "g0", 100)),
+            len(store.recent_messages("aemeath", "g1", 100)),
         )
         store.close()
         return results, counts

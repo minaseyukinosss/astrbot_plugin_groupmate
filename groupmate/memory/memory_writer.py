@@ -37,12 +37,16 @@ class MemoryWriter:
         self,
         store,
         *,
+        persona_id: str,
         privacy: Optional[PrivacyClassifier] = None,
         arbiter: Optional[MemoryArbiter] = None,
         bot_id: str = "",
         on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         self.store = store
+        self.persona_id = str(persona_id or "").strip()
+        if not self.persona_id:
+            raise ValueError("persona_id is required")
         self.privacy = privacy or PrivacyClassifier()
         self.arbiter = arbiter or MemoryArbiter()
         self.bot_id = str(bot_id or "")
@@ -56,11 +60,7 @@ class MemoryWriter:
         decision_id: str,
         now: int,
         reply_text: str = "",
-        enabled: bool = True,
     ) -> None:
-        if not enabled:
-            return
-
         def _safe() -> None:
             try:
                 self.process(
@@ -265,12 +265,15 @@ class MemoryWriter:
         blocked = False
         if has_tombstone is not None:
             blocked = bool(
-                has_tombstone(candidate.group_id, candidate.subject_id, hashed)
+                has_tombstone(
+                    self.persona_id, candidate.group_id, candidate.subject_id, hashed
+                )
             )
         existing = []
         if list_memories is not None:
             existing = list(
                 list_memories(
+                    self.persona_id,
                     candidate.group_id,
                     now=now,
                     limit=50,
@@ -288,6 +291,7 @@ class MemoryWriter:
         if decision.status is CandidateStatus.ACCEPTED and decision.memory is not None:
             if accept is not None:
                 accept(
+                    self.persona_id,
                     candidate.candidate_id,
                     decision.memory,
                     reason=decision.reason,
@@ -296,6 +300,7 @@ class MemoryWriter:
                 )
             elif decide is not None:
                 decide(
+                    self.persona_id,
                     candidate.candidate_id,
                     CandidateStatus.ACCEPTED,
                     reason=decision.reason,
@@ -303,7 +308,7 @@ class MemoryWriter:
                 )
                 add = getattr(self.store, "add_memory", None)
                 if add is not None:
-                    add(decision.memory)
+                    add(self.persona_id, decision.memory)
             return MemoryCandidate(
                 candidate_id=candidate.candidate_id,
                 group_id=candidate.group_id,
@@ -324,6 +329,7 @@ class MemoryWriter:
             )
         if decide is not None:
             decide(
+                self.persona_id,
                 candidate.candidate_id,
                 decision.status,
                 reason=decision.reason,
@@ -355,7 +361,7 @@ class MemoryWriter:
         if append is None:
             return candidate
         # 预标 rejected 的也入库便于审计
-        return append(candidate)
+        return append(self.persona_id, candidate)
 
     def _candidate(
         self,

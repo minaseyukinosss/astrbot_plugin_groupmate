@@ -1,5 +1,4 @@
 import asyncio
-from dataclasses import replace
 from inspect import signature
 
 import pytest
@@ -14,20 +13,19 @@ from groupmate.capabilities import (
 from groupmate.core import response_act as response_act_module
 from groupmate.core.speak_contract import SpeakContract, is_silence
 from groupmate.models import (
-    OutboundKind,
     RelationshipState,
     ReplyMode,
     SendResult,
     TopicSnapshot,
     TriggerKind,
 )
+from groupmate.policies import BehaviorPolicy, ReplyPolicy, ResourcePolicy
 from groupmate.persona.aemeath import (
     AemeathOutputFirewall,
     AemeathPersonaProvider,
 )
 from groupmate.engine.rate_limit import SlidingWindowRateLimiter
 from groupmate.engine.workflow import CognitiveWorkflow
-from groupmate.media import LocalReactionCatalog, ReactionAsset
 from tests.fakes import (
     FakeClock,
     FakeMemoryRepository,
@@ -35,6 +33,7 @@ from tests.fakes import (
     NullVision,
     StaticGenerationModel,
     StaticPersona,
+    persona_context,
 )
 
 
@@ -47,7 +46,6 @@ def build_workflow(
     persona=None,
     task_response_resolver=None,
     capabilities=None,
-    reaction_catalog=None,
     participation_engine=None,
     budgets=None,
     direct_fallback=None,
@@ -57,21 +55,26 @@ def build_workflow(
         kwargs["task_response_resolver"] = task_response_resolver
     if capabilities is not None:
         kwargs["capabilities"] = capabilities
-    if reaction_catalog is not None:
-        kwargs["reaction_catalog"] = reaction_catalog
     if participation_engine is not None:
         kwargs["participation_engine"] = participation_engine
     if budgets is not None:
         kwargs["budgets"] = budgets
     if direct_fallback is not None:
         kwargs["direct_fallback"] = direct_fallback
+    prompt_provider = persona or StaticPersona()
+    behavior = BehaviorPolicy(
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+        resources=ResourcePolicy(open_send_cooldown_seconds=0),
+    )
     return CognitiveWorkflow(
         generation_model=generator or StaticGenerationModel("这也太离谱了呀。"),
         vision=vision or NullVision(),
         platform=platform or FakePlatform(),
         memory=memory or FakeMemoryRepository(),
-        persona=persona or StaticPersona(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
+        persona_context=persona_context(prompt_provider),
+        behavior=behavior,
+        vision_enabled=True,
+        output_guard=AemeathOutputFirewall(),
         rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
         clock=clock or FakeClock(),
         **kwargs,
@@ -230,7 +233,7 @@ def test_workflow_reads_relationship_state_without_mutating_it(
         interaction_count=4,
         updated_at=90,
     )
-    memory.upsert_relationship_state(state)
+    memory.upsert_relationship_state("aemeath", state)
     generator = RecordingGenerationModel("在呢。")
     message = message_factory(
         message_id="direct",
@@ -252,7 +255,7 @@ def test_workflow_reads_relationship_state_without_mutating_it(
 
     assert outcome.sent is True
     assert "好感状态：警惕" in generator.plans[-1].user_prompt
-    assert memory.get_relationship_state("g1", "u1") == state
+    assert memory.get_relationship_state("aemeath", "g1", "u1") == state
     assert memory.social_events == []
 
 
@@ -262,7 +265,7 @@ def test_task_request_clarifies_when_resolver_reports_missing_information(
     generator = RecordingGenerationModel()
     workflow = build_workflow(
         generator=generator,
-        task_response_resolver=lambda scene, message, policy: (
+        task_response_resolver=lambda scene, message: (
             True,
             ("待翻译文本",),
         ),
@@ -289,7 +292,7 @@ def test_task_request_hands_off_when_resolver_reports_supported(
     generator = RecordingGenerationModel()
     workflow = build_workflow(
         generator=generator,
-        task_response_resolver=lambda scene, message, policy: (True, ()),
+        task_response_resolver=lambda scene, message: (True, ()),
     )
 
     outcome = asyncio.run(
@@ -353,7 +356,7 @@ def test_clarify_facts_reach_real_prompt_as_escaped_data(
     workflow = build_workflow(
         generator=generator,
         persona=AemeathPersonaProvider(),
-        task_response_resolver=lambda scene, message, policy: _resolution(
+        task_response_resolver=lambda scene, message: _resolution(
             "SUPPORTED",
             capability_name="translator",
             required_information=("待翻译文本", malicious),
@@ -384,7 +387,7 @@ def test_supported_task_stays_pending_and_forbids_completion_claims(
     workflow = build_workflow(
         generator=generator,
         persona=AemeathPersonaProvider(),
-        task_response_resolver=lambda scene, message, policy: _resolution(
+        task_response_resolver=lambda scene, message: _resolution(
             "SUPPORTED", capability_name="translator"
         ),
     )
@@ -422,7 +425,7 @@ def test_supported_vision_task_uses_capability_facts_before_aemeath_generation(
         generator=generator,
         persona=AemeathPersonaProvider(),
         capabilities=registry,
-        task_response_resolver=lambda scene, latest, policy: registry.resolve(
+        task_response_resolver=lambda scene, latest: registry.resolve(
             CapabilityRequest(
                 capability_name="vision",
                 message_text=latest.text,
@@ -503,47 +506,6 @@ def test_false_completion_after_repair_uses_safe_direct_fallback(
     assert platform.sent[0]["text"] == "这个我现在做不了。"
 
 
-def test_composition_flag_off_keeps_legacy_text_only_path(
-    message_factory, balanced_policy
-):
-    vision = CountingVision()
-    registry = CapabilityRegistry()
-    registry.register(vision_spec(vision))
-    generator = RecordingGenerationModel("已经帮你看好了。")
-    workflow = build_workflow(
-        generator=generator,
-        capabilities=registry,
-        task_response_resolver=lambda scene, latest, policy: registry.resolve(
-            CapabilityRequest(
-                capability_name="vision",
-                message_text=latest.text,
-                media_locators=latest.image_urls,
-            )
-        ),
-    )
-    message = message_factory(
-        message_id="legacy-vision",
-        text="帮我看看这张图",
-        image_urls=("https://example.test/flower.png",),
-    )
-    topic = TopicSnapshot("legacy-topic", "g1", (message,), 100, 100)
-
-    outcome = asyncio.run(
-        workflow.evaluate(
-            topic,
-            TriggerKind.ALIAS_DIRECT,
-            replace(balanced_policy, v3_composition_enabled=False),
-        )
-    )
-
-    assert outcome.sent is True
-    assert vision.calls == 0
-    assert not any(
-        state in ("ACT", "CAPABILITY", "COMPOSE")
-        for _, _, state, _, _ in workflow.memory.transitions
-    )
-
-
 def test_capability_cancellation_propagates(message_factory, balanced_policy):
     async def cancelled(request):
         del request
@@ -553,7 +515,7 @@ def test_capability_cancellation_propagates(message_factory, balanced_policy):
     registry.register(CapabilitySpec("vision", cancelled))
     workflow = build_workflow(
         capabilities=registry,
-        task_response_resolver=lambda scene, latest, policy: _resolution(
+        task_response_resolver=lambda scene, latest: _resolution(
             "SUPPORTED", capability_name="vision"
         ),
     )
@@ -572,7 +534,7 @@ def test_invalid_capability_name_fails_closed(message_factory, balanced_policy):
     workflow = build_workflow(
         generator=StaticGenerationModel("这个我现在做不了。"),
         capabilities=CapabilityRegistry(),
-        task_response_resolver=lambda scene, latest, policy: _resolution(
+        task_response_resolver=lambda scene, latest: _resolution(
             "SUPPORTED", capability_name="INVALID NAME"
         ),
     )
@@ -592,79 +554,16 @@ def test_invalid_capability_name_fails_closed(message_factory, balanced_policy):
     )
 
 
-def test_social_reciprocation_can_emit_scene_allowed_reaction_media(
-    tmp_path, message_factory, balanced_policy
-):
-    (tmp_path / "warm.png").write_bytes(b"image")
-    catalog = LocalReactionCatalog.from_items(
-        tmp_path,
-        (ReactionAsset("warm-1", "warm.png", ("warm",), True),),
-    )
-    platform = RichFakePlatform()
-    workflow = build_workflow(
-        generator=StaticGenerationModel("我也很开心呀。"),
-        platform=platform,
-        reaction_catalog=catalog,
-    )
-    message = message_factory(message_id="social", text="小爱，谢谢你")
-    topic = TopicSnapshot("social-topic", "g1", (message,), 100, 100)
-
-    outcome = asyncio.run(
-        workflow.evaluate(
-            topic,
-            TriggerKind.ALIAS_DIRECT,
-            replace(balanced_policy, reaction_media_enabled=True),
-        )
-    )
-
-    assert outcome.sent is True
-    assert tuple(item.kind for item in platform.outbound[-1]) == (
-        OutboundKind.TEXT,
-        OutboundKind.IMAGE,
-    )
-
-
-def test_boundary_act_never_emits_reaction_media(
-    tmp_path, message_factory, balanced_policy
-):
-    (tmp_path / "warm.png").write_bytes(b"image")
-    catalog = LocalReactionCatalog.from_items(
-        tmp_path,
-        (ReactionAsset("warm-1", "warm.png", ("warm",), True),),
-    )
-    platform = RichFakePlatform()
-    workflow = build_workflow(
-        generator=StaticGenerationModel("不行，别这么叫我。"),
-        platform=platform,
-        reaction_catalog=catalog,
-    )
-    message = message_factory(message_id="boundary", text="小爱，叫你老婆行吗")
-    topic = TopicSnapshot("boundary-topic", "g1", (message,), 100, 100)
-
-    outcome = asyncio.run(
-        workflow.evaluate(
-            topic,
-            TriggerKind.ALIAS_DIRECT,
-            replace(balanced_policy, reaction_media_enabled=True),
-        )
-    )
-
-    assert outcome.sent is True
-    assert tuple(item.kind for item in platform.outbound[-1]) == (
-        OutboundKind.TEXT,
-    )
-
-
 @pytest.mark.parametrize(
     "resolver",
     (
-        lambda scene, message, policy: _resolution(
+        lambda scene, message: _resolution(
             "UNKNOWN", required_information=("秘密参数",)
         ),
-        lambda scene, message, policy: _resolution(
+        lambda scene, message: _resolution(
             "UNSUPPORTED", required_information=("秘密参数",)
         ),
-        lambda scene, message, policy: (False, ("秘密参数",)),
+        lambda scene, message: (False, ("秘密参数",)),
     ),
 )
 def test_non_supported_task_status_ignores_missing_information_in_prompt(
@@ -693,7 +592,7 @@ def test_non_supported_task_status_ignores_missing_information_in_prompt(
     assert "只追问" not in plan.user_prompt
 
 
-def _raising_resolver(scene, message, policy):
+def _raising_resolver(scene, message):
     raise RuntimeError("resolver unavailable")
 
 
@@ -701,8 +600,8 @@ def _raising_resolver(scene, message, policy):
     ("resolver", "expected_reason"),
     (
         (_raising_resolver, "resolver_error:RuntimeError"),
-        (lambda scene, message, policy: None, "resolver_none"),
-        (lambda scene, message, policy: object(), "resolver_invalid"),
+        (lambda scene, message: None, "resolver_none"),
+        (lambda scene, message: object(), "resolver_invalid"),
     ),
 )
 def test_invalid_task_resolver_fails_closed_and_next_hard_turn_still_works(

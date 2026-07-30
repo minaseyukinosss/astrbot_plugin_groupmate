@@ -28,7 +28,8 @@ from eval.shadow_extract import (
 )
 from eval.shadow_models import AssociationConfidence
 from eval.shadow_projector import ShadowProjector
-from groupmate.models import GroupPolicy
+from groupmate.persona import default_persona_registry
+from groupmate.policies import BehaviorPolicy
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -151,9 +152,15 @@ def main(argv=None) -> int:
         label_reviews = collect_label_reviews(examples, labels)
         all_reviews = _dedupe_reviews(extraction_reviews + label_reviews)
 
+        persona = default_persona_registry().resolve(
+            "aemeath",
+            aliases=(args.current_alias,),
+            relationships=(),
+        )
         projector = ShadowProjector(
-            GroupPolicy(aliases=(args.current_alias,)),
+            BehaviorPolicy(),
             hasher,
+            persona_context=persona,
             target_uin=args.target_uin,
             target_alias=args.target_alias,
             current_alias=args.current_alias,
@@ -177,6 +184,7 @@ def main(argv=None) -> int:
             configuration={
                 "pipeline_version": "phase3-v1",
                 "mechanics_version": "unified-participation-v1",
+                "persona_id": persona.persona_id,
                 "run_gap_ms": 15000,
                 "adjacent_gap_ms": 20000,
                 "directed_gap_ms": 60000,

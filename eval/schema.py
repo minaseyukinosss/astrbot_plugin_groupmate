@@ -9,7 +9,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from groupmate.models import ChatMessage, GroupPolicy, TopicSnapshot
+from groupmate.models import ChatMessage, TopicSnapshot
+from groupmate.policies import BehaviorPolicy, ReplyPolicy
 
 
 SCHEMA_VERSION = 1
@@ -68,24 +69,7 @@ _CONSTRAINT_KEYS = frozenset(
         "max_repeated_ratio",
     }
 )
-_POLICY_KEYS = frozenset(
-    {
-        "aliases",
-        "handle_native_wake",
-        "history_limit",
-        "spontaneous_hourly_limit",
-        "spontaneous_cooldown_seconds",
-        "debounce_min_seconds",
-        "debounce_max_seconds",
-        "topic_max_seconds",
-        "candidate_ttl_seconds",
-        "max_reply_chars",
-        "vision_enabled",
-        "continuation_seconds",
-        "humanize_delay_enabled",
-        "max_reply_segments",
-    }
-)
+_POLICY_KEYS = frozenset()
 
 
 class ScenarioValidationError(ValueError):
@@ -381,11 +365,16 @@ class Scenario:
             updated_at=messages[-1].timestamp,
         )
 
-    def group_policy(self) -> GroupPolicy:
-        values = dict(self.policy)
-        values.setdefault("humanize_delay_enabled", False)
-        values.setdefault("spontaneous_cooldown_seconds", 0)
-        return GroupPolicy(**values)
+    def behavior_policy(self) -> BehaviorPolicy:
+        """Return deterministic internal policy for this isolated scenario."""
+
+        if self.policy:
+            raise ScenarioValidationError(
+                "scenario.policy must be empty; use constraints for assertions"
+            )
+        return BehaviorPolicy(
+            reply=ReplyPolicy(humanize_delay_enabled=False),
+        )
 
 
 @dataclass(frozen=True)

@@ -523,32 +523,3 @@ class SendResult:
             error_code=code,
             error_detail=detail,
         )
-
-
-@dataclass(frozen=True)
-class GroupPolicy:
-    aliases: Tuple[str, ...] = ("爱弥斯", "小爱", "飞行雪绒")
-    handle_native_wake: bool = True
-    history_limit: int = 100
-    spontaneous_hourly_limit: int = 6
-    spontaneous_cooldown_seconds: int = 600
-    debounce_min_seconds: float = 4.0
-    debounce_max_seconds: float = 8.0
-    topic_max_seconds: int = 12
-    candidate_ttl_seconds: int = 20
-    max_reply_chars: int = 60
-    vision_enabled: bool = True
-    continuation_seconds: int = 90
-    direct_pressure_window_seconds: int = 600
-    direct_pressure_nudge_count: int = 2
-    direct_pressure_pester_count: int = 3
-    humanize_delay_enabled: bool = True
-    max_reply_segments: int = 2
-
-    # Phase 5：关闭后不再接受候选写入，只读既有 memories
-    v3_memory_writer_enabled: bool = True
-    # Phase 6：关闭后回退当前文本-only workflow。
-    v3_composition_enabled: bool = True
-    # 反应素材必须同时显式启用并配置本地目录。
-    reaction_media_enabled: bool = False
-    reaction_catalog_path: str = ""

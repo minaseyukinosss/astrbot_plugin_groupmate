@@ -15,7 +15,6 @@ from groupmate.models import (
     AddresseeResolution,
     CandidateStatus,
     ChatMessage,
-    GroupPolicy,
     MemoryItem,
     MemoryKind,
     MemoryScope,
@@ -25,22 +24,22 @@ from groupmate.models import (
     TriggerKind,
 )
 from groupmate.persona.aemeath import AemeathOutputFirewall, AemeathPersonaProvider
+from groupmate.policies import BehaviorPolicy, ReplyPolicy, ResourcePolicy
 from tests.fakes import (
     FakeClock,
     FakeMemoryRepository,
     FakePlatform,
     NullVision,
     StaticGenerationModel,
+    persona_context,
 )
 
 
-def _policy(**overrides) -> GroupPolicy:
-    values = {
-        "humanize_delay_enabled": False,
-        "v3_memory_writer_enabled": True,
-    }
-    values.update(overrides)
-    return GroupPolicy(**values)
+def _policy() -> BehaviorPolicy:
+    return BehaviorPolicy(
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+        resources=ResourcePolicy(open_send_cooldown_seconds=0),
+    )
 
 
 def _user_targeting(user_id: str = "u1") -> TargetingDecision:
@@ -96,23 +95,23 @@ def _topic(text: str, *, group_id="g1", sender="u1") -> TopicSnapshot:
 
 def test_sensitive_text_writes_rejected_not_memory(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    writer = MemoryWriter(store)
+    writer = MemoryWriter(store, persona_id="aemeath")
     writer.process(
         _topic("记住我的密码是 secret123"),
         _user_targeting(),
         decision_id="d1",
         now=100,
     )
-    candidates = store.list_memory_candidates("g1")
+    candidates = store.list_memory_candidates("aemeath", "g1")
     assert candidates
     assert all(item.status is CandidateStatus.REJECTED for item in candidates)
-    assert store.list_memories("g1", now=100) == []
+    assert store.list_memories("aemeath", "g1", now=100) == []
     store.close()
 
 
 def test_ambiguous_subject_has_zero_personal_accepted(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    writer = MemoryWriter(store)
+    writer = MemoryWriter(store, persona_id="aemeath")
     writer.process(
         _topic("听说他明天考试", sender="u1"),
         _ambiguous_targeting("u2"),
@@ -121,35 +120,35 @@ def test_ambiguous_subject_has_zero_personal_accepted(tmp_path):
     )
     accepted = [
         item
-        for item in store.list_memory_candidates("g1")
+        for item in store.list_memory_candidates("aemeath", "g1")
         if item.status is CandidateStatus.ACCEPTED
         and item.scope is MemoryScope.USER_IN_GROUP
     ]
     assert accepted == []
-    assert store.list_memories("g1", now=100) == []
+    assert store.list_memories("aemeath", "g1", now=100) == []
     store.close()
 
 
 def test_joke_not_auto_accepted(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    writer = MemoryWriter(store)
+    writer = MemoryWriter(store, persona_id="aemeath")
     writer.process(
         _topic("开玩笑的别当真，我喜欢榴莲"),
         _user_targeting(),
         decision_id="d1",
         now=100,
     )
-    assert store.list_memories("g1", now=100) == []
+    assert store.list_memories("aemeath", "g1", now=100) == []
     assert any(
         item.status is CandidateStatus.REJECTED
-        for item in store.list_memory_candidates("g1")
+        for item in store.list_memory_candidates("aemeath", "g1")
     )
     store.close()
 
 
 def test_explicit_remember_is_accepted(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    writer = MemoryWriter(store)
+    writer = MemoryWriter(store, persona_id="aemeath")
     writer.process(
         _topic("记住我喜欢草莓蛋糕"),
         _user_targeting(),
@@ -157,14 +156,14 @@ def test_explicit_remember_is_accepted(tmp_path):
         now=100,
         reply_text="好，我会记住的。",
     )
-    memories = store.list_memories("g1", now=100)
+    memories = store.list_memories("aemeath", "g1", now=100)
     assert any("草莓蛋糕" in item.text for item in memories)
     store.close()
 
 
 def test_correct_and_delete_with_tombstone_blocks_replay(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    store.add_memory(
+    store.add_memory("aemeath",
         MemoryItem(
             memory_id="m-old",
             group_id="g1",
@@ -176,29 +175,29 @@ def test_correct_and_delete_with_tombstone_blocks_replay(tmp_path):
         )
     )
     corrected = store.correct_memory(
-        "m-old", "我喜欢香蕉", authority=9, now=20
+        "aemeath", "m-old", "我喜欢香蕉", authority=9, now=20
     )
     assert corrected is not None
-    assert store.get_memory("m-old").status is MemoryStatus.SUPERSEDED
-    assert store.search_memories("g1", "喜欢", now=20, limit=5)
-    assert store.delete_memory(corrected.memory_id, "user_request", now=30)
-    assert store.search_memories("g1", "喜欢", now=30, limit=5) == []
-    assert store.has_tombstone("g1", "u1", claim_hash("我喜欢香蕉"))
+    assert store.get_memory("aemeath", "m-old").status is MemoryStatus.SUPERSEDED
+    assert store.search_memories("aemeath", "g1", "喜欢", now=20, limit=5)
+    assert store.delete_memory("aemeath", corrected.memory_id, "user_request", now=30)
+    assert store.search_memories("aemeath", "g1", "喜欢", now=30, limit=5) == []
+    assert store.has_tombstone("aemeath", "g1", "u1", claim_hash("我喜欢香蕉"))
 
-    writer = MemoryWriter(store)
+    writer = MemoryWriter(store, persona_id="aemeath")
     writer.process(
         _topic("记住我喜欢香蕉"),
         _user_targeting(),
         decision_id="d2",
         now=40,
     )
-    assert store.search_memories("g1", "香蕉", now=40, limit=5) == []
+    assert store.search_memories("aemeath", "g1", "香蕉", now=40, limit=5) == []
     store.close()
 
 
 def test_cross_group_isolation(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    store.add_memory(
+    store.add_memory("aemeath",
         MemoryItem(
             memory_id="m1",
             group_id="g1",
@@ -209,13 +208,13 @@ def test_cross_group_isolation(tmp_path):
             authority=5,
         )
     )
-    assert store.search_memories("g2", "Alice exam", now=15, limit=5) == []
+    assert store.search_memories("aemeath", "g2", "Alice exam", now=15, limit=5) == []
     store.close()
 
 
 def test_scope_filter_hides_other_user_memories(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "m.db")
-    store.add_memory(
+    store.add_memory("aemeath",
         MemoryItem(
             memory_id="m1",
             group_id="g1",
@@ -228,6 +227,7 @@ def test_scope_filter_hides_other_user_memories(tmp_path):
         )
     )
     found = store.search_memories(
+        "aemeath",
         "g1",
         "hiking",
         now=15,
@@ -237,6 +237,7 @@ def test_scope_filter_hides_other_user_memories(tmp_path):
     )
     assert found == []
     blocked = store.search_memories(
+        "aemeath",
         "g1",
         "hiking",
         now=15,
@@ -249,7 +250,8 @@ def test_scope_filter_hides_other_user_memories(tmp_path):
 
 def test_writer_error_does_not_block_reply(topic_snapshot, balanced_policy):
     class BoomStore(FakeMemoryRepository):
-        def append_memory_candidate(self, candidate):
+        def append_memory_candidate(self, persona_id, candidate):
+            del persona_id, candidate
             raise RuntimeError("writer boom")
 
     platform = FakePlatform()
@@ -260,11 +262,13 @@ def test_writer_error_does_not_block_reply(topic_snapshot, balanced_policy):
         vision=NullVision(),
         platform=platform,
         memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
+        persona_context=persona_context(AemeathPersonaProvider()),
+        behavior=_policy(),
+        vision_enabled=True,
+        output_guard=AemeathOutputFirewall(),
         rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
         clock=FakeClock(),
-        memory_writer=MemoryWriter(memory, on_error=errors.append),
+        memory_writer=MemoryWriter(memory, persona_id="aemeath", on_error=errors.append),
     )
     policy = _policy()
     outcome = asyncio.run(
@@ -279,7 +283,7 @@ def test_writer_error_does_not_block_reply(topic_snapshot, balanced_policy):
     assert errors or outcome.sent is True
 
 
-def test_flag_off_skips_candidates(tmp_path, topic_snapshot):
+def test_confirmed_send_always_schedules_memory_writer(tmp_path, topic_snapshot):
     store = SQLiteMemoryStore(tmp_path / "m.db")
     platform = FakePlatform()
     calls = {"n": 0}
@@ -294,14 +298,16 @@ def test_flag_off_skips_candidates(tmp_path, topic_snapshot):
         vision=NullVision(),
         platform=platform,
         memory=store,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
+        persona_context=persona_context(AemeathPersonaProvider()),
+        behavior=_policy(),
+        vision_enabled=True,
+        output_guard=AemeathOutputFirewall(),
         rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
         clock=FakeClock(now=topic_snapshot.updated_at + 1),
-        memory_writer=TrackingWriter(store),
+        memory_writer=TrackingWriter(store, persona_id="aemeath"),
         addressee_resolver=AddresseeResolver(),
     )
-    policy = _policy(v3_memory_writer_enabled=False)
+    policy = _policy()
     outcome = asyncio.run(
         workflow.evaluate(topic_snapshot, TriggerKind.ALIAS_DIRECT, policy)
     )
@@ -311,6 +317,5 @@ def test_flag_off_skips_candidates(tmp_path, topic_snapshot):
         await asyncio.sleep(0.05)
 
     asyncio.run(_drain())
-    assert calls["n"] == 0
-    assert store.list_memory_candidates(topic_snapshot.group_id) == []
+    assert calls["n"] == 1
     store.close()

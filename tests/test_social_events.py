@@ -18,7 +18,8 @@ from groupmate.models import (
     TopicSnapshot,
     TriggerKind,
 )
-from groupmate.persona.aemeath import AemeathOutputFirewall, AemeathPersonaProvider
+from groupmate.persona.aemeath import AemeathOutputFirewall
+from groupmate.policies import BehaviorPolicy, ReplyPolicy
 from groupmate.social.projector import SocialStateProjector
 from tests.fakes import (
     FakeClock,
@@ -26,6 +27,7 @@ from tests.fakes import (
     FakePlatform,
     NullVision,
     StaticGenerationModel,
+    persona_context,
 )
 
 
@@ -52,6 +54,31 @@ def _event(kind, *, event_id="e1", occurred_at=1):
         confidence=1.0,
         occurred_at=occurred_at,
         decision_id="d1",
+    )
+
+
+def _behavior():
+    return BehaviorPolicy(
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+    )
+
+
+def _workflow(model, memory, *, addressee_resolver=None):
+    return CognitiveWorkflow(
+        generation_model=model,
+        vision=NullVision(),
+        platform=FakePlatform(),
+        memory=memory,
+        persona_context=persona_context(),
+        behavior=_behavior(),
+        vision_enabled=True,
+        output_guard=AemeathOutputFirewall(),
+        rate_limiter=SlidingWindowRateLimiter(
+            hourly_limit=6,
+            cooldown_seconds=0,
+        ),
+        clock=FakeClock(200),
+        addressee_resolver=addressee_resolver,
     )
 
 
@@ -113,24 +140,31 @@ def test_social_event_idempotent_and_replay(tmp_path):
     path = tmp_path / "social.db"
     store = SQLiteMemoryStore(path)
     event = _event(SocialEventKind.THANKS, occurred_at=5)
-    first = store.record_social_interaction(event, now=5)
-    second = store.record_social_interaction(event, now=6)
+    first = store.record_social_interaction("aemeath", event, now=5)
+    second = store.record_social_interaction("aemeath", event, now=6)
     assert first is not None
     assert second is not None
     assert first.affinity == second.affinity
-    assert len(store.list_social_events("g1", user_id="u1")) == 1
+    assert len(store.list_social_events("aemeath", "g1", user_id="u1")) == 1
 
-    wiped = store.get_relationship_state("g1", "u1")
+    wiped = store.get_relationship_state("aemeath", "g1", "u1")
     assert wiped is not None
-    rebuilt = store.rebuild_relationship_state("g1", "u1", seed_affinity=0, now=10)
+    rebuilt = store.rebuild_relationship_state(
+        "aemeath", "g1", "u1", seed_affinity=0, now=10
+    )
     assert rebuilt.affinity == wiped.affinity
     assert rebuilt.interaction_count == wiped.interaction_count
     store.close()
 
     db = sqlite3.connect(str(path))
-    legacy_rows = db.execute("SELECT COUNT(*) FROM favorability").fetchone()[0]
+    tables = {
+        row[0]
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
     db.close()
-    assert legacy_rows == 0
+    assert "favorability" not in tables
 
 
 def test_legacy_runtime_interfaces_and_keyword_classifier_are_removed():
@@ -146,16 +180,7 @@ def test_legacy_runtime_interfaces_and_keyword_classifier_are_removed():
 
 def test_ambiguous_and_silence_do_not_write_personal_state():
     memory = FakeMemoryRepository()
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("<SILENCE>"),
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(200),
-    )
+    workflow = _workflow(StaticGenerationModel("<SILENCE>"), memory)
     topic = TopicSnapshot(
         topic_id="t1",
         group_id="g1",
@@ -168,11 +193,8 @@ def test_ambiguous_and_silence_do_not_write_personal_state():
         created_at=100,
         updated_at=100,
     )
-    from groupmate.models import GroupPolicy
-
-    policy = GroupPolicy(humanize_delay_enabled=False)
     outcome = asyncio.run(
-        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, policy)
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, _behavior())
     )
     assert outcome.sent is False
     assert memory.social_events == []
@@ -181,16 +203,7 @@ def test_ambiguous_and_silence_do_not_write_personal_state():
 
 def test_workflow_does_not_infer_social_event_after_send():
     memory = FakeMemoryRepository()
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("在呢。"),
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(200),
-    )
+    workflow = _workflow(StaticGenerationModel("在呢。"), memory)
     topic = TopicSnapshot(
         topic_id="t1",
         group_id="g1",
@@ -198,29 +211,17 @@ def test_workflow_does_not_infer_social_event_after_send():
         created_at=100,
         updated_at=100,
     )
-    from groupmate.models import GroupPolicy
-
-    policy = GroupPolicy(humanize_delay_enabled=False)
     outcome = asyncio.run(
-        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, policy)
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, _behavior())
     )
     assert outcome.sent is True
     assert memory.social_events == []
-    assert memory.get_relationship_state("g1", "u1") is None
+    assert memory.get_relationship_state("aemeath", "g1", "u1") is None
 
 
 def test_first_ambiguous_romantic_address_does_not_create_negative_event():
     memory = FakeMemoryRepository()
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("别乱叫呀。"),
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(200),
-    )
+    workflow = _workflow(StaticGenerationModel("别乱叫呀。"), memory)
     topic = TopicSnapshot(
         topic_id="t1",
         group_id="g1",
@@ -228,11 +229,9 @@ def test_first_ambiguous_romantic_address_does_not_create_negative_event():
         created_at=100,
         updated_at=100,
     )
-    from groupmate.models import GroupPolicy
-
     outcome = asyncio.run(
         workflow.evaluate(
-            topic, TriggerKind.ALIAS_DIRECT, GroupPolicy(humanize_delay_enabled=False)
+            topic, TriggerKind.ALIAS_DIRECT, _behavior()
         )
     )
 
@@ -243,15 +242,9 @@ def test_first_ambiguous_romantic_address_does_not_create_negative_event():
 
 def test_multi_mention_silence_skips_personal_social_write():
     memory = FakeMemoryRepository()
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("嗯。"),
-        vision=NullVision(),
-        platform=FakePlatform(),
-        memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=60),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(200),
+    workflow = _workflow(
+        StaticGenerationModel("嗯。"),
+        memory,
         addressee_resolver=AddresseeResolver(),
     )
     topic = TopicSnapshot(
@@ -270,11 +263,9 @@ def test_multi_mention_silence_skips_personal_social_write():
         topic, TriggerKind.ALIAS_DIRECT, bot_id="bot"
     )
     assert targeting.social_target.kind is AddresseeKind.AMBIGUOUS
-    from groupmate.models import GroupPolicy
-
     outcome = asyncio.run(
         workflow.evaluate(
-            topic, TriggerKind.ALIAS_DIRECT, GroupPolicy(humanize_delay_enabled=False)
+            topic, TriggerKind.ALIAS_DIRECT, _behavior()
         )
     )
     assert outcome.sent is False

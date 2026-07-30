@@ -1,14 +1,18 @@
 import asyncio
+from inspect import signature
 
-from groupmate.engine.runtime import GroupActor
-from groupmate.models import GroupPolicy, WorkflowOutcome
+from groupmate.engine.runtime import GroupActor, GroupRuntimeManager
+from groupmate.models import WorkflowOutcome
+from groupmate.policies import BehaviorPolicy, ConversationPolicy
+from tests.fakes import persona_context
 
 
 class AsyncMemory:
     def __init__(self):
         self.messages = []
 
-    async def save_message_async(self, message):
+    async def save_message_async(self, persona_id, message):
+        del persona_id
         self.messages.append(message)
         return True
 
@@ -37,18 +41,27 @@ class BlockingWorkflow:
 
 
 def policy():
-    return GroupPolicy(
-        aliases=("小爱",),
-        debounce_min_seconds=0,
-        debounce_max_seconds=0,
-        spontaneous_cooldown_seconds=0,
+    return BehaviorPolicy(
+        conversation=ConversationPolicy(
+            debounce_min_seconds=0,
+            debounce_max_seconds=0,
+        )
+    )
+
+
+def actor_for(workflow):
+    return GroupActor(
+        "g1",
+        workflow,
+        persona_context(aliases=("小爱",)),
+        policy(),
     )
 
 
 def test_ingest_continues_while_generation_is_blocked(message_factory):
     async def scenario():
         workflow = BlockingWorkflow()
-        actor = GroupActor("g1", workflow, policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(
             message_factory(message_id="wake", text="小爱，在吗", timestamp=1)
@@ -71,7 +84,7 @@ def test_ingest_continues_while_generation_is_blocked(message_factory):
 def test_hard_trigger_cancels_running_soft_task(message_factory):
     async def scenario():
         workflow = BlockingWorkflow()
-        actor = GroupActor("g1", workflow, policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(message_factory(message_id="soft", timestamp=1))
         await workflow.started.wait()
@@ -94,39 +107,15 @@ def test_hard_trigger_cancels_running_soft_task(message_factory):
     assert workflow.triggers == ["candidate", "alias_direct"]
 
 
-def test_legacy_scheduler_flag_keeps_inline_behavior(message_factory):
-    class ImmediateWorkflow:
-        def __init__(self):
-            self.evaluations = []
-
-        async def evaluate(self, topic, trigger, policy, **kwargs):
-            del topic, policy, kwargs
-            self.evaluations.append(trigger.value)
-            return WorkflowOutcome("legacy", False, "silent")
-
-    async def scenario():
-        workflow = ImmediateWorkflow()
-        actor = GroupActor(
-            "g1", workflow, policy(), v3_scheduler_enabled=False
-        )
-        await actor.start()
-        await actor.submit(
-            message_factory(message_id="legacy", text="小爱，在吗")
-        )
-        await actor.drain()
-        snapshot = actor.snapshot()
-        await actor.close()
-        return workflow.evaluations, snapshot
-
-    evaluations, snapshot = asyncio.run(scenario())
-    assert evaluations == ["alias_direct"]
-    assert snapshot["scheduler"] == "legacy"
+def test_runtime_has_no_legacy_scheduler_switch():
+    assert "v3_scheduler_enabled" not in signature(GroupActor).parameters
+    assert "v3_scheduler_enabled" not in signature(GroupRuntimeManager).parameters
 
 
 def test_pause_cancels_in_flight_hard_task(message_factory):
     async def scenario():
         workflow = BlockingWorkflow()
-        actor = GroupActor("g1", workflow, policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(
             message_factory(message_id="hard", text="小爱，在吗")

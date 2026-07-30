@@ -112,24 +112,31 @@ class MemoryRepository(Protocol):
     ) -> Sequence[MemoryItem]:
         ...
 
-    def append_social_event(self, event: SocialEvent) -> bool:
+    def append_social_event(self, persona_id: str, event: SocialEvent) -> bool:
         ...
 
     def list_social_events(
-        self, group_id: str, user_id: Optional[str] = None, limit: int = 200
+        self,
+        persona_id: str,
+        group_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 200,
     ):
         ...
 
     def get_relationship_state(
-        self, group_id: str, user_id: str
+        self, persona_id: str, group_id: str, user_id: str
     ) -> Optional[RelationshipState]:
         ...
 
-    def upsert_relationship_state(self, state: RelationshipState) -> None:
+    def upsert_relationship_state(
+        self, persona_id: str, state: RelationshipState
+    ) -> None:
         ...
 
     def rebuild_relationship_state(
         self,
+        persona_id: str,
         group_id: str,
         user_id: str,
         *,
@@ -141,6 +148,7 @@ class MemoryRepository(Protocol):
 
     def record_social_interaction(
         self,
+        persona_id: str,
         event,
         *,
         configured_relationship: Optional[str] = None,

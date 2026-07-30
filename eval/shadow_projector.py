@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from eval.shadow_extract import LocalIdHasher, normalize_alias
 from eval.shadow_models import BehaviorExample, ShadowProjection
 from groupmate.core.addressee import AddresseeResolver
+from groupmate.core.response_act import ResponseAct
 from groupmate.core.response_act import TaskResolution, TaskResolutionStatus
 from groupmate.core.scenes import classify_scene
 from groupmate.engine.copied_at import is_copied_at
@@ -18,37 +17,43 @@ from groupmate.engine.topics import select_active_messages
 from groupmate.engine.triggers import TriggerRouter
 from groupmate.models import (
     ChatMessage,
-    GroupPolicy,
     InteractionScene,
     QuoteMode,
     TopicSnapshot,
     TriggerKind,
 )
-from groupmate.core.response_act import ResponseAct
-from groupmate.persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
+from groupmate.persona.registry import PersonaContext
+from groupmate.policies import BehaviorPolicy
 from groupmate.social.affinity import snapshot_for_relationship
 
 
 class ShadowProjector:
     def __init__(
         self,
-        policy: GroupPolicy,
+        behavior: BehaviorPolicy,
         hasher: LocalIdHasher,
         *,
+        persona_context: PersonaContext,
         target_uin: str,
         target_alias: str,
         current_alias: str,
+        vision_enabled: bool = True,
     ) -> None:
-        if not isinstance(policy, GroupPolicy):
-            raise TypeError("policy must be a GroupPolicy")
+        if not isinstance(behavior, BehaviorPolicy):
+            raise TypeError("behavior must be a BehaviorPolicy")
         if not isinstance(hasher, LocalIdHasher):
             raise TypeError("hasher must be a LocalIdHasher")
+        if not isinstance(persona_context, PersonaContext):
+            raise TypeError("persona_context must be a PersonaContext")
         target = str(target_uin or "").strip()
         old_alias = str(target_alias or "").strip()
         alias = str(current_alias or "").strip()
         if not target or not old_alias or not alias:
             raise ValueError("target UIN and aliases are required")
-        self.policy = replace(policy, aliases=(alias,))
+        self.behavior = behavior
+        self.persona_context = persona_context
+        self.aliases = persona_context.aliases
+        self.vision_enabled = bool(vision_enabled)
         self.hasher = hasher
         self.target_uin = target
         self.target_alias = old_alias
@@ -65,7 +70,7 @@ class ShadowProjector:
         latest = topic.latest
         if latest is None:
             raise ValueError("behavior example context must not be empty")
-        trigger = TriggerRouter(self.policy).classify(latest)
+        trigger = TriggerRouter(self.aliases).classify(latest)
         if is_copied_at(trigger.kind):
             return ShadowProjection(
                 sample_id=example.sample_id,
@@ -106,20 +111,21 @@ class ShadowProjector:
         targeting = self.addressee.resolve(
             topic,
             trigger.kind,
-            aliases=self.policy.aliases,
+            aliases=self.aliases,
             bot_id="__target_bot__",
             relationships={},
         )
         task_resolution = self._task_resolution(scene, latest)
         participation = self.participation.decide(
+            persona_id=self.persona_context.persona_id,
             topic=topic,
             trigger=trigger.kind,
-            policy=self.policy,
+            policy=self.behavior.participation,
             targeting=targeting,
             now=latest.timestamp,
-            aliases=self.policy.aliases,
+            aliases=self.aliases,
             affinity=snapshot_for_relationship(None),
-            persona=AEMEATH_PARTICIPATION_PROFILE,
+            persona=self.persona_context.definition.participation_profile,
             recent_outputs=(),
             task_resolution=task_resolution,
         )
@@ -217,7 +223,7 @@ class ShadowProjector:
         if (
             scene is InteractionScene.TASK_REQUEST
             and latest.image_urls
-            and self.policy.vision_enabled
+            and self.vision_enabled
         ):
             return TaskResolution(
                 TaskResolutionStatus.SUPPORTED,

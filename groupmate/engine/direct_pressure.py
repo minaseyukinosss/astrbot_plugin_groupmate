@@ -46,7 +46,7 @@ class DirectAddressPressureTracker:
         self.window_seconds = max(1, int(window_seconds))
         self.nudge_count = max(2, int(nudge_count))
         self.pester_count = max(self.nudge_count + 1, int(pester_count))
-        self._events: Dict[Tuple[str, str], Tuple[int, ...]] = {}
+        self._events: Dict[Tuple[str, str, str], Tuple[int, ...]] = {}
 
     def configure(
         self,
@@ -66,6 +66,7 @@ class DirectAddressPressureTracker:
 
     def observe(
         self,
+        persona_id: str,
         message: ChatMessage,
         trigger: TriggerKind,
         *,
@@ -74,7 +75,10 @@ class DirectAddressPressureTracker:
     ) -> DirectAddressPressureState:
         """observe（观察直接呼叫）：投影当前用户的压力档位。"""
 
-        key = (message.group_id, message.sender_id)
+        persona_id = str(persona_id or "").strip()
+        if not persona_id:
+            raise ValueError("persona_id must not be empty")
+        key = (persona_id, message.group_id, message.sender_id)
         if trigger is TriggerKind.NATIVE_DIRECT and message.reply_to_bot:
             return DirectAddressPressureState(
                 DirectAddressPressureLevel.NORMAL,

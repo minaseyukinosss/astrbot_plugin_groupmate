@@ -7,14 +7,6 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ..capabilities import CapabilityRegistry, CapabilityRequest, vision_spec
-from ..config import (
-    DEBOUNCE_MAX_SECONDS,
-    DEBOUNCE_MIN_SECONDS,
-    HISTORY_LIMIT,
-    HUMANIZE_DELAY_ENABLED,
-    MAX_REPLY_SEGMENTS,
-    TOPIC_MAX_SECONDS,
-)
 from ..core.projections import StateProjector
 from ..core.response_act import TaskResolution, TaskResolutionStatus
 from ..engine.external_knowledge import needs_external_knowledge
@@ -23,13 +15,15 @@ from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
 from ..memory import SQLiteMemoryStore
-from ..media import LocalReactionCatalog
-from ..models import ChatMessage, GroupPolicy, MessageOrigin, StringEnum, TriggerKind
+from ..memory.migrations import SCHEMA_VERSION
+from ..models import ChatMessage, MessageOrigin, StringEnum, TriggerKind
+from ..persona import default_persona_registry
 from ..persona.aemeath import (
     CHARACTER_NAME,
     AemeathOutputFirewall,
-    AemeathPersonaProvider,
 )
+from ..policies import BehaviorPolicy
+from .config import DeploymentSettings
 from .llm import (
     AstrBotGenerationModel,
     AstrBotPlatformPort,
@@ -47,7 +41,12 @@ class TurnOwner(StringEnum):
 class AstrBotBridge:
     """Connects AstrBot events to the framework-free group runtime."""
 
-    def __init__(self, context: Any, settings: Any, data_dir: Path) -> None:
+    def __init__(
+        self,
+        context: Any,
+        settings: DeploymentSettings,
+        data_dir: Path,
+    ) -> None:
         self.context = context
         self.settings = settings
         self.data_dir = Path(data_dir)
@@ -55,14 +54,18 @@ class AstrBotBridge:
         self._umo_by_group: Dict[str, str] = {}
         self._provider_by_group: Dict[str, str] = {}
         self._bootstrapped = set()
-        self._bootstrap_locks: Dict[str, asyncio.Lock] = {}
+        self._bootstrap_locks: Dict[tuple, asyncio.Lock] = {}
         self._paused = False
+        self.persona_context = default_persona_registry().resolve(
+            "aemeath",
+            aliases=settings.aliases_for("aemeath"),
+            relationships=settings.relationships_for("aemeath"),
+        )
+        self.behavior = BehaviorPolicy()
         self.runtime = GroupRuntimeManager(
             self._workflow_for,
-            self._policy_for,
-            v3_scheduler_enabled=bool(
-                self._setting("v3_scheduler_enabled", True)
-            ),
+            lambda group_id: self.persona_context,
+            lambda group_id: self.behavior,
         )
 
     async def handle_event(self, event: Any) -> None:
@@ -88,7 +91,7 @@ class AstrBotBridge:
         group_id = str(event.get_group_id())
         if self.paused or not group_id or self._is_command_event(event):
             return
-        actor = await self.runtime.actor_for(group_id)
+        actor = await self.runtime.actor_for(group_id, self.persona_context)
         topic = actor.window.snapshot()
         from ..engine.topics import select_active_messages
 
@@ -96,14 +99,15 @@ class AstrBotBridge:
             topic.messages, topic_created_at=topic.created_at
         )
         memories = self.memory.search_memories(
+            self.persona_context.persona_id,
             group_id,
             " ".join(message.text for message in active),
             now=max((message.timestamp for message in active), default=0),
             limit=8,
         )
-        prompt = AemeathPersonaProvider(
-            relationships=self._relationships(),
-        ).build_user_context(topic, memories)
+        prompt = self.persona_context.prompt_provider.build_user_context(
+            topic, memories
+        )
         if self.should_defer_native_wake_to_astrbot(event):
             prompt = (
                 "Groupmate 已观察本群上下文；本轮需要联网或外部事实，"
@@ -118,8 +122,6 @@ class AstrBotBridge:
 
     def should_take_native_wake(self, event: Any) -> bool:
         """Whether this @ / reply-to-bot is a Groupmate native-wake candidate."""
-        if not bool(self._setting("handle_native_wake", True)):
-            return False
         if self.paused:
             return False
         group_id = str(event.get_group_id())
@@ -127,7 +129,7 @@ class AstrBotBridge:
             return False
         message = self._message_from_event(event)
         return (
-            TriggerRouter(self._policy_for(group_id)).classify(message).kind
+            TriggerRouter(self.persona_context.aliases).classify(message).kind
             is TriggerKind.NATIVE_DIRECT
         )
 
@@ -158,29 +160,31 @@ class AstrBotBridge:
             return None
         umo = str(event.unified_msg_origin)
         self._umo_by_group[group_id] = umo
-        try:
-            self._provider_by_group[group_id] = await self.context.get_current_chat_provider_id(
-                umo
-            )
-        except Exception:
-            self._provider_by_group.setdefault(
-                group_id, self._setting("generation_provider", "")
-            )
-        actor = await self.runtime.actor_for(group_id)
-        if group_id not in self._bootstrapped:
-            lock = self._bootstrap_locks.get(group_id)
+        if self.settings.generation_provider:
+            self._provider_by_group[group_id] = self.settings.generation_provider
+        else:
+            try:
+                self._provider_by_group[
+                    group_id
+                ] = await self.context.get_current_chat_provider_id(umo)
+            except Exception:
+                self._provider_by_group[group_id] = ""
+        actor = await self.runtime.actor_for(group_id, self.persona_context)
+        runtime_key = (self.persona_context.persona_id, group_id)
+        if runtime_key not in self._bootstrapped:
+            lock = self._bootstrap_locks.get(runtime_key)
             if lock is None:
                 lock = asyncio.Lock()
-                self._bootstrap_locks[group_id] = lock
+                self._bootstrap_locks[runtime_key] = lock
             async with lock:
-                if group_id not in self._bootstrapped:
+                if runtime_key not in self._bootstrapped:
                     await self._bootstrap_group(actor, event)
-                    self._bootstrapped.add(group_id)
+                    self._bootstrapped.add(runtime_key)
         return actor
 
     async def _bootstrap_group(self, actor, event: Any) -> None:
         group_id = actor.group_id
-        policy = self._policy_for(group_id)
+        conversation = self.behavior.conversation
         was_dispatch = actor._dispatch_enabled and not self.paused
         actor.set_dispatch_enabled(False)
         clock = _SystemClock()
@@ -188,7 +192,12 @@ class AstrBotBridge:
             self.memory,
             character_name=CHARACTER_NAME,
         )
-        snapshot = projector.rebuild(group_id, now=clock.now(), policy=policy)
+        snapshot = projector.rebuild(
+            self.persona_context.persona_id,
+            group_id,
+            now=clock.now(),
+            policy=conversation,
+        )
         projector.apply(
             snapshot,
             window=actor.window,
@@ -203,7 +212,7 @@ class AstrBotBridge:
             try:
                 history = await NapCatHistoryPort(
                     bot, event.get_self_id()
-                ).fetch_recent(group_id, policy.history_limit)
+                ).fetch_recent(group_id, conversation.history_limit)
                 for message in history:
                     stamped = message
                     if message.origin is not MessageOrigin.BOT_DELIVERY:
@@ -229,11 +238,24 @@ class AstrBotBridge:
         last_id = topic.latest.message_id if topic.latest else None
         close = getattr(self.memory, "close_topic_epoch_async", None)
         if close is not None and topic.topic_id:
-            await close(group_id, topic.topic_id, now, "RESET", last_id)
+            await close(
+                self.persona_context.persona_id,
+                group_id,
+                topic.topic_id,
+                now,
+                "RESET",
+                last_id,
+            )
         new_id = actor.window.reset_topic()
         open_epoch = getattr(self.memory, "open_topic_epoch_async", None)
         if open_epoch is not None:
-            await open_epoch(group_id, new_id, now, last_id)
+            await open_epoch(
+                self.persona_context.persona_id,
+                group_id,
+                new_id,
+                now,
+                last_id,
+            )
         actor.set_dispatch_enabled(was_dispatch and not self.paused)
 
     def _message_from_event(self, event: Any) -> ChatMessage:
@@ -263,38 +285,78 @@ class AstrBotBridge:
 
     def status(self) -> Dict[str, Any]:
         groups: Dict[str, Any] = {}
-        for group_id, snapshot in self.runtime.snapshots().items():
+        for group_id, snapshot in self.runtime.snapshots(
+            self.persona_context.persona_id
+        ).items():
             enriched = dict(snapshot)
-            enriched["recent_ends"] = self.memory.recent_decision_ends(group_id, limit=3)
+            enriched["recent_ends"] = self.memory.recent_decision_ends(
+                self.persona_context.persona_id, group_id, limit=3
+            )
             groups[group_id] = enriched
         return {
             "paused": self.paused,
-            "scheduler": (
-                "v3" if self.runtime.v3_scheduler_enabled else "legacy"
+            "active_persona": self.persona_context.persona_id,
+            "enabled_scope": (
+                list(self.settings.enabled_groups)
+                if self.settings.enabled_groups
+                else "all"
+            ),
+            "alias_count": len(self.persona_context.aliases),
+            "relationship_seed_count": len(
+                self.persona_context.relationship_seeds
+            ),
+            "generation_provider_mode": (
+                "explicit"
+                if self.settings.generation_provider
+                else "current_group"
+            ),
+            "vision_status": (
+                "disabled"
+                if not self.settings.vision_enabled
+                else (
+                    "explicit"
+                    if self.settings.vision_provider
+                    else "reuse_text"
+                )
+            ),
+            "database_schema": SCHEMA_VERSION,
+            "config_health": (
+                "warning"
+                if (
+                    self.settings.diagnostics.ignored_legacy_keys
+                    or self.settings.diagnostics.unknown_keys
+                    or self.settings.diagnostics.warnings
+                )
+                else "ok"
+            ),
+            "ignored_legacy_keys": list(
+                self.settings.diagnostics.ignored_legacy_keys
             ),
             "groups": groups,
-            "bootstrapped": sorted(self._bootstrapped),
+            "bootstrapped": sorted(
+                group_id
+                for persona_id, group_id in self._bootstrapped
+                if persona_id == self.persona_context.persona_id
+            ),
         }
 
-    def _workflow_for(self, group_id: str):
-        persona = AemeathPersonaProvider(
-            relationships=self._relationships(),
-        )
+    def _workflow_for(self, group_id: str, persona_context):
         getter = lambda gid: self._provider_by_group.get(
             gid,
-            self._setting("generation_provider", ""),
+            self.settings.generation_provider,
         )
-        policy = self._policy_for(group_id)
         vision = AstrBotVisionPort(
             self.context,
-            lambda gid: self._setting("vision_provider", "") or getter(gid),
+            lambda gid: self.settings.vision_provider or getter(gid),
         )
         capabilities = CapabilityRegistry()
-        capabilities.register(vision_spec(vision if policy.vision_enabled else None))
+        capabilities.register(
+            vision_spec(vision if self.settings.vision_enabled else None)
+        )
 
-        def resolve_task(scene, message, group_policy):
+        def resolve_task(scene, message):
             del scene
-            if not group_policy.vision_enabled or not message.image_urls:
+            if not self.settings.vision_enabled or not message.image_urls:
                 return TaskResolution(status=TaskResolutionStatus.UNSUPPORTED)
             return capabilities.resolve(
                 CapabilityRequest(
@@ -307,96 +369,32 @@ class AstrBotBridge:
                 )
             )
 
-        reaction_catalog = None
-        if policy.v3_composition_enabled and policy.reaction_media_enabled:
-            try:
-                reaction_catalog = LocalReactionCatalog.from_directory(
-                    Path(policy.reaction_catalog_path)
-                )
-            except (OSError, TypeError, ValueError):
-                reaction_catalog = None
         return CognitiveWorkflow(
-            generation_model=AstrBotGenerationModel(self.context, getter, persona),
+            generation_model=AstrBotGenerationModel(
+                self.context,
+                getter,
+                persona_context.prompt_provider,
+            ),
             vision=vision,
             platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
             memory=self.memory,
-            persona=persona,
-            output_guard=AemeathOutputFirewall(policy.max_reply_chars),
+            persona_context=persona_context,
+            behavior=self.behavior,
+            vision_enabled=self.settings.vision_enabled,
+            output_guard=AemeathOutputFirewall(),
             rate_limiter=SlidingWindowRateLimiter(
-                policy.spontaneous_hourly_limit,
-                policy.spontaneous_cooldown_seconds,
+                self.behavior.resources.open_send_hourly_limit,
+                self.behavior.resources.open_send_cooldown_seconds,
             ),
             clock=_SystemClock(),
             character_name=CHARACTER_NAME,
-            task_response_resolver=(
-                resolve_task if policy.v3_composition_enabled else None
-            ),
+            task_response_resolver=resolve_task,
             capabilities=capabilities,
-            reaction_catalog=reaction_catalog,
-        )
-
-    def _relationships(self):
-        resolver = getattr(self.settings, "relationships_for", None)
-        if callable(resolver):
-            return resolver("aemeath")
-        configured = getattr(self.settings, "relationships", ())
-        if isinstance(configured, tuple) and (
-            not configured or hasattr(configured[0], "sender_id")
-        ):
-            return configured
-        return ()
-
-    def _policy_for(self, group_id: str) -> GroupPolicy:
-        del group_id
-        aliases = tuple(self._setting("aliases", ("爱弥斯", "小爱", "飞行雪绒")))
-        return GroupPolicy(
-            aliases=aliases,
-            handle_native_wake=bool(self._setting("handle_native_wake", True)),
-            history_limit=HISTORY_LIMIT,
-            spontaneous_hourly_limit=int(self._setting("spontaneous_hourly_limit", 6)),
-            spontaneous_cooldown_seconds=int(
-                self._setting("spontaneous_cooldown_seconds", 600)
-            ),
-            debounce_min_seconds=DEBOUNCE_MIN_SECONDS,
-            debounce_max_seconds=DEBOUNCE_MAX_SECONDS,
-            topic_max_seconds=TOPIC_MAX_SECONDS,
-            max_reply_chars=int(self._setting("max_reply_chars", 60) or 60),
-            vision_enabled=bool(self._setting("vision_enabled", True)),
-            continuation_seconds=int(self._setting("continuation_seconds", 90)),
-            direct_pressure_window_seconds=int(
-                self._setting("direct_pressure_window_seconds", 600)
-            ),
-            direct_pressure_nudge_count=int(
-                self._setting("direct_pressure_nudge_count", 2)
-            ),
-            direct_pressure_pester_count=int(
-                self._setting("direct_pressure_pester_count", 3)
-            ),
-            humanize_delay_enabled=HUMANIZE_DELAY_ENABLED,
-            max_reply_segments=MAX_REPLY_SEGMENTS,
-            v3_memory_writer_enabled=bool(
-                self._setting("v3_memory_writer_enabled", True)
-            ),
-            v3_composition_enabled=bool(
-                self._setting("v3_composition_enabled", True)
-            ),
-            reaction_media_enabled=bool(
-                self._setting("reaction_media_enabled", False)
-                and str(self._setting("reaction_catalog_path", "") or "").strip()
-            ),
-            reaction_catalog_path=str(
-                self._setting("reaction_catalog_path", "") or ""
-            ).strip(),
         )
 
     def _group_enabled(self, group_id: str) -> bool:
-        groups = tuple(self._setting("enabled_groups", ()))
+        groups = self.settings.enabled_groups
         return not groups or group_id in {str(item) for item in groups}
-
-    def _setting(self, name: str, default: Any) -> Any:
-        if isinstance(self.settings, dict):
-            return self.settings.get(name, default)
-        return getattr(self.settings, name, default)
 
     @staticmethod
     def _is_command_event(event: Any) -> bool:

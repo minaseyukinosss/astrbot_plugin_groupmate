@@ -29,6 +29,13 @@ from . import retrieval as memory_retrieval
 from .writer import SQLiteWriteWorker
 
 
+def _require_persona_id(value: str) -> str:
+    persona_id = str(value or "").strip()
+    if not persona_id:
+        raise ValueError("persona_id is required")
+    return persona_id
+
+
 class SQLiteMemoryStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -60,13 +67,15 @@ class SQLiteMemoryStore:
         return int(row["value"]) if row else 0
 
     @staticmethod
-    def _message_params(message: ChatMessage):
+    def _message_params(persona_id: str, message: ChatMessage):
+        persona_id = _require_persona_id(persona_id)
         origin = message.origin
         if not isinstance(origin, MessageOrigin):
             origin = MessageOrigin(str(origin))
         if origin is MessageOrigin.BOT_DELIVERY and not message.decision_id:
             raise ValueError("BOT_DELIVERY requires decision_id")
         return (
+            persona_id,
             message.group_id,
             message.message_id,
             message.sender_id,
@@ -89,36 +98,43 @@ class SQLiteMemoryStore:
             int(message.event_version or 1),
         )
 
-    def save_message(self, message: ChatMessage) -> bool:
-        return bool(self._write(lambda db: self._insert_message(db, message)))
+    def save_message(self, persona_id: str, message: ChatMessage) -> bool:
+        persona_id = _require_persona_id(persona_id)
+        return bool(self._write(lambda db: self._insert_message(db, persona_id, message)))
 
-    async def save_message_async(self, message: ChatMessage) -> bool:
-        return bool(await self._write_async(lambda db: self._insert_message(db, message)))
+    async def save_message_async(self, persona_id: str, message: ChatMessage) -> bool:
+        persona_id = _require_persona_id(persona_id)
+        return bool(
+            await self._write_async(lambda db: self._insert_message(db, persona_id, message))
+        )
 
     @classmethod
-    def _insert_message(cls, db, message: ChatMessage) -> bool:
+    def _insert_message(cls, db, persona_id: str, message: ChatMessage) -> bool:
         cursor = db.execute(
             """
             INSERT OR IGNORE INTO messages(
-                group_id, message_id, sender_id, sender_name, text, timestamp,
+                persona_id, group_id, message_id, sender_id, sender_name, text, timestamp,
                 reply_to_message_id, reply_to_bot, mentions_bot, is_bot,
                 is_command, image_urls, segment_types, metadata,
                 origin, decision_id, ingested_at, platform, bot_id, event_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            cls._message_params(message),
+            cls._message_params(persona_id, message),
         )
         return cursor.rowcount == 1
 
-    def recent_messages(self, group_id: str, limit: int) -> List[ChatMessage]:
+    def recent_messages(
+        self, persona_id: str, group_id: str, limit: int
+    ) -> List[ChatMessage]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT * FROM messages
-            WHERE group_id = ?
+            WHERE persona_id = ? AND group_id = ?
             ORDER BY timestamp DESC, rowid DESC
             LIMIT ?
             """,
-            (str(group_id), max(0, int(limit))),
+            (persona_id, str(group_id), max(0, int(limit))),
         ).fetchall()
         return [self._row_to_message(row) for row in reversed(rows)]
 
@@ -161,6 +177,7 @@ class SQLiteMemoryStore:
 
     def upsert_profile(
         self,
+        persona_id: str,
         group_id: str,
         subject_id: str,
         display_name: str,
@@ -168,25 +185,29 @@ class SQLiteMemoryStore:
         authority: int,
         updated_at: int = 0,
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+
         def operation(db):
             existing = db.execute(
-                "SELECT authority FROM profiles WHERE group_id = ? AND subject_id = ?",
-                (str(group_id), str(subject_id)),
+                "SELECT authority FROM profiles "
+                "WHERE persona_id = ? AND group_id = ? AND subject_id = ?",
+                (persona_id, str(group_id), str(subject_id)),
             ).fetchone()
             if existing and int(existing["authority"]) > int(authority):
                 return False
             db.execute(
                 """
                 INSERT INTO profiles(
-                    group_id, subject_id, display_name, relationship, authority, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(group_id, subject_id) DO UPDATE SET
+                    persona_id, group_id, subject_id, display_name, relationship, authority, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(persona_id, group_id, subject_id) DO UPDATE SET
                     display_name = excluded.display_name,
                     relationship = excluded.relationship,
                     authority = excluded.authority,
                     updated_at = excluded.updated_at
                 """,
                 (
+                    persona_id,
                     str(group_id),
                     str(subject_id),
                     display_name.strip(),
@@ -199,14 +220,19 @@ class SQLiteMemoryStore:
 
         return bool(self._write(operation))
 
-    def get_profile(self, group_id: str, subject_id: str) -> Optional[Dict[str, Any]]:
+    def get_profile(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> Optional[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
-            "SELECT * FROM profiles WHERE group_id = ? AND subject_id = ?",
-            (str(group_id), str(subject_id)),
+            "SELECT * FROM profiles "
+            "WHERE persona_id = ? AND group_id = ? AND subject_id = ?",
+            (persona_id, str(group_id), str(subject_id)),
         ).fetchone()
         return dict(row) if row else None
 
-    def add_memory(self, memory: MemoryItem) -> None:
+    def add_memory(self, persona_id: str, memory: MemoryItem) -> None:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
             source_ids = tuple(memory.source_message_ids or ())
             if not source_ids and memory.source_message_id:
@@ -223,14 +249,15 @@ class SQLiteMemoryStore:
             db.execute(
                 """
                 INSERT OR REPLACE INTO memories(
-                    memory_id, group_id, subject_id, kind, text, created_at,
+                    memory_id, persona_id, group_id, subject_id, kind, text, created_at,
                     expires_at, confidence, importance, authority, source_message_id,
                     status, scope, sensitivity, extractor_version,
                     supersedes_memory_id, source_message_ids_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory.memory_id,
+                    persona_id,
                     memory.group_id,
                     memory.subject_id,
                     memory.kind.value,
@@ -254,6 +281,7 @@ class SQLiteMemoryStore:
 
     def list_memories(
         self,
+        persona_id: str,
         group_id: str,
         *,
         kind: Optional[MemoryKind] = None,
@@ -263,11 +291,12 @@ class SQLiteMemoryStore:
         status_accepted_only: bool = True,
         statuses: Optional[Sequence[MemoryStatus]] = None,
     ) -> List[MemoryItem]:
+        persona_id = _require_persona_id(persona_id)
         sql = (
-            "SELECT * FROM memories WHERE group_id = ? "
+            "SELECT * FROM memories WHERE persona_id = ? AND group_id = ? "
             "AND (expires_at IS NULL OR expires_at > ?)"
         )
-        params: List[Any] = [str(group_id), int(now)]
+        params: List[Any] = [persona_id, str(group_id), int(now)]
         if kind is not None:
             sql += " AND kind = ?"
             params.append(kind.value)
@@ -289,15 +318,17 @@ class SQLiteMemoryStore:
         rows = self._db.execute(sql, tuple(params)).fetchall()
         return [self._row_to_memory(row) for row in rows]
 
-    def get_memory(self, memory_id: str) -> Optional[MemoryItem]:
+    def get_memory(self, persona_id: str, memory_id: str) -> Optional[MemoryItem]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
-            "SELECT * FROM memories WHERE memory_id = ?",
-            (str(memory_id),),
+            "SELECT * FROM memories WHERE persona_id = ? AND memory_id = ?",
+            (persona_id, str(memory_id)),
         ).fetchone()
         return self._row_to_memory(row) if row else None
 
     def search_memories(
         self,
+        persona_id: str,
         group_id: str,
         query: str,
         now: int,
@@ -306,12 +337,14 @@ class SQLiteMemoryStore:
         subject_ids: Optional[Sequence[str]] = None,
         include_user_in_group: bool = True,
     ) -> List[MemoryItem]:
+        persona_id = _require_persona_id(persona_id)
         sql = (
-            "SELECT * FROM memories WHERE group_id = ? "
+            "SELECT * FROM memories WHERE persona_id = ? AND group_id = ? "
             "AND status = ? "
             "AND (expires_at IS NULL OR expires_at > ?)"
         )
         params: List[Any] = [
+            persona_id,
             str(group_id),
             MemoryStatus.ACCEPTED.value,
             int(now),
@@ -329,8 +362,9 @@ class SQLiteMemoryStore:
         )
 
     def append_memory_candidate(
-        self, candidate: MemoryCandidate
+        self, persona_id: str, candidate: MemoryCandidate
     ) -> Optional[MemoryCandidate]:
+        persona_id = _require_persona_id(persona_id)
         hashed = candidate.claim_hash or claim_hash(candidate.claim)
         source_ids = tuple(
             str(item) for item in candidate.source_message_ids if str(item).strip()
@@ -351,22 +385,23 @@ class SQLiteMemoryStore:
         def operation(db):
             existing = db.execute(
                 "SELECT * FROM memory_candidates "
-                "WHERE group_id=? AND subject_id=? AND claim_hash=?",
-                (candidate.group_id, candidate.subject_id, hashed),
+                "WHERE persona_id=? AND group_id=? AND subject_id=? AND claim_hash=?",
+                (persona_id, candidate.group_id, candidate.subject_id, hashed),
             ).fetchone()
             if existing:
                 return dict(existing)
             db.execute(
                 """
                 INSERT INTO memory_candidates(
-                    candidate_id, group_id, scope, subject_id, kind, claim, claim_hash,
+                    candidate_id, persona_id, group_id, scope, subject_id, kind, claim, claim_hash,
                     source_message_ids_json, confidence, sensitivity,
                     proposed_expires_at, extractor_version, status, created_at,
                     decided_at, decision_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     candidate.candidate_id,
+                    persona_id,
                     candidate.group_id,
                     scope.value,
                     candidate.subject_id,
@@ -389,24 +424,29 @@ class SQLiteMemoryStore:
         existing_row = self._write(operation)
         if existing_row is not None:
             return self._row_to_candidate(existing_row)
-        return self.get_memory_candidate(candidate.candidate_id)
+        return self.get_memory_candidate(persona_id, candidate.candidate_id)
 
-    def get_memory_candidate(self, candidate_id: str) -> Optional[MemoryCandidate]:
+    def get_memory_candidate(
+        self, persona_id: str, candidate_id: str
+    ) -> Optional[MemoryCandidate]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
-            "SELECT * FROM memory_candidates WHERE candidate_id = ?",
-            (str(candidate_id),),
+            "SELECT * FROM memory_candidates WHERE persona_id = ? AND candidate_id = ?",
+            (persona_id, str(candidate_id)),
         ).fetchone()
         return self._row_to_candidate(row) if row else None
 
     def list_memory_candidates(
         self,
+        persona_id: str,
         group_id: str,
         *,
         status: Optional[CandidateStatus] = None,
         limit: int = 50,
     ) -> List[MemoryCandidate]:
-        sql = "SELECT * FROM memory_candidates WHERE group_id = ?"
-        params: List[Any] = [str(group_id)]
+        persona_id = _require_persona_id(persona_id)
+        sql = "SELECT * FROM memory_candidates WHERE persona_id = ? AND group_id = ?"
+        params: List[Any] = [persona_id, str(group_id)]
         if status is not None:
             sql += " AND status = ?"
             params.append(
@@ -419,12 +459,14 @@ class SQLiteMemoryStore:
 
     def decide_candidate(
         self,
+        persona_id: str,
         candidate_id: str,
         status: CandidateStatus,
         *,
         reason: str = "",
         decided_at: int,
     ) -> None:
+        persona_id = _require_persona_id(persona_id)
         status_value = (
             status.value if isinstance(status, CandidateStatus) else str(status)
         )
@@ -432,14 +474,15 @@ class SQLiteMemoryStore:
         def operation(db):
             db.execute(
                 "UPDATE memory_candidates SET status=?, decided_at=?, decision_reason=? "
-                "WHERE candidate_id=?",
-                (status_value, int(decided_at), str(reason or ""), str(candidate_id)),
+                "WHERE persona_id=? AND candidate_id=?",
+                (status_value, int(decided_at), str(reason or ""), persona_id, str(candidate_id)),
             )
 
         self._write(operation)
 
     def accept_candidate_memory(
         self,
+        persona_id: str,
         candidate_id: str,
         memory: MemoryItem,
         *,
@@ -447,11 +490,12 @@ class SQLiteMemoryStore:
         decided_at: int,
         superseded_memory_id: Optional[str] = None,
     ) -> None:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
             if superseded_memory_id:
                 db.execute(
-                    "UPDATE memories SET status=? WHERE memory_id=?",
-                    (MemoryStatus.SUPERSEDED.value, str(superseded_memory_id)),
+                    "UPDATE memories SET status=? WHERE persona_id=? AND memory_id=?",
+                    (MemoryStatus.SUPERSEDED.value, persona_id, str(superseded_memory_id)),
                 )
             source_ids = tuple(memory.source_message_ids or ())
             if not source_ids and memory.source_message_id:
@@ -459,14 +503,15 @@ class SQLiteMemoryStore:
             db.execute(
                 """
                 INSERT OR REPLACE INTO memories(
-                    memory_id, group_id, subject_id, kind, text, created_at,
+                    memory_id, persona_id, group_id, subject_id, kind, text, created_at,
                     expires_at, confidence, importance, authority, source_message_id,
                     status, scope, sensitivity, extractor_version,
                     supersedes_memory_id, source_message_ids_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     memory.memory_id,
+                    persona_id,
                     memory.group_id,
                     memory.subject_id,
                     memory.kind.value,
@@ -491,11 +536,12 @@ class SQLiteMemoryStore:
             )
             db.execute(
                 "UPDATE memory_candidates SET status=?, decided_at=?, decision_reason=? "
-                "WHERE candidate_id=?",
+                "WHERE persona_id=? AND candidate_id=?",
                 (
                     CandidateStatus.ACCEPTED.value,
                     int(decided_at),
                     str(reason or ""),
+                    persona_id,
                     str(candidate_id),
                 ),
             )
@@ -504,6 +550,7 @@ class SQLiteMemoryStore:
 
     def correct_memory(
         self,
+        persona_id: str,
         memory_id: str,
         new_text: str,
         *,
@@ -511,7 +558,8 @@ class SQLiteMemoryStore:
         now: int,
         source_message_ids: Optional[Sequence[str]] = None,
     ) -> Optional[MemoryItem]:
-        old = self.get_memory(memory_id)
+        persona_id = _require_persona_id(persona_id)
+        old = self.get_memory(persona_id, memory_id)
         if old is None:
             return None
         source_ids = tuple(
@@ -541,20 +589,21 @@ class SQLiteMemoryStore:
 
         def operation(db):
             db.execute(
-                "UPDATE memories SET status=? WHERE memory_id=?",
-                (MemoryStatus.SUPERSEDED.value, old.memory_id),
+                "UPDATE memories SET status=? WHERE persona_id=? AND memory_id=?",
+                (MemoryStatus.SUPERSEDED.value, persona_id, old.memory_id),
             )
             db.execute(
                 """
                 INSERT INTO memories(
-                    memory_id, group_id, subject_id, kind, text, created_at,
+                    memory_id, persona_id, group_id, subject_id, kind, text, created_at,
                     expires_at, confidence, importance, authority, source_message_id,
                     status, scope, sensitivity, extractor_version,
                     supersedes_memory_id, source_message_ids_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     corrected.memory_id,
+                    persona_id,
                     corrected.group_id,
                     corrected.subject_id,
                     corrected.kind.value,
@@ -577,8 +626,11 @@ class SQLiteMemoryStore:
         self._write(operation)
         return corrected
 
-    def delete_memory(self, memory_id: str, reason: str, *, now: int) -> bool:
-        item = self.get_memory(memory_id)
+    def delete_memory(
+        self, persona_id: str, memory_id: str, reason: str, *, now: int
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+        item = self.get_memory(persona_id, memory_id)
         if item is None:
             return False
         hashed = claim_hash(item.text)
@@ -589,18 +641,19 @@ class SQLiteMemoryStore:
 
         def operation(db):
             db.execute(
-                "UPDATE memories SET status=? WHERE memory_id=?",
-                (MemoryStatus.DELETED.value, str(memory_id)),
+                "UPDATE memories SET status=? WHERE persona_id=? AND memory_id=?",
+                (MemoryStatus.DELETED.value, persona_id, str(memory_id)),
             )
             db.execute(
                 """
                 INSERT OR IGNORE INTO memory_tombstones(
-                    tombstone_id, group_id, subject_id, claim_hash,
+                    tombstone_id, persona_id, group_id, subject_id, claim_hash,
                     source_message_ids_json, deleted_at, reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tombstone_id,
+                    persona_id,
                     item.group_id,
                     item.subject_id,
                     hashed,
@@ -613,21 +666,27 @@ class SQLiteMemoryStore:
         self._write(operation)
         return True
 
-    def has_tombstone(self, group_id: str, subject_id: str, claim_hash_value: str) -> bool:
+    def has_tombstone(
+        self, persona_id: str, group_id: str, subject_id: str, claim_hash_value: str
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
             "SELECT 1 FROM memory_tombstones "
-            "WHERE group_id=? AND subject_id=? AND claim_hash=? LIMIT 1",
-            (str(group_id), str(subject_id), str(claim_hash_value)),
+            "WHERE persona_id=? AND group_id=? AND subject_id=? AND claim_hash=? LIMIT 1",
+            (persona_id, str(group_id), str(subject_id), str(claim_hash_value)),
         ).fetchone()
         return row is not None
 
-    def purge_expired_memories(self, now: int) -> int:
+    def purge_expired_memories(self, persona_id: str, now: int) -> int:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
             cursor = db.execute(
                 "UPDATE memories SET status=? "
-                "WHERE status=? AND expires_at IS NOT NULL AND expires_at <= ?",
+                "WHERE persona_id=? AND status=? "
+                "AND expires_at IS NOT NULL AND expires_at <= ?",
                 (
                     MemoryStatus.EXPIRED.value,
+                    persona_id,
                     MemoryStatus.ACCEPTED.value,
                     int(now),
                 ),
@@ -754,39 +813,44 @@ class SQLiteMemoryStore:
 
     def record_transition(
         self,
+        persona_id: str,
         decision_id: str,
         group_id: str,
         state: str,
         reason: str,
         timestamp: int,
     ) -> None:
+        persona_id = _require_persona_id(persona_id)
         self._write(
             lambda db: db.execute(
                 """
-                INSERT INTO decisions(decision_id, group_id, state, reason, timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO decisions(
+                    persona_id, decision_id, group_id, state, reason, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (decision_id, group_id, state, reason, int(timestamp)),
+                (persona_id, decision_id, group_id, state, reason, int(timestamp)),
             )
         )
 
     def recent_decision_ends(
-        self, group_id: str, limit: int = 3
+        self, persona_id: str, group_id: str, limit: int = 3
     ) -> List[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT decision_id, reason, timestamp
             FROM decisions
-            WHERE group_id = ? AND state = 'END'
+            WHERE persona_id = ? AND group_id = ? AND state = 'END'
             ORDER BY timestamp DESC, rowid DESC
             LIMIT ?
             """,
-            (str(group_id), max(1, int(limit))),
+            (persona_id, str(group_id), max(1, int(limit))),
         ).fetchall()
         return [dict(row) for row in rows]
 
     def enqueue_outbox(
         self,
+        persona_id: str,
         decision_id: str,
         group_id: str,
         text: str,
@@ -798,16 +862,19 @@ class SQLiteMemoryStore:
         outbound: Sequence[OutboundSegment] = (),
         kind: str = "reply",
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+
         def operation(db):
             cursor = db.execute(
                 """
                 INSERT OR IGNORE INTO outbox(
-                    decision_id, group_id, text, created_at, expires_at, sent_at,
+                    persona_id, decision_id, group_id, text, created_at, expires_at, sent_at,
                     status, attempt, quote_message_id, segments_json, outbound_json,
                     kind
-                ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
                 """,
                 (
+                    persona_id,
                     decision_id,
                     group_id,
                     text,
@@ -823,16 +890,43 @@ class SQLiteMemoryStore:
 
         return bool(self._write(operation))
 
-    async def enqueue_outbox_async(self, *args, **kwargs) -> bool:
+    async def enqueue_outbox_async(
+        self,
+        persona_id: str,
+        decision_id: str,
+        group_id: str,
+        text: str,
+        created_at: int,
+        expires_at: Optional[int] = None,
+        *,
+        quote_message_id: Optional[str] = None,
+        segments: Sequence[str] = (),
+        outbound: Sequence[OutboundSegment] = (),
+        kind: str = "reply",
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         return bool(
             await self._write_async(
-                lambda db: self._enqueue_outbox_on(db, *args, **kwargs)
+                lambda db: self._enqueue_outbox_on(
+                    db,
+                    persona_id,
+                    decision_id,
+                    group_id,
+                    text,
+                    created_at,
+                    expires_at,
+                    quote_message_id=quote_message_id,
+                    segments=segments,
+                    outbound=outbound,
+                    kind=kind,
+                )
             )
         )
 
     @staticmethod
     def _enqueue_outbox_on(
         db,
+        persona_id,
         decision_id,
         group_id,
         text,
@@ -844,15 +938,17 @@ class SQLiteMemoryStore:
         outbound=(),
         kind="reply"
     ):
+        persona_id = _require_persona_id(persona_id)
         cursor = db.execute(
             """
             INSERT OR IGNORE INTO outbox(
-                decision_id, group_id, text, created_at, expires_at, sent_at,
+                persona_id, decision_id, group_id, text, created_at, expires_at, sent_at,
                 status, attempt, quote_message_id, segments_json, outbound_json,
                 kind
-            ) VALUES (?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', 0, ?, ?, ?, ?)
             """,
             (
+                persona_id,
                 decision_id,
                 group_id,
                 text,
@@ -882,33 +978,44 @@ class SQLiteMemoryStore:
             )
         return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
-    def pending_outbox(self, now: int) -> List[Dict[str, Any]]:
+    def pending_outbox(self, persona_id: str, now: int) -> List[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT * FROM outbox
-            WHERE status = 'pending' AND (expires_at IS NULL OR expires_at > ?)
+            WHERE persona_id = ? AND status = 'pending'
+              AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY created_at ASC
             """,
-            (int(now),),
+            (persona_id, int(now)),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def outbox_record(self, decision_id: str) -> Optional[Dict[str, Any]]:
+    def outbox_record(
+        self, persona_id: str, decision_id: str
+    ) -> Optional[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
-            "SELECT * FROM outbox WHERE decision_id=?", (str(decision_id),)
+            "SELECT * FROM outbox WHERE persona_id=? AND decision_id=?",
+            (persona_id, str(decision_id)),
         ).fetchone()
         return dict(row) if row else None
 
-    def mark_outbox_sent(self, decision_id: str, sent_at: int) -> None:
+    def mark_outbox_sent(
+        self, persona_id: str, decision_id: str, sent_at: int
+    ) -> None:
+        persona_id = _require_persona_id(persona_id)
         self._write(
             lambda db: db.execute(
-                "UPDATE outbox SET sent_at = ?, status='sent' WHERE decision_id = ?",
-                (int(sent_at), decision_id),
+                "UPDATE outbox SET sent_at = ?, status='sent' "
+                "WHERE persona_id = ? AND decision_id = ?",
+                (int(sent_at), persona_id, decision_id),
             )
         )
 
     async def transition_outbox_async(
         self,
+        persona_id: str,
         decision_id: str,
         expected: str,
         status: str,
@@ -917,19 +1024,22 @@ class SQLiteMemoryStore:
         failure_detail: str = "",
         increment_attempt: bool = False
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+
         def operation(db):
             cursor = db.execute(
                 """
                 UPDATE outbox
                 SET status=?, failure_code=?, failure_detail=?,
                     attempt=attempt + ?
-                WHERE decision_id=? AND status=?
+                WHERE persona_id=? AND decision_id=? AND status=?
                 """,
                 (
                     str(status),
                     failure_code or None,
                     (failure_detail or "")[:500] or None,
                     int(bool(increment_attempt)),
+                    persona_id,
                     decision_id,
                     str(expected),
                 ),
@@ -940,40 +1050,45 @@ class SQLiteMemoryStore:
 
     async def finalize_delivery_async(
         self,
+        persona_id: str,
         decision_id: str,
         sent_at: int,
         bot_message: ChatMessage,
         reason: str = "sent",
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+
         def operation(db):
             row = db.execute(
-                "SELECT status FROM outbox WHERE decision_id=?", (decision_id,)
+                "SELECT status FROM outbox WHERE persona_id=? AND decision_id=?",
+                (persona_id, decision_id),
             ).fetchone()
             if row is None or row["status"] == "sent":
                 return False
             if row["status"] != "sending":
                 return False
-            self._insert_message(db, bot_message)
+            self._insert_message(db, persona_id, bot_message)
             db.execute(
                 "UPDATE outbox SET status='sent', sent_at=?, "
-                "failure_code=NULL, failure_detail=NULL WHERE decision_id=?",
-                (int(sent_at), decision_id),
+                "failure_code=NULL, failure_detail=NULL "
+                "WHERE persona_id=? AND decision_id=?",
+                (int(sent_at), persona_id, decision_id),
             )
             db.execute(
-                "INSERT INTO decisions(decision_id, group_id, state, reason, timestamp) "
-                "VALUES (?, ?, 'SEND', ?, ?)",
-                (decision_id, bot_message.group_id, reason, int(sent_at)),
+                "INSERT INTO decisions(persona_id, decision_id, group_id, state, reason, timestamp) "
+                "VALUES (?, ?, ?, 'SEND', ?, ?)",
+                (persona_id, decision_id, bot_message.group_id, reason, int(sent_at)),
             )
             db.execute(
-                "INSERT INTO decisions(decision_id, group_id, state, reason, timestamp) "
-                "VALUES (?, ?, 'END', ?, ?)",
-                (decision_id, bot_message.group_id, reason, int(sent_at)),
+                "INSERT INTO decisions(persona_id, decision_id, group_id, state, reason, timestamp) "
+                "VALUES (?, ?, ?, 'END', ?, ?)",
+                (persona_id, decision_id, bot_message.group_id, reason, int(sent_at)),
             )
             return True
 
         return bool(await self._write_async(operation))
 
-    async def mark_sending_unknown_async(self) -> int:
+    async def mark_all_sending_unknown_async(self) -> int:
         def operation(db):
             cursor = db.execute(
                 "UPDATE outbox SET status='unknown', failure_code='shutdown' "
@@ -983,133 +1098,159 @@ class SQLiteMemoryStore:
 
         return int(await self._write_async(operation))
 
+    async def mark_sending_unknown_async(self) -> int:
+        """Compatibility-free operational alias for host shutdown recovery."""
+        return await self.mark_all_sending_unknown_async()
+
     def list_ledger_messages(
-        self, group_id: str, limit: int = 100
+        self, persona_id: str, group_id: str, limit: int = 100
     ) -> List[ChatMessage]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT * FROM messages
-            WHERE group_id = ?
+            WHERE persona_id = ? AND group_id = ?
             ORDER BY timestamp ASC, rowid ASC
             LIMIT ?
             """,
-            (str(group_id), max(0, int(limit))),
+            (persona_id, str(group_id), max(0, int(limit))),
         ).fetchall()
         return [self._row_to_message(row) for row in rows]
 
     def list_bot_deliveries(
-        self, group_id: str, limit: int = 20
+        self, persona_id: str, group_id: str, limit: int = 20
     ) -> List[ChatMessage]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT * FROM messages
-            WHERE group_id = ? AND origin = 'BOT_DELIVERY'
+            WHERE persona_id = ? AND group_id = ? AND origin = 'BOT_DELIVERY'
               AND decision_id IS NOT NULL AND decision_id != ''
             ORDER BY timestamp DESC, rowid DESC
             LIMIT ?
             """,
-            (str(group_id), max(0, int(limit))),
+            (persona_id, str(group_id), max(0, int(limit))),
         ).fetchall()
         return [self._row_to_message(row) for row in reversed(rows)]
 
-    def list_candidate_sent_at(self, group_id: str, since: int) -> List[int]:
+    def list_candidate_sent_at(
+        self, persona_id: str, group_id: str, since: int
+    ) -> List[int]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT sent_at FROM outbox
-            WHERE group_id = ? AND status = 'sent'
+            WHERE persona_id = ? AND group_id = ? AND status = 'sent'
               AND kind IN ('reply', 'candidate')
               AND sent_at IS NOT NULL AND sent_at > ?
             ORDER BY sent_at ASC
             """,
-            (str(group_id), int(since)),
+            (persona_id, str(group_id), int(since)),
         ).fetchall()
         # Spontaneous/candidate deliveries are tagged as kind=reply by workflow;
         # use BOT_DELIVERY messages joined with outbox kind when available.
         return [int(row["sent_at"]) for row in rows]
 
-    def list_spontaneous_sent_at(self, group_id: str, since: int) -> List[int]:
+    def list_spontaneous_sent_at(
+        self, persona_id: str, group_id: str, since: int
+    ) -> List[int]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT sent_at FROM outbox
-            WHERE group_id = ? AND status = 'sent' AND kind = 'candidate'
+            WHERE persona_id = ? AND group_id = ?
+              AND status = 'sent' AND kind = 'candidate'
               AND sent_at IS NOT NULL AND sent_at > ?
             ORDER BY sent_at ASC
             """,
-            (str(group_id), int(since)),
+            (persona_id, str(group_id), int(since)),
         ).fetchall()
         return [int(row["sent_at"]) for row in rows]
 
-    def latest_open_topic_epoch(self, group_id: str) -> Optional[Dict[str, Any]]:
+    def latest_open_topic_epoch(
+        self, persona_id: str, group_id: str
+    ) -> Optional[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
             """
             SELECT * FROM topic_epochs
-            WHERE group_id = ? AND closed_at IS NULL
+            WHERE persona_id = ? AND group_id = ? AND closed_at IS NULL
             ORDER BY opened_at DESC
             LIMIT 1
             """,
-            (str(group_id),),
+            (persona_id, str(group_id)),
         ).fetchone()
         return dict(row) if row else None
 
     def open_topic_epoch(
         self,
+        persona_id: str,
         group_id: str,
         topic_id: str,
         opened_at: int,
         last_message_id: Optional[str] = None,
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
-            open_row = db.execute(
-                "SELECT topic_id FROM topic_epochs "
-                "WHERE group_id=? AND closed_at IS NULL LIMIT 1",
-                (str(group_id),),
-            ).fetchone()
-            if open_row is not None:
-                db.execute(
-                    "UPDATE topic_epochs SET closed_at=?, close_reason='HARD_WAKE' "
-                    "WHERE group_id=? AND topic_id=? AND closed_at IS NULL",
-                    (int(opened_at), str(group_id), open_row["topic_id"]),
-                )
-            db.execute(
-                """
-                INSERT INTO topic_epochs(
-                    group_id, topic_id, opened_at, closed_at, close_reason, last_message_id
-                ) VALUES (?, ?, ?, NULL, NULL, ?)
-                """,
-                (str(group_id), str(topic_id), int(opened_at), last_message_id),
+            return self._open_topic_epoch_on(
+                db,
+                persona_id,
+                group_id,
+                topic_id,
+                opened_at,
+                last_message_id,
             )
-            return True
 
         return bool(self._write(operation))
 
-    async def open_topic_epoch_async(self, *args, **kwargs) -> bool:
-        return bool(
-            await self._write_async(
-                lambda db: self._open_topic_epoch_on(db, *args, **kwargs)
-            )
-        )
-
-    @staticmethod
-    def _open_topic_epoch_on(
-        db,
+    async def open_topic_epoch_async(
+        self,
+        persona_id: str,
         group_id: str,
         topic_id: str,
         opened_at: int,
         last_message_id: Optional[str] = None,
         close_existing_reason: str = "HARD_WAKE",
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
+        return bool(
+            await self._write_async(
+                lambda db: self._open_topic_epoch_on(
+                    db,
+                    persona_id,
+                    group_id,
+                    topic_id,
+                    opened_at,
+                    last_message_id,
+                    close_existing_reason,
+                )
+            )
+        )
+
+    @staticmethod
+    def _open_topic_epoch_on(
+        db,
+        persona_id: str,
+        group_id: str,
+        topic_id: str,
+        opened_at: int,
+        last_message_id: Optional[str] = None,
+        close_existing_reason: str = "HARD_WAKE",
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         open_row = db.execute(
             "SELECT topic_id FROM topic_epochs "
-            "WHERE group_id=? AND closed_at IS NULL LIMIT 1",
-            (str(group_id),),
+            "WHERE persona_id=? AND group_id=? AND closed_at IS NULL LIMIT 1",
+            (persona_id, str(group_id)),
         ).fetchone()
         if open_row is not None:
             db.execute(
                 "UPDATE topic_epochs SET closed_at=?, close_reason=? "
-                "WHERE group_id=? AND topic_id=? AND closed_at IS NULL",
+                "WHERE persona_id=? AND group_id=? AND topic_id=? AND closed_at IS NULL",
                 (
                     int(opened_at),
                     str(close_existing_reason),
+                    persona_id,
                     str(group_id),
                     open_row["topic_id"],
                 ),
@@ -1117,66 +1258,89 @@ class SQLiteMemoryStore:
         db.execute(
             """
             INSERT INTO topic_epochs(
-                group_id, topic_id, opened_at, closed_at, close_reason, last_message_id
-            ) VALUES (?, ?, ?, NULL, NULL, ?)
+                persona_id, group_id, topic_id, opened_at, closed_at,
+                close_reason, last_message_id
+            ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
             """,
-            (str(group_id), str(topic_id), int(opened_at), last_message_id),
+            (
+                persona_id,
+                str(group_id),
+                str(topic_id),
+                int(opened_at),
+                last_message_id,
+            ),
         )
         return True
 
     def close_topic_epoch(
         self,
+        persona_id: str,
         group_id: str,
         topic_id: str,
         closed_at: int,
         close_reason: str,
         last_message_id: Optional[str] = None,
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
-            cursor = db.execute(
-                """
-                UPDATE topic_epochs
-                SET closed_at=?, close_reason=?, last_message_id=COALESCE(?, last_message_id)
-                WHERE group_id=? AND topic_id=? AND closed_at IS NULL
-                """,
-                (
-                    int(closed_at),
-                    str(close_reason),
-                    last_message_id,
-                    str(group_id),
-                    str(topic_id),
-                ),
+            return self._close_topic_epoch_on(
+                db,
+                persona_id,
+                group_id,
+                topic_id,
+                closed_at,
+                close_reason,
+                last_message_id,
             )
-            return cursor.rowcount == 1
 
         return bool(self._write(operation))
 
-    async def close_topic_epoch_async(self, *args, **kwargs) -> bool:
+    async def close_topic_epoch_async(
+        self,
+        persona_id: str,
+        group_id: str,
+        topic_id: str,
+        closed_at: int,
+        close_reason: str,
+        last_message_id: Optional[str] = None,
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         return bool(
             await self._write_async(
-                lambda db: self._close_topic_epoch_on(db, *args, **kwargs)
+                lambda db: self._close_topic_epoch_on(
+                    db,
+                    persona_id,
+                    group_id,
+                    topic_id,
+                    closed_at,
+                    close_reason,
+                    last_message_id,
+                )
             )
         )
 
     @staticmethod
     def _close_topic_epoch_on(
         db,
+        persona_id: str,
         group_id: str,
         topic_id: str,
         closed_at: int,
         close_reason: str,
         last_message_id: Optional[str] = None,
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         cursor = db.execute(
             """
             UPDATE topic_epochs
             SET closed_at=?, close_reason=?, last_message_id=COALESCE(?, last_message_id)
-            WHERE group_id=? AND topic_id=? AND closed_at IS NULL
+            WHERE persona_id=? AND group_id=? AND topic_id=? AND closed_at IS NULL
             """,
             (
                 int(closed_at),
                 str(close_reason),
                 last_message_id,
+                persona_id,
                 str(group_id),
                 str(topic_id),
             ),
@@ -1186,6 +1350,7 @@ class SQLiteMemoryStore:
     def grant_continuation(
         self,
         *,
+        persona_id: str,
         grant_id: str,
         group_id: str,
         sender_id: str,
@@ -1196,18 +1361,20 @@ class SQLiteMemoryStore:
         expires_at: int,
         max_total_seconds: int,
     ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         absolute = int(granted_at) + max(1, int(max_total_seconds))
         def operation(db):
             db.execute(
                 """
                 INSERT INTO continuation_grants(
-                    grant_id, group_id, sender_id, opened_by_decision_id,
+                    grant_id, persona_id, group_id, sender_id, opened_by_decision_id,
                     opened_by_message_id, trigger_kind, granted_at, expires_at,
                     max_total_seconds, absolute_deadline_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(grant_id),
+                    persona_id,
                     str(group_id),
                     str(sender_id),
                     str(opened_by_decision_id),
@@ -1223,25 +1390,55 @@ class SQLiteMemoryStore:
 
         return bool(self._write(operation))
 
-    async def grant_continuation_async(self, **kwargs) -> bool:
+    async def grant_continuation_async(
+        self,
+        *,
+        persona_id: str,
+        grant_id: str,
+        group_id: str,
+        sender_id: str,
+        opened_by_decision_id: str,
+        opened_by_message_id: str,
+        trigger_kind: str,
+        granted_at: int,
+        expires_at: int,
+        max_total_seconds: int,
+    ) -> bool:
+        persona_id = _require_persona_id(persona_id)
         return bool(
-            await self._write_async(lambda db: self._grant_continuation_on(db, **kwargs))
+            await self._write_async(
+                lambda db: self._grant_continuation_on(
+                    db,
+                    persona_id=persona_id,
+                    grant_id=grant_id,
+                    group_id=group_id,
+                    sender_id=sender_id,
+                    opened_by_decision_id=opened_by_decision_id,
+                    opened_by_message_id=opened_by_message_id,
+                    trigger_kind=trigger_kind,
+                    granted_at=granted_at,
+                    expires_at=expires_at,
+                    max_total_seconds=max_total_seconds,
+                )
+            )
         )
 
     @staticmethod
     def _grant_continuation_on(db, **kwargs) -> bool:
+        persona_id = _require_persona_id(kwargs.get("persona_id"))
         granted_at = int(kwargs["granted_at"])
         max_total_seconds = max(1, int(kwargs["max_total_seconds"]))
         db.execute(
             """
             INSERT INTO continuation_grants(
-                grant_id, group_id, sender_id, opened_by_decision_id,
+                grant_id, persona_id, group_id, sender_id, opened_by_decision_id,
                 opened_by_message_id, trigger_kind, granted_at, expires_at,
                 max_total_seconds, absolute_deadline_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(kwargs["grant_id"]),
+                persona_id,
                 str(kwargs["group_id"]),
                 str(kwargs["sender_id"]),
                 str(kwargs["opened_by_decision_id"]),
@@ -1256,15 +1453,20 @@ class SQLiteMemoryStore:
         return True
 
     def latest_continuation_grant(
-        self, group_id: str, now: int, sender_id: Optional[str] = None
+        self,
+        persona_id: str,
+        group_id: str,
+        now: int,
+        sender_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         sql = """
             SELECT * FROM continuation_grants
-            WHERE group_id = ?
+            WHERE persona_id = ? AND group_id = ?
               AND expires_at >= ?
               AND absolute_deadline_at >= ?
         """
-        params: List[Any] = [str(group_id), int(now), int(now)]
+        params: List[Any] = [persona_id, str(group_id), int(now), int(now)]
         if sender_id is not None:
             sql += " AND sender_id = ?"
             params.append(str(sender_id))
@@ -1273,17 +1475,18 @@ class SQLiteMemoryStore:
         return dict(row) if row else None
 
     def list_active_continuation_grants(
-        self, group_id: str, now: int
+        self, persona_id: str, group_id: str, now: int
     ) -> List[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
         rows = self._db.execute(
             """
             SELECT * FROM continuation_grants
-            WHERE group_id = ?
+            WHERE persona_id = ? AND group_id = ?
               AND expires_at >= ?
               AND absolute_deadline_at >= ?
             ORDER BY granted_at DESC
             """,
-            (str(group_id), int(now), int(now)),
+            (persona_id, str(group_id), int(now), int(now)),
         ).fetchall()
         latest_by_sender: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -1293,7 +1496,8 @@ class SQLiteMemoryStore:
             latest_by_sender.values(), key=lambda item: int(item["granted_at"])
         )
 
-    def append_social_event(self, event: SocialEvent) -> bool:
+    def append_social_event(self, persona_id: str, event: SocialEvent) -> bool:
+        persona_id = _require_persona_id(persona_id)
         kind = event.kind
         if not isinstance(kind, SocialEventKind):
             kind = SocialEventKind(str(kind))
@@ -1302,12 +1506,13 @@ class SQLiteMemoryStore:
             cursor = db.execute(
                 """
                 INSERT OR IGNORE INTO social_events(
-                    event_id, group_id, user_id, kind, source_message_id,
+                    event_id, persona_id, group_id, user_id, kind, source_message_id,
                     confidence, occurred_at, decision_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(event.event_id),
+                    persona_id,
                     str(event.group_id),
                     str(event.user_id),
                     kind.value,
@@ -1323,15 +1528,17 @@ class SQLiteMemoryStore:
 
     def list_social_events(
         self,
+        persona_id: str,
         group_id: str,
         user_id: Optional[str] = None,
         limit: int = 200,
     ) -> List[SocialEvent]:
+        persona_id = _require_persona_id(persona_id)
         sql = """
             SELECT * FROM social_events
-            WHERE group_id = ?
+            WHERE persona_id = ? AND group_id = ?
         """
-        params: List[Any] = [str(group_id)]
+        params: List[Any] = [persona_id, str(group_id)]
         if user_id is not None:
             sql += " AND user_id = ?"
             params.append(str(user_id))
@@ -1359,14 +1566,15 @@ class SQLiteMemoryStore:
         return events
 
     def get_relationship_state(
-        self, group_id: str, user_id: str
+        self, persona_id: str, group_id: str, user_id: str
     ) -> Optional[RelationshipState]:
+        persona_id = _require_persona_id(persona_id)
         row = self._db.execute(
             """
             SELECT * FROM relationship_state
-            WHERE group_id = ? AND user_id = ?
+            WHERE persona_id = ? AND group_id = ? AND user_id = ?
             """,
-            (str(group_id), str(user_id)),
+            (persona_id, str(group_id), str(user_id)),
         ).fetchone()
         if row is None:
             return None
@@ -1383,16 +1591,19 @@ class SQLiteMemoryStore:
             updated_at=int(row["updated_at"]),
         )
 
-    def upsert_relationship_state(self, state: RelationshipState) -> None:
+    def upsert_relationship_state(
+        self, persona_id: str, state: RelationshipState
+    ) -> None:
+        persona_id = _require_persona_id(persona_id)
         def operation(db):
             db.execute(
                 """
                 INSERT INTO relationship_state(
-                    group_id, user_id, familiarity, affinity, trust,
+                    persona_id, group_id, user_id, familiarity, affinity, trust,
                     boundary_pressure, interaction_count, last_interaction_at,
                     configured_relationship, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(group_id, user_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(persona_id, group_id, user_id) DO UPDATE SET
                     familiarity = excluded.familiarity,
                     affinity = excluded.affinity,
                     trust = excluded.trust,
@@ -1403,6 +1614,7 @@ class SQLiteMemoryStore:
                     updated_at = excluded.updated_at
                 """,
                 (
+                    persona_id,
                     str(state.group_id),
                     str(state.user_id),
                     int(state.familiarity),
@@ -1420,6 +1632,7 @@ class SQLiteMemoryStore:
 
     def rebuild_relationship_state(
         self,
+        persona_id: str,
         group_id: str,
         user_id: str,
         *,
@@ -1427,9 +1640,12 @@ class SQLiteMemoryStore:
         seed_affinity: int = 0,
         now: int = 0,
     ) -> RelationshipState:
+        persona_id = _require_persona_id(persona_id)
         from ..social.projector import SocialStateProjector
 
-        events = self.list_social_events(group_id, user_id=user_id, limit=5000)
+        events = self.list_social_events(
+            persona_id, group_id, user_id=user_id, limit=5000
+        )
         state = SocialStateProjector().project(
             events,
             group_id=group_id,
@@ -1438,22 +1654,26 @@ class SQLiteMemoryStore:
             seed_affinity=int(seed_affinity),
             now=int(now),
         )
-        self.upsert_relationship_state(state)
+        self.upsert_relationship_state(persona_id, state)
         return state
 
     def record_social_interaction(
         self,
+        persona_id: str,
         event: SocialEvent,
         *,
         configured_relationship: Optional[str] = None,
         now: int = 0,
     ) -> Optional[RelationshipState]:
         """幂等写入事件并增量投影；重复 source 返回已有状态且不双计。"""
+        persona_id = _require_persona_id(persona_id)
         from ..social.affinity import initial_affinity_for_relationship
         from ..social.projector import SocialStateProjector
 
-        inserted = self.append_social_event(event)
-        current = self.get_relationship_state(event.group_id, event.user_id)
+        inserted = self.append_social_event(persona_id, event)
+        current = self.get_relationship_state(
+            persona_id, event.group_id, event.user_id
+        )
         if current is None:
             current = RelationshipState(
                 group_id=event.group_id,
@@ -1472,7 +1692,7 @@ class SQLiteMemoryStore:
             configured_relationship=configured_relationship,
             now=int(now or event.occurred_at),
         )
-        self.upsert_relationship_state(state)
+        self.upsert_relationship_state(persona_id, state)
         return state
 
     def close(self) -> None:

@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from groupmate.engine.rate_limit import SlidingWindowRateLimiter
 from groupmate.engine.triggers import TriggerRouter
 from groupmate.engine.workflow import CognitiveWorkflow
-from groupmate.persona.aemeath import AemeathOutputFirewall, AemeathPersonaProvider
+from groupmate.persona import default_persona_registry
+from groupmate.persona.aemeath import AemeathOutputFirewall
 
 from .adapters import (
     FixedClock,
@@ -69,8 +70,13 @@ async def run_scenario(
     judge: Optional[LLMJudge] = None,
 ) -> EvaluationResult:
     topic = scenario.topic_snapshot()
-    policy = scenario.group_policy()
-    trigger = TriggerRouter(policy).classify(topic.latest)
+    behavior = scenario.behavior_policy()
+    persona = default_persona_registry().resolve(
+        "aemeath",
+        aliases=("爱弥斯", "小爱", "飞行雪绒"),
+        relationships=(),
+    )
+    trigger = TriggerRouter(persona.aliases).classify(topic.latest)
     platform = RecordingPlatform()
     memory = InMemoryRepository()
     now = max(message.timestamp for message in topic.messages)
@@ -87,10 +93,12 @@ async def run_scenario(
         vision=NullVision(),
         platform=platform,
         memory=memory,
-        persona=AemeathPersonaProvider(),
-        output_guard=AemeathOutputFirewall(max_chars=policy.max_reply_chars),
+        persona_context=persona,
+        behavior=behavior,
+        vision_enabled=True,
+        output_guard=AemeathOutputFirewall(),
         rate_limiter=SlidingWindowRateLimiter(
-            hourly_limit=policy.spontaneous_hourly_limit,
+            hourly_limit=behavior.resources.open_send_hourly_limit,
             cooldown_seconds=0,
         ),
         clock=FixedClock(now),
@@ -101,7 +109,7 @@ async def run_scenario(
         outcome = await workflow.evaluate(
             topic,
             trigger.kind,
-            policy,
+            behavior,
             trigger_alias=trigger.alias,
         )
         latency_ms = (time.perf_counter() - started) * 1000.0

@@ -52,23 +52,28 @@ astrbot_plugin_groupmate/
 
 | 配置项 | 说明 | 默认 |
 |---|---|---|
-| `wake_group.enabled_groups` | 允许观察的群；空=全部 | `[]` |
-| `wake_group.aliases` | 直接称呼 | 爱弥斯、小爱、飞行雪绒 |
-| `wake_group.handle_native_wake` | Groupmate 接管 `@`/回复 Bot | `true` |
-| `wake_group.continuation_seconds` | 直接呼叫后同人续聊秒数 | `90` |
-| `persona_group.group_brief` | 一句话群氛围（进稳定 system） | 空 |
-| `persona_group.max_reply_chars` | 单条回复字数护栏 | `60` |
-| `relationship_group.relationships` | QQ / 关系 / 称呼（可视化增删） | 内置默认 |
+| `scope_group.enabled_groups` | 启用群列表；空列表表示所有群 | `[]` |
+| `persona_group.persona_aliases` | 按人格配置文本称呼；显式空列表不会补回默认称呼 | `aemeath: [爱弥斯, 小爱, 飞行雪绒]` |
+| `persona_group.relationships` | 按人格配置初始关系；只影响尚无关系状态的群友 | `aemeath: []` |
 | `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
-| `provider_group.vision_provider` | 看图模型；空=复用回复模型 | 空 |
 | `provider_group.vision_enabled` | 允许按需看图 | `true` |
-| `limits_group.spontaneous_hourly_limit` | 每小时最多自主发言 | `6` |
-| `limits_group.spontaneous_cooldown_seconds` | 自主发言最短间隔 | `600` |
+| `provider_group.vision_provider` | 看图模型；空=复用最终文本模型 | 空 |
+
+当前只注册 `aemeath` 人格，管理界面不提供未实现的人格切换入口。称呼和初始关系必须放在 `aemeath` 键下；旧扁平配置和未知字段不会参与运行时，并会在状态页的配置健康信息中报告。
+
+文本模型优先使用显式 `generation_provider`；只有留空时才读取当前群模型。图片理解关闭时不调用视觉模型；开启后优先使用显式 `vision_provider`，留空则复用已解析的文本模型。
+
+## 状态归属与数据库升级
+
+- `schema v11（人格隔离数据库版本）` 为消息、话题、续聊、记忆、关系、决策与投递状态增加显式人格归属。同一群和同一用户在不同人格下不会共享短期窗口或长期状态。
+- `aemeath（爱弥斯人格 ID）` 拥有从受支持旧版本迁移的全部既有数据。未来注册其他人格时，新人格从独立空状态开始，不读取或修改 `aemeath` 的状态。
+- 升级已有数据库前会在原目录创建 `groupmate.db.pre-migrate-v<旧版>-to-v11.<时间戳>（迁移前备份）`。数据库与备份默认位于 `AstrBot/data/plugin_data/astrbot_plugin_groupmate/（插件数据目录）`。
+- 如需恢复，先停止或卸载插件，保留当前 `groupmate.db` 供排查，再将选定的迁移前备份复制为 `groupmate.db`。重新加载当前插件会再次执行 v11 迁移；如需停留在旧 schema，应同时恢复与该 schema 匹配的旧插件版本。
 
 ## 配置入口
 
 1. **插件 Pages（本插件页）**：WebUI → 插件 →「群聊伙伴 Groupmate」详情 → 打开 **settings** 页（运行状态 / 暂停恢复 / 当前配置摘要）。
-2. **可视化配置（齿轮）**：同一插件详情里的 **配置**，改别名、群氛围、关系表、字数护栏等（`_conf_schema.json`）。身份固定为爱弥斯。
+2. **可视化配置（齿轮）**：同一插件详情里的 **配置**，设置启用群、人格称呼、初始关系和模型 Provider（`_conf_schema.json`）。当前人格固定为爱弥斯。
 
 改完 schema 或 `pages/` 后请在 WebUI **重载插件**；仅改静态页通常刷新即可。
 
@@ -81,21 +86,12 @@ astrbot_plugin_groupmate/
 5. **指令**：旁路
 6. **联网例外**：交回 AstrBot Agent
 
-## V3 回滚开关
-
-以下开关默认开启，仅用于故障定位或阶段回滚：
-
-| 配置项 | 回退行为 |
-|---|---|
-| `wake_group.v3_scheduler_enabled` | 关闭 V3 非阻塞调度，回退旧串行调度 |
-| `wake_group.v3_memory_writer_enabled` | 停止接受记忆候选，仅只读既有 memories |
-
 ## 管理命令
 
 | 命令 | 作用 |
 |---|---|
 | `/groupmate_status` | 运行状态 |
-| `/groupmate_pause` | 暂停观察 |
+| `/groupmate_pause` | 暂停决策与回复，继续观察并记录群消息 |
 | `/groupmate_resume` | 恢复 |
 | `/groupmate_reset` | 清空当前群短期上下文与 Session |
 

@@ -1,6 +1,7 @@
 import pytest
 
-from groupmate.models import ChatMessage, GroupPolicy, TopicSnapshot
+from groupmate.models import ChatMessage, TopicSnapshot
+from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
 
 
 @pytest.fixture
@@ -22,12 +23,13 @@ def message_factory():
 
 @pytest.fixture
 def balanced_policy():
-    return GroupPolicy(
-        aliases=("爱弥斯", "小爱", "飞行雪绒"),
-        debounce_min_seconds=0.01,
-        debounce_max_seconds=0.01,
-        spontaneous_cooldown_seconds=0,
-        humanize_delay_enabled=False,
+    return BehaviorPolicy(
+        conversation=ConversationPolicy(
+            debounce_min_seconds=0.01,
+            debounce_max_seconds=0.01,
+        ),
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+        resources=ResourcePolicy(open_send_cooldown_seconds=0),
     )
 
 

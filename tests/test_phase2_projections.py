@@ -14,11 +14,11 @@ from groupmate.engine.workflow import CognitiveWorkflow
 from groupmate.memory.store import SQLiteMemoryStore
 from groupmate.models import (
     ChatMessage,
-    GroupPolicy,
     MessageOrigin,
     TriggerKind,
     WorkflowOutcome,
 )
+from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
 from tests.fakes import (
     FakeClock,
     FakeMemoryRepository,
@@ -26,21 +26,23 @@ from tests.fakes import (
     NullVision,
     StaticGenerationModel,
     StaticPersona,
+    persona_context,
 )
 
 
 def _policy(**kwargs):
     base = dict(
-        aliases=("小爱",),
         continuation_seconds=90,
         debounce_min_seconds=0,
         debounce_max_seconds=0,
-        spontaneous_cooldown_seconds=0,
-        humanize_delay_enabled=False,
         history_limit=50,
     )
     base.update(kwargs)
-    return GroupPolicy(**base)
+    return BehaviorPolicy(
+        conversation=ConversationPolicy(**base),
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+        resources=ResourcePolicy(open_send_cooldown_seconds=0),
+    )
 
 
 def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
@@ -68,11 +70,12 @@ def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
         decision_id="d1",
         ingested_at=now - 9,
     )
-    assert store.save_message(user)
-    assert store.save_message(bot)
+    assert store.save_message("aemeath", user)
+    assert store.save_message("aemeath", bot)
     topic_id = uuid4().hex
-    store.open_topic_epoch("g1", topic_id, now - 10, "u1")
+    store.open_topic_epoch("aemeath", "g1", topic_id, now - 10, "u1")
     store.grant_continuation(
+        persona_id="aemeath",
         grant_id="grant-1",
         group_id="g1",
         sender_id="u1",
@@ -84,16 +87,19 @@ def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
         max_total_seconds=90,
     )
     store.enqueue_outbox(
+        "aemeath",
         "cand-1",
         "g1",
         "哈哈",
         created_at=now - 5,
         kind="candidate",
     )
-    store.mark_outbox_sent("cand-1", sent_at=now - 5)
+    store.mark_outbox_sent("aemeath", "cand-1", sent_at=now - 5)
 
     projector = StateProjector(store)
-    snapshot = projector.rebuild("g1", now=now, policy=_policy())
+    snapshot = projector.rebuild(
+        "aemeath", "g1", now=now, policy=_policy().conversation
+    )
     assert snapshot.topic_id == topic_id
     assert [item.message_id for item in snapshot.messages] == ["u1", "bot-d1"]
     assert snapshot.continuation is not None
@@ -140,7 +146,7 @@ def test_rebuild_restores_topic_session_continuation_and_outputs(tmp_path):
     store.close()
 
 
-def test_projection_restores_and_hydrates_recent_media_ids(tmp_path):
+def test_projection_does_not_restore_decorative_media_ids(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "media-projection.db")
     bot = ChatMessage(
         message_id="bot-rich",
@@ -161,16 +167,14 @@ def test_projection_restores_and_hydrates_recent_media_ids(tmp_path):
             "media_ids": ["warm-1", "result-1"],
         },
     )
-    assert store.save_message(bot)
-    snapshot = StateProjector(store).rebuild("g1", now=200, policy=_policy())
+    assert store.save_message("aemeath", bot)
+    snapshot = StateProjector(store).rebuild(
+        "aemeath", "g1", now=200, policy=_policy().conversation
+    )
 
     class WorkflowStub:
-        def __init__(self):
-            self.media_ids = ()
-
         def hydrate_recent_media_ids(self, group_id, media_ids):
-            assert group_id == "g1"
-            self.media_ids = tuple(media_ids)
+            raise AssertionError("decorative media state must not be hydrated")
 
     workflow = WorkflowStub()
     StateProjector(store).apply(
@@ -182,8 +186,7 @@ def test_projection_restores_and_hydrates_recent_media_ids(tmp_path):
         set_continuation=lambda sender_id, expires_at: None,
     )
 
-    assert snapshot.recent_media_ids == ("warm-1", "result-1")
-    assert workflow.media_ids == ("warm-1", "result-1")
+    assert not hasattr(snapshot, "recent_media_ids")
     store.close()
 
 
@@ -196,15 +199,19 @@ def test_continuation_reply_does_not_renew_grant(tmp_path, message_factory):
             vision=NullVision(),
             platform=platform,
             memory=store,
-            persona=StaticPersona(),
+            persona_context=persona_context(StaticPersona(), aliases=("小爱",)),
+            behavior=_policy(),
+            vision_enabled=True,
             output_guard=__import__(
                 "groupmate.persona.aemeath", fromlist=["AemeathOutputFirewall"]
-            ).AemeathOutputFirewall(60),
+            ).AemeathOutputFirewall(),
             rate_limiter=SlidingWindowRateLimiter(6, 0),
             clock=FakeClock(200),
             character_name="爱弥斯",
         )
-        actor = GroupActor("g1", workflow, _policy())
+        actor = GroupActor(
+            "g1", workflow, persona_context(aliases=("小爱",)), _policy()
+        )
         await actor.start()
         await actor.submit(
             message_factory(
@@ -214,7 +221,7 @@ def test_continuation_reply_does_not_renew_grant(tmp_path, message_factory):
             )
         )
         await actor.drain()
-        first = store.latest_continuation_grant("g1", now=150)
+        first = store.latest_continuation_grant("aemeath", "g1", now=150)
         assert first is not None
         first_expires = int(first["expires_at"])
         await actor.submit(
@@ -225,7 +232,7 @@ def test_continuation_reply_does_not_renew_grant(tmp_path, message_factory):
             )
         )
         await actor.drain()
-        second = store.latest_continuation_grant("g1", now=150)
+        second = store.latest_continuation_grant("aemeath", "g1", now=150)
         await actor.close()
         store.close()
         return first_expires, second, [item[1].value for item in []]
@@ -246,7 +253,9 @@ def test_history_preload_does_not_schedule(message_factory, tmp_path):
                 evaluations.append(trigger)
                 return WorkflowOutcome("x", False, "silent")
 
-        actor = GroupActor("g1", Recording(), _policy())
+        actor = GroupActor(
+            "g1", Recording(), persona_context(aliases=("小爱",)), _policy()
+        )
         await actor.start()
         await actor.preload(
             message_factory(message_id="h1", text="历史消息", timestamp=1)
@@ -263,6 +272,7 @@ def test_rebuild_restores_active_continuations_for_each_sender(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "multi-grants.db")
     for sender_id, granted_at in (("u1", 100), ("u2", 110)):
         store.grant_continuation(
+            persona_id="aemeath",
             grant_id="grant-" + sender_id,
             group_id="g1",
             sender_id=sender_id,
@@ -274,7 +284,9 @@ def test_rebuild_restores_active_continuations_for_each_sender(tmp_path):
             max_total_seconds=200,
         )
 
-    snapshot = StateProjector(store).rebuild("g1", now=now, policy=_policy())
+    snapshot = StateProjector(store).rebuild(
+        "aemeath", "g1", now=now, policy=_policy().conversation
+    )
     restored = {}
 
     def set_continuation(sender_id, expires_at):
@@ -298,16 +310,18 @@ def test_rebuild_restores_active_continuations_for_each_sender(tmp_path):
 
 def test_unknown_outbox_not_counted_in_rate_rebuild(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "unknown.db")
-    store.enqueue_outbox("u1", "g", "x", created_at=10, kind="candidate")
+    store.enqueue_outbox(
+        "aemeath", "u1", "g", "x", created_at=10, kind="candidate"
+    )
     asyncio.run(
         store.transition_outbox_async(
-            "u1", "pending", "sending", increment_attempt=True
+            "aemeath", "u1", "pending", "sending", increment_attempt=True
         )
     )
     asyncio.run(
         store.transition_outbox_async(
-            "u1", "sending", "unknown", failure_code="no_receipt"
+            "aemeath", "u1", "sending", "unknown", failure_code="no_receipt"
         )
     )
-    assert store.list_spontaneous_sent_at("g", since=0) == []
+    assert store.list_spontaneous_sent_at("aemeath", "g", since=0) == []
     store.close()

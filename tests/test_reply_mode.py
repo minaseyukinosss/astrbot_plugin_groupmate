@@ -12,7 +12,7 @@ def test_select_modes():
 
 
 def test_firewall_allows_longer_help_mode():
-    firewall = AemeathOutputFirewall(max_chars=60)
+    firewall = AemeathOutputFirewall()
     longish = "先打开面板再点养成然后强化，确认材料够了就点一次。" * 4
     assert len(longish) > 60
     short_mode = firewall.validate(

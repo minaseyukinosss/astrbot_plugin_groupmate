@@ -70,9 +70,13 @@ class GroupmatePlugin(Star):
     async def groupmate_reset(self, event: AstrMessageEvent):
         """清理当前群的短期上下文。"""
         group_id = str(event.get_group_id())
-        actor = await self.bridge.runtime.actor_for(group_id)
+        actor = await self.bridge.runtime.actor_for(
+            group_id,
+            self.bridge.persona_context,
+        )
         actor.window = actor.window.__class__(
-            group_id, max_messages=self.bridge._policy_for(group_id).history_limit
+            group_id,
+            max_messages=self.bridge.behavior.conversation.history_limit,
         )
         sessions = getattr(getattr(actor, "workflow", None), "sessions", None)
         if sessions is not None:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..persona.aemeath import CHARACTER_NAME
-
 PLUGIN_NAME = "astrbot_plugin_groupmate"
 
 
@@ -33,22 +31,7 @@ class GroupmateWebAPI:
     async def status(self):
         from astrbot.api.web import json_response
 
-        settings = self.bridge.settings
-        config = {
-            "character_name": CHARACTER_NAME,
-            "aliases": list(getattr(settings, "aliases", ()) or ()),
-            "group_brief": getattr(settings, "group_brief", ""),
-            "max_reply_chars": getattr(settings, "max_reply_chars", 60),
-            "relationship_count": len(getattr(settings, "relationships", ()) or ()),
-            "handle_native_wake": bool(getattr(settings, "handle_native_wake", True)),
-            "vision_enabled": bool(getattr(settings, "vision_enabled", True)),
-            "spontaneous_hourly_limit": getattr(
-                settings, "spontaneous_hourly_limit", 6
-            ),
-        }
-        payload = self.bridge.status()
-        payload["config"] = config
-        return json_response(payload)
+        return json_response(self.bridge.status())
 
     async def set_runtime(self):
         from astrbot.api.web import error_response, json_response, request

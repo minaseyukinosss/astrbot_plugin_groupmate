@@ -10,13 +10,13 @@ from ..core.presence import project_presence
 from ..core.response_act import ResponseAct, TaskResolution, plan_response_act
 from ..core.scenes import classify_scene
 from ..models import (
-    GroupPolicy,
     InteractionScene,
     QuoteMode,
     TargetingDecision,
     TopicSnapshot,
     TriggerKind,
 )
+from ..policies import ParticipationPolicy
 from ..persona.aemeath.behavior_profile import (
     ParticipationMotive,
     PersonaParticipationProfile,
@@ -70,9 +70,10 @@ class ParticipationDecisionEngine:
     def decide(
         self,
         *,
+        persona_id: str,
         topic: TopicSnapshot,
         trigger: TriggerKind,
-        policy: GroupPolicy,
+        policy: ParticipationPolicy,
         targeting: TargetingDecision,
         now: int,
         aliases: Sequence[str],
@@ -119,6 +120,7 @@ class ParticipationDecisionEngine:
             )
         if trigger in _DIRECT_TRIGGERS:
             return self._direct_decision(
+                persona_id=persona_id,
                 topic=topic,
                 trigger=trigger,
                 targeting=targeting,
@@ -140,6 +142,7 @@ class ParticipationDecisionEngine:
     def _direct_decision(
         self,
         *,
+        persona_id: str,
         topic: TopicSnapshot,
         trigger: TriggerKind,
         targeting: TargetingDecision,
@@ -154,6 +157,7 @@ class ParticipationDecisionEngine:
             raise ValueError("direct participation requires latest message")
         persona.rule_for_affinity(affinity.band)
         pressure = self.pressure.observe(
+            persona_id,
             latest,
             trigger,
             now=now,

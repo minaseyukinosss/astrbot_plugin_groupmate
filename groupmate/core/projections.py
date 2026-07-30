@@ -8,7 +8,8 @@ from uuid import uuid4
 
 from ..engine.rate_limit import SlidingWindowRateLimiter
 from ..engine.topics import TopicWindow
-from ..models import ChatMessage, GroupPolicy, MessageOrigin
+from ..models import ChatMessage, MessageOrigin
+from ..policies import ConversationPolicy
 from .session import DialogueTurn, GroupSession
 
 
@@ -22,6 +23,7 @@ class ContinuationProjection:
 
 @dataclass(frozen=True)
 class ProjectionSnapshot:
+    persona_id: str
     group_id: str
     topic_id: str
     topic_opened_at: int
@@ -34,7 +36,6 @@ class ProjectionSnapshot:
     last_bot_speak_at: Optional[int]
     rebuilt_at: int
     continuations: Tuple[ContinuationProjection, ...] = ()
-    recent_media_ids: Tuple[str, ...] = ()
 
 
 class StateProjector:
@@ -44,18 +45,24 @@ class StateProjector:
 
     def rebuild(
         self,
+        persona_id: str,
         group_id: str,
         *,
         now: int,
-        policy: GroupPolicy,
+        policy: ConversationPolicy,
     ) -> ProjectionSnapshot:
+        persona_id = str(persona_id or "").strip()
+        if not persona_id:
+            raise ValueError("persona_id is required")
         group_id = str(group_id)
         limit = max(1, int(policy.history_limit))
-        messages = tuple(self.store.list_ledger_messages(group_id, limit=limit))
+        messages = tuple(
+            self.store.list_ledger_messages(persona_id, group_id, limit=limit)
+        )
         epoch = None
         latest_open = getattr(self.store, "latest_open_topic_epoch", None)
         if latest_open is not None:
-            epoch = latest_open(group_id)
+            epoch = latest_open(persona_id, group_id)
 
         if epoch:
             topic_id = str(epoch["topic_id"])
@@ -72,29 +79,23 @@ class StateProjector:
             max(item.timestamp for item in topic_messages) if topic_messages else opened_at
         )
         session_turns = self._session_turns(messages, max_turns=12)
-        continuations = self._continuations(group_id, now)
+        continuations = self._continuations(persona_id, group_id, now)
         continuation = continuations[-1] if continuations else None
-        bot_deliveries = tuple(self.store.list_bot_deliveries(group_id, limit=20))
+        bot_deliveries = tuple(
+            self.store.list_bot_deliveries(persona_id, group_id, limit=20)
+        )
         recent_outputs = tuple(
             item.text for item in bot_deliveries if (item.text or "").strip()
         )
-        recent_media_ids = []
-        for item in bot_deliveries:
-            values = item.metadata.get("media_ids", ())
-            if isinstance(values, (str, bytes)):
-                values = (values,)
-            for media_id in values or ():
-                cleaned = str(media_id or "").strip()
-                if cleaned and cleaned not in recent_media_ids:
-                    recent_media_ids.append(cleaned)
         spontaneous = ()
         list_spontaneous = getattr(self.store, "list_spontaneous_sent_at", None)
         if list_spontaneous is not None:
             spontaneous = tuple(
-                list_spontaneous(group_id, now - 3600)
+                list_spontaneous(persona_id, group_id, now - 3600)
             )
         last_bot = bot_deliveries[-1].timestamp if bot_deliveries else None
         return ProjectionSnapshot(
+            persona_id=persona_id,
             group_id=group_id,
             topic_id=topic_id,
             topic_opened_at=opened_at,
@@ -107,7 +108,6 @@ class StateProjector:
             last_bot_speak_at=last_bot,
             rebuilt_at=int(now),
             continuations=continuations,
-            recent_media_ids=tuple(recent_media_ids[-20:]),
         )
 
     def apply(
@@ -131,9 +131,6 @@ class StateProjector:
         hydrate_outputs = getattr(workflow, "hydrate_recent_outputs", None)
         if hydrate_outputs is not None:
             hydrate_outputs(snapshot.group_id, snapshot.recent_outputs)
-        hydrate_media = getattr(workflow, "hydrate_recent_media_ids", None)
-        if hydrate_media is not None:
-            hydrate_media(snapshot.group_id, snapshot.recent_media_ids)
         set_continuation("", 0)
         continuations = snapshot.continuations
         if not continuations and snapshot.continuation is not None:
@@ -183,17 +180,17 @@ class StateProjector:
         return tuple(turns[-max(2, int(max_turns)) :])
 
     def _continuation(
-        self, group_id: str, now: int
+        self, persona_id: str, group_id: str, now: int
     ) -> Optional[ContinuationProjection]:
-        continuations = self._continuations(group_id, now)
+        continuations = self._continuations(persona_id, group_id, now)
         return continuations[-1] if continuations else None
 
     def _continuations(
-        self, group_id: str, now: int
+        self, persona_id: str, group_id: str, now: int
     ) -> Tuple[ContinuationProjection, ...]:
         list_active = getattr(self.store, "list_active_continuation_grants", None)
         if list_active is not None:
-            rows = list_active(group_id, now)
+            rows = list_active(persona_id, group_id, now)
             return tuple(
                 ContinuationProjection(
                     sender_id=str(row["sender_id"]),
@@ -208,7 +205,7 @@ class StateProjector:
         latest = getattr(self.store, "latest_continuation_grant", None)
         if latest is None:
             return ()
-        row = latest(group_id, now)
+        row = latest(persona_id, group_id, now)
         if not row:
             return ()
         expires = min(int(row["expires_at"]), int(row["absolute_deadline_at"]))

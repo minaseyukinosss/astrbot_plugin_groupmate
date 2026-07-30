@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class SchemaMigrationError(RuntimeError):
@@ -373,6 +373,380 @@ def _v9_to_v10(db: sqlite3.Connection) -> None:
         )
 
 
+_V11_PERSONA_TABLES = (
+    "messages",
+    "profiles",
+    "memories",
+    "decisions",
+    "outbox",
+    "topic_epochs",
+    "continuation_grants",
+    "social_events",
+    "relationship_state",
+    "memory_candidates",
+    "memory_tombstones",
+)
+
+
+def _v11_schema_sql() -> str:
+    """Return the complete schema for a new persona-scoped database."""
+    return """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE messages (
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, message_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL, sender_name TEXT NOT NULL,
+            text TEXT NOT NULL, timestamp INTEGER NOT NULL,
+            reply_to_message_id TEXT, reply_to_bot INTEGER NOT NULL,
+            mentions_bot INTEGER NOT NULL, is_bot INTEGER NOT NULL,
+            is_command INTEGER NOT NULL, image_urls TEXT NOT NULL,
+            segment_types TEXT NOT NULL, metadata TEXT NOT NULL,
+            origin TEXT NOT NULL, decision_id TEXT,
+            ingested_at INTEGER NOT NULL, platform TEXT NOT NULL,
+            bot_id TEXT NOT NULL, event_version INTEGER NOT NULL,
+            PRIMARY KEY (persona_id, group_id, message_id)
+        );
+        CREATE TABLE profiles (
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, subject_id TEXT NOT NULL,
+            display_name TEXT NOT NULL, relationship TEXT NOT NULL,
+            authority INTEGER NOT NULL, updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (persona_id, group_id, subject_id)
+        );
+        CREATE TABLE memories (
+            memory_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, subject_id TEXT NOT NULL,
+            kind TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL,
+            expires_at INTEGER, confidence REAL NOT NULL, importance REAL NOT NULL,
+            authority INTEGER NOT NULL, source_message_id TEXT,
+            status TEXT NOT NULL DEFAULT 'accepted',
+            scope TEXT NOT NULL DEFAULT 'USER_IN_GROUP',
+            sensitivity TEXT NOT NULL DEFAULT 'none',
+            extractor_version TEXT NOT NULL DEFAULT 'rules-v1',
+            supersedes_memory_id TEXT,
+            source_message_ids_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE TABLE decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT NOT NULL, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL,
+            timestamp INTEGER NOT NULL
+        );
+        CREATE TABLE outbox (
+            decision_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL,
+            expires_at INTEGER, sent_at INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending', attempt INTEGER NOT NULL DEFAULT 0,
+            failure_code TEXT, failure_detail TEXT, quote_message_id TEXT,
+            segments_json TEXT NOT NULL DEFAULT '[]', kind TEXT NOT NULL DEFAULT 'reply',
+            outbound_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE TABLE topic_epochs (
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, topic_id TEXT NOT NULL,
+            opened_at INTEGER NOT NULL, closed_at INTEGER,
+            close_reason TEXT, last_message_id TEXT,
+            PRIMARY KEY (persona_id, group_id, topic_id)
+        );
+        CREATE TABLE continuation_grants (
+            grant_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+            opened_by_decision_id TEXT NOT NULL, opened_by_message_id TEXT NOT NULL,
+            trigger_kind TEXT NOT NULL, granted_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL, max_total_seconds INTEGER NOT NULL,
+            absolute_deadline_at INTEGER NOT NULL
+        );
+        CREATE TABLE social_events (
+            event_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL,
+            source_message_id TEXT NOT NULL, confidence REAL NOT NULL,
+            occurred_at INTEGER NOT NULL, decision_id TEXT,
+            UNIQUE (persona_id, group_id, source_message_id, kind)
+        );
+        CREATE TABLE relationship_state (
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, user_id TEXT NOT NULL,
+            familiarity INTEGER NOT NULL DEFAULT 0, affinity INTEGER NOT NULL DEFAULT 0,
+            trust INTEGER NOT NULL DEFAULT 0, boundary_pressure INTEGER NOT NULL DEFAULT 0,
+            interaction_count INTEGER NOT NULL DEFAULT 0,
+            last_interaction_at INTEGER NOT NULL DEFAULT 0,
+            configured_relationship TEXT, updated_at INTEGER NOT NULL,
+            PRIMARY KEY (persona_id, group_id, user_id)
+        );
+        CREATE TABLE memory_candidates (
+            candidate_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, scope TEXT NOT NULL, subject_id TEXT NOT NULL,
+            kind TEXT NOT NULL, claim TEXT NOT NULL, claim_hash TEXT NOT NULL,
+            source_message_ids_json TEXT NOT NULL, confidence REAL NOT NULL,
+            sensitivity TEXT NOT NULL, proposed_expires_at INTEGER,
+            extractor_version TEXT NOT NULL, status TEXT NOT NULL,
+            created_at INTEGER NOT NULL, decided_at INTEGER, decision_reason TEXT,
+            UNIQUE (persona_id, group_id, subject_id, claim_hash)
+        );
+        CREATE TABLE memory_tombstones (
+            tombstone_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL, subject_id TEXT NOT NULL, claim_hash TEXT NOT NULL,
+            source_message_ids_json TEXT NOT NULL, deleted_at INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            UNIQUE (persona_id, group_id, subject_id, claim_hash)
+        );
+        INSERT INTO schema_meta(key, value) VALUES('version', '11');
+    """
+
+
+def _v11_indexes_sql() -> str:
+    return """
+        CREATE INDEX idx_messages_persona_group_time
+            ON messages(persona_id, group_id, timestamp DESC);
+        CREATE INDEX idx_messages_persona_group_ingest
+            ON messages(persona_id, group_id, timestamp ASC, ingested_at ASC);
+        CREATE INDEX idx_messages_persona_decision
+            ON messages(persona_id, decision_id);
+        CREATE INDEX idx_memories_persona_group_subject
+            ON memories(persona_id, group_id, subject_id, created_at DESC);
+        CREATE INDEX idx_memories_persona_status
+            ON memories(persona_id, group_id, status, created_at DESC);
+        CREATE INDEX idx_decisions_persona_id
+            ON decisions(persona_id, decision_id, id);
+        CREATE INDEX idx_outbox_persona_status_created
+            ON outbox(persona_id, status, created_at);
+        CREATE INDEX idx_topic_epochs_persona_group_open
+            ON topic_epochs(persona_id, group_id, opened_at DESC);
+        CREATE INDEX idx_continuation_persona_lookup
+            ON continuation_grants(persona_id, group_id, sender_id, granted_at DESC);
+        CREATE INDEX idx_continuation_persona_active
+            ON continuation_grants(persona_id, group_id, expires_at);
+        CREATE INDEX idx_social_persona_group_user
+            ON social_events(persona_id, group_id, user_id, occurred_at DESC);
+        CREATE INDEX idx_social_persona_source
+            ON social_events(persona_id, group_id, source_message_id);
+        CREATE INDEX idx_candidates_persona_group
+            ON memory_candidates(persona_id, group_id, created_at DESC);
+        CREATE INDEX idx_candidates_persona_status
+            ON memory_candidates(persona_id, group_id, status);
+        CREATE INDEX idx_tombstones_persona_lookup
+            ON memory_tombstones(persona_id, group_id, subject_id, claim_hash);
+    """
+
+
+def _bootstrap_v11(db: sqlite3.Connection) -> None:
+    db.executescript(_v11_schema_sql())
+    db.executescript(_v11_indexes_sql())
+
+
+_V11_COPY_COLUMNS = {
+    "messages": (
+        "group_id,message_id,sender_id,sender_name,text,timestamp,"
+        "reply_to_message_id,reply_to_bot,mentions_bot,is_bot,is_command,"
+        "image_urls,segment_types,metadata,origin,decision_id,ingested_at,"
+        "platform,bot_id,event_version"
+    ),
+    "profiles": "group_id,subject_id,display_name,relationship,authority,updated_at",
+    "memories": (
+        "memory_id,group_id,subject_id,kind,text,created_at,expires_at,confidence,"
+        "importance,authority,source_message_id,status,scope,sensitivity,"
+        "extractor_version,supersedes_memory_id,source_message_ids_json"
+    ),
+    "decisions": "decision_id,group_id,state,reason,timestamp",
+    "outbox": (
+        "decision_id,group_id,text,created_at,expires_at,sent_at,status,attempt,"
+        "failure_code,failure_detail,quote_message_id,segments_json,kind,outbound_json"
+    ),
+    "topic_epochs": "group_id,topic_id,opened_at,closed_at,close_reason,last_message_id",
+    "continuation_grants": (
+        "grant_id,group_id,sender_id,opened_by_decision_id,opened_by_message_id,"
+        "trigger_kind,granted_at,expires_at,max_total_seconds,absolute_deadline_at"
+    ),
+    "social_events": (
+        "event_id,group_id,user_id,kind,source_message_id,confidence,occurred_at,decision_id"
+    ),
+    "relationship_state": (
+        "group_id,user_id,familiarity,affinity,trust,boundary_pressure,"
+        "interaction_count,last_interaction_at,configured_relationship,updated_at"
+    ),
+    "memory_candidates": (
+        "candidate_id,group_id,scope,subject_id,kind,claim,claim_hash,"
+        "source_message_ids_json,confidence,sensitivity,proposed_expires_at,"
+        "extractor_version,status,created_at,decided_at,decision_reason"
+    ),
+    "memory_tombstones": (
+        "tombstone_id,group_id,subject_id,claim_hash,source_message_ids_json,"
+        "deleted_at,reason"
+    ),
+}
+
+
+def _rebuild_with_persona(
+    db: sqlite3.Connection,
+    *,
+    table: str,
+    create_sql: str,
+    insert_columns: str,
+) -> None:
+    target = table + "_v11"
+    db.execute(create_sql.format(table=target))
+    db.execute(
+        "INSERT INTO {target}(persona_id,{columns}) "
+        "SELECT 'aemeath',{columns} FROM {table}".format(
+            target=target,
+            columns=insert_columns,
+            table=table,
+        )
+    )
+    old_count = db.execute("SELECT COUNT(*) FROM " + table).fetchone()[0]
+    new_count = db.execute("SELECT COUNT(*) FROM " + target).fetchone()[0]
+    if old_count != new_count:
+        raise SchemaMigrationError("row-count mismatch for " + table)
+    db.execute("DROP TABLE " + table)
+    db.execute("ALTER TABLE " + target + " RENAME TO " + table)
+
+
+def _v11_table_create_sql(table: str) -> str:
+    """Return one v11 CREATE TABLE statement with a caller-supplied name."""
+    statements = {
+        "messages": """
+            CREATE TABLE {table} (
+                persona_id TEXT NOT NULL, group_id TEXT NOT NULL, message_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, text TEXT NOT NULL,
+                timestamp INTEGER NOT NULL, reply_to_message_id TEXT, reply_to_bot INTEGER NOT NULL,
+                mentions_bot INTEGER NOT NULL, is_bot INTEGER NOT NULL, is_command INTEGER NOT NULL,
+                image_urls TEXT NOT NULL, segment_types TEXT NOT NULL, metadata TEXT NOT NULL,
+                origin TEXT NOT NULL, decision_id TEXT, ingested_at INTEGER NOT NULL,
+                platform TEXT NOT NULL, bot_id TEXT NOT NULL, event_version INTEGER NOT NULL,
+                PRIMARY KEY (persona_id, group_id, message_id)
+            )
+        """,
+        "profiles": """
+            CREATE TABLE {table} (
+                persona_id TEXT NOT NULL, group_id TEXT NOT NULL, subject_id TEXT NOT NULL,
+                display_name TEXT NOT NULL, relationship TEXT NOT NULL, authority INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (persona_id, group_id, subject_id)
+            )
+        """,
+        "memories": """
+            CREATE TABLE {table} (
+                memory_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER, confidence REAL NOT NULL,
+                importance REAL NOT NULL, authority INTEGER NOT NULL, source_message_id TEXT,
+                status TEXT NOT NULL DEFAULT 'accepted', scope TEXT NOT NULL DEFAULT 'USER_IN_GROUP',
+                sensitivity TEXT NOT NULL DEFAULT 'none', extractor_version TEXT NOT NULL DEFAULT 'rules-v1',
+                supersedes_memory_id TEXT, source_message_ids_json TEXT NOT NULL DEFAULT '[]'
+            )
+        """,
+        "decisions": """
+            CREATE TABLE {table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, decision_id TEXT NOT NULL,
+                persona_id TEXT NOT NULL, group_id TEXT NOT NULL, state TEXT NOT NULL,
+                reason TEXT NOT NULL, timestamp INTEGER NOT NULL
+            )
+        """,
+        "outbox": """
+            CREATE TABLE {table} (
+                decision_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                text TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER, sent_at INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending', attempt INTEGER NOT NULL DEFAULT 0,
+                failure_code TEXT, failure_detail TEXT, quote_message_id TEXT,
+                segments_json TEXT NOT NULL DEFAULT '[]', kind TEXT NOT NULL DEFAULT 'reply',
+                outbound_json TEXT NOT NULL DEFAULT '[]'
+            )
+        """,
+        "topic_epochs": """
+            CREATE TABLE {table} (
+                persona_id TEXT NOT NULL, group_id TEXT NOT NULL, topic_id TEXT NOT NULL,
+                opened_at INTEGER NOT NULL, closed_at INTEGER, close_reason TEXT,
+                last_message_id TEXT, PRIMARY KEY (persona_id, group_id, topic_id)
+            )
+        """,
+        "continuation_grants": """
+            CREATE TABLE {table} (
+                grant_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL, opened_by_decision_id TEXT NOT NULL,
+                opened_by_message_id TEXT NOT NULL, trigger_kind TEXT NOT NULL,
+                granted_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                max_total_seconds INTEGER NOT NULL, absolute_deadline_at INTEGER NOT NULL
+            )
+        """,
+        "social_events": """
+            CREATE TABLE {table} (
+                event_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                user_id TEXT NOT NULL, kind TEXT NOT NULL, source_message_id TEXT NOT NULL,
+                confidence REAL NOT NULL, occurred_at INTEGER NOT NULL, decision_id TEXT,
+                UNIQUE (persona_id, group_id, source_message_id, kind)
+            )
+        """,
+        "relationship_state": """
+            CREATE TABLE {table} (
+                persona_id TEXT NOT NULL, group_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                familiarity INTEGER NOT NULL DEFAULT 0, affinity INTEGER NOT NULL DEFAULT 0,
+                trust INTEGER NOT NULL DEFAULT 0, boundary_pressure INTEGER NOT NULL DEFAULT 0,
+                interaction_count INTEGER NOT NULL DEFAULT 0, last_interaction_at INTEGER NOT NULL DEFAULT 0,
+                configured_relationship TEXT, updated_at INTEGER NOT NULL,
+                PRIMARY KEY (persona_id, group_id, user_id)
+            )
+        """,
+        "memory_candidates": """
+            CREATE TABLE {table} (
+                candidate_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                scope TEXT NOT NULL, subject_id TEXT NOT NULL, kind TEXT NOT NULL, claim TEXT NOT NULL,
+                claim_hash TEXT NOT NULL, source_message_ids_json TEXT NOT NULL, confidence REAL NOT NULL,
+                sensitivity TEXT NOT NULL, proposed_expires_at INTEGER, extractor_version TEXT NOT NULL,
+                status TEXT NOT NULL, created_at INTEGER NOT NULL, decided_at INTEGER,
+                decision_reason TEXT, UNIQUE (persona_id, group_id, subject_id, claim_hash)
+            )
+        """,
+        "memory_tombstones": """
+            CREATE TABLE {table} (
+                tombstone_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL, claim_hash TEXT NOT NULL, source_message_ids_json TEXT NOT NULL,
+                deleted_at INTEGER NOT NULL, reason TEXT NOT NULL,
+                UNIQUE (persona_id, group_id, subject_id, claim_hash)
+            )
+        """,
+    }
+    return statements[table]
+
+
+def _v10_to_v11(db: sqlite3.Connection) -> None:
+    for table in _V11_PERSONA_TABLES:
+        _rebuild_with_persona(
+            db,
+            table=table,
+            create_sql=_v11_table_create_sql(table),
+            insert_columns=_V11_COPY_COLUMNS[table],
+        )
+    db.execute("DROP TABLE favorability")
+    for statement in _v11_indexes_sql().split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
+
+
+def _verify_v11(db: sqlite3.Connection) -> None:
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    missing = set(_V11_PERSONA_TABLES) - tables
+    if missing or "favorability" in tables:
+        raise SchemaMigrationError("schema v11 table verification failed")
+    for table in _V11_PERSONA_TABLES:
+        info = {
+            row[1]: row for row in db.execute("PRAGMA table_info(" + table + ")")
+        }
+        column = info.get("persona_id")
+        if column is None or column[3] != 1 or column[4] is not None:
+            raise SchemaMigrationError("schema v11 persona_id verification failed for " + table)
+        if db.execute(
+            "SELECT COUNT(*) FROM " + table + " WHERE persona_id IS NULL OR persona_id=''"
+        ).fetchone()[0]:
+            raise SchemaMigrationError("schema v11 contains empty persona_id in " + table)
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v11 integrity check failed")
+
+
 def _set_version(db: sqlite3.Connection, version: int) -> None:
     db.execute(
         "UPDATE schema_meta SET value=? WHERE key='version'",
@@ -396,7 +770,7 @@ def migrate_database(path: Path) -> Optional[Path]:
                 current, SCHEMA_VERSION
             )
         )
-    if current not in (0, 5, 6, 7, 8, 9, SCHEMA_VERSION):
+    if current not in (0, 5, 6, 7, 8, 9, 10, SCHEMA_VERSION):
         db.close()
         raise UnsupportedSchemaError(
             "no safe migration path from schema {}".format(current)
@@ -416,8 +790,8 @@ def migrate_database(path: Path) -> Optional[Path]:
     try:
         if current == 0:
             with db:
-                _bootstrap_v5(db)
-            current = 5
+                _bootstrap_v11(db)
+            current = SCHEMA_VERSION
         if current == 5:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -554,6 +928,17 @@ def migrate_database(path: Path) -> Optional[Path]:
                 }
                 if "outbound_json" not in columns:
                     raise SchemaMigrationError("schema verification failed")
+                _set_version(db, 10)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 10
+        if current == 10:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v10_to_v11(db)
+                _verify_v11(db)
                 _set_version(db, SCHEMA_VERSION)
                 db.commit()
             except BaseException:

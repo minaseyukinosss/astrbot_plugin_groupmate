@@ -45,15 +45,15 @@ def test_v6_database_migrates_to_v7_with_backfill(tmp_path):
     db.close()
 
     store = SQLiteMemoryStore(path)
-    assert store.schema_version() == 10
-    messages = store.list_ledger_messages("g", limit=10)
+    assert store.schema_version() == 11
+    messages = store.list_ledger_messages("aemeath", "g", limit=10)
     by_id = {item.message_id: item for item in messages}
     assert by_id["bot-1"].origin is MessageOrigin.BOT_DELIVERY
     assert by_id["bot-1"].decision_id == "d1"
     assert by_id["u1"].origin is MessageOrigin.PLATFORM_REALTIME
-    assert store.latest_open_topic_epoch("g") is not None
+    assert store.latest_open_topic_epoch("aemeath", "g") is not None
     store.close()
-    assert list(tmp_path.glob("legacy.db.pre-migrate-v6-to-v10.*"))
+    assert list(tmp_path.glob("legacy.db.pre-migrate-v6-to-v11.*"))
 
 
 def test_newer_database_is_rejected(tmp_path):
@@ -92,13 +92,13 @@ def test_failed_v7_migration_rolls_back(tmp_path, monkeypatch):
     db.close()
     assert version == "6"
     assert "temporary_column" not in columns
-    assert list(tmp_path.glob("broken.db.pre-migrate-v6-to-v10.*"))
+    assert list(tmp_path.glob("broken.db.pre-migrate-v6-to-v11.*"))
 
 
 def test_bot_delivery_without_decision_id_is_rejected(tmp_path):
     store = SQLiteMemoryStore(tmp_path / "reject.db")
     with pytest.raises(ValueError):
-        store.save_message(
+        store.save_message("aemeath",
             ChatMessage(
                 message_id="bot-x",
                 group_id="g",

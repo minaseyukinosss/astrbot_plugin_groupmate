@@ -45,10 +45,6 @@ class AemeathOutputFirewall:
         re.IGNORECASE,
     )
 
-    def __init__(self, max_chars: int = 60, max_sentences: int = 2) -> None:
-        self.max_chars = max(1, max_chars)
-        self.max_sentences = max(1, max_sentences)
-
     def validate(
         self,
         text: str,
@@ -61,12 +57,9 @@ class AemeathOutputFirewall:
         cleaned = (text or "").strip().strip("`").strip()
         codes: List[str] = []
         non_repairable = set()
-        max_chars = self.max_chars
-        max_sentences = self.max_sentences
-        if reply_mode is not None:
-            constr = constraints_for(reply_mode)
-            max_chars = constr.max_chars
-            max_sentences = constr.max_sentences
+        constr = constraints_for(reply_mode or ReplyMode.SHORT_SOCIAL)
+        max_chars = constr.max_chars
+        max_sentences = constr.max_sentences
 
         if not cleaned:
             codes.append("empty_output")

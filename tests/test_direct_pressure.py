@@ -37,18 +37,21 @@ def test_repeated_bare_alias_direct_escalates_to_pester():
     pressure = tracker()
 
     first = pressure.observe(
+        "aemeath",
         message(timestamp=100),
         TriggerKind.ALIAS_DIRECT,
         now=100,
         aliases=("爱弥斯",),
     )
     second = pressure.observe(
+        "aemeath",
         message(timestamp=120),
         TriggerKind.ALIAS_DIRECT,
         now=120,
         aliases=("爱弥斯",),
     )
     third = pressure.observe(
+        "aemeath",
         message(timestamp=140),
         TriggerKind.ALIAS_DIRECT,
         now=140,
@@ -63,12 +66,14 @@ def test_repeated_bare_alias_direct_escalates_to_pester():
 def test_contentful_direct_resets_pressure():
     pressure = tracker()
     pressure.observe(
+        "aemeath",
         message(timestamp=100),
         TriggerKind.ALIAS_DIRECT,
         now=100,
         aliases=("爱弥斯",),
     )
     pressure.observe(
+        "aemeath",
         message(timestamp=120),
         TriggerKind.ALIAS_DIRECT,
         now=120,
@@ -76,6 +81,7 @@ def test_contentful_direct_resets_pressure():
     )
 
     state = pressure.observe(
+        "aemeath",
         message("爱弥斯，这个怎么弄？", timestamp=130),
         TriggerKind.ALIAS_DIRECT,
         now=130,
@@ -91,12 +97,14 @@ def test_real_native_at_counts_but_reply_to_bot_does_not():
     pressure = tracker()
 
     native = pressure.observe(
+        "aemeath",
         message("@爱弥斯", timestamp=100, mentions_bot=True),
         TriggerKind.NATIVE_DIRECT,
         now=100,
         aliases=("爱弥斯",),
     )
     reply = pressure.observe(
+        "aemeath",
         message("嗯？", timestamp=120, reply_to_bot=True),
         TriggerKind.NATIVE_DIRECT,
         now=120,
@@ -112,12 +120,14 @@ def test_copied_at_and_continuation_are_excluded_from_pressure():
     pressure = tracker()
 
     copied = pressure.observe(
+        "aemeath",
         message("@爱弥斯", timestamp=100),
         TriggerKind.COPIED_AT,
         now=100,
         aliases=("爱弥斯",),
     )
     continuation = pressure.observe(
+        "aemeath",
         message("然后呢", timestamp=120),
         TriggerKind.CONTINUATION,
         now=120,
@@ -133,6 +143,7 @@ def test_copied_at_and_continuation_are_excluded_from_pressure():
 def test_pressure_is_isolated_per_sender_and_expires_by_window():
     pressure = tracker()
     pressure.observe(
+        "aemeath",
         message(timestamp=100, sender_id="u1"),
         TriggerKind.ALIAS_DIRECT,
         now=100,
@@ -140,12 +151,14 @@ def test_pressure_is_isolated_per_sender_and_expires_by_window():
     )
 
     other = pressure.observe(
+        "aemeath",
         message(timestamp=120, sender_id="u2"),
         TriggerKind.ALIAS_DIRECT,
         now=120,
         aliases=("爱弥斯",),
     )
     expired = pressure.observe(
+        "aemeath",
         message(timestamp=800, sender_id="u1"),
         TriggerKind.ALIAS_DIRECT,
         now=800,
@@ -165,12 +178,14 @@ def test_tracker_can_apply_group_policy_thresholds():
     )
 
     first = pressure.observe(
+        "aemeath",
         message(timestamp=100),
         TriggerKind.ALIAS_DIRECT,
         now=100,
         aliases=("爱弥斯",),
     )
     second = pressure.observe(
+        "aemeath",
         message(timestamp=120),
         TriggerKind.ALIAS_DIRECT,
         now=120,
@@ -179,3 +194,25 @@ def test_tracker_can_apply_group_policy_thresholds():
 
     assert first.level is DirectAddressPressureLevel.NORMAL
     assert second.level is DirectAddressPressureLevel.NORMAL
+
+
+def test_pressure_key_includes_persona():
+    pressure = tracker()
+    pressure.observe(
+        "aemeath",
+        message(timestamp=100),
+        TriggerKind.ALIAS_DIRECT,
+        now=100,
+        aliases=("爱弥斯",),
+    )
+
+    future = pressure.observe(
+        "future",
+        message(timestamp=120),
+        TriggerKind.ALIAS_DIRECT,
+        now=120,
+        aliases=("新人格",),
+    )
+
+    assert future.level is DirectAddressPressureLevel.NORMAL
+    assert future.count == 1

@@ -126,10 +126,21 @@ def delivery_still_valid(plan: DeliveryPlan, now: int) -> bool:
 class DeliveryService:
     """The only component allowed to invoke PlatformPort send methods."""
 
-    def __init__(self, platform, memory, clock, character_name: str = "爱弥斯") -> None:
+    def __init__(
+        self,
+        platform,
+        memory,
+        clock,
+        *,
+        persona_id: str,
+        character_name: str = "爱弥斯",
+    ) -> None:
         self.platform = platform
         self.memory = memory
         self.clock = clock
+        self.persona_id = str(persona_id or "").strip()
+        if not self.persona_id:
+            raise ValueError("persona_id is required")
         self.character_name = character_name
 
     async def deliver(
@@ -333,6 +344,7 @@ class DeliveryService:
         if method is not None:
             return bool(
                 await method(
+                    self.persona_id,
                     plan.decision_id,
                     plan.group_id,
                     text,
@@ -349,6 +361,7 @@ class DeliveryService:
             return True
         try:
             value = method(
+                self.persona_id,
                 plan.decision_id,
                 plan.group_id,
                 text,
@@ -361,6 +374,7 @@ class DeliveryService:
             )
         except TypeError:
             value = method(
+                self.persona_id,
                 plan.decision_id,
                 plan.group_id,
                 text,
@@ -384,7 +398,11 @@ class DeliveryService:
         if method is not None:
             return bool(
                 await method(
-                    decision_id, expected.value, status.value, **kwargs
+                    self.persona_id,
+                    decision_id,
+                    expected.value,
+                    status.value,
+                    **kwargs,
                 )
             )
         row = getattr(self.memory, "outbox", {}).get(decision_id)
@@ -402,20 +420,25 @@ class DeliveryService:
     async def _finalize(self, decision_id, sent_at, bot_message, reason) -> bool:
         method = getattr(self.memory, "finalize_delivery_async", None)
         if method is not None:
-            return bool(await method(decision_id, sent_at, bot_message, reason))
+            return bool(
+                await method(
+                    self.persona_id, decision_id, sent_at, bot_message, reason
+                )
+            )
         mark = getattr(self.memory, "mark_outbox_sent", None)
         if mark is not None:
-            value = mark(decision_id, sent_at)
+            value = mark(self.persona_id, decision_id, sent_at)
             if inspect.isawaitable(value):
                 await value
         save = getattr(self.memory, "save_message", None)
         if save is not None:
-            value = save(bot_message)
+            value = save(self.persona_id, bot_message)
             if inspect.isawaitable(value):
                 await value
         record = getattr(self.memory, "record_transition", None)
         if record is not None:
             value = record(
+                self.persona_id,
                 decision_id,
                 bot_message.group_id,
                 "SEND",
@@ -425,6 +448,7 @@ class DeliveryService:
             if inspect.isawaitable(value):
                 await value
             value = record(
+                self.persona_id,
                 decision_id,
                 bot_message.group_id,
                 "END",

@@ -340,7 +340,6 @@ def single_turn_scenarios() -> Iterable[Dict]:
             output=output,
             outcome_reason="sent",
             max_chars=180,
-            policy={"max_reply_chars": 180, "max_reply_segments": 3},
             tags=["help_detail", "hard_wake"],
         )
 

@@ -7,12 +7,12 @@ Contract:
 - 叫/喊/问问 + alias → ALIAS_DIRECT
 """
 
-from groupmate.models import GroupPolicy, TriggerKind
+from groupmate.models import TriggerKind
 from groupmate.engine.triggers import TriggerRouter
 
 
 def build_router(aliases=("爱弥斯", "小爱", "飞行雪绒")):
-    return TriggerRouter(GroupPolicy(aliases=aliases))
+    return TriggerRouter(aliases=aliases)
 
 
 def test_existing_command_is_bypassed(message_factory):
@@ -22,9 +22,7 @@ def test_existing_command_is_bypassed(message_factory):
 
 
 def test_native_at_is_native_direct(message_factory):
-    router = TriggerRouter(
-        GroupPolicy(aliases=("爱弥斯", "小爱"), handle_native_wake=False)
-    )
+    router = TriggerRouter(aliases=("爱弥斯", "小爱"))
     result = router.classify(message_factory(text="在吗", mentions_bot=True))
 
     assert result.kind is TriggerKind.NATIVE_DIRECT

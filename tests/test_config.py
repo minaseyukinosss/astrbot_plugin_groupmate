@@ -31,6 +31,34 @@ def test_deployment_settings_contain_only_six_public_values():
     assert settings.relationships_for("aemeath") == ()
 
 
+def test_removed_configuration_and_fallbacks_are_absent_from_production():
+    removed = (
+        "PluginSettings",
+        "GroupPolicy",
+        "handle_native_wake",
+        "group_brief",
+        "max_reply_chars",
+        "spontaneous_hourly_limit",
+        "spontaneous_cooldown_seconds",
+        "v3_scheduler_enabled",
+        "v3_memory_writer_enabled",
+        "v3_composition_enabled",
+        "reaction_media_enabled",
+        "reaction_catalog_path",
+        "LocalReactionCatalog",
+        "ReactionPolicy",
+        "DEFAULT_RELATIONSHIPS",
+        "flatten_plugin_config",
+    )
+    production = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "groupmate").rglob("*.py")
+    )
+
+    for name in removed:
+        assert name not in production
+
+
 def test_explicit_empty_aliases_are_not_replaced_by_defaults():
     settings = AstrBotConfigParser().parse(
         {
@@ -67,8 +95,8 @@ def test_legacy_keys_are_diagnosed_and_never_applied():
     )
 
     assert settings.enabled_groups == ()
-    assert settings.diagnostics.ignored_legacy_keys == (
-        "enabled_groups",
+    assert settings.diagnostics.ignored_legacy_keys == ("enabled_groups",)
+    assert settings.diagnostics.unknown_keys == (
         "group_brief",
         "max_reply_chars",
     )

@@ -1,30 +1,48 @@
 import asyncio
 
-from groupmate.models import GroupPolicy
 from groupmate.engine.runtime import GroupActor, GroupRuntimeManager
-from tests.fakes import RecordingWorkflow
+from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
+from tests.fakes import RecordingWorkflow, persona_context
 
 
-def fast_policy():
-    return GroupPolicy(
-        aliases=("小爱",),
-        debounce_min_seconds=0.01,
-        debounce_max_seconds=0.01,
-        spontaneous_cooldown_seconds=0,
+def persona():
+    return persona_context(aliases=("小爱",))
+
+
+def future_persona():
+    return persona_context(
+        aliases=("新人格",),
+        persona_id="future",
+        display_name="新人格",
     )
+
+
+def fast_policy(**overrides):
+    conversation = {
+        "debounce_min_seconds": 0.01,
+        "debounce_max_seconds": 0.01,
+    }
+    conversation.update(overrides)
+    return BehaviorPolicy(
+        conversation=ConversationPolicy(**conversation),
+        reply=ReplyPolicy(humanize_delay_enabled=False),
+        resources=ResourcePolicy(open_send_cooldown_seconds=0),
+    )
+
+
+def actor_for(workflow, behavior=None):
+    return GroupActor("g1", workflow, persona(), behavior or fast_policy())
 
 
 def test_topic_max_seconds_clamps_debounce_wait(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        policy = GroupPolicy(
-            aliases=("小爱",),
+        policy = fast_policy(
             debounce_min_seconds=5.0,
             debounce_max_seconds=5.0,
             topic_max_seconds=12,
-            spontaneous_cooldown_seconds=0,
         )
-        actor = GroupActor("g1", workflow, policy=policy)
+        actor = actor_for(workflow, policy)
         await actor.start()
         await actor.submit(message_factory(message_id="1", timestamp=100, text="今天好热啊大家"))
         await actor.submit(
@@ -42,7 +60,7 @@ def test_topic_max_seconds_clamps_debounce_wait(message_factory):
 def test_debounce_collapses_message_burst(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor("g1", workflow, policy=fast_policy())
+        actor = actor_for(workflow)
         await actor.start()
         for index in range(4):
             await actor.submit(
@@ -61,7 +79,7 @@ def test_debounce_collapses_message_burst(message_factory):
 def test_native_wake_cancels_pending_spontaneous_topic(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor("g1", workflow, policy=fast_policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(message_factory(message_id="soft"))
         await actor.submit(message_factory(message_id="direct", mentions_bot=True))
@@ -76,17 +94,10 @@ def test_native_wake_cancels_pending_spontaneous_topic(message_factory):
     assert workflow.evaluations[0][0].latest.message_id == "direct"
 
 
-def test_native_wake_bypasses_when_disabled(message_factory):
+def test_native_wake_always_uses_unified_runtime(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        policy = GroupPolicy(
-            aliases=("小爱",),
-            handle_native_wake=False,
-            debounce_min_seconds=0.01,
-            debounce_max_seconds=0.01,
-            spontaneous_cooldown_seconds=0,
-        )
-        actor = GroupActor("g1", workflow, policy=policy)
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(message_factory(message_id="soft"))
         await actor.submit(message_factory(message_id="direct", mentions_bot=True))
@@ -96,13 +107,13 @@ def test_native_wake_bypasses_when_disabled(message_factory):
 
     workflow = asyncio.run(scenario())
 
-    assert workflow.evaluations == []
+    assert [item[1].value for item in workflow.evaluations] == ["native_direct"]
 
 
 def test_alias_direct_is_evaluated_without_debounce(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor("g1", workflow, policy=fast_policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(message_factory(message_id="direct", text="小爱，在吗"))
         await actor.drain()
@@ -118,16 +129,7 @@ def test_alias_direct_is_evaluated_without_debounce(message_factory):
 def test_followup_after_direct_wake_uses_continuation(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor(
-            "g1",
-            workflow,
-            policy=GroupPolicy(
-                aliases=("小爱",),
-                continuation_seconds=90,
-                debounce_min_seconds=0.01,
-                debounce_max_seconds=0.01,
-            ),
-        )
+        actor = actor_for(workflow, fast_policy(continuation_seconds=90))
         await actor.start()
         await actor.submit(
             message_factory(message_id="wake", text="小爱", timestamp=100)
@@ -155,16 +157,7 @@ def test_followup_after_direct_wake_uses_continuation(message_factory):
 def test_followup_from_other_sender_stays_candidate(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor(
-            "g1",
-            workflow,
-            policy=GroupPolicy(
-                aliases=("小爱",),
-                continuation_seconds=90,
-                debounce_min_seconds=0.01,
-                debounce_max_seconds=0.01,
-            ),
-        )
+        actor = actor_for(workflow, fast_policy(continuation_seconds=90))
         await actor.start()
         await actor.submit(
             message_factory(message_id="wake", text="小爱", timestamp=100)
@@ -193,7 +186,7 @@ def test_followup_from_other_sender_stays_candidate(message_factory):
 def test_duplicate_direct_wake_still_evaluates_after_preload(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor("g1", workflow, policy=fast_policy())
+        actor = actor_for(workflow)
         await actor.start()
         message = message_factory(message_id="direct", text="小爱，在吗")
         await actor.preload(message)
@@ -212,11 +205,16 @@ def test_runtime_manager_keeps_groups_isolated(message_factory):
     async def scenario():
         workflows = {}
 
-        def factory(group_id):
+        def factory(group_id, persona_context):
+            del persona_context
             workflows[group_id] = RecordingWorkflow()
             return workflows[group_id]
 
-        manager = GroupRuntimeManager(factory, lambda group_id: fast_policy())
+        manager = GroupRuntimeManager(
+            factory,
+            lambda group_id: persona(),
+            lambda group_id: fast_policy(),
+        )
         await manager.submit(message_factory(group_id="g1", message_id="1"))
         await manager.submit(message_factory(group_id="g2", message_id="2"))
         await manager.drain()
@@ -228,6 +226,36 @@ def test_runtime_manager_keeps_groups_isolated(message_factory):
     assert set(workflows) == {"g1", "g2"}
     assert workflows["g1"].evaluations[0][0].group_id == "g1"
     assert workflows["g2"].evaluations[0][0].group_id == "g2"
+
+
+def test_runtime_manager_keeps_personas_isolated_for_same_group():
+    async def scenario():
+        workflows = {}
+
+        def factory(group_id, persona_context):
+            workflow = RecordingWorkflow()
+            workflows.setdefault(group_id, []).append(
+                (persona_context.persona_id, workflow)
+            )
+            return workflow
+
+        manager = GroupRuntimeManager(
+            factory,
+            lambda group_id: persona(),
+            lambda group_id: fast_policy(),
+        )
+        aemeath = await manager.actor_for("g1", persona())
+        future = await manager.actor_for("g1", future_persona())
+        repeat = await manager.actor_for("g1", persona())
+        await manager.close()
+        return aemeath, future, repeat, workflows
+
+    aemeath, future, repeat, workflows = asyncio.run(scenario())
+
+    assert aemeath is repeat
+    assert future is not aemeath
+    assert future.window.snapshot().messages == ()
+    assert [item[0] for item in workflows["g1"]] == ["aemeath", "future"]
 
 
 def test_direct_requests_are_serialized_without_invalidating_first(message_factory):
@@ -255,7 +283,7 @@ def test_direct_requests_are_serialized_without_invalidating_first(message_facto
 
     async def scenario():
         workflow = BlockingWorkflow()
-        actor = GroupActor("g1", workflow, policy=fast_policy())
+        actor = actor_for(workflow)
         await actor.start()
         await actor.submit(
             message_factory(message_id="first", text="小爱，先回答我")
@@ -286,17 +314,7 @@ def test_direct_requests_are_serialized_without_invalidating_first(message_facto
 def test_continuation_grants_are_kept_per_sender(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
-        actor = GroupActor(
-            "g1",
-            workflow,
-            policy=GroupPolicy(
-                aliases=("小爱",),
-                continuation_seconds=90,
-                debounce_min_seconds=0.01,
-                debounce_max_seconds=0.01,
-                spontaneous_cooldown_seconds=0,
-            ),
-        )
+        actor = actor_for(workflow, fast_policy(continuation_seconds=90))
         await actor.start()
         await actor.submit(
             message_factory(message_id="u1-wake", text="小爱", timestamp=100)

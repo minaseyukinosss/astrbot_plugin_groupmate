@@ -48,6 +48,7 @@ def test_cli_writes_private_safe_reports_and_local_review(tmp_path):
         report["configuration"]["mechanics_version"]
         == "unified-participation-v1"
     )
+    assert report["configuration"]["persona_id"] == "aemeath"
     for private in ("20002", "10001", "小维", "普通群聊长句"):
         assert private not in payload
         assert private not in markdown.read_text(encoding="utf-8")

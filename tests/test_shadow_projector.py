@@ -5,23 +5,46 @@ import pytest
 from eval.shadow_extract import LocalIdHasher
 from eval.shadow_projector import ShadowProjector
 from groupmate.core.response_act import ResponseAct
-from groupmate.models import GroupPolicy, InteractionScene
+from groupmate.models import InteractionScene
+from groupmate.persona import default_persona_registry
+from groupmate.policies import BehaviorPolicy, ReplyPolicy, ResourcePolicy
 from tests.test_reference_labeler import example
 
 
 @pytest.fixture
 def projector():
+    persona = default_persona_registry().resolve(
+        "aemeath",
+        aliases=("爱弥斯",),
+        relationships=(),
+    )
     return ShadowProjector(
-        GroupPolicy(
-            aliases=("爱弥斯",),
-            spontaneous_cooldown_seconds=0,
-            humanize_delay_enabled=False,
+        BehaviorPolicy(
+            reply=ReplyPolicy(humanize_delay_enabled=False),
+            resources=ResourcePolicy(open_send_cooldown_seconds=0),
         ),
         LocalIdHasher(b"a" * 32),
+        persona_context=persona,
         target_uin="20002",
         target_alias="小维",
         current_alias="爱弥斯",
     )
+
+
+def test_shadow_projector_requires_persona_context():
+    with pytest.raises(TypeError):
+        ShadowProjector(
+            BehaviorPolicy(),
+            LocalIdHasher(b"a" * 32),
+            target_uin="20002",
+            target_alias="小维",
+            current_alias="爱弥斯",
+        )
+
+
+def test_shadow_projection_uses_explicit_aemeath_context(projector):
+    assert projector.persona_context.persona_id == "aemeath"
+    assert projector.persona_context.aliases == ("爱弥斯",)
 
 
 def test_direct_social_boundary_and_vision_task_projection(projector):

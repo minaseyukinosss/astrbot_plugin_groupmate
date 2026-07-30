@@ -46,7 +46,8 @@ def test_scenario_schema_accepts_valid_synthetic_fixture():
 
     assert scenario.scenario_id == "schema-valid-01"
     assert scenario.topic_snapshot().latest.sender_id == "u1"
-    assert scenario.group_policy().humanize_delay_enabled is False
+    assert scenario.behavior_policy().reply.humanize_delay_enabled is False
+    assert not hasattr(scenario, "group_policy")
 
 
 def test_scenario_schema_rejects_unknown_version_and_fields():
