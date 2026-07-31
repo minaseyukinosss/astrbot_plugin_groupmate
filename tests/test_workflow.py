@@ -4,8 +4,12 @@ from inspect import signature
 import pytest
 
 from groupmate.capabilities import (
+    CapabilityContext,
+    CapabilityManifest,
+    CapabilityPermission,
     CapabilityRegistry,
     CapabilityRequest,
+    CapabilityResult,
     CapabilitySpec,
     CapabilityStatus,
     vision_spec,
@@ -46,15 +50,19 @@ def build_workflow(
     persona=None,
     task_response_resolver=None,
     capabilities=None,
+    capability_governor=None,
     participation_engine=None,
     budgets=None,
     direct_fallback=None,
+    vision_enabled=True,
 ):
     kwargs = {}
     if task_response_resolver is not None:
         kwargs["task_response_resolver"] = task_response_resolver
     if capabilities is not None:
         kwargs["capabilities"] = capabilities
+    if capability_governor is not None:
+        kwargs["capability_governor"] = capability_governor
     if participation_engine is not None:
         kwargs["participation_engine"] = participation_engine
     if budgets is not None:
@@ -73,7 +81,7 @@ def build_workflow(
         memory=memory or FakeMemoryRepository(),
         persona_context=persona_context(prompt_provider),
         behavior=behavior,
-        vision_enabled=True,
+        vision_enabled=vision_enabled,
         output_guard=AemeathOutputFirewall(),
         rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
         clock=clock or FakeClock(),
@@ -122,9 +130,23 @@ class RichFakePlatform(FakePlatform):
         return SendResult.confirmed(len(segments))
 
 
-def _task_topic(message_factory, text="帮我翻译一下"):
-    message = message_factory(message_id="task", text=text)
+def _task_topic(message_factory, text="帮我翻译一下", **message_overrides):
+    message = message_factory(
+        message_id="task",
+        text=text,
+        **message_overrides,
+    )
     return TopicSnapshot("task-topic", "g1", (message,), 100, 100)
+
+
+class RecordingGovernor:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def execute(self, request, context, *, now):
+        self.calls.append((request, context, now))
+        return self.result
 
 
 def _open_help_topic(message_factory):
@@ -461,6 +483,83 @@ def test_supported_vision_task_uses_capability_facts_before_aemeath_generation(
     )
 
 
+def test_workflow_builds_safe_capability_context(message_factory, balanced_policy):
+    governor = RecordingGovernor(
+        CapabilityResult(
+            CapabilityStatus.SUCCESS,
+            "vision",
+            facts=("图片描述",),
+            user_text="图片描述",
+        )
+    )
+    workflow = build_workflow(
+        capability_governor=governor,
+        task_response_resolver=lambda scene, latest: _resolution(
+            "SUPPORTED",
+            capability_name="vision",
+        ),
+    )
+
+    topic = _task_topic(
+        message_factory,
+        "帮我看看图",
+        image_urls=("https://example.test/image.png",),
+    )
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert len(governor.calls) == 1
+    request, context, now = governor.calls[0]
+    assert request.capability_name == "vision"
+    assert isinstance(context, CapabilityContext)
+    assert context.persona_id == "aemeath"
+    assert context.group_id == "g1"
+    assert context.actor_id == "u1"
+    assert context.message_id == topic.latest.message_id
+    assert context.trace_id
+    assert CapabilityPermission.VISION_READ in context.allowed_permissions
+    assert context.media_policy.capability_media_allowed is True
+    assert not hasattr(context, "platform")
+    assert not hasattr(context, "memory")
+
+
+def test_workflow_denies_vision_permission_when_vision_disabled(
+    message_factory, balanced_policy
+):
+    governor = RecordingGovernor(
+        CapabilityResult(
+            CapabilityStatus.UNSUPPORTED,
+            "vision",
+            error_code="permission_denied",
+        )
+    )
+    workflow = build_workflow(
+        vision_enabled=False,
+        capability_governor=governor,
+        task_response_resolver=lambda scene, latest: _resolution(
+            "SUPPORTED",
+            capability_name="vision",
+        ),
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            _task_topic(
+                message_factory,
+                "帮我看看图",
+                image_urls=("https://example.test/image.png",),
+            ),
+            TriggerKind.ALIAS_DIRECT,
+            balanced_policy,
+        )
+    )
+
+    assert outcome.sent is True
+    assert governor.calls == []
+
+
 def test_unsupported_task_completion_claim_is_repaired_before_send(
     message_factory, balanced_policy
 ):
@@ -512,7 +611,16 @@ def test_capability_cancellation_propagates(message_factory, balanced_policy):
         raise asyncio.CancelledError()
 
     registry = CapabilityRegistry()
-    registry.register(CapabilitySpec("vision", cancelled))
+    registry.register(
+        CapabilitySpec(
+            CapabilityManifest(
+                name="vision",
+                version="1.0.0",
+                permission_profile=(CapabilityPermission.VISION_READ,),
+            ),
+            cancelled,
+        )
+    )
     workflow = build_workflow(
         capabilities=registry,
         task_response_resolver=lambda scene, latest: _resolution(
