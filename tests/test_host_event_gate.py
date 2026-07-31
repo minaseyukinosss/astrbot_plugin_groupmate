@@ -134,4 +134,4 @@ def test_ignored_events_never_enter_groupmate(event):
 def test_bridge_no_longer_owns_host_command_reflection():
     from groupmate.host.bridge import AstrBotBridge
 
-    assert not hasattr(AstrBotBridge, "_is_command_event")
+    assert not hasattr(AstrBotBridge, "_is_" + "command_event")

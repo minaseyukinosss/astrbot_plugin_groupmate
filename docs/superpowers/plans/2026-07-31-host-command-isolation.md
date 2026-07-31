@@ -1,8 +1,10 @@
 # Host Command Isolation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 在 AstrBot 通用群消息入口前识别已注册命令和宿主唤醒前缀，使 `/取名` 等其他插件命令以及 Groupmate 自有管理命令完全不进入 Groupmate 的 Actor、话题、记忆、模型和发送链路。
+
+**Status:** Complete; verified by the full pytest suite and `git diff --check`.
 
 **Architecture:** 新增纯宿主适配组件 `HostEventGate`，只读取 AstrBot 事件事实和当前会话配置，输出不可变的 `HostEventDisposition`。新增 `AstrBotEventIngress` 作为 `main.py` 与 `AstrBotBridge` 之间的单一入口；只有 `GROUPMATE_MESSAGE` 可以调用 Bridge。领域 Runtime 同时把 `is_command=True` 作为最后一道防线，在追加 TopicWindow 和持久化前直接旁路。
 
@@ -57,7 +59,7 @@ Expected: exit 0，全部现有测试通过。若基线失败，停止实施并�
 - Modify: `tests/test_runtime.py`
 - Modify: `groupmate/engine/runtime.py:198-221`
 
-- [ ] **Step 1: Write the failing runtime test**
+- [x] **Step 1: Write the failing runtime test**
 
 在 `tests/test_runtime.py` 的基础 Actor 测试区域加入：
 
@@ -88,7 +90,7 @@ def test_command_bypasses_window_memory_and_evaluation(message_factory):
     assert last_trigger.value == "command"
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -98,7 +100,7 @@ python3 -m pytest tests/test_runtime.py::test_command_bypasses_window_memory_and
 
 Expected: FAIL，因为当前 `_handle_ingest()` 会在识别 `TriggerKind.COMMAND` 前追加 TopicWindow 并调用 `save_message_async()`。
 
-- [ ] **Step 3: Move command bypass before append**
+- [x] **Step 3: Move command bypass before append**
 
 将 `GroupActor._handle_ingest()` 的开头改为：
 
@@ -124,7 +126,7 @@ Expected: FAIL，因为当前 `_handle_ingest()` 会在识别 `TriggerKind.COMMA
 
 保留后续的 `IGNORE` 判断。不要把普通 bot/空消息的持久化语义一并改掉，本任务只收紧 Command。
 
-- [ ] **Step 4: Run focused runtime tests and verify GREEN**
+- [x] **Step 4: Run focused runtime tests and verify GREEN**
 
 Run:
 
@@ -134,7 +136,7 @@ python3 -m pytest tests/test_runtime.py tests/test_phase1_runtime.py tests/test_
 
 Expected: exit 0，命令零持久化测试和现有调度/触发测试全部通过。
 
-- [ ] **Step 5: Commit runtime defense**
+- [x] **Step 5: Commit runtime defense**
 
 ```bash
 git add groupmate/engine/runtime.py tests/test_runtime.py
@@ -149,7 +151,7 @@ git commit -m "fix: bypass commands before runtime persistence"
 - Create: `groupmate/host/event_gate.py`
 - Create: `tests/test_host_event_gate.py`
 
-- [ ] **Step 1: Write command and prefix classification tests**
+- [x] **Step 1: Write command and prefix classification tests**
 
 创建 `tests/test_host_event_gate.py`：
 
@@ -285,7 +287,7 @@ def test_ignored_events_never_enter_groupmate(event):
     assert gate(enabled_groups=("g1",)).classify(event) is HostEventDisposition.IGNORE
 ```
 
-- [ ] **Step 2: Run the gate tests and verify RED**
+- [x] **Step 2: Run the gate tests and verify RED**
 
 Run:
 
@@ -295,7 +297,7 @@ python3 -m pytest tests/test_host_event_gate.py -q
 
 Expected: collection ERROR with `ModuleNotFoundError: groupmate.host.event_gate`.
 
-- [ ] **Step 3: Implement `HostEventGate`**
+- [x] **Step 3: Implement `HostEventGate`**
 
 创建 `groupmate/host/event_gate.py`：
 
@@ -470,7 +472,7 @@ class HostEventGate:
             return default if value is None else value
 ```
 
-- [ ] **Step 4: Run gate tests and verify GREEN**
+- [x] **Step 4: Run gate tests and verify GREEN**
 
 Run:
 
@@ -480,7 +482,7 @@ python3 -m pytest tests/test_host_event_gate.py tests/test_astrbot_translation.p
 
 Expected: exit 0，所有 HostEventGate 与现有 OneBot 翻译测试通过。
 
-- [ ] **Step 5: Commit the pure host gate**
+- [x] **Step 5: Commit the pure host gate**
 
 ```bash
 git add groupmate/host/event_gate.py tests/test_host_event_gate.py
@@ -495,7 +497,7 @@ git commit -m "feat: classify AstrBot-owned host events"
 - Create: `groupmate/host/ingress.py`
 - Create: `tests/test_host_event_ingress.py`
 
-- [ ] **Step 1: Write ingress side-effect tests**
+- [x] **Step 1: Write ingress side-effect tests**
 
 创建 `tests/test_host_event_ingress.py`：
 
@@ -613,7 +615,7 @@ def test_admitted_request_reaches_bridge_enrichment():
     assert bridge.calls == [("enrich", event, request)]
 ```
 
-- [ ] **Step 2: Run ingress tests and verify RED**
+- [x] **Step 2: Run ingress tests and verify RED**
 
 Run:
 
@@ -623,7 +625,7 @@ python3 -m pytest tests/test_host_event_ingress.py -q
 
 Expected: collection ERROR with `ModuleNotFoundError: groupmate.host.ingress`.
 
-- [ ] **Step 3: Implement `AstrBotEventIngress`**
+- [x] **Step 3: Implement `AstrBotEventIngress`**
 
 创建 `groupmate/host/ingress.py`：
 
@@ -662,7 +664,7 @@ class AstrBotEventIngress:
         return disposition
 ```
 
-- [ ] **Step 4: Run ingress tests and verify GREEN**
+- [x] **Step 4: Run ingress tests and verify GREEN**
 
 Run:
 
@@ -672,7 +674,7 @@ python3 -m pytest tests/test_host_event_ingress.py -q
 
 Expected: exit 0，宿主命令和前缀不会调用 Bridge 或 `stop_event()`，Groupmate/AstrBot Agent 原有归属路径保持通过。
 
-- [ ] **Step 5: Commit the ingress boundary**
+- [x] **Step 5: Commit the ingress boundary**
 
 ```bash
 git add groupmate/host/ingress.py tests/test_host_event_ingress.py
@@ -690,7 +692,7 @@ git commit -m "feat: add single AstrBot event ingress"
 - Modify: `tests/test_plugin_loading.py`
 - Modify: `tests/test_host_event_gate.py`
 
-- [ ] **Step 1: Add failing plugin delegation and cleanup tests**
+- [x] **Step 1: Add failing plugin delegation and cleanup tests**
 
 在 `tests/test_host_event_gate.py` 末尾加入：
 
@@ -734,7 +736,7 @@ asyncio.run(plugin.enrich_native_request(event, request))
 assert plugin.ingress.calls == [("handle", event), ("enrich", event, request)]
 ```
 
-- [ ] **Step 2: Run wiring tests and verify RED**
+- [x] **Step 2: Run wiring tests and verify RED**
 
 Run:
 
@@ -744,7 +746,7 @@ python3 -m pytest tests/test_plugin_loading.py tests/test_host_event_gate.py::te
 
 Expected: FAIL；当前主插件直接调用 `bridge`，并且 `AstrBotBridge._is_command_event` 仍存在。
 
-- [ ] **Step 3: Export the new host boundary**
+- [x] **Step 3: Export the new host boundary**
 
 在 `groupmate/host/__init__.py` 加入：
 
@@ -761,7 +763,7 @@ from .ingress import AstrBotEventIngress
     "HostEventGate",
 ```
 
-- [ ] **Step 4: Construct and use the ingress in `main.py`**
+- [x] **Step 4: Construct and use the ingress in `main.py`**
 
 把宿主导入改为：
 
@@ -803,7 +805,7 @@ from .groupmate.host import (
 
 `main.py` 不再导入 `TurnOwner`。
 
-- [ ] **Step 5: Remove late command reflection from Bridge**
+- [x] **Step 5: Remove late command reflection from Bridge**
 
 在 `AstrBotBridge.enrich_request()` 中把：
 
@@ -829,7 +831,7 @@ from .groupmate.host import (
 
 删除 `AstrBotBridge._is_command_event()`。保留 `OneBotTranslator.from_event(..., is_command=...)` 的通用参数和 `TriggerKind.COMMAND`，它们仍是非 AstrBot 适配器和领域防线的一部分。
 
-- [ ] **Step 6: Run host wiring regression tests and verify GREEN**
+- [x] **Step 6: Run host wiring regression tests and verify GREEN**
 
 Run:
 
@@ -839,7 +841,7 @@ python3 -m pytest tests/test_plugin_loading.py tests/test_host_event_gate.py tes
 
 Expected: exit 0；主插件统一委托 Ingress，Bridge 不再反射 AstrBot command filters，原生唤醒唯一归属测试保持通过。
 
-- [ ] **Step 7: Scan for residual late command detection**
+- [x] **Step 7: Scan for residual late command detection**
 
 Run:
 
@@ -849,7 +851,7 @@ rg -n "_is_command_event|activated_handlers" main.py groupmate
 
 Expected: `activated_handlers` 只出现在 `groupmate/host/event_gate.py`；`_is_command_event` 无匹配。
 
-- [ ] **Step 8: Commit plugin wiring**
+- [x] **Step 8: Commit plugin wiring**
 
 ```bash
 git add main.py groupmate/host/__init__.py groupmate/host/bridge.py tests/test_plugin_loading.py tests/test_host_event_gate.py
@@ -865,7 +867,7 @@ git commit -m "refactor: gate AstrBot commands before Groupmate bridge"
 - Modify: `docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md`
 - Modify: `docs/superpowers/plans/2026-07-31-host-command-isolation.md`
 
-- [ ] **Step 1: Update user-facing command behavior**
+- [x] **Step 1: Update user-facing command behavior**
 
 把 README “唤醒路径”中的第 5 项改为：
 
@@ -873,7 +875,7 @@ git commit -m "refactor: gate AstrBot commands before Groupmate bridge"
 5. **AstrBot 指令**：已注册命令和使用宿主唤醒前缀的输入在进入 Groupmate Actor 前旁路；不写入话题、记忆或 outbox，也不阻止其他插件处理
 ```
 
-- [ ] **Step 2: Mark only Stage 1 implemented in the design**
+- [x] **Step 2: Mark only Stage 1 implemented in the design**
 
 把设计文档头部状态改为：
 
@@ -883,7 +885,7 @@ git commit -m "refactor: gate AstrBot commands before Groupmate bridge"
 
 不要把 Capability Governance 或 Provider SPI 标记为完成。
 
-- [ ] **Step 3: Run focused contract tests**
+- [x] **Step 3: Run focused contract tests**
 
 Run:
 
@@ -893,7 +895,7 @@ python3 -m pytest tests/test_host_event_gate.py tests/test_host_event_ingress.py
 
 Expected: exit 0，所有命令隔离、Runtime 防线、插件加载和原生唤醒测试通过。
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run:
 
@@ -903,7 +905,7 @@ python3 -m pytest -q
 
 Expected: exit 0，全部测试通过且无失败。
 
-- [ ] **Step 5: Verify formatting and residuals**
+- [x] **Step 5: Verify formatting and residuals**
 
 Run:
 
@@ -921,7 +923,7 @@ rg -n "_is_command_event" main.py groupmate tests
 
 Expected: no output；运行时代码与测试不再依赖该方法。
 
-- [ ] **Step 6: Mark this plan complete and commit documentation**
+- [x] **Step 6: Mark this plan complete and commit documentation**
 
 勾选本计划所有已完成步骤，并在文件头部 Goal 下加入：
 
@@ -936,6 +938,6 @@ git add README.md docs/superpowers/specs/2026-07-31-host-command-capability-boun
 git commit -m "docs: close host command isolation plan"
 ```
 
-- [ ] **Step 7: Use branch completion workflow**
+- [x] **Step 7: Use branch completion workflow**
 
 调用 `superpowers:verification-before-completion` 读取最新完整测试输出，再调用 `superpowers:finishing-a-development-branch` 提供合并、PR、保留或丢弃分支的标准选项。不要在用户选择前自动合并或删除工作树。

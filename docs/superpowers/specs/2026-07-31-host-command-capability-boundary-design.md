@@ -2,7 +2,7 @@
 
 日期：2026-07-31
 
-状态：已确认架构，尚未进入实施
+状态：Host Command Isolation 已实施；Capability Governance 与 Provider SPI 待实施
 
 适用范围：AstrBot 宿主共存、Groupmate 内部能力扩展、Phase 6 后续架构
 
