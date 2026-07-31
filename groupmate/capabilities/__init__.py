@@ -21,6 +21,7 @@ from .contracts import (
     CapabilityStatus,
     MediaCandidate,
 )
+from .governor import CapabilityGovernor
 from .registry import CapabilityRegistry, CapabilitySpec
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "CapabilityContext",
     "CapabilityCostClass",
     "CapabilityFailurePolicy",
+    "CapabilityGovernor",
     "CapabilityLatencyClass",
     "CapabilityManifest",
     "CapabilityMediaPolicy",
