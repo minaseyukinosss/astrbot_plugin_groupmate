@@ -23,6 +23,7 @@ from .contracts import (
 )
 from .governor import CapabilityGovernor
 from .provider import CapabilityHealth, CapabilityProvider
+from .provider_runtime import CapabilityProviderRuntime
 from .registry import CapabilityRegistry, CapabilitySpec
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "CapabilityMediaPolicy",
     "CapabilityPermission",
     "CapabilityProvider",
+    "CapabilityProviderRuntime",
     "CapabilityRequest",
     "CapabilityResult",
     "CapabilitySpec",
