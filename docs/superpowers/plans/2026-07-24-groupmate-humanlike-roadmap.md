@@ -1893,8 +1893,10 @@ Schema/API：
 
 ### Phase 6：能力层、表情包与多模态
 
-状态：未开始。下一阶段从能力契约、Capability Registry、Composer 和现有
-vision/external knowledge 迁移开始。
+状态：历史阶段说明，不再直接作为现行实施依据。能力契约、Capability Registry、
+Composer、富媒体投递和受限 vision/handoff 基础已经随后续 Phase 2 工作落地；尚未
+完成的宿主命令隔离、能力治理和内部 Provider SPI 以
+`docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md` 为准。
 
 目标：建立稳定扩展点，不污染核心流程。
 
