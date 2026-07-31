@@ -5,6 +5,13 @@ from dataclasses import FrozenInstanceError, fields
 import pytest
 
 from groupmate.capabilities.contracts import (
+    CapabilityContext,
+    CapabilityCostClass,
+    CapabilityFailurePolicy,
+    CapabilityLatencyClass,
+    CapabilityManifest,
+    CapabilityMediaPolicy,
+    CapabilityPermission,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
@@ -182,3 +189,107 @@ def test_media_ids_are_stable_non_path_identifiers():
             purpose="task result",
             safety_label="provider_approved",
         )
+
+
+def test_capability_manifest_is_immutable_and_declares_governance_fields():
+    manifest = CapabilityManifest(
+        name="vision",
+        version="1.0.0",
+        supported_intents=("image_understanding",),
+        permission_profile=(CapabilityPermission.VISION_READ,),
+        latency_class=CapabilityLatencyClass.INTERACTIVE,
+        cost_class=CapabilityCostClass.METERED,
+        failure_policy=CapabilityFailurePolicy.FAIL_CLOSED,
+        max_result_size=512,
+        default_timeout_seconds=3.5,
+        max_concurrency=2,
+    )
+
+    assert manifest.name == "vision"
+    assert manifest.version == "1.0.0"
+    assert manifest.permission_profile == (CapabilityPermission.VISION_READ,)
+    assert manifest.supported_intents == ("image_understanding",)
+    assert manifest.max_result_size == 512
+    assert manifest.default_timeout_seconds == 3.5
+    assert manifest.max_concurrency == 2
+    assert hash(manifest)
+
+    with pytest.raises(FrozenInstanceError):
+        manifest.name = "changed"
+
+
+def test_capability_manifest_rejects_empty_permissions_and_bad_limits():
+    with pytest.raises(ValueError, match="permission_profile"):
+        CapabilityManifest(
+            name="vision",
+            version="1.0.0",
+            permission_profile=(),
+        )
+    with pytest.raises(ValueError, match="max_result_size"):
+        CapabilityManifest(
+            name="vision",
+            version="1.0.0",
+            permission_profile=(CapabilityPermission.VISION_READ,),
+            max_result_size=0,
+        )
+    with pytest.raises(ValueError, match="default_timeout_seconds"):
+        CapabilityManifest(
+            name="vision",
+            version="1.0.0",
+            permission_profile=(CapabilityPermission.VISION_READ,),
+            default_timeout_seconds=0,
+        )
+    with pytest.raises(ValueError, match="max_concurrency"):
+        CapabilityManifest(
+            name="vision",
+            version="1.0.0",
+            permission_profile=(CapabilityPermission.VISION_READ,),
+            max_concurrency=0,
+        )
+
+
+def test_capability_context_contains_only_safe_runtime_facts():
+    context = CapabilityContext(
+        persona_id="aemeath",
+        group_id="g1",
+        actor_id="u1",
+        message_id="m1",
+        trace_id="d1",
+        deadline_at=123,
+        allowed_permissions=(CapabilityPermission.VISION_READ,),
+        media_policy=CapabilityMediaPolicy(capability_media_allowed=True),
+    )
+    field_names = {field.name for field in fields(CapabilityContext)}
+
+    assert field_names == {
+        "persona_id",
+        "group_id",
+        "actor_id",
+        "message_id",
+        "trace_id",
+        "deadline_at",
+        "allowed_permissions",
+        "media_policy",
+    }
+    assert context.allowed_permissions == (CapabilityPermission.VISION_READ,)
+    assert context.media_policy.capability_media_allowed is True
+    assert not field_names.intersection(
+        {
+            "platform",
+            "delivery_service",
+            "memory",
+            "memory_store",
+            "workflow",
+            "actor",
+            "astrbot_context",
+            "event",
+        }
+    )
+
+
+def test_capability_media_policy_defaults_to_no_media():
+    policy = CapabilityMediaPolicy()
+
+    assert policy.capability_media_allowed is False
+    assert policy.allowed_media_kinds == ()
+    assert policy.allowed_safety_labels == ()
