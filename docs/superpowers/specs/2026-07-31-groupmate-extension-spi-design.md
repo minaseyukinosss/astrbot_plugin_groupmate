@@ -2,7 +2,7 @@
 
 日期：2026-07-31
 
-状态：设计已确认；待实施计划
+状态：Phase A 静态 CapabilityProvider SPI 已实施；HostEventAdapter 与具体 IntegrationAdapter 待实施
 
 适用范围：Groupmate 内部能力扩展、AstrBot 特殊事件适配、第三方插件能力复用
 
@@ -363,7 +363,7 @@ groupmate/
 
 ## 11. 分阶段实施
 
-### Phase A：静态 CapabilityProvider SPI
+### Phase A：静态 CapabilityProvider SPI（已实施）
 
 - 定义 `CapabilityProvider`、`CapabilityHealth` 和 `CapabilityProviderRuntime`；
 - 把 vision 与 external handoff 迁移为 Provider；
