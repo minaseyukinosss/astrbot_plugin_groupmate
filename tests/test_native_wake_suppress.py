@@ -227,6 +227,31 @@ def test_bridge_injects_governed_capabilities(tmp_path):
     assert manifest_names == ("vision",)
 
 
+def test_bridge_stores_provider_runtime_per_group(tmp_path):
+    bridge = _bridge(tmp_path, vision_enabled=True)
+    workflow = bridge._workflow_for("g1", bridge.persona_context)
+    runtime = bridge._capability_runtimes["g1"]
+
+    assert workflow.capabilities is runtime.registry
+    assert workflow.capability_governor.registry is runtime.registry
+    assert runtime.closed is False
+
+
+def test_bridge_close_releases_provider_runtimes(tmp_path):
+    async def scenario():
+        bridge = _bridge(tmp_path, vision_enabled=True)
+        bridge._workflow_for("g1", bridge.persona_context)
+        runtime = bridge._capability_runtimes["g1"]
+
+        await bridge.close()
+        return runtime, bridge._capability_runtimes
+
+    runtime, runtimes = asyncio.run(scenario())
+
+    assert runtime.closed is True
+    assert runtimes == {}
+
+
 def test_bridge_does_not_route_text_only_tasks_to_arbitrary_capabilities(tmp_path):
     bridge = _bridge(tmp_path, vision_enabled=True)
     workflow = bridge._workflow_for("g1", bridge.persona_context)

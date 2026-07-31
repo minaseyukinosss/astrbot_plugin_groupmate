@@ -13,6 +13,11 @@ from groupmate.capabilities.builtin import (
     external_handoff_spec,
     vision_spec,
 )
+from groupmate.capabilities.provider import CapabilityProvider
+from groupmate.capabilities.providers import (
+    ExternalHandoffProvider,
+    VisionProvider,
+)
 from groupmate.capabilities.contracts import CapabilityRequest, CapabilityStatus
 from groupmate.capabilities.registry import CapabilityRegistry
 from groupmate.core.response_act import TaskResolutionStatus
@@ -39,6 +44,33 @@ class StaticVision:
     async def describe(self, image_urls):
         self.calls.append(tuple(image_urls))
         return self.description
+
+
+def test_vision_provider_uses_provider_spi():
+    provider = VisionProvider(StaticVision("图片描述"))
+
+    assert isinstance(provider, CapabilityProvider)
+    assert provider.manifest.name == "vision"
+    assert provider.health().available is True
+    assert provider.health().reason_code == "ready"
+
+
+def test_disabled_vision_provider_reports_unavailable():
+    provider = VisionProvider(None)
+
+    assert provider.health().available is False
+    assert provider.health().reason_code == "vision_unavailable"
+
+
+def test_external_handoff_provider_uses_provider_spi():
+    provider = ExternalHandoffProvider(
+        ExternalHandoffReason.EXTERNAL_ACTION_REQUIRED,
+        ExternalHandoffTarget.CONFIGURED_SERVICE,
+    )
+
+    assert isinstance(provider, CapabilityProvider)
+    assert provider.manifest.name == "external_handoff"
+    assert provider.health().available is True
 
 
 def test_vision_spec_declares_manifest_for_governor():

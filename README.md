@@ -7,7 +7,7 @@
 ## 当前发布
 
 - 版本：`0.3.0`
-- V3 核心迁移、宿主命令隔离和能力治理已落地并有测试覆盖；Provider SPI、Tool Gateway 和外部能力接入仍按 2026-07-31 架构边界设计后续推进。
+- V3 核心迁移、宿主命令隔离、能力治理和静态 Provider SPI 已落地并有测试覆盖；HostEventAdapter、外部插件 adapter、Tool Gateway 和外部能力接入仍按 2026-07-31 架构边界设计后续推进。
 - 发布包只包含运行时、Pages、配置、README 和规格文档；不包含 `.git`、`.venv`、测试、离线评测语料或缓存。
 
 ## 目录结构
@@ -38,6 +38,7 @@ astrbot_plugin_groupmate/
 - 多人归属：回复目标、记忆主体、社会状态目标分离
 - 保守长期记忆：候选抽取、敏感拦截、authority 仲裁、TTL、删除 tombstone
 - 管理命令：status / pause / resume / reset
+- 静态 CapabilityProvider 生命周期、启动健康采样与 Bridge 统一装配
 
 刻意不包含：工具环全家桶、Kanban、心跳巡检、表达自学习。
 

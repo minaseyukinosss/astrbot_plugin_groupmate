@@ -8,9 +8,9 @@ from typing import Any, Dict
 
 from ..capabilities import (
     CapabilityGovernor,
-    CapabilityRegistry,
+    CapabilityProviderRuntime,
     CapabilityRequest,
-    vision_spec,
+    VisionProvider,
 )
 from ..core.projections import StateProjector
 from ..core.response_act import TaskResolution, TaskResolutionStatus
@@ -58,6 +58,7 @@ class AstrBotBridge:
         self.memory = SQLiteMemoryStore(self.data_dir / "groupmate.db")
         self._umo_by_group: Dict[str, str] = {}
         self._provider_by_group: Dict[str, str] = {}
+        self._capability_runtimes = {}
         self._bootstrapped = set()
         self._bootstrap_locks: Dict[tuple, asyncio.Lock] = {}
         self._paused = False
@@ -271,6 +272,9 @@ class AstrBotBridge:
     async def close(self) -> None:
         self.paused = True
         await self.runtime.close()
+        for provider_runtime in tuple(self._capability_runtimes.values()):
+            provider_runtime.close()
+        self._capability_runtimes.clear()
         await self.memory.mark_sending_unknown_async()
         await self.memory.flush_async()
         self.memory.close()
@@ -352,10 +356,17 @@ class AstrBotBridge:
             self.context,
             lambda gid: self.settings.vision_provider or getter(gid),
         )
-        capabilities = CapabilityRegistry()
-        capabilities.register(
-            vision_spec(vision if self.settings.vision_enabled else None)
-        )
+        provider_runtime = self._capability_runtimes.get(group_id)
+        if provider_runtime is None:
+            provider_runtime = CapabilityProviderRuntime(
+                (
+                    VisionProvider(
+                        vision if self.settings.vision_enabled else None
+                    ),
+                )
+            )
+            self._capability_runtimes[group_id] = provider_runtime
+        capabilities = provider_runtime.registry
         governor = CapabilityGovernor(capabilities)
 
         def resolve_task(scene, message):

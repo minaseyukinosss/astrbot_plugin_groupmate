@@ -4,6 +4,8 @@
 
 **Goal:** Add a static, lifecycle-aware `CapabilityProvider` SPI so Groupmate-owned abilities and future integration adapters can be registered without changing workflow, persona, or delivery code.
 
+**Status:** Complete; verified by focused provider tests, full pytest, residual scans, and `git diff --check`.
+
 **Architecture:** Keep `CapabilityRegistry` as the static spec catalog and `CapabilityGovernor` as the only runtime execution boundary. Add a Python 3.7-compatible provider base class, immutable health value, and `CapabilityProviderRuntime` that starts providers, samples health once, creates `CapabilitySpec` values, and closes providers in reverse order. Migrate built-in vision and external handoff behind this SPI while preserving their existing compatibility helpers.
 
 **Tech Stack:** Python 3.7-compatible ABCs and dataclasses, asyncio capability executors, pytest, existing Groupmate capability contracts and AstrBot bridge.
@@ -57,7 +59,7 @@ Out of scope:
 - Modify: `groupmate/capabilities/__init__.py`
 - Create: `tests/test_capability_provider.py`
 
-- [ ] **Step 1: Write failing provider contract tests**
+- [x] **Step 1: Write failing provider contract tests**
 
 Add tests covering immutable health, validation, default lifecycle methods, manifest validation, and required-information defaults:
 
@@ -121,7 +123,7 @@ def test_provider_requires_manifest_and_execute():
         MissingManifest()
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -131,7 +133,7 @@ python3 -m pytest tests/test_capability_provider.py -q
 
 Expected: collection fails because `CapabilityHealth` and `CapabilityProvider` do not exist.
 
-- [ ] **Step 3: Implement the minimal provider contract**
+- [x] **Step 3: Implement the minimal provider contract**
 
 Create `groupmate/capabilities/provider.py` with Python 3.7-compatible ABCs:
 
@@ -191,7 +193,7 @@ class CapabilityProvider(ABC):
 
 Export `CapabilityHealth` and `CapabilityProvider` from `groupmate/capabilities/__init__.py`.
 
-- [ ] **Step 4: Run contract tests and verify GREEN**
+- [x] **Step 4: Run contract tests and verify GREEN**
 
 Run:
 
@@ -201,7 +203,7 @@ python3 -m pytest tests/test_capability_provider.py tests/test_capability_contra
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/capabilities/provider.py groupmate/capabilities/__init__.py tests/test_capability_provider.py
@@ -217,7 +219,7 @@ git commit -m "feat: add capability provider contract"
 - Modify: `groupmate/capabilities/__init__.py`
 - Create: `tests/test_capability_provider_runtime.py`
 
-- [ ] **Step 1: Write failing lifecycle and assembly tests**
+- [x] **Step 1: Write failing lifecycle and assembly tests**
 
 Cover explicit startup, health gating, duplicate rejection, cancellation-safe execution through Governor, reverse close order, and idempotent close:
 
@@ -301,7 +303,7 @@ def test_duplicate_manifest_name_fails_before_second_start():
 
 Also add a startup-failure test that verifies a failing provider is registered as unavailable with reason `start_error`, while already-started providers still close normally.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -311,7 +313,7 @@ python3 -m pytest tests/test_capability_provider_runtime.py -q
 
 Expected: collection fails because `CapabilityProviderRuntime` does not exist.
 
-- [ ] **Step 3: Implement runtime assembly**
+- [x] **Step 3: Implement runtime assembly**
 
 Create `groupmate/capabilities/provider_runtime.py`:
 
@@ -380,7 +382,7 @@ class CapabilityProviderRuntime:
 
 Export `CapabilityProviderRuntime` from `groupmate/capabilities/__init__.py`.
 
-- [ ] **Step 4: Run runtime and registry tests**
+- [x] **Step 4: Run runtime and registry tests**
 
 Run:
 
@@ -390,7 +392,7 @@ python3 -m pytest tests/test_capability_provider_runtime.py tests/test_capabilit
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/capabilities/provider_runtime.py groupmate/capabilities/__init__.py tests/test_capability_provider_runtime.py
@@ -409,7 +411,7 @@ git commit -m "feat: add static capability provider runtime"
 - Modify: `groupmate/capabilities/__init__.py`
 - Modify: `tests/test_builtin_capabilities.py`
 
-- [ ] **Step 1: Write failing built-in provider tests**
+- [x] **Step 1: Write failing built-in provider tests**
 
 Add assertions that `VisionProvider` and `ExternalHandoffProvider` implement `CapabilityProvider`, expose their current manifests, report health without executing, and preserve existing result semantics:
 
@@ -436,7 +438,7 @@ def test_external_handoff_provider_uses_provider_spi():
     assert provider.manifest.name == "external_handoff"
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -446,7 +448,7 @@ python3 -m pytest tests/test_builtin_capabilities.py -q
 
 Expected: import fails because the provider classes do not exist.
 
-- [ ] **Step 3: Move built-ins behind Provider SPI**
+- [x] **Step 3: Move built-ins behind Provider SPI**
 
 Implement `VisionProvider` and `ExternalHandoffProvider` with the same behavior currently held by `VisionCapability` and `ExternalHandoffCapability`. Each provider owns its immutable manifest, health, required-information matcher, and async `execute()` method.
 
@@ -467,7 +469,7 @@ def external_handoff_spec(reason, target):
 
 Add `provider_spec(provider)` to `provider.py`; it validates health and returns a `CapabilitySpec` without owning lifecycle, for legacy tests and callers only. Runtime code must use `CapabilityProviderRuntime`.
 
-- [ ] **Step 4: Run built-in, runtime, and workflow tests**
+- [x] **Step 4: Run built-in, runtime, and workflow tests**
 
 Run:
 
@@ -477,7 +479,7 @@ python3 -m pytest tests/test_builtin_capabilities.py tests/test_capability_provi
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/capabilities/providers groupmate/capabilities/builtin.py groupmate/capabilities/provider.py groupmate/capabilities/__init__.py tests/test_builtin_capabilities.py
@@ -493,7 +495,7 @@ git commit -m "refactor: migrate built-ins to provider spi"
 - Modify: `tests/test_native_wake_suppress.py`
 - Modify: `tests/test_provider_resolution.py`
 
-- [ ] **Step 1: Write failing Bridge lifecycle tests**
+- [x] **Step 1: Write failing Bridge lifecycle tests**
 
 Add tests that each group workflow receives a registry and governor from one stored provider runtime, disabled vision remains registered as unavailable, and `bridge.close()` closes and clears all provider runtimes exactly once.
 
@@ -519,7 +521,7 @@ def test_bridge_close_releases_provider_runtimes(tmp_path):
     assert runtimes == {}
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -529,7 +531,7 @@ python3 -m pytest tests/test_native_wake_suppress.py::test_bridge_stores_provide
 
 Expected: failures because Bridge has no `_capability_runtimes`.
 
-- [ ] **Step 3: Wire runtime into Bridge**
+- [x] **Step 3: Wire runtime into Bridge**
 
 In `AstrBotBridge.__init__` add:
 
@@ -562,7 +564,7 @@ for provider_runtime in tuple(self._capability_runtimes.values()):
 self._capability_runtimes.clear()
 ```
 
-- [ ] **Step 4: Run Bridge and host regression tests**
+- [x] **Step 4: Run Bridge and host regression tests**
 
 Run:
 
@@ -572,7 +574,7 @@ python3 -m pytest tests/test_native_wake_suppress.py tests/test_provider_resolut
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/bridge.py tests/test_native_wake_suppress.py tests/test_provider_resolution.py
@@ -588,11 +590,11 @@ git commit -m "refactor: assemble capabilities through provider runtime"
 - Modify: `docs/superpowers/specs/2026-07-31-groupmate-extension-spi-design.md`
 - Modify: `docs/superpowers/plans/2026-07-31-groupmate-extension-spi-phase-a.md`
 
-- [ ] **Step 1: Update architecture status**
+- [x] **Step 1: Update architecture status**
 
 Document that Phase A static Provider SPI is implemented, while HostEventAdapter, external plugin adapters, dynamic discovery, Tool Gateway, MCP, and actions remain unimplemented.
 
-- [ ] **Step 2: Run focused verification**
+- [x] **Step 2: Run focused verification**
 
 Run:
 
@@ -609,7 +611,7 @@ python3 -m pytest \
   -q
 ```
 
-- [ ] **Step 3: Run full verification and residual scans**
+- [x] **Step 3: Run full verification and residual scans**
 
 Run:
 
@@ -627,7 +629,7 @@ Expected:
 - built-in compatibility helpers remain only in capability modules and tests;
 - `git diff --check` has no output.
 
-- [ ] **Step 4: Mark this plan complete and commit docs**
+- [x] **Step 4: Mark this plan complete and commit docs**
 
 Add below the Goal line only after verification:
 
