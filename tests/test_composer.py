@@ -107,6 +107,50 @@ def test_composer_drops_untrusted_capability_media(tmp_path):
     assert [item.kind for item in draft.segments] == [OutboundKind.TEXT]
 
 
+def test_composer_keeps_final_guard_after_governor_media_filter():
+    act_plan = _act(
+        ResponseAct.TASK_HANDOFF,
+        InteractionScene.TASK_REQUEST,
+        capability_name="image_tool",
+    )
+    unsafe = MediaCandidate(
+        media_id="img-unsafe",
+        source="provider",
+        locator="https://example.test/unsafe.png",
+        media_kind="image",
+        semantic_label="unsafe image",
+        purpose="reply attachment",
+        safety_label="untrusted",
+    )
+    safe = MediaCandidate(
+        media_id="img-safe",
+        source="provider",
+        locator="https://example.test/safe.png",
+        media_kind="image",
+        semantic_label="safe image",
+        purpose="reply attachment",
+        safety_label="safe",
+    )
+    result = CapabilityResult(
+        CapabilityStatus.SUCCESS,
+        "image_tool",
+        facts=("fact",),
+        user_text="fact",
+        media_candidates=(unsafe, safe),
+    )
+
+    draft = ResponseComposer().compose(
+        text="看这张。",
+        act_plan=act_plan,
+        quote_message_id=None,
+        capability_result=result,
+    )
+
+    assert [segment.media_id for segment in draft.segments if segment.media_id] == [
+        "img-safe"
+    ]
+
+
 def test_composer_drops_approved_media_with_unsafe_locator():
     unsafe_locator = CapabilityResult(
         CapabilityStatus.SUCCESS,
