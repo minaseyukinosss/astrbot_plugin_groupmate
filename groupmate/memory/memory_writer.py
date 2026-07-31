@@ -83,8 +83,8 @@ class MemoryWriter:
         except RuntimeError:
             _safe()
             return
-        task = loop.create_task(asyncio.to_thread(_safe))
-        task.add_done_callback(lambda _: None)
+        future = loop.run_in_executor(None, _safe)
+        future.add_done_callback(lambda _: None)
 
     def process(
         self,

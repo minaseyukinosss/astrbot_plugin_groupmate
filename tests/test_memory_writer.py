@@ -288,34 +288,46 @@ def test_confirmed_send_always_schedules_memory_writer(tmp_path, topic_snapshot)
     platform = FakePlatform()
     calls = {"n": 0}
 
-    class TrackingWriter(MemoryWriter):
-        def process(self, *args, **kwargs):
-            calls["n"] += 1
-            return super().process(*args, **kwargs)
+    try:
+        async def _scenario():
+            completed = asyncio.Event()
+            loop = asyncio.get_running_loop()
 
-    workflow = CognitiveWorkflow(
-        generation_model=StaticGenerationModel("好呀。"),
-        vision=NullVision(),
-        platform=platform,
-        memory=store,
-        persona_context=persona_context(AemeathPersonaProvider()),
-        behavior=_policy(),
-        vision_enabled=True,
-        output_guard=AemeathOutputFirewall(),
-        rate_limiter=SlidingWindowRateLimiter(hourly_limit=6, cooldown_seconds=0),
-        clock=FakeClock(now=topic_snapshot.updated_at + 1),
-        memory_writer=TrackingWriter(store, persona_id="aemeath"),
-        addressee_resolver=AddresseeResolver(),
-    )
-    policy = _policy()
-    outcome = asyncio.run(
-        workflow.evaluate(topic_snapshot, TriggerKind.ALIAS_DIRECT, policy)
-    )
-    assert outcome.sent is True
+            class TrackingWriter(MemoryWriter):
+                def process(self, *args, **kwargs):
+                    try:
+                        calls["n"] += 1
+                        return super().process(*args, **kwargs)
+                    finally:
+                        loop.call_soon_threadsafe(completed.set)
 
-    async def _drain():
-        await asyncio.sleep(0.05)
+            workflow = CognitiveWorkflow(
+                generation_model=StaticGenerationModel("好呀。"),
+                vision=NullVision(),
+                platform=platform,
+                memory=store,
+                persona_context=persona_context(AemeathPersonaProvider()),
+                behavior=_policy(),
+                vision_enabled=True,
+                output_guard=AemeathOutputFirewall(),
+                rate_limiter=SlidingWindowRateLimiter(
+                    hourly_limit=6,
+                    cooldown_seconds=0,
+                ),
+                clock=FakeClock(now=topic_snapshot.updated_at + 1),
+                memory_writer=TrackingWriter(store, persona_id="aemeath"),
+                addressee_resolver=AddresseeResolver(),
+            )
+            outcome = await workflow.evaluate(
+                topic_snapshot,
+                TriggerKind.ALIAS_DIRECT,
+                _policy(),
+            )
+            assert outcome.sent is True
 
-    asyncio.run(_drain())
-    assert calls["n"] == 1
-    store.close()
+            await asyncio.wait_for(completed.wait(), timeout=1)
+            assert calls["n"] == 1
+
+        asyncio.run(_scenario())
+    finally:
+        store.close()
