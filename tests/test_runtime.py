@@ -76,6 +76,32 @@ def test_debounce_collapses_message_burst(message_factory):
     assert workflow.evaluations[0][0].latest.message_id == "3"
 
 
+def test_command_bypasses_window_memory_and_evaluation(message_factory):
+    async def scenario():
+        workflow = RecordingWorkflow()
+        actor = actor_for(workflow)
+        await actor.start()
+        await actor.submit(
+            message_factory(
+                message_id="command",
+                text="/取名 小明",
+                is_command=True,
+            )
+        )
+        await actor.drain()
+        snapshot = actor.window.snapshot()
+        last_trigger = actor.last_trigger
+        await actor.close()
+        return workflow, snapshot, last_trigger
+
+    workflow, snapshot, last_trigger = asyncio.run(scenario())
+
+    assert snapshot.messages == ()
+    assert workflow.memory.messages == []
+    assert workflow.evaluations == []
+    assert last_trigger.value == "command"
+
+
 def test_native_wake_cancels_pending_spontaneous_topic(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()

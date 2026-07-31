@@ -197,6 +197,11 @@ class GroupActor:
 
     async def _handle_ingest(self, item: _Ingest) -> None:
         message = item.message
+        classified = self.router.classify(message)
+        if classified.kind is TriggerKind.COMMAND:
+            self.last_trigger = classified.kind
+            return
+
         appended = self.window.append(message)
         if appended:
             await self.workflow.memory.save_message_async(
@@ -206,7 +211,7 @@ class GroupActor:
         if not item.schedule or not self._dispatch_enabled:
             return
 
-        result = self._maybe_continue(message, self.router.classify(message))
+        result = self._maybe_continue(message, classified)
         if not appended:
             if result.kind not in (
                 TriggerKind.NATIVE_DIRECT,
