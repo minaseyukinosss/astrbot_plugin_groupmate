@@ -9,15 +9,31 @@ from .builtin import (
     vision_spec,
 )
 from .contracts import (
+    CapabilityContext,
+    CapabilityCostClass,
+    CapabilityFailurePolicy,
+    CapabilityLatencyClass,
+    CapabilityManifest,
+    CapabilityMediaPolicy,
+    CapabilityPermission,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
     MediaCandidate,
 )
+from .governor import CapabilityGovernor
 from .registry import CapabilityRegistry, CapabilitySpec
 
 __all__ = [
     "CapabilityRegistry",
+    "CapabilityContext",
+    "CapabilityCostClass",
+    "CapabilityFailurePolicy",
+    "CapabilityGovernor",
+    "CapabilityLatencyClass",
+    "CapabilityManifest",
+    "CapabilityMediaPolicy",
+    "CapabilityPermission",
     "CapabilityRequest",
     "CapabilityResult",
     "CapabilitySpec",

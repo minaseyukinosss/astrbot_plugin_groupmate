@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict, Optional, Sequence
+from typing import Awaitable, Callable, Dict, Optional, Sequence, Tuple
 
 from ..core.response_act import TaskResolution, TaskResolutionStatus
 from .contracts import (
+    CapabilityManifest,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
@@ -21,13 +22,14 @@ InformationMatcher = Callable[[CapabilityRequest], Sequence[str]]
 
 @dataclass(frozen=True)
 class CapabilitySpec:
-    name: str
+    manifest: CapabilityManifest
     executor: CapabilityExecutor
     required_information: Optional[InformationMatcher] = None
     available: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", validate_capability_name(self.name))
+        if not isinstance(self.manifest, CapabilityManifest):
+            raise TypeError("capability manifest is required")
         if not callable(self.executor):
             raise TypeError("capability executor must be callable")
         if self.required_information is not None and not callable(
@@ -36,6 +38,10 @@ class CapabilitySpec:
             raise TypeError("required_information must be callable")
         if not isinstance(self.available, bool):
             raise TypeError("available must be a bool")
+
+    @property
+    def name(self) -> str:
+        return self.manifest.name
 
 
 class CapabilityRegistry:
@@ -57,6 +63,9 @@ class CapabilityRegistry:
     def lookup(self, capability_name: str) -> Optional[CapabilitySpec]:
         name = validate_capability_name(capability_name)
         return self._specs.get(name)
+
+    def manifests(self) -> Tuple[CapabilityManifest, ...]:
+        return tuple(spec.manifest for spec in self._specs.values())
 
     def describe(self, capability_name: str) -> TaskResolution:
         name = validate_capability_name(capability_name)

@@ -217,6 +217,16 @@ def test_bridge_registers_policy_scoped_vision_capability(tmp_path):
     assert resolution.capability_name == "vision"
 
 
+def test_bridge_injects_governed_capabilities(tmp_path):
+    bridge = _bridge(tmp_path, vision_enabled=True)
+    workflow = bridge._workflow_for("g1", bridge.persona_context)
+
+    assert workflow.capabilities is not None
+    assert workflow.capability_governor is not None
+    manifest_names = tuple(item.name for item in workflow.capabilities.manifests())
+    assert manifest_names == ("vision",)
+
+
 def test_bridge_does_not_route_text_only_tasks_to_arbitrary_capabilities(tmp_path):
     bridge = _bridge(tmp_path, vision_enabled=True)
     workflow = bridge._workflow_for("g1", bridge.persona_context)

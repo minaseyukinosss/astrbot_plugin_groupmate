@@ -9,12 +9,18 @@ from typing import Callable, DefaultDict, Deque, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from ..capabilities import (
+    CapabilityGovernor,
     CapabilityRegistry,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
 )
-from ..capabilities.contracts import validate_capability_name
+from ..capabilities.contracts import (
+    CapabilityContext,
+    CapabilityMediaPolicy,
+    CapabilityPermission,
+    validate_capability_name,
+)
 from ..core.addressee import AddresseeResolver
 from ..core.intent import (
     has_image_capability,
@@ -107,6 +113,7 @@ class CognitiveWorkflow:
         memory_writer: Optional[MemoryWriter] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
         capabilities: Optional[CapabilityRegistry] = None,
+        capability_governor: Optional[CapabilityGovernor] = None,
         composer: Optional[ResponseComposer] = None,
     ) -> None:
         self.generation_model = generation_model
@@ -143,6 +150,15 @@ class CognitiveWorkflow:
         self.direct_fallback = direct_fallback or DirectFallbackComposer()
         self.task_response_resolver = task_response_resolver
         self.capabilities = capabilities
+        self.capability_governor = (
+            capability_governor
+            if capability_governor is not None
+            else (
+                CapabilityGovernor(capabilities)
+                if capabilities is not None
+                else None
+            )
+        )
         self.composer = composer or ResponseComposer()
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
@@ -370,11 +386,12 @@ class CognitiveWorkflow:
         capability_name = self._capability_name(
             response_act, required_capabilities
         )
-        if capability_name and self.capabilities is not None:
+        if capability_name and self.capability_governor is not None:
             capability_result = await self._execute_capability(
                 decision_id,
                 topic,
                 capability_name,
+                participation.media_policy,
                 now,
             )
             if capability_result.status is CapabilityStatus.SUCCESS:
@@ -670,6 +687,7 @@ class CognitiveWorkflow:
         decision_id: str,
         topic: TopicSnapshot,
         capability_name: str,
+        media_policy,
         now: int,
     ) -> CapabilityResult:
         if capability_name == "vision" and not self.vision_enabled:
@@ -686,6 +704,13 @@ class CognitiveWorkflow:
                 user_text="Vision could not run within the current budget.",
                 error_code="cost_budget_exhausted",
             )
+        elif self.capability_governor is None:
+            result = CapabilityResult(
+                CapabilityStatus.UNSUPPORTED,
+                capability_name,
+                user_text="This capability is not available.",
+                error_code="capability_not_registered",
+            )
         else:
             latest = topic.latest
             request = CapabilityRequest(
@@ -696,8 +721,41 @@ class CognitiveWorkflow:
                 actor_id=latest.sender_id if latest is not None else "",
                 message_id=latest.message_id if latest is not None else "",
             )
+            context = CapabilityContext(
+                persona_id=self.persona_context.persona_id,
+                group_id=topic.group_id,
+                actor_id=latest.sender_id if latest is not None else "",
+                message_id=latest.message_id if latest is not None else "",
+                trace_id=decision_id,
+                deadline_at=now + 10,
+                allowed_permissions=(
+                    (CapabilityPermission.VISION_READ,)
+                    if capability_name == "vision"
+                    else ()
+                ),
+                media_policy=CapabilityMediaPolicy(
+                    capability_media_allowed=bool(
+                        getattr(
+                            media_policy,
+                            "capability_media_allowed",
+                            False,
+                        )
+                    ),
+                    allowed_media_kinds=("image",),
+                    allowed_safety_labels=(
+                        "catalog_approved",
+                        "provider_approved",
+                        "reviewed",
+                        "safe",
+                    ),
+                ),
+            )
             try:
-                result = await self.capabilities.execute(request)
+                result = await self.capability_governor.execute(
+                    request,
+                    context,
+                    now=now,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - capability boundary fails closed

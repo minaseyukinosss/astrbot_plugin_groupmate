@@ -76,6 +76,21 @@ def test_empty_vision_provider_reuses_resolved_text_provider(tmp_path):
     asyncio.run(bridge.close())
 
 
+def test_disabled_vision_is_registered_but_unavailable(tmp_path):
+    bridge = AstrBotBridge(
+        ProviderContext(),
+        settings(vision_enabled=False),
+        tmp_path,
+    )
+    workflow = bridge._workflow_for("g1", bridge.persona_context)
+
+    spec = workflow.capabilities.lookup("vision")
+    assert spec is not None
+    assert spec.available is False
+    assert workflow.capability_governor is not None
+    asyncio.run(bridge.close())
+
+
 def test_status_reports_health_without_removed_values(tmp_path):
     bridge = AstrBotBridge(ProviderContext(), settings(), tmp_path)
 

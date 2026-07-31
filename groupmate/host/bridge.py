@@ -6,7 +6,12 @@ import asyncio
 from pathlib import Path
 from typing import Any, Dict
 
-from ..capabilities import CapabilityRegistry, CapabilityRequest, vision_spec
+from ..capabilities import (
+    CapabilityGovernor,
+    CapabilityRegistry,
+    CapabilityRequest,
+    vision_spec,
+)
 from ..core.projections import StateProjector
 from ..core.response_act import TaskResolution, TaskResolutionStatus
 from ..engine.external_knowledge import needs_external_knowledge
@@ -351,6 +356,7 @@ class AstrBotBridge:
         capabilities.register(
             vision_spec(vision if self.settings.vision_enabled else None)
         )
+        governor = CapabilityGovernor(capabilities)
 
         def resolve_task(scene, message):
             del scene
@@ -388,6 +394,7 @@ class AstrBotBridge:
             character_name=CHARACTER_NAME,
             task_response_resolver=resolve_task,
             capabilities=capabilities,
+            capability_governor=governor,
         )
 
     def _group_enabled(self, group_id: str) -> bool:

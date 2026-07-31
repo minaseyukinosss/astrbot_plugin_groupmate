@@ -7,7 +7,7 @@
 ## 当前发布
 
 - 版本：`0.3.0`
-- V3 核心迁移已落地并有测试覆盖；能力契约、Registry、Composer 和富媒体投递已有基础，后续能力治理与宿主命令隔离按 2026-07-31 架构边界设计推进。
+- V3 核心迁移、宿主命令隔离和能力治理已落地并有测试覆盖；Provider SPI、Tool Gateway 和外部能力接入仍按 2026-07-31 架构边界设计后续推进。
 - 发布包只包含运行时、Pages、配置、README 和规格文档；不包含 `.git`、`.venv`、测试、离线评测语料或缓存。
 
 ## 目录结构
@@ -103,6 +103,8 @@ astrbot_plugin_groupmate/
 AstrBot 其他插件命令共存、Groupmate 内部 Capability Provider 扩展和未来外部能力
 接入边界见
 [`docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md`](docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md)。
+
+内部能力通过 `CapabilityManifest`、`CapabilityContext` 和 `CapabilityGovernor` 显式治理。Provider 只能返回结构化事实、媒体候选或 handoff 状态；最终表达和发送仍由人格、OutputFirewall、Composer 和 DeliveryService 统一处理。
 
 V3 目标架构与分阶段实施门槛见
 [`docs/superpowers/plans/2026-07-24-groupmate-humanlike-roadmap.md`](docs/superpowers/plans/2026-07-24-groupmate-humanlike-roadmap.md)。
