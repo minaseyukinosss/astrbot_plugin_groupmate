@@ -7,6 +7,8 @@ from .config import (
     ConfigurationError,
     DeploymentSettings,
 )
+from .event_gate import HostEventDisposition, HostEventGate
+from .ingress import AstrBotEventIngress
 from .llm import (
     AstrBotGenerationModel,
     AstrBotPlatformPort,
@@ -16,11 +18,14 @@ from .onebot import NapCatHistoryPort, OneBotTranslator
 
 __all__ = [
     "AstrBotBridge",
+    "AstrBotEventIngress",
     "TurnOwner",
     "AstrBotConfigParser",
     "ConfigDiagnostics",
     "ConfigurationError",
     "DeploymentSettings",
+    "HostEventDisposition",
+    "HostEventGate",
     "AstrBotGenerationModel",
     "AstrBotPlatformPort",
     "AstrBotVisionPort",

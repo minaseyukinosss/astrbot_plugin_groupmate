@@ -9,7 +9,11 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from .groupmate.host import AstrBotBridge, TurnOwner
+from .groupmate.host import (
+    AstrBotBridge,
+    AstrBotEventIngress,
+    HostEventGate,
+)
 from .groupmate.host.config import AstrBotConfigParser
 from .groupmate.host.web_api import GroupmateWebAPI
 
@@ -21,6 +25,11 @@ class GroupmatePlugin(Star):
         self.config = AstrBotConfigParser().parse(config)
         data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
         self.bridge = AstrBotBridge(context, self.config, data_dir)
+        self.event_gate = HostEventGate(
+            config_resolver=getattr(context, "get_config", None),
+            enabled_groups=self.config.enabled_groups,
+        )
+        self.ingress = AstrBotEventIngress(self.event_gate, self.bridge)
         self.web_api = GroupmateWebAPI(self.bridge)
         self.web_api.register(context)
         logger.info("Groupmate initialized")
@@ -29,19 +38,14 @@ class GroupmatePlugin(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def observe_group_message(self, event: AstrMessageEvent):
         """旁路观察 QQ 群消息，不抢占已有指令。"""
-        owner = self.bridge.apply_owner_to_event(event)
-        if owner is TurnOwner.ASTRBOT_AGENT:
-            # 只观察并让 AstrBot Agent 保持唯一的最终回复权。
-            await self.bridge.observe_only(event)
-            return
-        await self.bridge.handle_event(event)
+        await self.ingress.handle_group_message(event)
 
     @filter.on_llm_request()
     async def enrich_native_request(self, event: AstrMessageEvent, req):
         """为 AstrBot 原生唤醒请求补充有限群聊上下文。"""
         if event.is_private_chat():
             return
-        await self.bridge.enrich_request(event, req)
+        await self.ingress.enrich_request(event, req)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("groupmate_status")

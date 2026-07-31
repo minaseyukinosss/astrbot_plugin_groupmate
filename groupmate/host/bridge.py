@@ -91,7 +91,7 @@ class AstrBotBridge:
         ):
             return
         group_id = str(event.get_group_id())
-        if self.paused or not group_id or self._is_command_event(event):
+        if self.paused or not group_id:
             return
         actor = await self.runtime.actor_for(group_id, self.persona_context)
         topic = actor.window.snapshot()
@@ -261,7 +261,6 @@ class AstrBotBridge:
         return OneBotTranslator.from_event(
             event,
             bot_id=str(event.get_self_id()),
-            is_command=self._is_command_event(event),
         )
 
     async def close(self) -> None:
@@ -394,15 +393,6 @@ class AstrBotBridge:
     def _group_enabled(self, group_id: str) -> bool:
         groups = self.settings.enabled_groups
         return not groups or group_id in {str(item) for item in groups}
-
-    @staticmethod
-    def _is_command_event(event: Any) -> bool:
-        for handler in event.get_extra("activated_handlers", []) or []:
-            for event_filter in getattr(handler, "event_filters", []):
-                if "command" in type(event_filter).__name__.lower():
-                    return True
-        return False
-
 
 class _SystemClock:
     def now(self) -> int:

@@ -107,7 +107,34 @@ plugins.__package__ = "data.plugins"
 sys.modules["data"] = data
 sys.modules["data.plugins"] = plugins
 
-importlib.import_module("data.plugins.astrbot_plugin_groupmate.main")
+module = importlib.import_module("data.plugins.astrbot_plugin_groupmate.main")
+
+
+class FakeIngress:
+    def __init__(self):
+        self.calls = []
+
+    async def handle_group_message(self, event):
+        self.calls.append(("handle", event))
+
+    async def enrich_request(self, event, request):
+        self.calls.append(("enrich", event, request))
+
+
+class FakeEvent:
+    @staticmethod
+    def is_private_chat():
+        return False
+
+
+plugin = object.__new__(module.GroupmatePlugin)
+plugin.ingress = FakeIngress()
+event = FakeEvent()
+request = object()
+import asyncio
+asyncio.run(plugin.observe_group_message(event))
+asyncio.run(plugin.enrich_native_request(event, request))
+assert plugin.ingress.calls == [("handle", event), ("enrich", event, request)]
 '''
     result = subprocess.run(
         [sys.executable, "-c", script, str(plugins_dir)],
