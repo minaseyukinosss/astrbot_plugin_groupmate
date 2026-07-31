@@ -11,6 +11,7 @@ from .contracts import (
     CapabilityRequest,
     CapabilityResult,
 )
+from .registry import CapabilitySpec
 
 
 @dataclass(frozen=True)
@@ -58,3 +59,18 @@ class CapabilityProvider(ABC):
 
     def close(self) -> None:
         return None
+
+
+def provider_spec(provider: CapabilityProvider) -> CapabilitySpec:
+    """Build a compatibility spec without taking ownership of lifecycle."""
+    if not isinstance(provider, CapabilityProvider):
+        raise TypeError("provider must be a CapabilityProvider")
+    health = provider.health()
+    if not isinstance(health, CapabilityHealth):
+        raise TypeError("provider health must be a CapabilityHealth")
+    return CapabilitySpec(
+        provider.manifest,
+        provider.execute,
+        required_information=provider.required_information,
+        available=health.available,
+    )

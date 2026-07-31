@@ -24,6 +24,10 @@ from .contracts import (
 from .governor import CapabilityGovernor
 from .provider import CapabilityHealth, CapabilityProvider
 from .provider_runtime import CapabilityProviderRuntime
+from .providers import (
+    ExternalHandoffProvider,
+    VisionProvider,
+)
 from .registry import CapabilityRegistry, CapabilitySpec
 
 __all__ = [
@@ -46,8 +50,10 @@ __all__ = [
     "ExternalHandoffCapability",
     "ExternalHandoffReason",
     "ExternalHandoffTarget",
+    "ExternalHandoffProvider",
     "MediaCandidate",
     "VisionCapability",
+    "VisionProvider",
     "external_handoff_spec",
     "vision_spec",
 ]
