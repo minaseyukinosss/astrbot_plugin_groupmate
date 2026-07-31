@@ -1,12 +1,18 @@
 # Unified Participation Engine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Replace the old score-based participation path with a deterministic `ParticipationDecisionEngine`（统一参与决策引擎） while preserving copied-text @ as an Aemeath-styled bypass.
 
 **Architecture:** `COPIED_AT`（复制文本 @） exits before participation decisions through `CopiedAtGuard`（复制文本 @ 旁路）. Real direct calls flow through `DirectAddressPressureTracker`（直接呼叫压力跟踪器） and `ParticipationDecisionEngine`（统一参与决策引擎）, which outputs action, act, posture, quote policy, media policy, and reason codes. Old `OpportunityArbiter`（机会仲裁器） and `ReplyIntentPlanner`（回复意图规划器） are removed from the online workflow.
 
 **Tech Stack:** Python 3.7-compatible dataclasses/enums, pytest, existing Groupmate domain models, existing fake ports in `tests/fakes.py`.
+
+**Execution Status:** Completed on 2026-07-31.
+
+**Delivered By:** `47389eb`（复制文本 @ 旁路）, `c6a5b5b`（直接呼叫压力）, `81b4625` / `063034d`（参与决策契约与开放参与门）, `2536b3a`（工作流接入）, `03425b8`（旧参与机制移除）, and `181bf14` / `fdb8746`（persona-scoped runtime integration and final legacy runtime cleanup）.
+
+**Completion Evidence:** `pytest` 602 passed; focused copied @ / direct pressure / participation / shadow projector tests 37 passed; `git diff --check` passed; old online participation residual scan found only regression assertions and new `groupmate.host.config` imports. Local Phase 3 shadow export was not regenerated because `SHADOW_EXPORT_DIR` and `SHADOW_TARGET_UIN` are not set in this session.
 
 ---
 
@@ -32,7 +38,7 @@
 - Modify: `groupmate/engine/workflow.py`
 - Modify: `tests/test_workflow.py`
 
-- [ ] **Step 1: Write failing tests for Aemeath-styled copied @ tip**
+- [x] **Step 1: Write failing tests for Aemeath-styled copied @ tip**
 
 ```python
 # tests/test_copied_at_guard.py
@@ -84,13 +90,13 @@ def test_copied_at_sends_tip_without_llm(topic_snapshot, balanced_policy):
     assert memory.messages[0].metadata["origin"] == "bot_delivery"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_copied_at_guard.py tests/test_workflow.py::test_copied_at_sends_tip_without_llm -q`
 
 Expected: FAIL because `groupmate.engine.copied_at` does not exist and workflow still sends the old generic string.
 
-- [ ] **Step 3: Implement copied @ helper**
+- [x] **Step 3: Implement copied @ helper**
 
 ```python
 # groupmate/engine/copied_at.py
@@ -117,7 +123,7 @@ def copied_at_tip(alias: str) -> str:
     return _TIP_TEMPLATE.format(name=name)
 ```
 
-- [ ] **Step 4: Update workflow copied @ tip**
+- [x] **Step 4: Update workflow copied @ tip**
 
 ```python
 # groupmate/engine/workflow.py imports
@@ -133,13 +139,13 @@ if is_copied_at(trigger):
 text = copied_at_tip(trigger_alias)
 ```
 
-- [ ] **Step 5: Run tests to verify pass**
+- [x] **Step 5: Run tests to verify pass**
 
 Run: `pytest tests/test_copied_at_guard.py tests/test_workflow.py::test_copied_at_sends_tip_without_llm -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/engine/copied_at.py tests/test_copied_at_guard.py groupmate/engine/workflow.py tests/test_workflow.py
@@ -158,7 +164,7 @@ git commit -m "feat: style copied at bypass"
 - Modify: `groupmate/host/bridge.py`
 - Modify: `tests/test_config.py`
 
-- [ ] **Step 1: Write failing direct-pressure tests**
+- [x] **Step 1: Write failing direct-pressure tests**
 
 ```python
 # tests/test_direct_pressure.py
@@ -212,13 +218,13 @@ def test_copied_at_is_excluded_from_pressure():
     assert state.count == 0
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_direct_pressure.py -q`
 
 Expected: FAIL because `direct_pressure.py` does not exist.
 
-- [ ] **Step 3: Add policy config fields**
+- [x] **Step 3: Add policy config fields**
 
 ```python
 # groupmate/models.py GroupPolicy
@@ -252,7 +258,7 @@ direct_pressure_nudge_count=int(self._setting("direct_pressure_nudge_count", 2))
 direct_pressure_pester_count=int(self._setting("direct_pressure_pester_count", 3)),
 ```
 
-- [ ] **Step 4: Implement pressure tracker**
+- [x] **Step 4: Implement pressure tracker**
 
 ```python
 # groupmate/engine/direct_pressure.py
@@ -331,13 +337,13 @@ class DirectAddressPressureTracker:
         return bool(_CONTENTFUL.search(cleaned) or len(compact) > 8)
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `pytest tests/test_direct_pressure.py tests/test_config.py -q`
 
 Expected: PASS after config tests are updated for the new fields.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/engine/direct_pressure.py tests/test_direct_pressure.py groupmate/models.py groupmate/config.py groupmate/host/bridge.py tests/test_config.py
@@ -352,7 +358,7 @@ git commit -m "feat: track direct address pressure"
 - Create: `groupmate/engine/participation_types.py`
 - Create: `tests/test_participation_decision.py`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 ```python
 # tests/test_participation_decision.py
@@ -396,13 +402,13 @@ def test_pressure_state_can_be_stored_on_decision():
     assert decision.pressure.level is DirectAddressPressureLevel.NUDGE
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [x] **Step 2: Run tests to verify fail**
 
 Run: `pytest tests/test_participation_decision.py::test_participation_decision_normalizes_reason_codes -q`
 
 Expected: FAIL because `participation_types.py` does not exist.
 
-- [ ] **Step 3: Implement participation types**
+- [x] **Step 3: Implement participation types**
 
 ```python
 # groupmate/engine/participation_types.py
@@ -489,13 +495,13 @@ class ParticipationDecision:
         )
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pytest tests/test_participation_decision.py -q`
 
 Expected: PASS for contract tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/engine/participation_types.py tests/test_participation_decision.py
@@ -510,7 +516,7 @@ git commit -m "feat: add participation decision contracts"
 - Create: `groupmate/engine/participation.py`
 - Modify: `tests/test_participation_decision.py`
 
-- [ ] **Step 1: Add failing direct decision tests**
+- [x] **Step 1: Add failing direct decision tests**
 
 ```python
 # append to tests/test_participation_decision.py
@@ -568,13 +574,13 @@ def test_copied_at_never_reaches_participation_engine():
     assert "copied_at_bypassed" in decision.reason_codes
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [x] **Step 2: Run tests to verify fail**
 
 Run: `pytest tests/test_participation_decision.py -q`
 
 Expected: FAIL because `participation.py` does not exist.
 
-- [ ] **Step 3: Implement minimal direct engine**
+- [x] **Step 3: Implement minimal direct engine**
 
 ```python
 # groupmate/engine/participation.py
@@ -653,13 +659,13 @@ class ParticipationDecisionEngine:
         return "短应声，不主动扩展话题"
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pytest tests/test_participation_decision.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/engine/participation.py tests/test_participation_decision.py
@@ -674,7 +680,7 @@ git commit -m "feat: add direct participation engine"
 - Modify: `groupmate/engine/participation.py`
 - Modify: `tests/test_participation_decision.py`
 
-- [ ] **Step 1: Add failing open-participation tests**
+- [x] **Step 1: Add failing open-participation tests**
 
 ```python
 # append to tests/test_participation_decision.py
@@ -694,13 +700,13 @@ def test_empty_echo_candidate_silences():
     assert "inhibit:empty_echo" in decision.reason_codes
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [x] **Step 2: Run tests to verify fail**
 
 Run: `pytest tests/test_participation_decision.py::test_open_group_question_with_concrete_help_speaks tests/test_participation_decision.py::test_empty_echo_candidate_silences -q`
 
 Expected: FAIL because open participation still returns `open_participation_not_implemented`.
 
-- [ ] **Step 3: Implement minimal open gate**
+- [x] **Step 3: Implement minimal open gate**
 
 ```python
 # groupmate/engine/participation.py additions
@@ -726,13 +732,13 @@ if trigger is TriggerKind.CANDIDATE and _QUESTION.search(latest.text or ""):
 return ParticipationDecision.silence(scene=scene, reason_codes=("no_open_motive",))
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pytest tests/test_participation_decision.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/engine/participation.py tests/test_participation_decision.py
@@ -748,7 +754,7 @@ git commit -m "feat: add open participation gate"
 - Create: `tests/test_workflow_participation.py`
 - Modify: `tests/test_opportunity.py` or delete tests that assert old online behavior
 
-- [ ] **Step 1: Write failing workflow tests**
+- [x] **Step 1: Write failing workflow tests**
 
 ```python
 # tests/test_workflow_participation.py
@@ -804,13 +810,13 @@ def test_workflow_copied_at_does_not_call_model_or_open_continuation():
     assert model.calls == 0
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [x] **Step 2: Run tests to verify fail**
 
 Run: `pytest tests/test_workflow_participation.py -q`
 
 Expected: FAIL until workflow constructs and uses the new engine.
 
-- [ ] **Step 3: Inject participation engine into workflow**
+- [x] **Step 3: Inject participation engine into workflow**
 
 ```python
 # groupmate/engine/workflow.py imports
@@ -830,7 +836,7 @@ self.participation_engine = participation_engine or ParticipationDecisionEngine(
 )
 ```
 
-- [ ] **Step 4: Replace online OpportunityArbiter path**
+- [x] **Step 4: Replace online OpportunityArbiter path**
 
 Implementation outline in `CognitiveWorkflow.evaluate` after targeting resolution:
 
@@ -863,13 +869,13 @@ contribution = participation.contribution
 
 Remove online calls to `self.opportunity_arbiter.evaluate(...)` and `self.intent_planner.plan(...)` from the main path. Leave helper attributes only if tests still need them, then delete after tests are migrated.
 
-- [ ] **Step 5: Run focused workflow tests**
+- [x] **Step 5: Run focused workflow tests**
 
 Run: `pytest tests/test_workflow_participation.py tests/test_workflow.py::test_copied_at_sends_tip_without_llm -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/engine/workflow.py tests/test_workflow_participation.py tests/test_workflow.py
@@ -887,7 +893,7 @@ git commit -m "feat: route workflow through participation engine"
 - Modify: `tests/test_config.py`
 - Modify: `tests/test_opportunity.py`
 
-- [ ] **Step 1: Write failing config assertions**
+- [x] **Step 1: Write failing config assertions**
 
 ```python
 # tests/test_config.py
@@ -905,13 +911,13 @@ def test_group_policy_has_direct_pressure_defaults():
     assert policy.direct_pressure_pester_count == 3
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [x] **Step 2: Run tests to verify fail**
 
 Run: `pytest tests/test_config.py -q`
 
 Expected: FAIL while old setting remains.
 
-- [ ] **Step 3: Remove old setting and migrate tests**
+- [x] **Step 3: Remove old setting and migrate tests**
 
 Remove these fields and parser branches:
 
@@ -933,13 +939,13 @@ v3_opportunity_enabled=bool(self._setting("v3_opportunity_enabled", True)),
 
 Move remaining `tests/test_opportunity.py` cases that still validate useful low-level old behavior into either deleted tests or `tests/test_participation_decision.py`. Do not keep tests that require `OpportunityArbiter` as an online workflow dependency.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `pytest tests/test_config.py tests/test_participation_decision.py tests/test_workflow_participation.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/models.py groupmate/config.py groupmate/host/bridge.py tests/test_config.py tests/test_opportunity.py tests/test_participation_decision.py
@@ -955,7 +961,7 @@ git commit -m "refactor: remove legacy opportunity switch"
 - Modify: `tests/test_phase2_projections.py` or add focused shadow tests if present
 - Regenerate local ignored reports under `eval/results/` if export variables are available
 
-- [ ] **Step 1: Add failing projector test for copied @ bypass**
+- [x] **Step 1: Add failing projector test for copied @ bypass**
 
 ```python
 # tests/test_shadow_projector.py if not present, otherwise append to existing shadow tests
@@ -967,13 +973,13 @@ def test_shadow_projector_treats_copied_at_as_bypass():
     assert "copied_at_bypassed" in projection.reason_codes
 ```
 
-- [ ] **Step 2: Run projector test to verify fail**
+- [x] **Step 2: Run projector test to verify fail**
 
 Run: `pytest tests/test_shadow_projector.py -q`
 
 Expected: FAIL until projector uses copied @ bypass.
 
-- [ ] **Step 3: Update projector**
+- [x] **Step 3: Update projector**
 
 ```python
 # eval/shadow_projector.py imports
@@ -1008,19 +1014,19 @@ if is_copied_at(trigger.kind):
     )
 ```
 
-- [ ] **Step 4: Run full focused suite**
+- [x] **Step 4: Run full focused suite**
 
 Run: `pytest tests/test_copied_at_guard.py tests/test_direct_pressure.py tests/test_participation_decision.py tests/test_workflow_participation.py tests/test_config.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `pytest -q`
 
 Expected: PASS. If failures mention removed old opportunity behavior, update tests to assert the new participation engine contract instead of the old utility score.
 
-- [ ] **Step 6: Regenerate shadow report when local export env is available**
+- [x] **Step 6: Regenerate shadow report when local export env is available**
 
 Run:
 
@@ -1037,7 +1043,7 @@ python3.7 -m eval.shadow_export \
 
 Expected: `target_silence_projected_reply` decreases materially, copied-text @ does not appear as direct participation, and violation counts for boundary media and false completion stay 0.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add eval/shadow_projector.py tests/test_shadow_projector.py
