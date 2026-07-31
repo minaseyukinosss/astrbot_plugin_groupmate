@@ -4,6 +4,8 @@
 
 **Goal:** Add a governed capability execution layer so every Groupmate internal ability has an explicit manifest, a safe execution context, media policy enforcement, deadlines, size checks, and a single invocation path before results reach persona/composer/delivery.
 
+**Status:** Complete; verified by focused capability tests, the full pytest suite, and `git diff --check`.
+
 **Architecture:** Evolve the existing `CapabilityRequest`, `CapabilityResult`, `CapabilitySpec`, and `CapabilityRegistry` instead of creating a second plugin system. `CapabilityGovernor` becomes the only runtime execution entry point; `CapabilityRegistry` remains a static registry of explicitly declared specs. `CognitiveWorkflow` builds a `CapabilityContext` from persona/group/message/participation facts and passes capability results back through the existing PersonaAssembler, OutputFirewall, ResponseComposer, and DeliveryService chain.
 
 **Tech Stack:** Python 3.7-compatible dataclasses, asyncio, pytest, existing Groupmate capability contracts, existing `BehaviorPolicy` / `MediaPolicy` / `BudgetTracker`.
@@ -61,7 +63,7 @@ Out of scope:
 
 ## Execution Preflight
 
-- [ ] **Step 1: Create or enter an isolated worktree**
+- [x] **Step 1: Create or enter an isolated worktree**
 
 Use `superpowers:using-git-worktrees` before executing this plan. Suggested branch:
 
@@ -71,7 +73,7 @@ git worktree add .worktrees/capability-governance -b feat/capability-governance
 
 Expected: isolated worktree exists at `.worktrees/capability-governance`.
 
-- [ ] **Step 2: Verify clean baseline**
+- [x] **Step 2: Verify clean baseline**
 
 Run:
 
@@ -91,7 +93,7 @@ Stop if baseline fails. Do not mix baseline repair with this plan unless the fai
 - Modify: `groupmate/capabilities/contracts.py`
 - Modify: `tests/test_capability_contracts.py`
 
-- [ ] **Step 1: Write manifest and context tests**
+- [x] **Step 1: Write manifest and context tests**
 
 Append these tests to `tests/test_capability_contracts.py`:
 
@@ -211,7 +213,7 @@ def test_capability_media_policy_defaults_to_no_media():
     assert policy.allowed_safety_labels == ()
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -221,7 +223,7 @@ python3 -m pytest tests/test_capability_contracts.py -q
 
 Expected: FAIL because `CapabilityManifest`, `CapabilityContext`, and related enums do not exist.
 
-- [ ] **Step 3: Implement contract values**
+- [x] **Step 3: Implement contract values**
 
 In `groupmate/capabilities/contracts.py`, add these definitions after `CapabilityStatus`:
 
@@ -324,7 +326,7 @@ class CapabilityContext:
         object.__setattr__(self, "allowed_permissions", permissions)
 ```
 
-- [ ] **Step 4: Run contract tests and verify GREEN**
+- [x] **Step 4: Run contract tests and verify GREEN**
 
 Run:
 
@@ -334,7 +336,7 @@ python3 -m pytest tests/test_capability_contracts.py -q
 
 Expected: all capability contract tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/capabilities/contracts.py tests/test_capability_contracts.py
@@ -352,7 +354,7 @@ git commit -m "feat: add capability governance contracts"
 - Modify: `tests/test_capability_registry.py`
 - Modify: `tests/test_builtin_capabilities.py`
 
-- [ ] **Step 1: Write registry tests for manifest ownership**
+- [x] **Step 1: Write registry tests for manifest ownership**
 
 Add these tests to `tests/test_capability_registry.py`:
 
@@ -429,7 +431,7 @@ def test_vision_spec_declares_manifest_for_governor():
     assert spec.manifest.max_result_size > 0
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -439,7 +441,7 @@ python3 -m pytest tests/test_capability_registry.py tests/test_builtin_capabilit
 
 Expected: FAIL because `CapabilitySpec` still accepts a string name and has no `manifest` property.
 
-- [ ] **Step 3: Change `CapabilitySpec` to store `CapabilityManifest`**
+- [x] **Step 3: Change `CapabilitySpec` to store `CapabilityManifest`**
 
 In `groupmate/capabilities/registry.py`, update imports:
 
@@ -489,7 +491,7 @@ Add to `CapabilityRegistry`:
 
 Update typing import to include `Tuple`.
 
-- [ ] **Step 4: Update built-in specs**
+- [x] **Step 4: Update built-in specs**
 
 In `groupmate/capabilities/builtin.py`, import:
 
@@ -556,7 +558,7 @@ def external_handoff_spec(
     return CapabilitySpec(manifest, capability)
 ```
 
-- [ ] **Step 5: Export new contracts**
+- [x] **Step 5: Export new contracts**
 
 In `groupmate/capabilities/__init__.py`, export:
 
@@ -570,7 +572,7 @@ CapabilityMediaPolicy,
 CapabilityPermission,
 ```
 
-- [ ] **Step 6: Run registry and built-in tests**
+- [x] **Step 6: Run registry and built-in tests**
 
 Run:
 
@@ -580,7 +582,7 @@ python3 -m pytest tests/test_capability_registry.py tests/test_builtin_capabilit
 
 Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add groupmate/capabilities/registry.py groupmate/capabilities/builtin.py groupmate/capabilities/__init__.py tests/test_capability_registry.py tests/test_builtin_capabilities.py
@@ -596,7 +598,7 @@ git commit -m "refactor: require manifests for registered capabilities"
 - Modify: `groupmate/capabilities/__init__.py`
 - Create: `tests/test_capability_governor.py`
 
-- [ ] **Step 1: Write governor tests**
+- [x] **Step 1: Write governor tests**
 
 Create `tests/test_capability_governor.py`:
 
@@ -813,7 +815,7 @@ def test_external_cancellation_is_not_swallowed():
         asyncio.run(governor.execute(_request("cancelled"), _context(), now=100))
 ```
 
-- [ ] **Step 2: Run governor tests and verify RED**
+- [x] **Step 2: Run governor tests and verify RED**
 
 Run:
 
@@ -823,7 +825,7 @@ python3 -m pytest tests/test_capability_governor.py -q
 
 Expected: collection FAIL because `CapabilityGovernor` does not exist.
 
-- [ ] **Step 3: Implement governor**
+- [x] **Step 3: Implement governor**
 
 Create `groupmate/capabilities/governor.py`:
 
@@ -966,11 +968,11 @@ class CapabilityGovernor:
         return text_size + media_size
 ```
 
-- [ ] **Step 4: Export governor**
+- [x] **Step 4: Export governor**
 
 In `groupmate/capabilities/__init__.py`, import and export `CapabilityGovernor`.
 
-- [ ] **Step 5: Run governor tests and verify GREEN**
+- [x] **Step 5: Run governor tests and verify GREEN**
 
 Run:
 
@@ -980,7 +982,7 @@ python3 -m pytest tests/test_capability_governor.py tests/test_capability_regist
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/capabilities/governor.py groupmate/capabilities/__init__.py tests/test_capability_governor.py
@@ -996,7 +998,7 @@ git commit -m "feat: add capability governor"
 - Modify: `tests/test_workflow.py`
 - Modify: `tests/test_capability_governor.py`
 
-- [ ] **Step 1: Write workflow tests for governed context**
+- [x] **Step 1: Write workflow tests for governed context**
 
 Add this helper and tests near existing capability workflow tests in `tests/test_workflow.py`:
 
@@ -1098,7 +1100,7 @@ def test_workflow_denies_vision_permission_when_vision_disabled(
 
 If `build_workflow()` does not accept `capability_governor`, update the helper in `tests/test_workflow.py` to pass it through to `CognitiveWorkflow`.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -1108,7 +1110,7 @@ python3 -m pytest tests/test_workflow.py::test_workflow_builds_safe_capability_c
 
 Expected: FAIL because `CognitiveWorkflow` does not accept or use `capability_governor`.
 
-- [ ] **Step 3: Update workflow constructor**
+- [x] **Step 3: Update workflow constructor**
 
 In `groupmate/engine/workflow.py`, import:
 
@@ -1144,7 +1146,7 @@ Set fields:
         )
 ```
 
-- [ ] **Step 4: Route execution through governor**
+- [x] **Step 4: Route execution through governor**
 
 Change the capability call site around current line 373:
 
@@ -1231,7 +1233,7 @@ Replace the direct `self.capabilities.execute(request)` branch with:
 
 Keep the existing early `vision_disabled` and `cost_budget_exhausted` branches for this task so behavior stays stable. Governor will own all provider execution after those host-level availability checks.
 
-- [ ] **Step 5: Run workflow capability tests**
+- [x] **Step 5: Run workflow capability tests**
 
 Run:
 
@@ -1241,7 +1243,7 @@ python3 -m pytest tests/test_workflow.py tests/test_capability_governor.py -q
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/engine/workflow.py tests/test_workflow.py
@@ -1258,7 +1260,7 @@ git commit -m "refactor: execute capabilities through governor context"
 - Modify: `tests/test_provider_resolution.py`
 - Modify: `tests/test_builtin_capabilities.py`
 
-- [ ] **Step 1: Add bridge wiring assertions**
+- [x] **Step 1: Add bridge wiring assertions**
 
 Add to `tests/test_native_wake_suppress.py` near `test_bridge_registers_policy_scoped_vision_capability`:
 
@@ -1286,7 +1288,7 @@ def test_disabled_vision_is_registered_but_unavailable(tmp_path):
     assert workflow.capability_governor is not None
 ```
 
-- [ ] **Step 2: Run tests and verify RED or confirm current compatibility**
+- [x] **Step 2: Run tests and verify RED or confirm current compatibility**
 
 Run:
 
@@ -1296,7 +1298,7 @@ python3 -m pytest tests/test_native_wake_suppress.py::test_bridge_injects_govern
 
 Expected before bridge update: FAIL if `workflow.capability_governor` is missing.
 
-- [ ] **Step 3: Wire governor in bridge**
+- [x] **Step 3: Wire governor in bridge**
 
 In `groupmate/host/bridge.py`, import `CapabilityGovernor`:
 
@@ -1317,7 +1319,7 @@ Pass it to `CognitiveWorkflow`:
             capability_governor=governor,
 ```
 
-- [ ] **Step 4: Run bridge and provider tests**
+- [x] **Step 4: Run bridge and provider tests**
 
 Run:
 
@@ -1327,7 +1329,7 @@ python3 -m pytest tests/test_native_wake_suppress.py tests/test_provider_resolut
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/bridge.py tests/test_native_wake_suppress.py tests/test_provider_resolution.py tests/test_builtin_capabilities.py
@@ -1342,7 +1344,7 @@ git commit -m "refactor: inject governed capability runtime"
 - Modify: `tests/test_composer.py`
 - Modify: `groupmate/engine/composer.py` only if tests reveal a gap
 
-- [ ] **Step 1: Add regression that governor-filtered media is still guarded**
+- [x] **Step 1: Add regression that governor-filtered media is still guarded**
 
 Add to `tests/test_composer.py`:
 
@@ -1387,7 +1389,7 @@ def test_composer_keeps_final_guard_after_governor_media_filter():
     ]
 ```
 
-- [ ] **Step 2: Run composer tests**
+- [x] **Step 2: Run composer tests**
 
 Run:
 
@@ -1397,7 +1399,7 @@ python3 -m pytest tests/test_composer.py -q
 
 Expected: pass with existing final filter. If it fails, keep `ResponseComposer._safe_capability_media()` as the last safety filter and adjust only the smallest condition needed.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 If only tests changed:
 
@@ -1422,7 +1424,7 @@ git commit -m "fix: keep composer media guard after governance"
 - Modify: `docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md`
 - Modify: `docs/superpowers/plans/2026-07-31-capability-governance.md`
 
-- [ ] **Step 1: Update README architecture note**
+- [x] **Step 1: Update README architecture note**
 
 In `README.md`, under the “规格” or capability paragraph, add:
 
@@ -1430,7 +1432,7 @@ In `README.md`, under the “规格” or capability paragraph, add:
 内部能力通过 `CapabilityManifest`、`CapabilityContext` 和 `CapabilityGovernor` 显式治理。Provider 只能返回结构化事实、媒体候选或 handoff 状态；最终表达和发送仍由人格、OutputFirewall、Composer 和 DeliveryService 统一处理。
 ```
 
-- [ ] **Step 2: Update design status**
+- [x] **Step 2: Update design status**
 
 In `docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md`, change the status line to:
 
@@ -1440,7 +1442,7 @@ In `docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md
 
 Do not mark Provider SPI, Tool Gateway, MCP, or dynamic provider discovery complete.
 
-- [ ] **Step 3: Mark this plan complete after verification**
+- [x] **Step 3: Mark this plan complete after verification**
 
 Only after all commands in Step 4 and Step 5 pass, add below the Goal line:
 
@@ -1448,7 +1450,7 @@ Only after all commands in Step 4 and Step 5 pass, add below the Goal line:
 **Status:** Complete; verified by focused capability tests, the full pytest suite, and `git diff --check`.
 ```
 
-- [ ] **Step 4: Run focused capability tests**
+- [x] **Step 4: Run focused capability tests**
 
 Run:
 
@@ -1467,7 +1469,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Run full verification and residual scan**
+- [x] **Step 5: Run full verification and residual scan**
 
 Run:
 
@@ -1483,7 +1485,7 @@ Expected:
 - `git diff --check`: no output, exit 0.
 - residual scan: no direct runtime execution bypassing `CapabilityGovernor`. Registry unit tests may still call `registry.execute()` to verify the primitive; production workflow must not.
 
-- [ ] **Step 6: Commit docs**
+- [x] **Step 6: Commit docs**
 
 ```bash
 git add README.md docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md docs/superpowers/plans/2026-07-31-capability-governance.md

@@ -2,7 +2,7 @@
 
 日期：2026-07-31
 
-状态：Host Command Isolation 已实施；Capability Governance 与 Provider SPI 待实施
+状态：Host Command Isolation 与 Capability Governance 已实施；Provider SPI 待实施
 
 适用范围：AstrBot 宿主共存、Groupmate 内部能力扩展、Phase 6 后续架构
 
@@ -246,9 +246,10 @@ CapabilityResult
   diagnostic
 ```
 
-现有 `CapabilityRequest`、`CapabilityResult`、`MediaCandidate`、`CapabilitySpec` 和
-`CapabilityRegistry` 是这一 SPI 的种子，但还缺 Manifest、Context、生命周期和统一
-治理器。后续实施应演进现有契约，而不是建立第二套并行能力系统。
+现有 `CapabilityRequest`、`CapabilityResult`、`MediaCandidate`、`CapabilitySpec`、
+`CapabilityManifest`、`CapabilityContext`、`CapabilityRegistry` 和 `CapabilityGovernor`
+已经形成静态能力治理基础。Provider SPI 后续仍需补齐生命周期、发现、健康检查和
+统一装配规范；实施时应继续演进现有契约，而不是建立第二套并行能力系统。
 
 ### 6.2 Provider 权限限制
 
@@ -477,13 +478,14 @@ memory       -X-> AstrBot
 ## 15. 当前架构评价
 
 当前 Groupmate 的核心分层总体合理：宿主适配、每群 Actor、参与决策、人格、记忆和
-Delivery 已经有明确边界；现有 Capability contracts/registry 也提供了良好起点。
+Delivery 已经有明确边界；现有 Capability contracts/registry/governor 也提供了
+静态治理基础。
 
-当前不足主要集中在两个接口：命令识别仍位于 Bridge 内，没有在消息进入 actor 前
-形成强闸门；能力注册仍是 Bridge 中的静态装配，并缺少 Manifest、Context 和统一
-Governor。因此当前系统适合继续演进，但还不能称为稳定的内部插件平台。
+当前不足主要集中在 Provider SPI：能力注册仍是 Bridge 中的静态装配，尚未提供动态
+发现、生命周期、健康检查或统一外部服务适配。因此当前系统适合继续演进，但还不能
+称为完整的内部插件平台。
 
-按本文分三阶段演进后，外部能力扩展不需要改写人格、参与决策或发送链路，AstrBot
+Host Command Isolation 与 Capability Governance 落地后，外部能力扩展不需要改写人格、参与决策或发送链路，AstrBot
 其他插件也能保持独立。这比引入动态扫描或通用插件框架更符合当前规模，并为后续
 AstrBot Tool、MCP 或外部服务适配保留了清晰接口。
 
