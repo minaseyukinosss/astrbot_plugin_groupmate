@@ -6,7 +6,16 @@ import asyncio
 from typing import TYPE_CHECKING, Optional
 
 from ..models import StringEnum
-from .contracts import CapabilityRequest, CapabilityResult, CapabilityStatus
+from .contracts import (
+    CapabilityCostClass,
+    CapabilityFailurePolicy,
+    CapabilityLatencyClass,
+    CapabilityManifest,
+    CapabilityPermission,
+    CapabilityRequest,
+    CapabilityResult,
+    CapabilityStatus,
+)
 from .registry import CapabilitySpec
 
 if TYPE_CHECKING:
@@ -106,8 +115,20 @@ class ExternalHandoffCapability:
 
 def vision_spec(vision: Optional["VisionPort"]) -> CapabilitySpec:
     capability = VisionCapability(vision)
+    manifest = CapabilityManifest(
+        name=capability.name,
+        version="1.0.0",
+        supported_intents=("image_understanding",),
+        permission_profile=(CapabilityPermission.VISION_READ,),
+        latency_class=CapabilityLatencyClass.INTERACTIVE,
+        cost_class=CapabilityCostClass.METERED,
+        failure_policy=CapabilityFailurePolicy.FAIL_CLOSED,
+        max_result_size=2048,
+        default_timeout_seconds=10.0,
+        max_concurrency=1,
+    )
     return CapabilitySpec(
-        capability.name,
+        manifest,
         capability,
         required_information=lambda request: (
             () if request.media_locators else ("media_locator",)
@@ -121,4 +142,16 @@ def external_handoff_spec(
     target: ExternalHandoffTarget,
 ) -> CapabilitySpec:
     capability = ExternalHandoffCapability(reason, target)
-    return CapabilitySpec(capability.name, capability)
+    manifest = CapabilityManifest(
+        name=capability.name,
+        version="1.0.0",
+        supported_intents=("external_handoff",),
+        permission_profile=(CapabilityPermission.EXTERNAL_HANDOFF,),
+        latency_class=CapabilityLatencyClass.INLINE,
+        cost_class=CapabilityCostClass.FREE,
+        failure_policy=CapabilityFailurePolicy.HANDOFF,
+        max_result_size=512,
+        default_timeout_seconds=2.0,
+        max_concurrency=1,
+    )
+    return CapabilitySpec(manifest, capability)

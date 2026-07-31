@@ -41,6 +41,16 @@ class StaticVision:
         return self.description
 
 
+def test_vision_spec_declares_manifest_for_governor():
+    spec = vision_spec(StaticVision("图片描述"))
+
+    assert spec.manifest.name == "vision"
+    assert spec.manifest.version
+    assert spec.manifest.permission_profile
+    assert spec.manifest.default_timeout_seconds > 0
+    assert spec.manifest.max_result_size > 0
+
+
 def _vision_request(*locators):
     return CapabilityRequest(
         capability_name="vision",

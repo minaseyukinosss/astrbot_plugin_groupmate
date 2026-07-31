@@ -9,6 +9,13 @@ from .builtin import (
     vision_spec,
 )
 from .contracts import (
+    CapabilityContext,
+    CapabilityCostClass,
+    CapabilityFailurePolicy,
+    CapabilityLatencyClass,
+    CapabilityManifest,
+    CapabilityMediaPolicy,
+    CapabilityPermission,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
@@ -18,6 +25,13 @@ from .registry import CapabilityRegistry, CapabilitySpec
 
 __all__ = [
     "CapabilityRegistry",
+    "CapabilityContext",
+    "CapabilityCostClass",
+    "CapabilityFailurePolicy",
+    "CapabilityLatencyClass",
+    "CapabilityManifest",
+    "CapabilityMediaPolicy",
+    "CapabilityPermission",
     "CapabilityRequest",
     "CapabilityResult",
     "CapabilitySpec",

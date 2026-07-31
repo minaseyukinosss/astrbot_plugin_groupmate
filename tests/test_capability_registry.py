@@ -5,6 +5,8 @@ import asyncio
 import pytest
 
 from groupmate.capabilities.contracts import (
+    CapabilityManifest,
+    CapabilityPermission,
     CapabilityRequest,
     CapabilityResult,
     CapabilityStatus,
@@ -22,6 +24,17 @@ def _request(name="echo", **overrides):
     return CapabilityRequest(**values)
 
 
+def _manifest(name="echo", **overrides):
+    values = {
+        "name": name,
+        "version": "1.0.0",
+        "permission_profile": (CapabilityPermission.VISION_READ,),
+        "default_timeout_seconds": 0.1,
+    }
+    values.update(overrides)
+    return CapabilityManifest(**values)
+
+
 async def _echo(request):
     return CapabilityResult(
         CapabilityStatus.SUCCESS,
@@ -33,7 +46,7 @@ async def _echo(request):
 
 def test_register_lookup_and_execute_use_only_explicit_names():
     registry = CapabilityRegistry(default_timeout_seconds=0.1)
-    spec = CapabilitySpec("echo", _echo)
+    spec = CapabilitySpec(_manifest("echo"), _echo)
 
     registry.register(spec)
     result = asyncio.run(registry.execute(_request()))
@@ -57,18 +70,22 @@ def test_unknown_name_returns_unsupported_without_dynamic_execution():
 
 def test_duplicate_registration_is_rejected():
     registry = CapabilityRegistry()
-    registry.register(CapabilitySpec("echo", _echo))
+    registry.register(CapabilitySpec(_manifest("echo"), _echo))
 
     with pytest.raises(ValueError, match="already registered"):
-        registry.register(CapabilitySpec("echo", _echo))
+        registry.register(CapabilitySpec(_manifest("echo"), _echo))
 
 
 @pytest.mark.parametrize(
     "factory",
     (
-        lambda: CapabilitySpec("Invalid Name", _echo),
-        lambda: CapabilitySpec("echo", None),
-        lambda: CapabilitySpec("echo", _echo, required_information="not callable"),
+        lambda: CapabilitySpec(_manifest("Invalid Name"), _echo),
+        lambda: CapabilitySpec(_manifest("echo"), None),
+        lambda: CapabilitySpec(
+            _manifest("echo"),
+            _echo,
+            required_information="not callable",
+        ),
     ),
 )
 def test_invalid_capability_contract_is_rejected(factory):
@@ -81,7 +98,7 @@ def test_handler_exception_returns_failed_result():
         raise RuntimeError("provider secret must not leak")
 
     registry = CapabilityRegistry()
-    registry.register(CapabilitySpec("explode", exploding))
+    registry.register(CapabilitySpec(_manifest("explode"), exploding))
 
     result = asyncio.run(registry.execute(_request("explode")))
 
@@ -97,7 +114,7 @@ def test_timeout_returns_explicit_timeout_result():
         return CapabilityResult(CapabilityStatus.SUCCESS, "slow", facts=("done",))
 
     registry = CapabilityRegistry(default_timeout_seconds=0.001)
-    registry.register(CapabilitySpec("slow", slow))
+    registry.register(CapabilitySpec(_manifest("slow"), slow))
 
     result = asyncio.run(registry.execute(_request("slow")))
 
@@ -119,7 +136,7 @@ def test_external_cancellation_is_not_swallowed_as_failure():
                 cancelled.set()
 
         registry = CapabilityRegistry(default_timeout_seconds=30)
-        registry.register(CapabilitySpec("blocking", blocking))
+        registry.register(CapabilitySpec(_manifest("blocking"), blocking))
         task = asyncio.ensure_future(registry.execute(_request("blocking")))
         await started.wait()
         task.cancel()
@@ -143,7 +160,7 @@ def test_invalid_handler_result_fails_closed(returned):
         return returned
 
     registry = CapabilityRegistry()
-    registry.register(CapabilitySpec("invalid", invalid))
+    registry.register(CapabilitySpec(_manifest("invalid"), invalid))
 
     result = asyncio.run(registry.execute(_request("invalid")))
 
@@ -158,7 +175,11 @@ def test_describe_and_resolve_map_to_task_resolution_contract():
 
     registry = CapabilityRegistry()
     registry.register(
-        CapabilitySpec("echo", _echo, required_information=missing_input)
+        CapabilitySpec(
+            _manifest("echo"),
+            _echo,
+            required_information=missing_input,
+        )
     )
 
     described = registry.describe("echo")
@@ -180,7 +201,11 @@ def test_resolve_does_not_swallow_matcher_cancellation_on_python_37():
 
     registry = CapabilityRegistry()
     registry.register(
-        CapabilitySpec("cancelled", _echo, required_information=cancelled)
+        CapabilitySpec(
+            _manifest("cancelled"),
+            _echo,
+            required_information=cancelled,
+        )
     )
 
     with pytest.raises(asyncio.CancelledError):
@@ -189,7 +214,9 @@ def test_resolve_does_not_swallow_matcher_cancellation_on_python_37():
 
 def test_unavailable_registered_capability_resolves_and_executes_as_unsupported():
     registry = CapabilityRegistry()
-    registry.register(CapabilitySpec("offline", _echo, available=False))
+    registry.register(
+        CapabilitySpec(_manifest("offline"), _echo, available=False)
+    )
 
     resolution = registry.resolve(_request("offline"))
     result = asyncio.run(registry.execute(_request("offline")))
@@ -198,3 +225,31 @@ def test_unavailable_registered_capability_resolves_and_executes_as_unsupported(
     assert resolution.capability_name == "offline"
     assert result.status is CapabilityStatus.UNSUPPORTED
     assert result.error_code == "capability_unavailable"
+
+
+def test_spec_owns_manifest_and_exposes_name_for_existing_callers():
+    spec = CapabilitySpec(_manifest("echo"), _echo)
+
+    assert spec.name == "echo"
+    assert spec.manifest.name == "echo"
+    assert spec.manifest.version == "1.0.0"
+
+
+def test_registry_lists_registered_manifests_without_executors():
+    registry = CapabilityRegistry()
+    registry.register(CapabilitySpec(_manifest("echo"), _echo))
+
+    manifests = registry.manifests()
+
+    assert tuple(item.name for item in manifests) == ("echo",)
+    assert all(not hasattr(item, "executor") for item in manifests)
+
+
+def test_duplicate_manifest_name_is_rejected():
+    registry = CapabilityRegistry()
+    registry.register(CapabilitySpec(_manifest("echo"), _echo))
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(
+            CapabilitySpec(_manifest("echo", version="2.0.0"), _echo)
+        )
