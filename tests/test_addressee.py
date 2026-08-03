@@ -6,6 +6,7 @@ from groupmate.core.addressee import AddresseeResolver
 from groupmate.models import (
     AddresseeKind,
     ChatMessage,
+    MessageOrigin,
     TopicSnapshot,
     TriggerKind,
 )
@@ -32,6 +33,26 @@ def _topic(*messages):
         created_at=messages[0].timestamp,
         updated_at=messages[-1].timestamp,
     )
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
 
 
 def test_reply_chain_targets_quoted_user():
@@ -132,3 +153,17 @@ def test_latest_speaker_fallback():
     assert "latest_speaker" in decision.reply_audience.reason_codes or (
         decision.social_target.kind is AddresseeKind.USER
     )
+
+
+def test_host_interaction_replies_to_sender_without_personal_memory_subject():
+    decision = AddresseeResolver().resolve(
+        _topic(poke_message()),
+        TriggerKind.HOST_INTERACTION,
+    )
+
+    assert decision.reply_audience.target_user_ids == ("u1",)
+    assert decision.social_target.target_user_ids == ("u1",)
+    assert decision.memory_subject.kind is AddresseeKind.AMBIGUOUS
+    assert decision.memory_subject.target_user_ids == ()
+    assert "synthetic_interaction" in decision.memory_subject.reason_codes
+    assert "no_personal_memory" in decision.memory_subject.reason_codes

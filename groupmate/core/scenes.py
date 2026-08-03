@@ -40,6 +40,7 @@ _POLICIES = {
     ),
     InteractionScene.AMBIENT_CONTRIBUTION: ScenePolicy(False, QuoteMode.NEVER),
     InteractionScene.TASK_REQUEST: ScenePolicy(True, QuoteMode.ALWAYS),
+    InteractionScene.DIRECT_INTERACTION: ScenePolicy(True, QuoteMode.NEVER),
 }
 _HARD_TRIGGERS = frozenset(
     {
@@ -47,11 +48,14 @@ _HARD_TRIGGERS = frozenset(
         TriggerKind.ALIAS_DIRECT,
         TriggerKind.COPIED_AT,
         TriggerKind.CONTINUATION,
+        TriggerKind.HOST_INTERACTION,
     }
 )
 
 
 def classify_scene(trigger: TriggerKind, message: ChatMessage) -> InteractionScene:
+    if trigger is TriggerKind.HOST_INTERACTION:
+        return InteractionScene.DIRECT_INTERACTION
     if message.reply_to_bot:
         return InteractionScene.REPLY_TO_BOT
     if trigger in (

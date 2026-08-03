@@ -1,5 +1,11 @@
 from groupmate.core.scenes import classify_scene, is_hard_scene, policy_for_scene
-from groupmate.models import ChatMessage, InteractionScene, QuoteMode, TriggerKind
+from groupmate.models import (
+    ChatMessage,
+    InteractionScene,
+    MessageOrigin,
+    QuoteMode,
+    TriggerKind,
+)
 
 
 def message(text="今天好热", **overrides):
@@ -10,6 +16,26 @@ def message(text="今天好热", **overrides):
         sender_name="Alice",
         text=text,
         timestamp=100,
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
     )
     values.update(overrides)
     return ChatMessage(**values)
@@ -96,3 +122,11 @@ def test_social_scene_priority_still_follows_user_addressing():
     assert not is_hard_scene(
         InteractionScene.SOCIAL_RESPONSE, TriggerKind.ALIAS_MENTION
     )
+
+
+def test_host_interaction_is_hard_direct_interaction_without_quote():
+    scene = classify_scene(TriggerKind.HOST_INTERACTION, poke_message())
+
+    assert scene is InteractionScene.DIRECT_INTERACTION
+    assert policy_for_scene(scene).quote_mode is QuoteMode.NEVER
+    assert is_hard_scene(scene, TriggerKind.HOST_INTERACTION)

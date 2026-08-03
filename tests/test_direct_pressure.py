@@ -2,7 +2,7 @@ from groupmate.engine.direct_pressure import (
     DirectAddressPressureLevel,
     DirectAddressPressureTracker,
 )
-from groupmate.models import ChatMessage, TriggerKind
+from groupmate.models import ChatMessage, MessageOrigin, TriggerKind
 
 
 def message(
@@ -31,6 +31,26 @@ def tracker():
         nudge_count=2,
         pester_count=3,
     )
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
 
 
 def test_repeated_bare_alias_direct_escalates_to_pester():
@@ -216,3 +236,21 @@ def test_pressure_key_includes_persona():
 
     assert future.level is DirectAddressPressureLevel.NORMAL
     assert future.count == 1
+
+
+def test_repeated_host_interactions_share_direct_pressure_window():
+    pressure = tracker()
+
+    states = tuple(
+        pressure.observe(
+            "aemeath",
+            poke_message(message_id="poke-{}".format(index), timestamp=timestamp),
+            TriggerKind.HOST_INTERACTION,
+            now=timestamp,
+            aliases=("爱弥斯",),
+        )
+        for index, timestamp in enumerate((100, 120, 140), start=1)
+    )
+
+    assert tuple(state.count for state in states) == (1, 2, 3)
+    assert states[-1].level is DirectAddressPressureLevel.PESTER

@@ -24,6 +24,7 @@ class TriggerKind(StringEnum):
     CONTINUATION = "continuation"
     ALIAS_MENTION = "alias_mention"
     CANDIDATE = "candidate"
+    HOST_INTERACTION = "host_interaction"
 
 
 class DecisionAction(StringEnum):
@@ -156,6 +157,7 @@ class InteractionScene(StringEnum):
     SOCIAL_RESPONSE = "social_response"
     AMBIENT_CONTRIBUTION = "ambient_contribution"
     TASK_REQUEST = "task_request"
+    DIRECT_INTERACTION = "direct_interaction"
 
 
 class QuoteMode(StringEnum):

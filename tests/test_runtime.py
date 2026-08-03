@@ -1,6 +1,7 @@
 import asyncio
 
 from groupmate.engine.runtime import GroupActor, GroupRuntimeManager
+from groupmate.models import ChatMessage, MessageOrigin, TriggerKind
 from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
 from tests.fakes import FakeMemoryRepository, RecordingWorkflow, persona_context
 
@@ -32,6 +33,26 @@ def fast_policy(**overrides):
 
 def actor_for(workflow, behavior=None):
     return GroupActor("g1", workflow, persona(), behavior or fast_policy())
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
 
 
 def test_topic_max_seconds_clamps_debounce_wait(message_factory):
@@ -150,6 +171,52 @@ def test_alias_direct_is_evaluated_without_debounce(message_factory):
 
     assert len(workflow.evaluations) == 1
     assert workflow.evaluations[0][1].value == "alias_direct"
+
+
+def test_host_interaction_is_immediate_preserves_origin_and_opens_no_continuation():
+    class SignalingWorkflow(RecordingWorkflow):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+
+        async def evaluate(self, topic, trigger, policy, trigger_alias=""):
+            self.started.set()
+            return await super().evaluate(topic, trigger, policy, trigger_alias)
+
+    async def scenario():
+        workflow = SignalingWorkflow()
+        actor = actor_for(
+            workflow,
+            fast_policy(
+                debounce_min_seconds=60,
+                debounce_max_seconds=60,
+                continuation_seconds=90,
+            ),
+        )
+        await actor.start()
+        await actor.submit(poke_message())
+        await asyncio.wait_for(workflow.started.wait(), timeout=0.2)
+        await actor.drain()
+        evaluation = workflow.evaluations[0]
+        window_message = next(
+            item
+            for item in actor.window.snapshot().messages
+            if item.message_id == "poke-1"
+        )
+        memory_message = next(
+            item for item in workflow.memory.messages if item.message_id == "poke-1"
+        )
+        grants = list(workflow.memory.continuation_grants)
+        await actor.close()
+        return evaluation, window_message, memory_message, grants
+
+    evaluation, window_message, memory_message, grants = asyncio.run(scenario())
+
+    assert evaluation[1] is TriggerKind.HOST_INTERACTION
+    assert evaluation[0].latest.origin is MessageOrigin.SYSTEM_SYNTHETIC
+    assert window_message.origin is MessageOrigin.SYSTEM_SYNTHETIC
+    assert memory_message.origin is MessageOrigin.SYSTEM_SYNTHETIC
+    assert grants == []
 
 
 def test_followup_after_direct_wake_uses_continuation(message_factory):

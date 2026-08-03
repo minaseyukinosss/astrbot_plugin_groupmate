@@ -257,3 +257,13 @@ def test_bare_name_acknowledgement_uses_only_caller_supplied_aliases():
 
     assert injected.act.name == "ACKNOWLEDGE"
     assert not_injected.act.name == "ANSWER"
+
+
+def test_direct_interaction_uses_playful_reply_for_empty_poke_text():
+    plan = plan_response_act(
+        InteractionScene.DIRECT_INTERACTION,
+        reply_mode=ReplyMode.SHORT_SOCIAL,
+        text="",
+    )
+
+    assert plan.act is response_act_module.ResponseAct.PLAYFUL_REPLY

@@ -20,6 +20,7 @@ _HARD_TRIGGERS = frozenset(
         TriggerKind.ALIAS_DIRECT,
         TriggerKind.NATIVE_DIRECT,
         TriggerKind.CONTINUATION,
+        TriggerKind.HOST_INTERACTION,
     }
 )
 
@@ -136,6 +137,12 @@ class AddresseeResolver:
         memory = self._memory_subject(
             primary, social, sender_id, latest, participants, evidence
         )
+        if trigger is TriggerKind.HOST_INTERACTION:
+            memory = _ambiguous(
+                "synthetic_interaction",
+                "no_personal_memory",
+                evidence=evidence,
+            )
         return TargetingDecision(
             reply_audience=reply,
             memory_subject=memory,

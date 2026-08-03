@@ -81,6 +81,7 @@ _HARD_TRIGGERS = frozenset(
         TriggerKind.ALIAS_DIRECT,
         TriggerKind.NATIVE_DIRECT,
         TriggerKind.CONTINUATION,
+        TriggerKind.HOST_INTERACTION,
     }
 )
 TaskResponseResolver = Callable[
@@ -305,6 +306,17 @@ class CognitiveWorkflow:
             is ParticipationObligation.DIRECT_REQUIRED
             else Urgency.NORMAL
         )
+        decision_reason = "participation_speak"
+        if trigger is TriggerKind.HOST_INTERACTION:
+            interaction_decision = self._build_decision(
+                trigger,
+                topic,
+                soft_trigger,
+            )
+            if participation.act is ResponseAct.PLAYFUL_REPLY:
+                contribution = interaction_decision.contribution
+            urgency = interaction_decision.urgency
+            decision_reason = interaction_decision.reason_code
         quote_mode = participation.quote_mode
         self._record(
             decision_id,
@@ -317,7 +329,7 @@ class CognitiveWorkflow:
             contribution=contribution,
             confidence=1.0,
             trigger=trigger,
-            reason_code="participation_speak",
+            reason_code=decision_reason,
             target_message_id=target_message_id,
             needs_vision=needs_vision,
             urgency=urgency,
@@ -853,7 +865,10 @@ class CognitiveWorkflow:
                 needs_vision=has_image,
                 urgency=Urgency.NORMAL,
             )
-        if trigger is TriggerKind.NATIVE_DIRECT:
+        if trigger is TriggerKind.HOST_INTERACTION:
+            reason_code = "host_interaction"
+            contribution = "回应对方刚才对你的戳一戳互动，短而自然"
+        elif trigger is TriggerKind.NATIVE_DIRECT:
             reason_code = "native_direct"
             contribution = "回应对方刚才的直接呼叫"
         elif trigger is TriggerKind.CONTINUATION:

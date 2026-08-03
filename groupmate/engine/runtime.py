@@ -218,6 +218,7 @@ class GroupActor:
                 TriggerKind.ALIAS_DIRECT,
                 TriggerKind.COPIED_AT,
                 TriggerKind.CONTINUATION,
+                TriggerKind.HOST_INTERACTION,
             ):
                 return
 
@@ -373,6 +374,7 @@ class GroupActor:
                 TriggerKind.ALIAS_DIRECT,
                 TriggerKind.COPIED_AT,
                 TriggerKind.CONTINUATION,
+                TriggerKind.HOST_INTERACTION,
             )
             else "EVALUATED"
         )
@@ -500,8 +502,16 @@ class GroupActor:
         self._continuations.clear()
 
     def _stamp_message(self, message: ChatMessage, *, schedule: bool) -> ChatMessage:
-        if message.origin is MessageOrigin.BOT_DELIVERY:
-            return message
+        if message.origin in (
+            MessageOrigin.BOT_DELIVERY,
+            MessageOrigin.SYSTEM_SYNTHETIC,
+        ):
+            ingested_at = int(message.ingested_at or time.time())
+            return (
+                message
+                if message.ingested_at == ingested_at
+                else replace(message, ingested_at=ingested_at)
+            )
         origin = (
             MessageOrigin.PLATFORM_REALTIME
             if schedule

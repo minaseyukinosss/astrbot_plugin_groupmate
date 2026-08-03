@@ -37,6 +37,7 @@ _DIRECT_TRIGGERS = frozenset(
         TriggerKind.NATIVE_DIRECT,
         TriggerKind.ALIAS_DIRECT,
         TriggerKind.CONTINUATION,
+        TriggerKind.HOST_INTERACTION,
     }
 )
 _EMPTY_ECHO = re.compile(r"^(?:哈+|哈哈+|确实|好耶|草|笑死|是的|对)$")

@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from ..models import ChatMessage, TriggerKind
+from ..models import ChatMessage, MessageOrigin, TriggerKind
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,14 @@ class TriggerRouter:
             return TriggerResult(TriggerKind.IGNORE, "ignored_sender_or_empty")
         if message.is_command:
             return TriggerResult(TriggerKind.COMMAND, "existing_command")
+        if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
+            kind = str(message.metadata.get("interaction_kind", "") or "")
+            if kind == "poke" and message.segment_types == ("poke",):
+                return TriggerResult(
+                    TriggerKind.HOST_INTERACTION,
+                    "host_interaction:poke",
+                )
+            return TriggerResult(TriggerKind.IGNORE, "invalid_host_interaction")
         if message.mentions_bot or message.reply_to_bot:
             return TriggerResult(TriggerKind.NATIVE_DIRECT, "native_direct")
 

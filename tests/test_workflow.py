@@ -17,11 +17,14 @@ from groupmate.capabilities import (
 from groupmate.core import response_act as response_act_module
 from groupmate.core.speak_contract import SpeakContract, is_silence
 from groupmate.models import (
+    ChatMessage,
+    MessageOrigin,
     RelationshipState,
     ReplyMode,
     SendResult,
     TopicSnapshot,
     TriggerKind,
+    Urgency,
 )
 from groupmate.policies import BehaviorPolicy, ReplyPolicy, ResourcePolicy
 from groupmate.persona.aemeath import (
@@ -157,6 +160,26 @@ def _open_help_topic(message_factory):
     return TopicSnapshot("open-help-topic", "g1", (message,), 100, 100)
 
 
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
+
+
 def _resolution(status, capability_name="", required_information=()):
     return response_act_module.TaskResolution(
         status=getattr(response_act_module.TaskResolutionStatus, status),
@@ -237,6 +260,78 @@ def test_alias_direct_sends(topic_snapshot, balanced_policy):
     )
 
     assert outcome.sent is True
+
+
+def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(
+    balanced_policy,
+):
+    generator = RecordingGenerationModel("别戳啦，有事快说。")
+    platform = FakePlatform()
+    memory = FakeMemoryRepository()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    message = poke_message()
+    topic = TopicSnapshot("poke-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.HOST_INTERACTION, balanced_policy)
+    )
+
+    plan = generator.plans[-1]
+    assert outcome.sent is True
+    assert plan.response_act.act is response_act_module.ResponseAct.PLAYFUL_REPLY
+    assert plan.urgency is Urgency.HIGH
+    assert plan.contribution == "回应对方刚才对你的戳一戳互动，短而自然"
+    assert "爱弥斯" in plan.persona_prompt
+    assert plan.contribution in plan.user_prompt
+    assert platform.sent[0]["quote_message_id"] is None
+    assert memory.outbox[outcome.decision_id]["status"] == "sent"
+    assert any(
+        state == "GATE" and reason == "host_interaction"
+        for _, _, state, reason, _ in memory.transitions
+    )
+
+
+def test_hostile_repeated_host_interaction_keeps_boundary_contribution(
+    balanced_policy,
+):
+    generator = RecordingGenerationModel("有事直说。")
+    memory = FakeMemoryRepository()
+    memory.upsert_relationship_state(
+        "aemeath",
+        RelationshipState(group_id="g1", user_id="u1", affinity=-60),
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+
+    async def scenario():
+        for index, timestamp in enumerate((100, 120, 140), start=1):
+            generator.text = "有事直说{}。".format(index)
+            message = poke_message(
+                message_id="poke-{}".format(index),
+                timestamp=timestamp,
+            )
+            topic = TopicSnapshot(
+                "poke-topic-{}".format(index),
+                "g1",
+                (message,),
+                timestamp,
+                timestamp,
+            )
+            await workflow.evaluate(
+                topic,
+                TriggerKind.HOST_INTERACTION,
+                balanced_policy,
+            )
+
+    asyncio.run(scenario())
+
+    plan = generator.plans[-1]
+    assert plan.response_act.act is response_act_module.ResponseAct.BOUNDARY
+    assert plan.contribution == "短句守住边界，不延长空 @"
 
 
 def test_workflow_has_no_keyword_social_classifier_dependency():

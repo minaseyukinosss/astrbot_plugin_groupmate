@@ -151,6 +151,12 @@ def plan_response_act(
         )
 
     cleaned = (text or "").strip()
+    if scene is InteractionScene.DIRECT_INTERACTION:
+        return ResponseActPlan(
+            ResponseAct.PLAYFUL_REPLY,
+            scene,
+            (scene_reason, "host_interaction"),
+        )
     if scene is InteractionScene.SOCIAL_RESPONSE:
         if _PLAYFUL.search(cleaned):
             return ResponseActPlan(

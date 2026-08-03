@@ -7,12 +7,32 @@ Contract:
 - 叫/喊/问问 + alias → ALIAS_DIRECT
 """
 
-from groupmate.models import TriggerKind
+from groupmate.models import ChatMessage, MessageOrigin, TriggerKind
 from groupmate.engine.triggers import TriggerRouter
 
 
 def build_router(aliases=("爱弥斯", "小爱", "飞行雪绒")):
     return TriggerRouter(aliases=aliases)
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
 
 
 def test_existing_command_is_bypassed(message_factory):
@@ -127,3 +147,19 @@ def test_bot_and_empty_messages_are_ignored(message_factory):
 
     assert router.classify(message_factory(is_bot=True)).kind is TriggerKind.IGNORE
     assert router.classify(message_factory(text="", segment_types=())).kind is TriggerKind.IGNORE
+
+
+def test_strict_synthetic_poke_is_host_interaction():
+    result = build_router().classify(poke_message())
+
+    assert result.kind is TriggerKind.HOST_INTERACTION
+    assert result.reason == "host_interaction:poke"
+
+
+def test_unknown_or_mismatched_synthetic_interaction_is_ignored():
+    router = build_router()
+    unknown = poke_message(metadata={"interaction_kind": "wave"})
+    mismatched = poke_message(segment_types=("text", "poke"))
+
+    assert router.classify(unknown).kind is TriggerKind.IGNORE
+    assert router.classify(mismatched).kind is TriggerKind.IGNORE

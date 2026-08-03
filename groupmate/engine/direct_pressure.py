@@ -128,6 +128,8 @@ class DirectAddressPressureTracker:
         message: ChatMessage,
         trigger: TriggerKind,
     ) -> bool:
+        if trigger is TriggerKind.HOST_INTERACTION:
+            return True
         if trigger is TriggerKind.ALIAS_DIRECT:
             return True
         return bool(

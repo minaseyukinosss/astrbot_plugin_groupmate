@@ -17,6 +17,7 @@ from groupmate.engine.participation_types import (
 from groupmate.models import (
     ChatMessage,
     InteractionScene,
+    MessageOrigin,
     QuoteMode,
     TopicSnapshot,
     TriggerKind,
@@ -149,6 +150,28 @@ def engine():
     )
 
 
+def decide_poke(
+    engine,
+    *,
+    timestamp=100,
+    affinity=None,
+):
+    return decide(
+        engine,
+        "",
+        trigger=TriggerKind.HOST_INTERACTION,
+        timestamp=timestamp,
+        affinity=affinity,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+
+
 def test_bare_alias_direct_requires_short_acknowledgement():
     decision = decide(engine())
 
@@ -158,6 +181,43 @@ def test_bare_alias_direct_requires_short_acknowledgement():
     assert decision.posture is ResponsePosture.POLITE
     assert decision.contribution == "短应声，不主动扩展话题"
     assert decision.quote_mode is QuoteMode.NEVER
+
+
+def test_first_neutral_poke_requires_playful_direct_response():
+    decision = decide_poke(engine())
+
+    assert decision.action is ParticipationAction.SPEAK
+    assert decision.obligation is ParticipationObligation.DIRECT_REQUIRED
+    assert decision.scene is InteractionScene.DIRECT_INTERACTION
+    assert decision.act is ResponseAct.PLAYFUL_REPLY
+    assert decision.quote_mode is QuoteMode.NEVER
+    assert decision.pressure.count == 1
+
+
+def test_friendly_repeated_poke_stays_playful():
+    participation = engine()
+    friendly = AffinitySnapshot(AffinityBand.FRIENDLY, ResponsePosture.WARM)
+
+    decide_poke(participation, timestamp=100, affinity=friendly)
+    decide_poke(participation, timestamp=120, affinity=friendly)
+    decision = decide_poke(participation, timestamp=140, affinity=friendly)
+
+    assert decision.act is ResponseAct.PLAYFUL_REPLY
+    assert decision.posture is ResponsePosture.WARM
+    assert decision.pressure.level is DirectAddressPressureLevel.PESTER
+
+
+def test_hostile_repeated_poke_sets_firm_boundary():
+    participation = engine()
+    hostile = AffinitySnapshot(AffinityBand.HOSTILE, ResponsePosture.FIRM)
+
+    decide_poke(participation, timestamp=100, affinity=hostile)
+    decide_poke(participation, timestamp=120, affinity=hostile)
+    decision = decide_poke(participation, timestamp=140, affinity=hostile)
+
+    assert decision.act is ResponseAct.BOUNDARY
+    assert decision.posture is ResponsePosture.FIRM
+    assert decision.pressure.level is DirectAddressPressureLevel.PESTER
 
 
 def test_contentful_direct_question_uses_answer_act():
