@@ -81,6 +81,11 @@ class Filter:
     command = staticmethod(identity_decorator)
 
 
+class FakeStar:
+    def __init__(self, context):
+        self.star_context = context
+
+
 astrbot = types.ModuleType("astrbot")
 api = types.ModuleType("astrbot.api")
 event = types.ModuleType("astrbot.api.event")
@@ -90,7 +95,7 @@ api.logger = types.SimpleNamespace(info=lambda *args: None, exception=lambda *ar
 event.AstrMessageEvent = object
 event.filter = Filter()
 star.Context = object
-star.Star = object
+star.Star = FakeStar
 sys.modules.update({
     "astrbot": astrbot,
     "astrbot.api": api,
@@ -108,6 +113,39 @@ sys.modules["data"] = data
 sys.modules["data.plugins"] = plugins
 
 module = importlib.import_module("data.plugins.astrbot_plugin_groupmate.main")
+
+
+class FakeBridge:
+    def __init__(self, context, config, data_dir):
+        self.context = context
+        self.config = config
+        self.data_dir = data_dir
+
+
+class FakeWebAPI:
+    def __init__(self, bridge):
+        self.bridge = bridge
+
+    def register(self, context):
+        self.context = context
+
+
+class FakeContext:
+    @staticmethod
+    def get_config():
+        return {}
+
+
+module.AstrBotBridge = FakeBridge
+module.GroupmateWebAPI = FakeWebAPI
+configured = module.GroupmatePlugin(
+    FakeContext(),
+    {"interaction_group": {"poke_enabled": True}},
+)
+adapters = configured.ingress.event_adapters.adapters
+assert len(adapters) == 1
+assert adapters[0].__class__.__name__ == "PokeEventAdapter"
+assert adapters[0].enabled is True
 
 
 class FakeIngress:

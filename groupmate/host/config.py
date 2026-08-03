@@ -17,7 +17,12 @@ DEFAULT_PERSONA_ID = "aemeath"
 DEFAULT_ALIASES = ("爱弥斯", "小爱", "飞行雪绒")
 RELATIONSHIP_LABELS = ("普通群友", "闺蜜", "最亲近")
 
-_KNOWN_GROUPS = ("scope_group", "persona_group", "provider_group")
+_KNOWN_GROUPS = (
+    "scope_group",
+    "persona_group",
+    "provider_group",
+    "interaction_group",
+)
 _LEGACY_TOP_LEVEL_KEYS = (
     "aliases",
     "continuation_seconds",
@@ -61,6 +66,7 @@ class DeploymentSettings:
     generation_provider: str
     vision_enabled: bool
     vision_provider: str
+    poke_enabled: bool
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -71,7 +77,7 @@ class DeploymentSettings:
 
 
 class AstrBotConfigParser:
-    """Parse the six public AstrBot settings into immutable deployment state."""
+    """Parse the public AstrBot settings into immutable deployment state."""
 
     def parse(self, raw: Mapping[str, Any] | None) -> DeploymentSettings:
         source = _as_mapping(raw)
@@ -80,6 +86,7 @@ class AstrBotConfigParser:
         scope_group = _as_mapping(source.get("scope_group"))
         persona_group = _as_mapping(source.get("persona_group"))
         provider_group = _as_mapping(source.get("provider_group"))
+        interaction_group = _as_mapping(source.get("interaction_group"))
 
         enabled_groups = _parse_digit_tuple(
             scope_group.get("enabled_groups", ()),
@@ -102,6 +109,10 @@ class AstrBotConfigParser:
             ).strip(),
             vision_enabled=_boolean(provider_group.get("vision_enabled", True), True),
             vision_provider=str(provider_group.get("vision_provider", "") or "").strip(),
+            poke_enabled=_boolean(
+                interaction_group.get("poke_enabled", False),
+                False,
+            ),
             diagnostics=ConfigDiagnostics(
                 ignored_legacy_keys=diagnostics.ignored_legacy_keys,
                 unknown_keys=diagnostics.unknown_keys,

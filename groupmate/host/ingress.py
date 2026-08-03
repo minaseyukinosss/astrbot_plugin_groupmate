@@ -5,13 +5,20 @@ from __future__ import annotations
 from typing import Any
 
 from .bridge import TurnOwner
+from .event_adapters import HostEventAdapterRuntime
 from .event_gate import HostEventDisposition, HostEventGate
 
 
 class AstrBotEventIngress:
-    def __init__(self, gate: HostEventGate, bridge: Any) -> None:
+    def __init__(
+        self,
+        gate: HostEventGate,
+        bridge: Any,
+        event_adapters: HostEventAdapterRuntime = None,
+    ) -> None:
         self.gate = gate
         self.bridge = bridge
+        self.event_adapters = event_adapters or HostEventAdapterRuntime()
 
     async def handle_group_message(
         self,

@@ -15,6 +15,10 @@ from .groupmate.host import (
     HostEventGate,
 )
 from .groupmate.host.config import AstrBotConfigParser
+from .groupmate.host.event_adapters import (
+    HostEventAdapterRuntime,
+    PokeEventAdapter,
+)
 from .groupmate.host.web_api import GroupmateWebAPI
 
 
@@ -29,7 +33,14 @@ class GroupmatePlugin(Star):
             config_resolver=getattr(context, "get_config", None),
             enabled_groups=self.config.enabled_groups,
         )
-        self.ingress = AstrBotEventIngress(self.event_gate, self.bridge)
+        self.event_adapters = HostEventAdapterRuntime(
+            (PokeEventAdapter(enabled=self.config.poke_enabled),)
+        )
+        self.ingress = AstrBotEventIngress(
+            self.event_gate,
+            self.bridge,
+            event_adapters=self.event_adapters,
+        )
         self.web_api = GroupmateWebAPI(self.bridge)
         self.web_api.register(context)
         logger.info("Groupmate initialized")
