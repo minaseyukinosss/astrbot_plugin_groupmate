@@ -7,6 +7,13 @@ from .config import (
     ConfigurationError,
     DeploymentSettings,
 )
+from .event_adapters import (
+    HostEventAdapter,
+    HostEventAdapterManifest,
+    HostEventAdapterResult,
+    HostEventAdapterRuntime,
+    HostEventAdapterStatus,
+)
 from .event_gate import HostEventDisposition, HostEventGate
 from .ingress import AstrBotEventIngress
 from .llm import (
@@ -26,6 +33,11 @@ __all__ = [
     "DeploymentSettings",
     "HostEventDisposition",
     "HostEventGate",
+    "HostEventAdapter",
+    "HostEventAdapterManifest",
+    "HostEventAdapterResult",
+    "HostEventAdapterRuntime",
+    "HostEventAdapterStatus",
     "AstrBotGenerationModel",
     "AstrBotPlatformPort",
     "AstrBotVisionPort",
