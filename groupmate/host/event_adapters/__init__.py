@@ -6,6 +6,7 @@ from .base import (
     HostEventAdapterResult,
     HostEventAdapterStatus,
 )
+from .poke import PokeEventAdapter
 from .runtime import HostEventAdapterRuntime
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "HostEventAdapterResult",
     "HostEventAdapterRuntime",
     "HostEventAdapterStatus",
+    "PokeEventAdapter",
 ]
