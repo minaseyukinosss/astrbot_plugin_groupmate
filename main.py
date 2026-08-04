@@ -45,7 +45,7 @@ class GroupmatePlugin(Star):
         self.web_api.register(context)
         logger.info("Groupmate initialized")
 
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    @filter.event_message_type(filter.EventMessageType.ALL)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def observe_group_message(self, event: AstrMessageEvent):
         """旁路观察 QQ 群消息，不抢占已有指令。"""
