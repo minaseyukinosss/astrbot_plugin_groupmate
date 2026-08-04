@@ -287,7 +287,8 @@ def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(
     assert outcome.sent is True
     assert plan.response_act.act is response_act_module.ResponseAct.PLAYFUL_REPLY
     assert plan.urgency is Urgency.HIGH
-    assert plan.contribution == "回应对方刚才对你的戳一戳互动，短而自然"
+    assert plan.contribution.startswith("对方戳的是你")
+    assert "禁止「你俩/你们俩」" in plan.contribution
     assert "爱弥斯" in plan.persona_prompt
     assert plan.contribution in plan.user_prompt
     assert platform.sent[0]["quote_message_id"] is None
@@ -384,7 +385,8 @@ def test_hostile_repeated_host_interaction_keeps_boundary_contribution(
 
     plan = generator.plans[-1]
     assert plan.response_act.act is response_act_module.ResponseAct.BOUNDARY
-    assert plan.contribution == "对方戳得太烦了，短句划界，不延长"
+    assert plan.contribution.startswith("对方戳的是你")
+    assert "短句划界" in plan.contribution
 
 
 def test_workflow_has_no_keyword_social_classifier_dependency():

@@ -69,6 +69,47 @@ def test_guard_accepts_firm_response_without_hostility_escalation():
 
 
 @pytest.mark.parametrize(
+    "text,code",
+    [
+        ("嘿，戳人的家伙被反戳咯～", "leading_mono_interjection"),
+        ("噗，你俩这是戳上瘾了嘛～", "leading_mono_interjection"),
+        ("别戳啦——再戳我可要让你看看后果哦！", "decorative_punctuation"),
+        ("你戳戳我戳戳～", "decorative_punctuation"),
+    ],
+)
+def test_guard_rejects_chatty_poke_style(text, code):
+    result = AemeathOutputFirewall().validate(
+        text,
+        [],
+        response_act=ResponseAct.PLAYFUL_REPLY,
+    )
+
+    assert result.accepted is False
+    assert code in result.codes
+
+
+def test_guard_rejects_false_bystander_voice_on_playful_reply():
+    result = AemeathOutputFirewall().validate(
+        "你俩戳上瘾了嘛",
+        [],
+        response_act=ResponseAct.PLAYFUL_REPLY,
+    )
+
+    assert result.accepted is False
+    assert "false_bystander_voice" in result.codes
+
+
+def test_guard_accepts_plain_poke_pushback():
+    result = AemeathOutputFirewall().validate(
+        "别戳啦有事快说",
+        [],
+        response_act=ResponseAct.PLAYFUL_REPLY,
+    )
+
+    assert result.accepted is True
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "这个配置怎么了？",

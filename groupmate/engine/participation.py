@@ -291,7 +291,10 @@ class ParticipationDecisionEngine:
             posture=affinity.response_posture,
             obligation=ParticipationObligation.OPEN_OPTIONAL,
             reason_codes=("poke_bystander",),
-            contribution="群里有人互戳，可轻轻跟风戳一下或短句带过，不抢话题",
+            contribution=(
+                "群里别人互戳，你可轻轻跟一脚或短句带过；"
+                "不要抢成话题中心，一句短口语少标点"
+            ),
             quote_mode=QuoteMode.NEVER,
             media_policy=MediaPolicy(decorative_allowed=True),
         )
@@ -442,16 +445,21 @@ class ParticipationDecisionEngine:
         level: DirectAddressPressureLevel,
         band: AffinityBand,
     ) -> str:
+        base = (
+            "对方戳的是你；你是当事人，用「你」对说话者，"
+            "禁止「你俩/你们俩」旁观口吻；"
+            "一句短口语，少语气词少标点"
+        )
         if act is ResponseAct.BOUNDARY or level in (
             DirectAddressPressureLevel.PESTER,
             DirectAddressPressureLevel.AFTER_BOUNDARY,
         ):
             if band in (AffinityBand.HOSTILE, AffinityBand.WARY):
-                return "对方戳得太烦了，短句划界，不延长"
-            return "被连戳有点烦，轻轻嫌弃一下就停"
+                return base + "；被连戳嫌烦就短句划界，不延长"
+            return base + "；被连戳有点烦，轻轻嫌弃一下就停"
         if level is DirectAddressPressureLevel.NUDGE:
-            return "对方又戳你，短而自然地嫌弃或接一下"
-        return "回应对方刚才对你的戳一戳互动，短而自然"
+            return base + "；对方又戳你，短而自然地嫌弃或接一下"
+        return base
 
     @staticmethod
     def _pressure_act(
