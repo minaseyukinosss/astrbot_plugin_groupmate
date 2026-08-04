@@ -296,6 +296,21 @@ def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(
     )
 
 
+def test_successful_host_interaction_does_not_append_session_turns(
+    balanced_policy,
+):
+    workflow = build_workflow(generator=StaticGenerationModel("别戳啦。"))
+    message = poke_message()
+    topic = TopicSnapshot("poke-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.HOST_INTERACTION, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert workflow.session_for("g1").recent_turns() == ()
+
+
 def test_hostile_repeated_host_interaction_keeps_boundary_contribution(
     balanced_policy,
 ):

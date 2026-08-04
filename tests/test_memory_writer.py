@@ -19,6 +19,7 @@ from groupmate.models import (
     MemoryKind,
     MemoryScope,
     MemoryStatus,
+    MessageOrigin,
     TargetingDecision,
     TopicSnapshot,
     TriggerKind,
@@ -91,6 +92,38 @@ def _topic(text: str, *, group_id="g1", sender="u1") -> TopicSnapshot:
         created_at=100,
         updated_at=100,
     )
+
+
+def _synthetic_poke_topic() -> TopicSnapshot:
+    message = ChatMessage(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    return TopicSnapshot("poke-topic", "g1", (message,), 100, 100)
+
+
+def test_synthetic_interaction_extracts_no_user_or_bot_promise_candidate():
+    writer = MemoryWriter(FakeMemoryRepository(), persona_id="aemeath")
+
+    extracted = writer.extract_candidates(
+        _synthetic_poke_topic(),
+        _user_targeting(),
+        now=100,
+        reply_text="我会帮你记住",
+    )
+
+    assert extracted == ([], {})
 
 
 def test_sensitive_text_writes_rejected_not_memory(tmp_path):

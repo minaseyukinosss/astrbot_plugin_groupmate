@@ -51,6 +51,7 @@ from ..models import (
     Decision,
     DecisionAction,
     InteractionScene,
+    MessageOrigin,
     ReplyMode,
     ReplyPlan,
     TargetingDecision,
@@ -926,8 +927,10 @@ class CognitiveWorkflow:
         assistant_text: str,
         timestamp: int,
     ) -> None:
-        session = self.session_for(topic.group_id)
         latest = topic.latest
+        if latest is not None and latest.origin is MessageOrigin.SYSTEM_SYNTHETIC:
+            return
+        session = self.session_for(topic.group_id)
         if latest is not None and not latest.is_bot and latest.text:
             session.append_user(
                 latest.sender_name or "群友",

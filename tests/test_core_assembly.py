@@ -8,13 +8,15 @@ from groupmate.core.context_assembly import (
     AssembledPrompt,
     ContextAssembly,
 )
-from groupmate.core.history_format import format_relationship_line
+from groupmate.core.history_format import format_history_block, format_relationship_line
 from groupmate.core.response_act import ResponseAct, ResponseActPlan
 from groupmate.core.session import GroupSession
 from groupmate.models import (
     AddresseeKind,
     AddresseeResolution,
+    ChatMessage,
     InteractionScene,
+    MessageOrigin,
     RelationshipState,
     TargetingDecision,
 )
@@ -31,6 +33,34 @@ def _assembly(**kwargs) -> ContextAssembly:
         character_name="爱弥斯",
         **kwargs,
     )
+
+
+def poke_message(**overrides):
+    values = dict(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    values.update(overrides)
+    return ChatMessage(**values)
+
+
+def test_synthetic_poke_uses_fixed_prompt_label_without_raw_metadata():
+    block = format_history_block((poke_message(),), {})
+
+    assert "[互动：戳一戳]" in block
+    assert "source_adapter" not in block
+    assert "target_id" not in block
 
 
 def test_assembly_system_separates_identity_and_constraints():

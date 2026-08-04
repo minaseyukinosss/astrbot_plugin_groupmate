@@ -14,6 +14,7 @@ from ..models import (
     MemoryCandidate,
     MemoryKind,
     MemoryScope,
+    MessageOrigin,
     Sensitivity,
     TargetingDecision,
     TopicSnapshot,
@@ -128,6 +129,9 @@ class MemoryWriter:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
         )
+        latest = active[-1] if active else None
+        if latest is not None and latest.origin is MessageOrigin.SYSTEM_SYNTHETIC:
+            return [], {}
         memory_subject = targeting.memory_subject
         allow_personal = (
             memory_subject.kind is AddresseeKind.USER

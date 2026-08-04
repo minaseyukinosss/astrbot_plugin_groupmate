@@ -5,13 +5,26 @@ from __future__ import annotations
 import html
 from typing import Optional, Sequence, Tuple
 
-from ..models import ChatMessage, RelationshipState
+from ..models import ChatMessage, MessageOrigin, RelationshipState
 from ..social.affinity import AffinityBand, ResponsePosture, snapshot_for_relationship
 from .relationships import resolve_speaker
 
 ACTIVE_CONTEXT_MAX_MESSAGES = 8
 TOPIC_IDLE_GAP_SECONDS = 120
 MERGE_WINDOW_SECONDS = 8
+
+
+def _message_content(message: ChatMessage) -> str:
+    if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
+        labels = {"poke": "[互动：戳一戳]"}
+        return labels.get(
+            str(message.metadata.get("interaction_kind", "") or ""),
+            "[互动]",
+        )
+    content = message.text or "[图片]"
+    if message.image_urls and message.text:
+        content += " [图片]"
+    return content
 
 
 def select_active_messages(
@@ -79,9 +92,7 @@ def format_history_block(
         buffer_parts = []
 
     for message in messages:
-        content = message.text or "[图片]"
-        if message.image_urls and message.text:
-            content += " [图片]"
+        content = _message_content(message)
         speaker, relationship, suggested_address = resolve_speaker(
             message.sender_id, message.sender_name, relationships
         )

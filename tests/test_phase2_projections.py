@@ -199,6 +199,61 @@ def test_projection_does_not_restore_decorative_media_ids(tmp_path):
     store.close()
 
 
+def test_rebuild_keeps_synthetic_poke_for_audit_without_session_or_continuation(
+    tmp_path,
+):
+    store = SQLiteMemoryStore(tmp_path / "synthetic-projection.db")
+    poke = ChatMessage(
+        message_id="poke-1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="",
+        timestamp=100,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        ingested_at=100,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "bot",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+    bot = ChatMessage(
+        message_id="bot-poke-1",
+        group_id="g1",
+        sender_id="__bot__",
+        sender_name="爱弥斯",
+        text="别戳啦。",
+        timestamp=101,
+        is_bot=True,
+        origin=MessageOrigin.BOT_DELIVERY,
+        decision_id="poke-decision",
+        ingested_at=101,
+    )
+    assert store.save_message("aemeath", poke)
+    assert store.save_message("aemeath", bot)
+
+    snapshot = StateProjector(store).rebuild(
+        "aemeath",
+        "g1",
+        now=200,
+        policy=_policy().conversation,
+    )
+    store.close()
+
+    assert [message.message_id for message in snapshot.messages] == [
+        "poke-1",
+        "bot-poke-1",
+    ]
+    assert not any(
+        turn.role == "user" and turn.source_message_id == "poke-1"
+        for turn in snapshot.session_turns
+    )
+    assert snapshot.continuation is None
+    assert snapshot.continuations == ()
+
+
 def test_continuation_reply_does_not_renew_grant(tmp_path, message_factory):
     async def scenario():
         store = SQLiteMemoryStore(tmp_path / "grant.db")
