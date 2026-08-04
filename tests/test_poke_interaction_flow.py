@@ -23,10 +23,17 @@ class CommandFilter:
 
 
 class Poke:
-    type = "poke"
+    """Current AstrBot poke shape: target_id() method, id field, qq=0."""
+
+    type = "Poke"
 
     def __init__(self, target_id):
-        self.qq = target_id
+        self.id = target_id
+        self.qq = 0
+
+    def target_id(self):
+        text = str(self.id or "").strip()
+        return text or None
 
 
 class Event:
@@ -37,7 +44,10 @@ class Event:
             segments.append({"type": "text", "data": {"text": text}})
         if poke_target is not None:
             segments.append(
-                {"type": "poke", "data": {"qq": str(poke_target)}}
+                {
+                    "type": "poke",
+                    "data": {"type": "126", "id": str(poke_target)},
+                }
             )
         handlers = (
             [SimpleNamespace(event_filters=[CommandFilter()])]

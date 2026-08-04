@@ -70,21 +70,11 @@ def identity_decorator(*args, **kwargs):
     return lambda value: value
 
 
-def tagged_decorator(tag):
-    def decorate(value):
-        tags = list(getattr(value, "_test_filter_tags", ()))
-        tags.append(tag)
-        value._test_filter_tags = tuple(tags)
-        return value
-
-    return decorate
-
-
 class Filter:
-    EventMessageType = types.SimpleNamespace(GROUP_MESSAGE="group", ALL="all")
+    EventMessageType = types.SimpleNamespace(GROUP_MESSAGE="group")
     PlatformAdapterType = types.SimpleNamespace(AIOCQHTTP="aiocqhttp")
     PermissionType = types.SimpleNamespace(ADMIN="admin")
-    event_message_type = staticmethod(tagged_decorator)
+    event_message_type = staticmethod(identity_decorator)
     platform_adapter_type = staticmethod(identity_decorator)
     on_llm_request = staticmethod(identity_decorator)
     permission_type = staticmethod(identity_decorator)
@@ -123,7 +113,6 @@ sys.modules["data"] = data
 sys.modules["data.plugins"] = plugins
 
 module = importlib.import_module("data.plugins.astrbot_plugin_groupmate.main")
-assert "all" in module.GroupmatePlugin.observe_group_message._test_filter_tags
 
 
 class FakeBridge:

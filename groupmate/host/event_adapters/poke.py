@@ -67,6 +67,20 @@ class PokeEventAdapter(HostEventAdapter):
 
     @staticmethod
     def _is_aiocqhttp(event: Any) -> bool:
+        # AstrBot umo is platform_id:message_type:session_id (e.g. "default:...")
+        # Prefer the adapter type name over the configured platform id.
+        getter = getattr(event, "get_platform_name", None)
+        if callable(getter):
+            try:
+                if str(getter() or "").strip().casefold() == "aiocqhttp":
+                    return True
+            except Exception:
+                pass
+        platform_meta = getattr(event, "platform_meta", None)
+        if platform_meta is not None:
+            name = str(getattr(platform_meta, "name", "") or "").strip().casefold()
+            if name == "aiocqhttp":
+                return True
         origin = str(getattr(event, "unified_msg_origin", "") or "")
         platform, _, _ = origin.partition(":")
         return platform.strip().casefold() == "aiocqhttp"
@@ -82,10 +96,10 @@ class PokeEventAdapter(HostEventAdapter):
                 component.__class__.__name__.lower() != "poke"
             ):
                 continue
-            return True, cls._component_target(component)
+            return True, cls._target_from_component(component)
 
-        raw = cls._as_mapping(getattr(message_obj, "raw_message", None))
-        if raw is None:
+        raw = getattr(message_obj, "raw_message", None)
+        if not isinstance(raw, dict):
             return False, ""
         for segment in raw.get("message", ()) or ():
             if not isinstance(segment, dict):
@@ -95,67 +109,40 @@ class PokeEventAdapter(HostEventAdapter):
             data = segment.get("data") or {}
             if not isinstance(data, dict):
                 return True, ""
-            # Notice-style targets use target_id/qq; AstrBot notice→Poke
-            # stores the user target in id. Send-format poke faces also use
-            # id, but those are not notice events with sub_type=poke.
-            target = data.get("target_id", data.get("qq", data.get("id", "")))
-            return True, str(target or "").strip()
+            return True, cls._target_from_mapping(data)
         if str(raw.get("sub_type", "") or "").lower() == "poke":
-            return True, str(raw.get("target_id", "") or "").strip()
+            return True, cls._normalize_target(raw.get("target_id"))
         return False, ""
 
     @classmethod
-    def _component_target(cls, component: Any) -> str:
-        """Resolve poke target from AstrBot Poke component fields.
-
-        Current AstrBot builds notice pokes as ``Poke(id=target_id)`` and
-        exposes ``target_id()``. Older builds used ``qq``. Never stringify a
-        bound method — that previously caused false ``target_not_bot``.
-        """
-        method = getattr(component, "target_id", None)
-        if callable(method):
-            try:
-                value = method()
-            except Exception:
-                value = None
-            text = cls._normalize_target(value)
-            if text:
-                return text
-        for attr in ("qq", "id"):
-            value = getattr(component, attr, None)
-            if callable(value):
+    def _target_from_component(cls, component: Any) -> str:
+        for attr in ("target_id", "id", "qq"):
+            if not hasattr(component, attr):
                 continue
-            text = cls._normalize_target(value)
-            if text:
-                return text
+            target = cls._normalize_target(getattr(component, attr, None))
+            if target:
+                return target
+        return ""
+
+    @classmethod
+    def _target_from_mapping(cls, data: dict) -> str:
+        for key in ("target_id", "id", "qq"):
+            target = cls._normalize_target(data.get(key))
+            if target:
+                return target
         return ""
 
     @staticmethod
     def _normalize_target(value: Any) -> str:
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                return ""
         text = str(value or "").strip()
-        if not text or text == "0":
+        if text in ("", "0", "None"):
             return ""
         return text
-
-    @staticmethod
-    def _as_mapping(value: Any):
-        if value is None or isinstance(value, (str, bytes, list, tuple)):
-            return None
-        if isinstance(value, dict):
-            return value
-        getter = getattr(value, "get", None)
-        if not callable(getter):
-            return None
-        try:
-            return {
-                "message": getter("message", ()),
-                "sub_type": getter("sub_type", ""),
-                "target_id": getter("target_id", ""),
-                "message_id": getter("message_id", getter("id", "")),
-                "time": getter("time", getter("timestamp", 0)),
-            }
-        except Exception:
-            return None
 
     @staticmethod
     def _identifier(event: Any, method_name: str) -> str:

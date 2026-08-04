@@ -11,11 +11,6 @@ from .event_adapters import (
 )
 from .event_gate import HostEventDisposition, HostEventGate
 
-try:
-    from astrbot.api import logger as _host_logger
-except Exception:  # pragma: no cover - offline tests
-    _host_logger = None
-
 
 class AstrBotEventIngress:
     def __init__(
@@ -37,16 +32,8 @@ class AstrBotEventIngress:
             return disposition
         adapted = self.event_adapters.adapt(event)
         if adapted.status is HostEventAdapterStatus.BYPASSED:
-            self._debug(
-                "host interaction bypassed: {}".format(adapted.reason_code)
-            )
             return HostEventDisposition.HOST_INTERACTION_BYPASS
         if adapted.status is HostEventAdapterStatus.ADMITTED:
-            self._debug(
-                "host interaction admitted: {}".format(
-                    (adapted.message.metadata or {}).get("interaction_kind", "")
-                )
-            )
             await self.bridge.handle_adapted_event(event, adapted.message)
             return HostEventDisposition.GROUPMATE_INTERACTION
         owner = self.bridge.apply_owner_to_event(event)
@@ -66,12 +53,3 @@ class AstrBotEventIngress:
             return disposition
         await self.bridge.enrich_request(event, req)
         return disposition
-
-    @staticmethod
-    def _debug(message: str) -> None:
-        if _host_logger is None:
-            return
-        try:
-            _host_logger.debug("[Groupmate] {}".format(message))
-        except Exception:
-            return

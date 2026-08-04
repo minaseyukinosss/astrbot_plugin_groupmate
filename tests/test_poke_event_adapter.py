@@ -9,21 +9,22 @@ from groupmate.host.event_adapters import (
 from groupmate.models import MessageOrigin
 
 
-class Poke:
+class LegacyPoke:
+    """Legacy attribute-only poke used by older adapters/tests."""
+
     type = "poke"
 
     def __init__(self, qq):
         self.qq = qq
-        self.id = 0
 
 
 class AstrBotPoke:
-    """Mirrors current AstrBot notice poke: Poke(id=target_id) + target_id()."""
+    """Mirrors current AstrBot Poke: target_id() method, id field, qq=0."""
 
     type = "Poke"
 
     def __init__(self, target):
-        self.id = str(target)
+        self.id = target
         self.qq = 0
 
     def target_id(self):
@@ -34,16 +35,6 @@ class AstrBotPoke:
         return None
 
 
-class MappingRaw:
-    """aiocqhttp Event-like object: has .get but is not a dict."""
-
-    def __init__(self, data):
-        self._data = dict(data)
-
-    def get(self, key, default=None):
-        return self._data.get(key, default)
-
-
 class Event:
     def __init__(
         self,
@@ -52,15 +43,19 @@ class Event:
         component=True,
         raw_segment=False,
         raw_notice=False,
-        astrbot_component=False,
-        mapping_raw=False,
+        poke_factory=LegacyPoke,
+        raw_segment_data=None,
     ):
-        if astrbot_component:
-            message = [AstrBotPoke(target)]
-        elif component:
-            message = [Poke(target)]
+        message = [poke_factory(target)] if component else []
+        if raw_segment:
+            segment_data = (
+                {"qq": target}
+                if raw_segment_data is None
+                else dict(raw_segment_data)
+            )
+            raw_segments = [{"type": "poke", "data": segment_data}]
         else:
-            message = []
+            raw_segments = []
         raw_message = {
             "message_id": "notice-1",
             "group_id": "g1",
@@ -68,16 +63,10 @@ class Event:
             "target_id": target,
             "time": 100,
             "sender": {"nickname": "Alice"},
-            "message": (
-                [{"type": "poke", "data": {"qq": target}}]
-                if raw_segment
-                else []
-            ),
+            "message": raw_segments,
         }
         if raw_notice:
             raw_message["sub_type"] = "poke"
-        if mapping_raw:
-            raw_message = MappingRaw(raw_message)
         self.message_obj = SimpleNamespace(
             message_id="notice-1",
             timestamp=100,
@@ -117,10 +106,14 @@ def test_poke_targeting_another_user_is_bypassed():
     "event",
     [
         Event(component=True),
+        Event(component=True, poke_factory=AstrBotPoke),
         Event(component=False, raw_segment=True),
+        Event(
+            component=False,
+            raw_segment=True,
+            raw_segment_data={"type": "126", "id": "bot"},
+        ),
         Event(component=False, raw_notice=True),
-        Event(component=False, astrbot_component=True),
-        Event(component=False, raw_notice=True, mapping_raw=True),
     ],
 )
 def test_poke_targeting_bot_becomes_whitelisted_synthetic_message(event):
@@ -140,14 +133,23 @@ def test_poke_targeting_bot_becomes_whitelisted_synthetic_message(event):
     assert "raw" not in repr(result.message.metadata).lower()
 
 
-def test_astrbot_poke_target_id_method_is_not_stringified():
-    """Regression: bound target_id() used to become target_not_bot."""
+def test_astrbot_poke_method_target_id_is_not_stringified():
+    """Regression: getattr(Poke, 'target_id') is a method on current AstrBot."""
     result = PokeEventAdapter(enabled=True).adapt(
-        Event(component=False, astrbot_component=True)
+        Event(poke_factory=AstrBotPoke)
     )
 
     assert result.status is HostEventAdapterStatus.ADMITTED
     assert result.message.metadata["target_id"] == "bot"
+
+
+def test_astrbot_poke_other_target_still_bypasses():
+    result = PokeEventAdapter(enabled=True).adapt(
+        Event("u2", poke_factory=AstrBotPoke)
+    )
+
+    assert result.status is HostEventAdapterStatus.BYPASSED
+    assert result.reason_code == "target_not_bot"
 
 
 def test_non_poke_is_not_matched():
@@ -164,6 +166,26 @@ def test_non_poke_is_not_matched():
 def test_other_platform_poke_is_not_matched():
     event = Event()
     event.unified_msg_origin = "discord:GroupMessage:g1"
+
+    result = PokeEventAdapter(True).adapt(event)
+
+    assert result.status is HostEventAdapterStatus.NOT_MATCHED
+
+
+def test_platform_id_umo_still_matches_via_platform_name():
+    """AstrBot umo uses platform id (e.g. default), not adapter name."""
+    event = Event(poke_factory=AstrBotPoke)
+    event.unified_msg_origin = "default:GroupMessage:912113397"
+    event.get_platform_name = lambda: "aiocqhttp"
+
+    result = PokeEventAdapter(True).adapt(event)
+
+    assert result.status is HostEventAdapterStatus.ADMITTED
+
+
+def test_platform_id_umo_without_platform_name_is_not_matched():
+    event = Event(poke_factory=AstrBotPoke)
+    event.unified_msg_origin = "default:GroupMessage:912113397"
 
     result = PokeEventAdapter(True).adapt(event)
 

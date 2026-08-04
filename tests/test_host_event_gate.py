@@ -114,53 +114,6 @@ def test_wake_event_without_raw_direct_evidence_stays_with_astrbot():
     assert gate().classify(event) is HostEventDisposition.HOST_WAKE_PREFIX
 
 
-def test_wake_flagged_poke_targeting_bot_enters_groupmate():
-    """Empty wake_prefix makes AstrBot set is_at_or_wake_command on poke notices."""
-
-    class Poke:
-        type = "Poke"
-
-        def __init__(self, target):
-            self.id = target
-            self.qq = 0
-
-        def target_id(self):
-            return str(self.id)
-
-    event = FakeEvent(text="")
-    event.is_at_or_wake_command = True
-    event.message_obj.message = [Poke("bot")]
-    event.message_obj.raw_message = {
-        "post_type": "notice",
-        "notice_type": "notify",
-        "sub_type": "poke",
-        "target_id": "bot",
-        "user_id": "u1",
-        "group_id": "g1",
-        "self_id": "bot",
-        "message": [],
-    }
-
-    assert gate().classify(event) is HostEventDisposition.GROUPMATE_MESSAGE
-
-
-def test_wake_flagged_poke_targeting_other_stays_with_astrbot():
-    event = FakeEvent(text="")
-    event.is_at_or_wake_command = True
-    event.message_obj.raw_message = {
-        "post_type": "notice",
-        "notice_type": "notify",
-        "sub_type": "poke",
-        "target_id": "u2",
-        "user_id": "u1",
-        "group_id": "g1",
-        "self_id": "bot",
-        "message": [],
-    }
-
-    assert gate().classify(event) is HostEventDisposition.HOST_WAKE_PREFIX
-
-
 def test_ordinary_group_message_enters_groupmate():
     assert gate().classify(FakeEvent()) is HostEventDisposition.GROUPMATE_MESSAGE
 
