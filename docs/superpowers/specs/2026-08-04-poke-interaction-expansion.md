@@ -44,7 +44,7 @@ Bot 自己的回戳 / 跟风戳必须以短期可读痕迹进入 session / bot_d
 | `poke_session_per_minute` | `6` | 同群每分钟被戳反应上限；`0` 不限制 |
 | `poke_back_probability` | `0.35` | 被戳且允许回戳时的回戳概率 |
 | `poke_bystander_probability` | `0.33` | 跟风触发概率 |
-| `poke_bystander_cooldown_seconds` | `10` | 同群跟风冷却 |
+| `poke_bystander_cooldown_seconds` | `20` | 同群跟风冷却 |
 | `poke_bystander_target` | `victim` | `victim` / `poker` / `random` |
 
 暴戳复用并特化 `direct_pressure_*`（HOST_INTERACTION 计入）；NUDGE/PESTER 改嫌弃话术，AFTER_BOUNDARY / 敌对 → `BOUNDARY` 或沉默。

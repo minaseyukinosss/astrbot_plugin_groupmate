@@ -51,7 +51,7 @@ class InteractionPolicy:
     poke_session_per_minute: int = 6
     poke_back_probability: float = 0.35
     poke_bystander_probability: float = 0.33
-    poke_bystander_cooldown_seconds: int = 10
+    poke_bystander_cooldown_seconds: int = 20
     poke_bystander_target: str = "victim"
 
 
