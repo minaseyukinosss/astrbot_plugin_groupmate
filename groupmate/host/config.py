@@ -109,7 +109,7 @@ class AstrBotConfigParser:
             ).strip(),
             vision_enabled=_boolean(provider_group.get("vision_enabled", True), True),
             vision_provider=str(provider_group.get("vision_provider", "") or "").strip(),
-            poke_enabled=_boolean(
+            poke_enabled=_strict_boolean(
                 interaction_group.get("poke_enabled", False),
                 False,
             ),
@@ -155,6 +155,10 @@ def _boolean(value: Any, default: bool) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+def _strict_boolean(value: Any, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
 
 
 def _parse_digit_tuple(raw: Any, *, path: str) -> Tuple[str, ...]:

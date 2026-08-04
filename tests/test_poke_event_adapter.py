@@ -47,6 +47,7 @@ class Event:
             message=message,
             raw_message=raw_message,
         )
+        self.unified_msg_origin = "aiocqhttp:GroupMessage:g1"
 
     def get_group_id(self):
         return "g1"
@@ -107,6 +108,15 @@ def test_non_poke_is_not_matched():
     ]
 
     result = PokeEventAdapter(True).adapt(ordinary)
+
+    assert result.status is HostEventAdapterStatus.NOT_MATCHED
+
+
+def test_other_platform_poke_is_not_matched():
+    event = Event()
+    event.unified_msg_origin = "discord:GroupMessage:g1"
+
+    result = PokeEventAdapter(True).adapt(event)
 
     assert result.status is HostEventAdapterStatus.NOT_MATCHED
 

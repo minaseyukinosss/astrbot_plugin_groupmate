@@ -410,11 +410,11 @@ Adapter。Phase B 不预先承诺第三方插件兼容。
 
 ## 15. 完成证据
 
-在实现提交 `909a4d8` 基础上执行 Task 7 收口验证：
+在 Phase B 收口提交 `3f2babd` 与集中审查修复基础上执行最终验证：
 
-- Host focused：`96 passed`，其中端到端互动边界新增 `5 passed`；
-- Core focused：`164 passed`；
-- Full pytest：`727 passed in 4.53s`；
+- Host focused：`102 passed`，其中端到端互动边界新增 `5 passed`；
+- Core focused：`165 passed`；
+- Full pytest：`734 passed in 4.17s`；
 - deterministic evaluation：`120/120`，`pass_rate=1.0`，`errors=0`，
   guard、privacy、trigger 检查均无回退；
 - host pause 与 Phase 2 projection 精确回归：`2 passed`；pause 向 Actor 传递
@@ -424,6 +424,8 @@ Adapter。Phase B 不预先承诺第三方插件兼容。
   合成消息 metadata 仍为白名单字符串字段；
 - `PokeEventAdapter` 的生产实例化仅位于 `main.py`，核心显式 interaction 语义只出现在
   计划的 host、domain、Actor、workflow、memory/projection 边界；
+- 集中审查补齐重复 synthetic event 幂等、默认关闭开关的严格布尔解析，以及 Adapter
+  自身的 AIOCQHTTP 平台校验；
 - `git diff --check` 退出码为 0，无输出。
 
 Phase A 与 Phase B 均已实施。具体第三方插件仍需在 Phase C 暴露稳定、无发送副作用的

@@ -21,6 +21,8 @@ class PokeEventAdapter(HostEventAdapter):
         super().__init__()
 
     def adapt(self, event: Any) -> HostEventAdapterResult:
+        if not self._is_aiocqhttp(event):
+            return HostEventAdapterResult.not_matched()
         matched, target_id = self._poke_target(event)
         if not matched:
             return HostEventAdapterResult.not_matched()
@@ -62,6 +64,12 @@ class PokeEventAdapter(HostEventAdapter):
                 },
             )
         )
+
+    @staticmethod
+    def _is_aiocqhttp(event: Any) -> bool:
+        origin = str(getattr(event, "unified_msg_origin", "") or "")
+        platform, _, _ = origin.partition(":")
+        return platform.strip().casefold() == "aiocqhttp"
 
     @classmethod
     def _poke_target(cls, event: Any) -> Tuple[bool, str]:

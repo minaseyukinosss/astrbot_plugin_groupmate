@@ -1323,12 +1323,12 @@ git commit -m "docs: close host event adapter phase b"
 
 ## Completion Evidence
 
-Verified on 2026-08-04 from integrated implementation commit `909a4d8` plus the Task 7
-end-to-end regression file:
+Verified on 2026-08-04 from Phase B closure commit `3f2babd` plus the centralized
+review fixes:
 
-- focused host regression: `96 passed in 0.73s`;
-- focused core regression: `164 passed in 1.68s`;
-- full pytest: `727 passed in 4.53s`;
+- focused host regression: `102 passed in 0.59s`;
+- focused core regression: `165 passed in 1.59s`;
+- full pytest: `734 passed in 4.17s`;
 - deterministic evaluation: `120/120` passed, `pass_rate=1.0`, `errors=0`,
   `sent_runs=96`, `silence_rate=0.2`; all guard, privacy, trigger, visible-ID, length,
   outcome and required/forbidden-pattern checks passed;
@@ -1341,6 +1341,9 @@ end-to-end regression file:
 - explicit `HOST_INTERACTION` / `DIRECT_INTERACTION` / `SYSTEM_SYNTHETIC` usage was
   confined to the planned host, domain, Actor, workflow, memory/projection boundaries
   and tests; the production `PokeEventAdapter` instance is assembled only in `main.py`;
+- centralized review fixed duplicate synthetic-event evaluation, made the default-off
+  poke switch reject non-boolean values, and made `PokeEventAdapter` reject non-AIOCQHTTP
+  origins at its own boundary;
 - `git diff --check` exited 0 with no output;
 - `eval/results/phase-b.json` was generated and is ignored by the repository as designed.
 

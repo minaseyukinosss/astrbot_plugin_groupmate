@@ -42,6 +42,18 @@ def test_poke_enabled_is_nested_and_explicit():
     assert settings.diagnostics.unknown_keys == ()
 
 
+@pytest.mark.parametrize(
+    "value",
+    ("flase", "true", {"enabled": True}, [True], 1),
+)
+def test_invalid_poke_enabled_values_fail_closed(value):
+    settings = AstrBotConfigParser().parse(
+        {"interaction_group": {"poke_enabled": value}}
+    )
+
+    assert settings.poke_enabled is False
+
+
 def test_removed_configuration_and_fallbacks_are_absent_from_production():
     removed = (
         "PluginSettings",

@@ -218,7 +218,6 @@ class GroupActor:
                 TriggerKind.ALIAS_DIRECT,
                 TriggerKind.COPIED_AT,
                 TriggerKind.CONTINUATION,
-                TriggerKind.HOST_INTERACTION,
             ):
                 return
 

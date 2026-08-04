@@ -219,6 +219,24 @@ def test_host_interaction_is_immediate_preserves_origin_and_opens_no_continuatio
     assert grants == []
 
 
+def test_duplicate_host_interaction_is_not_evaluated_twice():
+    async def scenario():
+        workflow = RecordingWorkflow()
+        actor = actor_for(workflow)
+        message = poke_message()
+        await actor.start()
+        await actor.submit(message)
+        await actor.drain()
+        await actor.submit(message)
+        await actor.drain()
+        await actor.close()
+        return workflow
+
+    workflow = asyncio.run(scenario())
+
+    assert len(workflow.evaluations) == 1
+
+
 def test_followup_after_direct_wake_uses_continuation(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()
