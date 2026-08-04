@@ -94,5 +94,18 @@
         "hint": "留空时复用实际使用的文本生成模型；不可用时跳过图片理解并继续文本处理。"
       }
     }
+  },
+  "interaction_group": {
+    "description": "宿主互动",
+    "type": "object",
+    "hint": "宿主特殊互动默认关闭，开启后 Groupmate 成为对应互动的预期最终回复所有者。",
+    "items": {
+      "poke_enabled": {
+        "description": "戳一戳互动",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后由 Groupmate 回复戳 Bot 事件；请停用其他直接回复戳一戳的插件。"
+      }
+    }
   }
 }

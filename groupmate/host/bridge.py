@@ -84,6 +84,20 @@ class AstrBotBridge:
             self._message_from_event(event), schedule=not self.paused
         )
 
+    async def handle_adapted_event(
+        self,
+        event: Any,
+        message: ChatMessage,
+    ) -> bool:
+        if not isinstance(message, ChatMessage):
+            raise TypeError("message must be a ChatMessage")
+        actor = await self._prepare_actor(event)
+        if actor is None:
+            return False
+        self._mark_groupmate_owner(event)
+        await actor.submit(message, schedule=not self.paused)
+        return True
+
     async def observe_only(self, event: Any) -> None:
         """Ingest the message into the group window without generating a reply."""
         actor = await self._prepare_actor(event)
@@ -156,11 +170,15 @@ class AstrBotBridge:
     def apply_owner_to_event(self, event: Any) -> TurnOwner:
         owner = self.owner_for_event(event)
         if owner is TurnOwner.GROUPMATE:
-            if hasattr(event, "should_call_llm"):
-                event.should_call_llm(True)
-            else:
-                event.call_llm = True
+            self._mark_groupmate_owner(event)
         return owner
+
+    @staticmethod
+    def _mark_groupmate_owner(event: Any) -> None:
+        if hasattr(event, "should_call_llm"):
+            event.should_call_llm(True)
+        else:
+            event.call_llm = True
 
     async def _prepare_actor(self, event: Any):
         group_id = str(event.get_group_id())
@@ -325,6 +343,9 @@ class AstrBotBridge:
                     if self.settings.vision_provider
                     else "reuse_text"
                 )
+            ),
+            "poke_adapter": (
+                "enabled" if self.settings.poke_enabled else "disabled"
             ),
             "database_schema": SCHEMA_VERSION,
             "config_health": (

@@ -12,6 +12,8 @@ class HostEventDisposition(StringEnum):
     HOST_WAKE_PREFIX = "host_wake_prefix"
     GROUPMATE_MESSAGE = "groupmate_message"
     IGNORE = "ignore"
+    HOST_INTERACTION_BYPASS = "host_interaction_bypass"
+    GROUPMATE_INTERACTION = "groupmate_interaction"
 
 
 class HostEventGate:

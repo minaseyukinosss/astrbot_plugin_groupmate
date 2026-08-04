@@ -14,7 +14,7 @@ from groupmate.host.config import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_deployment_settings_contain_only_six_public_values():
+def test_deployment_settings_contain_only_seven_public_values():
     settings = AstrBotConfigParser().parse({})
 
     assert {item.name for item in fields(DeploymentSettings)} == {
@@ -24,11 +24,22 @@ def test_deployment_settings_contain_only_six_public_values():
         "generation_provider",
         "vision_enabled",
         "vision_provider",
+        "poke_enabled",
         "diagnostics",
     }
     assert settings.enabled_groups == ()
     assert settings.aliases_for("aemeath") == ("爱弥斯", "小爱", "飞行雪绒")
     assert settings.relationships_for("aemeath") == ()
+    assert settings.poke_enabled is False
+
+
+def test_poke_enabled_is_nested_and_explicit():
+    settings = AstrBotConfigParser().parse(
+        {"interaction_group": {"poke_enabled": True}}
+    )
+
+    assert settings.poke_enabled is True
+    assert settings.diagnostics.unknown_keys == ()
 
 
 def test_removed_configuration_and_fallbacks_are_absent_from_production():
@@ -163,7 +174,7 @@ def test_unknown_top_level_keys_are_diagnostics_only():
     assert settings.diagnostics.unknown_keys == ("random_key", "unknown_group")
 
 
-def test_schema_exposes_exactly_six_settings():
+def test_schema_exposes_exactly_seven_settings():
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     items = {
         name
@@ -178,5 +189,10 @@ def test_schema_exposes_exactly_six_settings():
         "generation_provider",
         "vision_enabled",
         "vision_provider",
+        "poke_enabled",
     }
     assert schema["scope_group"]["items"]["enabled_groups"]["default"] == []
+    assert (
+        schema["interaction_group"]["items"]["poke_enabled"]["default"]
+        is False
+    )

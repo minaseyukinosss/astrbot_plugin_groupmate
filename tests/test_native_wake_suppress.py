@@ -10,7 +10,11 @@ from groupmate.host import AstrBotBridge
 from groupmate.host.bridge import TurnOwner
 from groupmate.host.config import AstrBotConfigParser
 from groupmate.core.response_act import TaskResolutionStatus
-from groupmate.models import ChatMessage, InteractionScene
+from groupmate.models import (
+    ChatMessage,
+    InteractionScene,
+    MessageOrigin,
+)
 
 
 class _FakeEvent:
@@ -86,6 +90,9 @@ def _bridge(tmp_path: Path, **settings) -> AstrBotBridge:
             "vision_enabled": settings.pop("vision_enabled", True),
             "vision_provider": settings.pop("vision_provider", ""),
         },
+        "interaction_group": {
+            "poke_enabled": settings.pop("poke_enabled", False),
+        },
     }
     assert not settings
     return AstrBotBridge(
@@ -93,6 +100,85 @@ def _bridge(tmp_path: Path, **settings) -> AstrBotBridge:
         settings=AstrBotConfigParser().parse(raw),
         data_dir=tmp_path,
     )
+
+
+def _synthetic_poke():
+    return ChatMessage(
+        message_id="poke-1",
+        group_id="912113397",
+        sender_id="10001",
+        sender_name="恺撒",
+        text="",
+        timestamp=1_700_000_000,
+        segment_types=("poke",),
+        origin=MessageOrigin.SYSTEM_SYNTHETIC,
+        metadata={
+            "interaction_kind": "poke",
+            "target_id": "20002",
+            "source_adapter": "aiocqhttp_poke",
+        },
+    )
+
+
+def test_adapted_event_marks_owner_and_submits_exact_message():
+    async def scenario():
+        bridge = object.__new__(AstrBotBridge)
+        bridge._paused = False
+        actor = SimpleNamespace(calls=[])
+
+        async def submit(message, schedule):
+            actor.calls.append((message, schedule))
+
+        async def prepare(event):
+            del event
+            actor.submit = submit
+            return actor
+
+        bridge._prepare_actor = prepare
+        event = _FakeEvent(at_bot=False)
+        message = _synthetic_poke()
+        accepted = await bridge.handle_adapted_event(event, message)
+        return event, message, actor.calls, accepted
+
+    event, message, calls, accepted = asyncio.run(scenario())
+
+    assert accepted is True
+    assert event.call_llm is True
+    assert calls == [(message, True)]
+    assert calls[0][0] is message
+
+
+def test_adapted_event_paused_submits_without_schedule():
+    async def scenario():
+        bridge = object.__new__(AstrBotBridge)
+        bridge._paused = True
+        actor = SimpleNamespace(calls=[])
+
+        async def submit(message, schedule):
+            actor.calls.append((message, schedule))
+
+        async def prepare(event):
+            del event
+            actor.submit = submit
+            return actor
+
+        bridge._prepare_actor = prepare
+        accepted = await bridge.handle_adapted_event(
+            _FakeEvent(at_bot=False),
+            _synthetic_poke(),
+        )
+        return actor.calls, accepted
+
+    calls, accepted = asyncio.run(scenario())
+
+    assert accepted is True
+    assert calls == [(_synthetic_poke(), False)]
+
+
+def test_status_reports_poke_adapter_state(tmp_path):
+    bridge = _bridge(tmp_path, poke_enabled=True)
+
+    assert bridge.status()["poke_adapter"] == "enabled"
 
 
 def test_should_take_native_wake_on_at(tmp_path):
