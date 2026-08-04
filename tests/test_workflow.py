@@ -172,7 +172,9 @@ def poke_message(**overrides):
         origin=MessageOrigin.SYSTEM_SYNTHETIC,
         metadata={
             "interaction_kind": "poke",
+            "poke_role": "direct",
             "target_id": "bot",
+            "poker_id": "u1",
             "source_adapter": "aiocqhttp_poke",
         },
     )
@@ -296,7 +298,7 @@ def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(
     )
 
 
-def test_successful_host_interaction_does_not_append_session_turns(
+def test_successful_host_interaction_records_assistant_action_without_user_poke_turn(
     balanced_policy,
 ):
     workflow = build_workflow(generator=StaticGenerationModel("别戳啦。"))
@@ -308,7 +310,43 @@ def test_successful_host_interaction_does_not_append_session_turns(
     )
 
     assert outcome.sent is True
-    assert workflow.session_for("g1").recent_turns() == ()
+    turns = workflow.session_for("g1").recent_turns()
+    assert len(turns) == 1
+    assert turns[0].role == "assistant"
+    assert turns[0].text == "别戳啦。"
+    assert all(turn.role != "user" for turn in turns)
+
+
+def test_bystander_poke_only_records_session_action(balanced_policy):
+    from groupmate.engine.participation import ParticipationDecisionEngine
+    from groupmate.engine.poke_throttle import PokeThrottle
+
+    workflow = build_workflow(
+        generator=StaticGenerationModel("不应调用"),
+        participation_engine=ParticipationDecisionEngine(
+            poke_throttle=PokeThrottle(rng=lambda: 0.0),
+        ),
+    )
+    workflow.poke_back_enabled = True
+    message = poke_message(
+        metadata={
+            "interaction_kind": "poke",
+            "poke_role": "bystander",
+            "target_id": "u2",
+            "poker_id": "u1",
+            "source_adapter": "aiocqhttp_poke",
+        }
+    )
+    topic = TopicSnapshot("bystander-topic", "g1", (message,), 100, 100)
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.HOST_INTERACTION, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert outcome.text == "戳了戳 u2"
+    turns = workflow.session_for("g1").recent_turns()
+    assert [turn.text for turn in turns] == ["戳了戳 u2"]
 
 
 def test_hostile_repeated_host_interaction_keeps_boundary_contribution(
@@ -346,7 +384,7 @@ def test_hostile_repeated_host_interaction_keeps_boundary_contribution(
 
     plan = generator.plans[-1]
     assert plan.response_act.act is response_act_module.ResponseAct.BOUNDARY
-    assert plan.contribution == "短句守住边界，不延长空 @"
+    assert plan.contribution == "对方戳得太烦了，短句划界，不延长"
 
 
 def test_workflow_has_no_keyword_social_classifier_dependency():

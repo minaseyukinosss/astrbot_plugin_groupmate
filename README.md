@@ -61,7 +61,8 @@ astrbot_plugin_groupmate/
 | `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
 | `provider_group.vision_enabled` | 允许按需看图 | `true` |
 | `provider_group.vision_provider` | 看图模型；空=复用最终文本模型 | 空 |
-| `interaction_group.poke_enabled` | 接管目标为 Bot 的 AIOCQHTTP 戳一戳，并由 Groupmate 生成最终回复 | `false` |
+| `interaction_group.poke_enabled` | 接管 AIOCQHTTP 戳一戳（戳 Bot 必回应路径；他人互戳可跟风观察） | `false` |
+| `interaction_group.poke_back_enabled` | 允许回戳 / 跟风戳出站；关闭时仅可能文字回应 | `false` |
 
 当前只注册 `aemeath` 人格，管理界面不提供未实现的人格切换入口。称呼和初始关系必须放在 `aemeath` 键下；旧扁平配置和未知字段不会参与运行时，并会在状态页的配置健康信息中报告。
 
@@ -70,6 +71,7 @@ astrbot_plugin_groupmate/
 启用 `interaction_group.poke_enabled` 表示管理员选择 Groupmate 作为戳一戳的预期最终
 回复所有者。若另一个插件也会直接回复同一戳一戳，必须关闭其回复处理器，或将其切换为
 不发送消息的 service-only 模式；Groupmate 不自动探测或关闭第三方插件。
+开启 `poke_back_enabled` 后才会对平台发出戳一戳（回戳与跟风）；冷却、概率沉默与暴戳语气由代码内置策略控制。
 
 ## 状态归属与数据库升级
 
@@ -92,7 +94,7 @@ astrbot_plugin_groupmate/
 3. **软提及 / 候选**：`ParticipationDecisionEngine（统一参与决策引擎）`按场景判断；路过提名、复读和无参与动机消息直接沉默，明确群体求助才允许短答
 4. **续聊**：窗口内同人；Session 注入近轮对话
 5. **AstrBot 指令**：已注册命令和使用宿主唤醒前缀的输入在进入 Groupmate Actor 前旁路；不写入话题、记忆或 outbox，也不阻止其他插件处理
-6. **宿主互动**：配置开启后，目标为 Bot 的 AIOCQHTTP 戳一戳以 `SYSTEM_SYNTHETIC` / `HOST_INTERACTION` 进入同一 Actor、Persona、Firewall、Delivery 和 Outbox 链路；不引用伪造文本，不创建长期人物记忆或续聊授权
+6. **宿主互动**：配置开启后，AIOCQHTTP 戳一戳以 `SYSTEM_SYNTHETIC` / `HOST_INTERACTION` 进入同一 Actor、Persona、Firewall、Delivery 和 Outbox 链路；戳 Bot 走冷却 / 概率沉默 / 暴戳压力；他人互戳可按策略跟风；`poke_back_enabled` 时才出站回戳。不引用伪造文本，不创建长期人物记忆或续聊授权
 7. **联网例外**：交回 AstrBot Agent
 
 ## 管理命令

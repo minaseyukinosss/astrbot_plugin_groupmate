@@ -1,7 +1,7 @@
 import pytest
 
 from groupmate.models import ChatMessage, TopicSnapshot
-from groupmate.policies import BehaviorPolicy, ConversationPolicy, ReplyPolicy, ResourcePolicy
+from groupmate.policies import BehaviorPolicy, ConversationPolicy, InteractionPolicy, ReplyPolicy, ResourcePolicy
 
 
 @pytest.fixture
@@ -30,6 +30,13 @@ def balanced_policy():
         ),
         reply=ReplyPolicy(humanize_delay_enabled=False),
         resources=ResourcePolicy(open_send_cooldown_seconds=0),
+        interaction=InteractionPolicy(
+            poke_react_probability=1.0,
+            poke_bystander_probability=1.0,
+            poke_back_probability=1.0,
+            poke_cooldown_seconds=0,
+            poke_bystander_cooldown_seconds=0,
+        ),
     )
 
 

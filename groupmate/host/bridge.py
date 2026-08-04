@@ -347,6 +347,9 @@ class AstrBotBridge:
             "poke_adapter": (
                 "enabled" if self.settings.poke_enabled else "disabled"
             ),
+            "poke_back": (
+                "enabled" if self.settings.poke_back_enabled else "disabled"
+            ),
             "database_schema": SCHEMA_VERSION,
             "config_health": (
                 "warning"
@@ -417,6 +420,7 @@ class AstrBotBridge:
             persona_context=persona_context,
             behavior=self.behavior,
             vision_enabled=self.settings.vision_enabled,
+            poke_back_enabled=self.settings.poke_back_enabled,
             output_guard=AemeathOutputFirewall(),
             rate_limiter=SlidingWindowRateLimiter(
                 self.behavior.resources.open_send_hourly_limit,

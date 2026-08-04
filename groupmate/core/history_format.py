@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Optional, Sequence, Tuple
 
-from ..models import ChatMessage, MessageOrigin, RelationshipState
+from ..models import ChatMessage, MessageOrigin, OutboundKind, OutboundSegment, RelationshipState
 from ..social.affinity import AffinityBand, ResponsePosture, snapshot_for_relationship
 from .relationships import resolve_speaker
 
@@ -14,13 +14,50 @@ TOPIC_IDLE_GAP_SECONDS = 120
 MERGE_WINDOW_SECONDS = 8
 
 
-def _message_content(message: ChatMessage) -> str:
+def format_outbound_poke_note(target_user_id: str) -> str:
+    """Short first-person-visible note that the character poked someone."""
+    target = str(target_user_id or "").strip() or "某人"
+    return "戳了戳 {}".format(target)
+
+
+def compose_bot_delivery_text(
+    outbound: Sequence[OutboundSegment],
+    spoken_text: str = "",
+) -> str:
+    """Merge outbound poke actions with spoken text for short-term recall."""
+    parts = []
+    for item in tuple(outbound or ()):
+        if not isinstance(item, OutboundSegment):
+            continue
+        if item.kind is OutboundKind.POKE and item.target_user_id:
+            parts.append(format_outbound_poke_note(item.target_user_id))
+    spoken = str(spoken_text or "").strip()
+    if spoken:
+        parts.append(spoken)
+    return " / ".join(parts)
+
+
+def _message_content(message: ChatMessage, *, character_name: str = "角色") -> str:
     if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
-        labels = {"poke": "[互动：戳一戳]"}
-        return labels.get(
-            str(message.metadata.get("interaction_kind", "") or ""),
-            "[互动]",
-        )
+        kind = str(message.metadata.get("interaction_kind", "") or "")
+        if kind == "poke":
+            speaker = (message.sender_name or message.sender_id or "群友").strip() or "群友"
+            role = str(message.metadata.get("poke_role", "") or "").lower()
+            if role == "bystander":
+                target = str(message.metadata.get("target_id", "") or "").strip()
+                target_label = target or "某人"
+                return "{} 戳了戳 {}".format(speaker, target_label)
+            character = (character_name or "角色").strip() or "角色"
+            return "{} 戳了戳 {}".format(speaker, character)
+        return "[互动]"
+    if (
+        message.is_bot
+        and "poke" in tuple(message.segment_types or ())
+        and not (message.text or "").strip()
+    ):
+        target = str(message.metadata.get("poke_target_id", "") or "").strip() or "某人"
+        speaker = (message.sender_name or character_name or "角色").strip() or "角色"
+        return "{} 戳了戳 {}".format(speaker, target)
     content = message.text or "[图片]"
     if message.image_urls and message.text:
         content += " [图片]"
@@ -63,6 +100,7 @@ def format_history_block(
     relationships: dict,
     *,
     merge_window_seconds: int = MERGE_WINDOW_SECONDS,
+    character_name: str = "角色",
 ) -> str:
     """Format active messages; merge same-sender bursts within a short window."""
     if not messages:
@@ -92,7 +130,7 @@ def format_history_block(
         buffer_parts = []
 
     for message in messages:
-        content = _message_content(message)
+        content = _message_content(message, character_name=character_name)
         speaker, relationship, suggested_address = resolve_speaker(
             message.sender_id, message.sender_name, relationships
         )

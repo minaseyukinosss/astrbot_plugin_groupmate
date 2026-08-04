@@ -100,6 +100,8 @@ class HostEventAdapterResult:
             "interaction_kind",
             "source_adapter",
             "target_id",
+            "poke_role",
+            "poker_id",
         }
         if set(metadata) - allowed_keys or any(
             not isinstance(key, str)

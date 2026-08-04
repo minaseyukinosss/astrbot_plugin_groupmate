@@ -195,3 +195,55 @@ def test_composer_has_no_local_reaction_argument():
     from inspect import signature
 
     assert "reaction" not in signature(ResponseComposer.compose).parameters
+
+
+def test_composer_omits_poke_when_back_disabled():
+    draft = ResponseComposer(rng=lambda: 0.0).compose(
+        text="别戳啦。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=False,
+        poke_role="direct",
+        poke_target_user_id="u1",
+        reason_codes=("poke_direct",),
+    )
+
+    assert [item.kind for item in draft.segments] == [OutboundKind.TEXT]
+
+
+def test_composer_can_emit_direct_poke_with_text():
+    from groupmate.policies import InteractionPolicy
+    from groupmate.social.affinity import AffinityBand
+
+    draft = ResponseComposer(rng=lambda: 0.0).compose(
+        text="别戳啦。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=True,
+        poke_role="direct",
+        poke_target_user_id="u1",
+        interaction=InteractionPolicy(poke_back_probability=1.0),
+        affinity_band=AffinityBand.FRIENDLY,
+        reason_codes=("poke_direct",),
+    )
+
+    assert [item.kind for item in draft.segments] == [
+        OutboundKind.POKE,
+        OutboundKind.TEXT,
+    ]
+    assert draft.segments[0].target_user_id == "u1"
+
+
+def test_composer_bystander_prefers_poke_only():
+    draft = ResponseComposer(rng=lambda: 0.0).compose(
+        text="跟风一句。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=True,
+        poke_role="bystander",
+        poke_target_user_id="u2",
+        reason_codes=("poke_bystander",),
+    )
+
+    assert [item.kind for item in draft.segments] == [OutboundKind.POKE]
+    assert draft.segments[0].target_user_id == "u2"

@@ -146,6 +146,10 @@ class StateProjector:
             if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
                 continue
             text = (message.text or "").strip()
+            if not text and "poke" in tuple(message.segment_types or ()):
+                target = str(message.metadata.get("poke_target_id", "") or "").strip()
+                if message.is_bot or message.origin is MessageOrigin.BOT_DELIVERY:
+                    text = "戳了戳 {}".format(target or "某人")
             if not text:
                 continue
             if message.is_bot or message.origin is MessageOrigin.BOT_DELIVERY:

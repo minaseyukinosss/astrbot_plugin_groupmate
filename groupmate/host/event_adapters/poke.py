@@ -36,8 +36,12 @@ class PokeEventAdapter(HostEventAdapter):
         timestamp = self._timestamp(event)
         if not all((group_id, sender_id, bot_id, target_id, timestamp > 0)):
             return HostEventAdapterResult.bypassed("invalid_event")
-        if target_id != bot_id:
-            return HostEventAdapterResult.bypassed("target_not_bot")
+        if target_id == bot_id:
+            poke_role = "direct"
+            metadata_target = bot_id
+        else:
+            poke_role = "bystander"
+            metadata_target = target_id
 
         return HostEventAdapterResult.admitted(
             ChatMessage(
@@ -59,7 +63,9 @@ class PokeEventAdapter(HostEventAdapter):
                 bot_id=bot_id,
                 metadata={
                     "interaction_kind": "poke",
-                    "target_id": bot_id,
+                    "poke_role": poke_role,
+                    "target_id": metadata_target,
+                    "poker_id": sender_id,
                     "source_adapter": "aiocqhttp_poke",
                 },
             )

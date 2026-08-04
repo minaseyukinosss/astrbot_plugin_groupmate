@@ -105,11 +105,21 @@ class DirectAddressPressureTracker:
         ) + (int(now),)
         self._events[key] = timestamps
         count = len(timestamps)
+        if (
+            trigger is TriggerKind.HOST_INTERACTION
+            and count >= self.pester_count + 2
+        ):
+            return DirectAddressPressureState(
+                DirectAddressPressureLevel.AFTER_BOUNDARY,
+                count,
+                ("pressure_after_boundary", "poke_spam"),
+            )
         if count >= self.pester_count:
             return DirectAddressPressureState(
                 DirectAddressPressureLevel.PESTER,
                 count,
-                ("pressure_pester",),
+                ("pressure_pester",)
+                + (("poke_spam",) if trigger is TriggerKind.HOST_INTERACTION else ()),
             )
         if count >= self.nudge_count:
             return DirectAddressPressureState(
@@ -129,7 +139,13 @@ class DirectAddressPressureTracker:
         trigger: TriggerKind,
     ) -> bool:
         if trigger is TriggerKind.HOST_INTERACTION:
-            return True
+            role = str(message.metadata.get("poke_role", "") or "").strip().lower()
+            if role == "bystander":
+                return False
+            return (
+                str(message.metadata.get("interaction_kind", "") or "").lower()
+                == "poke"
+            )
         if trigger is TriggerKind.ALIAS_DIRECT:
             return True
         return bool(

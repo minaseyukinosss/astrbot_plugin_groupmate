@@ -50,6 +50,7 @@ class OutboxStatus(StringEnum):
 class OutboundKind(StringEnum):
     TEXT = "text"
     IMAGE = "image"
+    POKE = "poke"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class OutboundSegment:
     text: str = ""
     media_id: str = ""
     media_ref: str = ""
+    target_user_id: str = ""
 
     def __post_init__(self) -> None:
         kind = self.kind
@@ -66,17 +68,24 @@ class OutboundSegment:
         text = str(self.text or "").strip()
         media_id = str(self.media_id or "").strip()
         media_ref = str(self.media_ref or "").strip()
+        target_user_id = str(self.target_user_id or "").strip()
         if kind is OutboundKind.TEXT:
             if not text:
                 raise ValueError("text outbound segment requires text")
-            if media_id or media_ref:
+            if media_id or media_ref or target_user_id:
                 raise ValueError("text outbound segment cannot contain media")
+        elif kind is OutboundKind.POKE:
+            if not target_user_id:
+                raise ValueError("poke outbound segment requires target_user_id")
+            if text or media_id or media_ref:
+                raise ValueError("poke outbound segment cannot contain text or media")
         elif not media_id or not media_ref:
             raise ValueError("image outbound segment requires media_id and media_ref")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "text", text)
         object.__setattr__(self, "media_id", media_id)
         object.__setattr__(self, "media_ref", media_ref)
+        object.__setattr__(self, "target_user_id", target_user_id)
 
 
 class SendReceiptKind(StringEnum):

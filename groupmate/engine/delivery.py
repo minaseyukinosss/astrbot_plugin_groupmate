@@ -18,6 +18,7 @@ from ..models import (
     Urgency,
     WorkflowOutcome,
 )
+from ..core.history_format import compose_bot_delivery_text
 
 
 @dataclass(frozen=True)
@@ -259,6 +260,8 @@ class DeliveryService:
 
         sent_at = self.clock.now()
         outbound = tuple(plan.outbound or ())
+        spoken_text = text
+        display_text = compose_bot_delivery_text(outbound, spoken_text)
         segment_types = (
             tuple(item.kind.value for item in outbound)
             if outbound
@@ -274,12 +277,25 @@ class DeliveryService:
             for item in outbound
             if item.kind is OutboundKind.IMAGE
         ]
+        poke_targets = [
+            item.target_user_id
+            for item in outbound
+            if item.kind is OutboundKind.POKE and item.target_user_id
+        ]
+        metadata = {
+            "origin": "bot_delivery",
+            "decision_id": plan.decision_id,
+            "delivery_kind": kind,
+            "media_ids": media_ids,
+        }
+        if poke_targets:
+            metadata["poke_target_id"] = poke_targets[0]
         bot_message = ChatMessage(
             message_id="bot-" + plan.decision_id,
             group_id=plan.group_id,
             sender_id="__bot__",
             sender_name=self.character_name,
-            text=text,
+            text=display_text,
             timestamp=sent_at,
             is_bot=True,
             image_urls=image_urls,
@@ -287,19 +303,14 @@ class DeliveryService:
             origin=MessageOrigin.BOT_DELIVERY,
             decision_id=plan.decision_id,
             ingested_at=sent_at,
-            metadata={
-                "origin": "bot_delivery",
-                "decision_id": plan.decision_id,
-                "delivery_kind": kind,
-                "media_ids": media_ids,
-            },
+            metadata=metadata,
         )
         finalized = await self._finalize(
             plan.decision_id, sent_at, bot_message, sent_reason
         )
         if not finalized:
             return WorkflowOutcome(plan.decision_id, False, "finalize_failed")
-        return WorkflowOutcome(plan.decision_id, True, sent_reason, text)
+        return WorkflowOutcome(plan.decision_id, True, sent_reason, display_text)
 
     async def _send(self, plan: DeliveryPlan):
         outbound = plan.outbound or tuple(

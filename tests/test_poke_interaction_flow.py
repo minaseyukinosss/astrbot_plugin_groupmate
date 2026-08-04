@@ -184,28 +184,36 @@ def test_host_command_precedes_poke_adapter_without_event_mutation():
     assert event.stop_calls == 0
 
 
-def test_disabled_or_other_target_poke_bypasses_without_storage():
+def test_disabled_poke_bypasses_without_storage():
     disabled = RecordingPokeEventAdapter(enabled=False)
     disabled_bridge = RecordingBridge()
     disabled_event = Event(poke_target="bot")
-    other = RecordingPokeEventAdapter(enabled=True)
-    other_bridge = RecordingBridge()
-    other_event = Event(poke_target="u2")
 
     disabled_result = asyncio.run(
         ingress(disabled, disabled_bridge).handle_group_message(disabled_event)
     )
+
+    assert disabled_result is HostEventDisposition.HOST_INTERACTION_BYPASS
+    assert disabled_bridge.actor.submissions == []
+    assert disabled_event.call_llm_values == []
+    assert disabled_event.stop_calls == 0
+
+
+def test_other_target_poke_is_admitted_as_bystander_without_stop_event():
+    other = RecordingPokeEventAdapter(enabled=True)
+    other_bridge = RecordingBridge()
+    other_event = Event(poke_target="u2")
+
     other_result = asyncio.run(
         ingress(other, other_bridge).handle_group_message(other_event)
     )
 
-    assert disabled_result is HostEventDisposition.HOST_INTERACTION_BYPASS
-    assert other_result is HostEventDisposition.HOST_INTERACTION_BYPASS
-    assert disabled_bridge.actor.submissions == []
-    assert other_bridge.actor.submissions == []
-    assert disabled_event.call_llm_values == []
-    assert other_event.call_llm_values == []
-    assert disabled_event.stop_calls == 0
+    assert other_result is HostEventDisposition.GROUPMATE_INTERACTION
+    assert len(other_bridge.actor.submissions) == 1
+    message, schedule = other_bridge.actor.submissions[0]
+    assert message.metadata["poke_role"] == "bystander"
+    assert message.metadata["target_id"] == "u2"
+    assert schedule is True
     assert other_event.stop_calls == 0
 
 

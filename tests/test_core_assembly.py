@@ -55,12 +55,62 @@ def poke_message(**overrides):
     return ChatMessage(**values)
 
 
-def test_synthetic_poke_uses_fixed_prompt_label_without_raw_metadata():
-    block = format_history_block((poke_message(),), {})
+def test_synthetic_poke_uses_readable_history_without_raw_metadata():
+    block = format_history_block(
+        (poke_message(),),
+        {},
+        character_name="爱弥斯",
+    )
 
-    assert "[互动：戳一戳]" in block
+    assert "Alice 戳了戳 爱弥斯" in block
     assert "source_adapter" not in block
     assert "target_id" not in block
+
+
+def test_bystander_poke_history_shows_victim_id():
+    block = format_history_block(
+        (
+            poke_message(
+                metadata={
+                    "interaction_kind": "poke",
+                    "poke_role": "bystander",
+                    "target_id": "u9",
+                    "poker_id": "u1",
+                    "source_adapter": "aiocqhttp_poke",
+                }
+            ),
+        ),
+        {},
+        character_name="爱弥斯",
+    )
+
+    assert "Alice 戳了戳 u9" in block
+
+
+def test_bot_outbound_poke_delivery_is_readable_in_history():
+    from groupmate.models import MessageOrigin
+
+    bot_poke = ChatMessage(
+        message_id="bot-1",
+        group_id="g1",
+        sender_id="__bot__",
+        sender_name="爱弥斯",
+        text="戳了戳 u1 / 别戳啦。",
+        timestamp=101,
+        is_bot=True,
+        segment_types=("poke", "text"),
+        origin=MessageOrigin.BOT_DELIVERY,
+        decision_id="d1",
+        metadata={
+            "origin": "bot_delivery",
+            "decision_id": "d1",
+            "poke_target_id": "u1",
+        },
+    )
+    block = format_history_block((bot_poke,), {}, character_name="爱弥斯")
+
+    assert "戳了戳 u1" in block
+    assert "别戳啦" in block
 
 
 def test_assembly_system_separates_identity_and_constraints():

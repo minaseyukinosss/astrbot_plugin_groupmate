@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Sequence
+from typing import Optional, Sequence
 
 from ..core.intent import select_reply_mode
 from ..core.presence import project_presence
@@ -16,7 +16,7 @@ from ..models import (
     TopicSnapshot,
     TriggerKind,
 )
-from ..policies import ParticipationPolicy
+from ..policies import InteractionPolicy, ParticipationPolicy
 from ..persona.aemeath.behavior_profile import (
     ParticipationMotive,
     PersonaParticipationProfile,
@@ -31,6 +31,7 @@ from .participation_types import (
     ParticipationDecision,
     ParticipationObligation,
 )
+from .poke_throttle import PokeThrottle
 
 _DIRECT_TRIGGERS = frozenset(
     {
@@ -65,8 +66,10 @@ class ParticipationDecisionEngine:
         self,
         *,
         pressure: DirectAddressPressureTracker = None,
+        poke_throttle: PokeThrottle = None,
     ) -> None:
         self.pressure = pressure or DirectAddressPressureTracker()
+        self.poke_throttle = poke_throttle or PokeThrottle()
 
     def decide(
         self,
@@ -82,6 +85,7 @@ class ParticipationDecisionEngine:
         persona: PersonaParticipationProfile,
         recent_outputs: Sequence[str],
         task_resolution: TaskResolution = None,
+        interaction: Optional[InteractionPolicy] = None,
     ) -> ParticipationDecision:
         """decide（参与决策）：一次性决定发言、动作和姿态。"""
 
@@ -119,6 +123,19 @@ class ParticipationDecisionEngine:
                 reason_codes=("inhibit:ambiguous_target",),
                 posture=affinity.response_posture,
             )
+        if trigger is TriggerKind.HOST_INTERACTION:
+            return self._host_interaction_decision(
+                persona_id=persona_id,
+                topic=topic,
+                trigger=trigger,
+                targeting=targeting,
+                now=now,
+                aliases=aliases,
+                affinity=affinity,
+                persona=persona,
+                task_resolution=task_resolution,
+                interaction=interaction or InteractionPolicy(),
+            )
         if trigger in _DIRECT_TRIGGERS:
             return self._direct_decision(
                 persona_id=persona_id,
@@ -140,6 +157,145 @@ class ParticipationDecisionEngine:
             now=now,
         )
 
+    def _host_interaction_decision(
+        self,
+        *,
+        persona_id: str,
+        topic: TopicSnapshot,
+        trigger: TriggerKind,
+        targeting: TargetingDecision,
+        now: int,
+        aliases: Sequence[str],
+        affinity: AffinitySnapshot,
+        persona: PersonaParticipationProfile,
+        task_resolution: TaskResolution = None,
+        interaction: InteractionPolicy,
+    ) -> ParticipationDecision:
+        latest = topic.latest
+        if latest is None:
+            raise ValueError("host interaction requires latest message")
+        role = str(latest.metadata.get("poke_role", "direct") or "direct").lower()
+        if role == "bystander":
+            return self._bystander_decision(
+                persona_id=persona_id,
+                topic=topic,
+                now=now,
+                affinity=affinity,
+                interaction=interaction,
+            )
+        throttle = self.poke_throttle.evaluate_direct(
+            persona_id=persona_id,
+            group_id=topic.group_id,
+            sender_id=latest.sender_id,
+            now=now,
+            policy=interaction,
+        )
+        pressure = self.pressure.observe(
+            persona_id,
+            latest,
+            trigger,
+            now=now,
+            aliases=aliases,
+        )
+        if not throttle.allow:
+            return ParticipationDecision.silence(
+                scene=InteractionScene.DIRECT_INTERACTION,
+                reason_codes=(throttle.reason_code,),
+                posture=affinity.response_posture,
+                pressure=pressure,
+            )
+        if (
+            pressure.level is DirectAddressPressureLevel.AFTER_BOUNDARY
+            and affinity.band in (AffinityBand.HOSTILE, AffinityBand.WARY)
+        ):
+            return ParticipationDecision.silence(
+                scene=InteractionScene.DIRECT_INTERACTION,
+                reason_codes=("poke_boundary_silence",) + pressure.reason_codes,
+                posture=ResponsePosture.FIRM,
+                pressure=pressure,
+            )
+        decision = self._direct_decision(
+            persona_id=persona_id,
+            topic=topic,
+            trigger=trigger,
+            targeting=targeting,
+            now=now,
+            aliases=aliases,
+            affinity=affinity,
+            persona=persona,
+            task_resolution=task_resolution,
+            precomputed_pressure=pressure,
+        )
+        if decision.action.value == "speak":
+            self.poke_throttle.mark_direct_reacted(
+                persona_id=persona_id,
+                group_id=topic.group_id,
+                sender_id=latest.sender_id,
+                now=now,
+            )
+        contribution = self._poke_contribution(
+            decision.act,
+            pressure.level,
+            affinity.band,
+        )
+        return ParticipationDecision.speak(
+            scene=decision.scene,
+            act=decision.act,
+            posture=decision.posture,
+            obligation=decision.obligation,
+            reason_codes=decision.reason_codes + ("poke_direct",),
+            contribution=contribution,
+            quote_mode=decision.quote_mode,
+            media_policy=decision.media_policy,
+            pressure=pressure,
+        )
+
+    def _bystander_decision(
+        self,
+        *,
+        persona_id: str,
+        topic: TopicSnapshot,
+        now: int,
+        affinity: AffinitySnapshot,
+        interaction: InteractionPolicy,
+    ) -> ParticipationDecision:
+        latest = topic.latest
+        if latest is None:
+            raise ValueError("bystander poke requires latest message")
+        throttle = self.poke_throttle.evaluate_bystander(
+            persona_id=persona_id,
+            group_id=topic.group_id,
+            now=now,
+            policy=interaction,
+        )
+        if not throttle.allow:
+            return ParticipationDecision.silence(
+                scene=InteractionScene.DIRECT_INTERACTION,
+                reason_codes=(throttle.reason_code,),
+                posture=affinity.response_posture,
+            )
+        if affinity.band is AffinityBand.HOSTILE:
+            return ParticipationDecision.silence(
+                scene=InteractionScene.DIRECT_INTERACTION,
+                reason_codes=("poke_bystander_hostile",),
+                posture=ResponsePosture.FIRM,
+            )
+        self.poke_throttle.mark_bystander_reacted(
+            persona_id=persona_id,
+            group_id=topic.group_id,
+            now=now,
+        )
+        return ParticipationDecision.speak(
+            scene=InteractionScene.DIRECT_INTERACTION,
+            act=ResponseAct.PLAYFUL_REPLY,
+            posture=affinity.response_posture,
+            obligation=ParticipationObligation.OPEN_OPTIONAL,
+            reason_codes=("poke_bystander",),
+            contribution="群里有人互戳，可轻轻跟风戳一下或短句带过，不抢话题",
+            quote_mode=QuoteMode.NEVER,
+            media_policy=MediaPolicy(decorative_allowed=True),
+        )
+
     def _direct_decision(
         self,
         *,
@@ -152,12 +308,13 @@ class ParticipationDecisionEngine:
         affinity: AffinitySnapshot,
         persona: PersonaParticipationProfile,
         task_resolution: TaskResolution = None,
+        precomputed_pressure=None,
     ) -> ParticipationDecision:
         latest = topic.latest
         if latest is None:
             raise ValueError("direct participation requires latest message")
         persona.rule_for_affinity(affinity.band)
-        pressure = self.pressure.observe(
+        pressure = precomputed_pressure or self.pressure.observe(
             persona_id,
             latest,
             trigger,
@@ -278,6 +435,23 @@ class ParticipationDecisionEngine:
             reason_codes=("no_open_motive",),
             posture=affinity.response_posture,
         )
+
+    @staticmethod
+    def _poke_contribution(
+        act: ResponseAct,
+        level: DirectAddressPressureLevel,
+        band: AffinityBand,
+    ) -> str:
+        if act is ResponseAct.BOUNDARY or level in (
+            DirectAddressPressureLevel.PESTER,
+            DirectAddressPressureLevel.AFTER_BOUNDARY,
+        ):
+            if band in (AffinityBand.HOSTILE, AffinityBand.WARY):
+                return "对方戳得太烦了，短句划界，不延长"
+            return "被连戳有点烦，轻轻嫌弃一下就停"
+        if level is DirectAddressPressureLevel.NUDGE:
+            return "对方又戳你，短而自然地嫌弃或接一下"
+        return "回应对方刚才对你的戳一戳互动，短而自然"
 
     @staticmethod
     def _pressure_act(

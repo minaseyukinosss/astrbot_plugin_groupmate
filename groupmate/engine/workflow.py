@@ -52,6 +52,7 @@ from ..models import (
     DecisionAction,
     InteractionScene,
     MessageOrigin,
+    OutboundKind,
     ReplyMode,
     ReplyPlan,
     TargetingDecision,
@@ -117,6 +118,7 @@ class CognitiveWorkflow:
         capabilities: Optional[CapabilityRegistry] = None,
         capability_governor: Optional[CapabilityGovernor] = None,
         composer: Optional[ResponseComposer] = None,
+        poke_back_enabled: bool = False,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -126,6 +128,7 @@ class CognitiveWorkflow:
         self.persona = persona_context.prompt_provider
         self.behavior = behavior
         self.vision_enabled = bool(vision_enabled)
+        self.poke_back_enabled = bool(poke_back_enabled)
         self.output_guard = output_guard
         self.rate_limiter = rate_limiter
         self.clock = clock
@@ -246,6 +249,7 @@ class CognitiveWorkflow:
             persona=persona_profile,
             recent_outputs=tuple(self._recent_outputs[topic.group_id]),
             task_resolution=task_resolution,
+            interaction=behavior.interaction,
         )
         self._record(
             decision_id,
@@ -314,10 +318,16 @@ class CognitiveWorkflow:
                 topic,
                 soft_trigger,
             )
-            if participation.act is ResponseAct.PLAYFUL_REPLY:
+            if "poke_direct" in participation.reason_codes:
+                # Keep participation's pressure-aware contribution.
+                contribution = participation.contribution or interaction_decision.contribution
+            elif participation.act is ResponseAct.PLAYFUL_REPLY:
                 contribution = interaction_decision.contribution
             urgency = interaction_decision.urgency
             decision_reason = interaction_decision.reason_code
+            if "poke_bystander" in participation.reason_codes:
+                decision_reason = "poke_bystander"
+                urgency = Urgency.NORMAL
         quote_mode = participation.quote_mode
         self._record(
             decision_id,
@@ -353,6 +363,24 @@ class CognitiveWorkflow:
         )
         if decision.action is not DecisionAction.RESPOND:
             return self._silent(decision_id, topic.group_id, "decision_ignore", now)
+
+        if (
+            self.poke_back_enabled
+            and "poke_bystander" in participation.reason_codes
+        ):
+            poke_only = await self._deliver_poke_only(
+                decision_id=decision_id,
+                topic=topic,
+                participation=participation,
+                response_act=response_act,
+                urgency=urgency,
+                behavior=behavior,
+                soft_trigger=soft_trigger,
+                still_valid=still_valid,
+                now=now,
+            )
+            if poke_only is not None:
+                return poke_only
 
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
@@ -474,6 +502,7 @@ class CognitiveWorkflow:
             return self.direct_fallback.compose(
                 participation.act,
                 participation.posture,
+                reason_codes=participation.reason_codes,
             )
 
         if not self.budgets.allow_generation(now):
@@ -587,6 +616,15 @@ class CognitiveWorkflow:
             act_plan=response_act,
             quote_message_id=quote_message_id,
             capability_result=capability_result,
+            poke_back_enabled=self.poke_back_enabled,
+            poke_role=self._poke_role(topic),
+            poke_target_user_id=self._poke_outbound_target(
+                topic, participation, behavior.interaction
+            ),
+            interaction=behavior.interaction,
+            affinity_band=affinity.band,
+            pressure=participation.pressure,
+            reason_codes=participation.reason_codes,
         )
         delivery = replace(delivery, outbound=draft.segments)
         media_ids = tuple(item.media_id for item in draft.segments if item.media_id)
@@ -888,6 +926,119 @@ class CognitiveWorkflow:
             urgency=Urgency.HIGH,
         )
 
+    @staticmethod
+    def _poke_role(topic: TopicSnapshot) -> str:
+        latest = topic.latest
+        if latest is None:
+            return ""
+        return str(latest.metadata.get("poke_role", "") or "").strip().lower()
+
+    async def _deliver_poke_only(
+        self,
+        *,
+        decision_id: str,
+        topic: TopicSnapshot,
+        participation,
+        response_act,
+        urgency: Urgency,
+        behavior,
+        soft_trigger: bool,
+        still_valid: Optional[Callable[[], bool]],
+        now: int,
+    ):
+        target = self._poke_outbound_target(
+            topic, participation, behavior.interaction
+        )
+        if not target:
+            return None
+        draft = self.composer.compose(
+            text="",
+            act_plan=response_act,
+            quote_message_id=None,
+            poke_back_enabled=True,
+            poke_role=self._poke_role(topic) or "bystander",
+            poke_target_user_id=target,
+            interaction=behavior.interaction,
+            affinity_band=None,
+            pressure=participation.pressure,
+            reason_codes=participation.reason_codes,
+        )
+        if not any(item.kind is OutboundKind.POKE for item in draft.segments):
+            return None
+        delivery = build_delivery_plan(
+            decision_id=decision_id,
+            group_id=topic.group_id,
+            text="",
+            urgency=urgency,
+            now=now,
+            ttl_seconds=behavior.conversation.candidate_ttl_seconds,
+            max_chars=1,
+            max_segments=1,
+            humanize_delay=behavior.reply.humanize_delay_enabled,
+            direct_wake=False,
+            quote_message_id=None,
+        )
+        delivery = replace(delivery, outbound=draft.segments, segments=())
+        self._record(
+            decision_id,
+            topic.group_id,
+            "COMPOSE",
+            "act={};media=0;poke_only".format(response_act.act.value),
+            now,
+        )
+        self._record(
+            decision_id,
+            topic.group_id,
+            "SCHEDULE",
+            "delay={:.2f};segments={}".format(
+                delivery.delay_seconds,
+                len(delivery.outbound),
+            ),
+            now,
+        )
+        outcome = await self.delivery_service.deliver(
+            delivery,
+            kind="candidate" if soft_trigger else "reply",
+            still_valid=still_valid,
+            sent_reason="sent",
+        )
+        send_now = self.clock.now()
+        if not outcome.sent:
+            self._record(decision_id, topic.group_id, "END", outcome.reason, send_now)
+            return outcome
+        if participation.obligation is ParticipationObligation.OPEN_OPTIONAL:
+            self.budgets.record_send(send_now)
+        if outcome.text:
+            self._recent_outputs[topic.group_id].append(outcome.text)
+        self._remember_session_turns(topic, outcome.text, send_now)
+        return outcome
+
+    def _poke_outbound_target(
+        self,
+        topic: TopicSnapshot,
+        participation,
+        interaction,
+    ) -> str:
+        latest = topic.latest
+        if latest is None:
+            return ""
+        role = self._poke_role(topic)
+        if role == "bystander":
+            poker_id = str(
+                latest.metadata.get("poker_id", latest.sender_id) or ""
+            ).strip()
+            victim_id = str(latest.metadata.get("target_id", "") or "").strip()
+            return self.participation_engine.poke_throttle.pick_bystander_target(
+                poker_id=poker_id,
+                victim_id=victim_id,
+                policy=interaction,
+            )
+        if role == "direct" or "poke_direct" in getattr(
+            participation, "reason_codes", ()
+        ):
+            return str(latest.sender_id or "").strip()
+        return ""
+
     def _social_user_id(self, targeting: TargetingDecision) -> Optional[str]:
         target = targeting.social_target
         if target.kind is not AddresseeKind.USER:
@@ -928,9 +1079,18 @@ class CognitiveWorkflow:
         timestamp: int,
     ) -> None:
         latest = topic.latest
-        if latest is not None and latest.origin is MessageOrigin.SYSTEM_SYNTHETIC:
-            return
         session = self.session_for(topic.group_id)
+        cleaned = str(assistant_text or "").strip()
+        if latest is not None and latest.origin is MessageOrigin.SYSTEM_SYNTHETIC:
+            # Synthetic poke is not a user chat turn, but outbound poke/text must
+            # remain visible so follow-ups like "你戳我干什么" can be answered.
+            if cleaned:
+                session.append_assistant(
+                    cleaned,
+                    timestamp,
+                    speaker=self.character_name,
+                )
+            return
         if latest is not None and not latest.is_bot and latest.text:
             session.append_user(
                 latest.sender_name or "群友",
@@ -939,11 +1099,12 @@ class CognitiveWorkflow:
                 speaker_id=latest.sender_id,
                 source_message_id=latest.message_id,
             )
-        session.append_assistant(
-            assistant_text,
-            timestamp,
-            speaker=self.character_name,
-        )
+        if cleaned:
+            session.append_assistant(
+                cleaned,
+                timestamp,
+                speaker=self.character_name,
+            )
 
     async def _send_copied_at_tip(
         self,

@@ -92,6 +92,7 @@ def _bridge(tmp_path: Path, **settings) -> AstrBotBridge:
         },
         "interaction_group": {
             "poke_enabled": settings.pop("poke_enabled", False),
+            "poke_back_enabled": settings.pop("poke_back_enabled", False),
         },
     }
     assert not settings
@@ -179,6 +180,13 @@ def test_status_reports_poke_adapter_state(tmp_path):
     bridge = _bridge(tmp_path, poke_enabled=True)
 
     assert bridge.status()["poke_adapter"] == "enabled"
+    assert bridge.status()["poke_back"] == "disabled"
+
+
+def test_status_reports_poke_back_enabled(tmp_path):
+    bridge = _bridge(tmp_path, poke_enabled=True, poke_back_enabled=True)
+
+    assert bridge.status()["poke_back"] == "enabled"
 
 
 def test_should_take_native_wake_on_at(tmp_path):

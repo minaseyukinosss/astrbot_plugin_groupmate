@@ -23,7 +23,8 @@ from groupmate.models import (
     TriggerKind,
 )
 from groupmate.persona.aemeath import AEMEATH_PARTICIPATION_PROFILE
-from groupmate.policies import BehaviorPolicy
+from groupmate.policies import BehaviorPolicy, InteractionPolicy
+from groupmate.engine.poke_throttle import PokeThrottle
 from groupmate.social.affinity import (
     AffinityBand,
     AffinitySnapshot,
@@ -110,6 +111,7 @@ def decide(
     trigger=TriggerKind.ALIAS_DIRECT,
     timestamp=100,
     affinity=None,
+    interaction=None,
     **message_overrides
 ):
     latest = message(text, timestamp=timestamp, **message_overrides)
@@ -137,6 +139,13 @@ def decide(
         or AffinitySnapshot(AffinityBand.NEUTRAL, ResponsePosture.POLITE),
         persona=AEMEATH_PARTICIPATION_PROFILE,
         recent_outputs=(),
+        interaction=interaction
+        or InteractionPolicy(
+            poke_react_probability=1.0,
+            poke_bystander_probability=1.0,
+            poke_cooldown_seconds=0,
+            poke_bystander_cooldown_seconds=0,
+        ),
     )
 
 
@@ -146,7 +155,8 @@ def engine():
             window_seconds=600,
             nudge_count=2,
             pester_count=3,
-        )
+        ),
+        poke_throttle=PokeThrottle(rng=lambda: 0.0),
     )
 
 
@@ -155,6 +165,9 @@ def decide_poke(
     *,
     timestamp=100,
     affinity=None,
+    interaction=None,
+    poke_role="direct",
+    target_id="bot",
 ):
     return decide(
         engine,
@@ -162,11 +175,14 @@ def decide_poke(
         trigger=TriggerKind.HOST_INTERACTION,
         timestamp=timestamp,
         affinity=affinity,
+        interaction=interaction,
         segment_types=("poke",),
         origin=MessageOrigin.SYSTEM_SYNTHETIC,
         metadata={
             "interaction_kind": "poke",
-            "target_id": "bot",
+            "poke_role": poke_role,
+            "target_id": target_id,
+            "poker_id": "u1",
             "source_adapter": "aiocqhttp_poke",
         },
     )
@@ -218,6 +234,43 @@ def test_hostile_repeated_poke_sets_firm_boundary():
     assert decision.act is ResponseAct.BOUNDARY
     assert decision.posture is ResponsePosture.FIRM
     assert decision.pressure.level is DirectAddressPressureLevel.PESTER
+    assert "poke_spam" in decision.reason_codes
+
+
+def test_poke_cooldown_silences_second_reaction():
+    participation = engine()
+    interaction = InteractionPolicy(
+        poke_react_probability=1.0,
+        poke_cooldown_seconds=30,
+    )
+
+    first = decide_poke(participation, timestamp=100, interaction=interaction)
+    second = decide_poke(participation, timestamp=110, interaction=interaction)
+
+    assert first.action is ParticipationAction.SPEAK
+    assert second.action is ParticipationAction.SILENCE
+    assert "poke_cooldown" in second.reason_codes
+
+
+def test_bystander_poke_can_speak_or_skip_by_probability():
+    speak = decide_poke(
+        engine(),
+        poke_role="bystander",
+        target_id="u2",
+        interaction=InteractionPolicy(poke_bystander_probability=1.0),
+    )
+    skip = decide_poke(
+        engine(),
+        poke_role="bystander",
+        target_id="u2",
+        interaction=InteractionPolicy(poke_bystander_probability=0.0),
+    )
+
+    assert speak.action is ParticipationAction.SPEAK
+    assert "poke_bystander" in speak.reason_codes
+    assert speak.obligation is ParticipationObligation.OPEN_OPTIONAL
+    assert skip.action is ParticipationAction.SILENCE
+    assert "poke_bystander_skip" in skip.reason_codes
 
 
 def test_contentful_direct_question_uses_answer_act():

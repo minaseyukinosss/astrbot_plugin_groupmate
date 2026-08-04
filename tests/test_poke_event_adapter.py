@@ -95,11 +95,13 @@ def test_poke_is_bypassed_when_disabled():
     assert result.reason_code == "disabled"
 
 
-def test_poke_targeting_another_user_is_bypassed():
+def test_poke_targeting_another_user_is_admitted_as_bystander():
     result = PokeEventAdapter(enabled=True).adapt(Event("u2"))
 
-    assert result.status is HostEventAdapterStatus.BYPASSED
-    assert result.reason_code == "target_not_bot"
+    assert result.status is HostEventAdapterStatus.ADMITTED
+    assert result.message.metadata["poke_role"] == "bystander"
+    assert result.message.metadata["target_id"] == "u2"
+    assert result.message.metadata["poker_id"] == "u1"
 
 
 @pytest.mark.parametrize(
@@ -127,7 +129,9 @@ def test_poke_targeting_bot_becomes_whitelisted_synthetic_message(event):
     assert result.message.bot_id == "bot"
     assert result.message.metadata == {
         "interaction_kind": "poke",
+        "poke_role": "direct",
         "target_id": "bot",
+        "poker_id": "u1",
         "source_adapter": "aiocqhttp_poke",
     }
     assert "raw" not in repr(result.message.metadata).lower()
@@ -143,13 +147,14 @@ def test_astrbot_poke_method_target_id_is_not_stringified():
     assert result.message.metadata["target_id"] == "bot"
 
 
-def test_astrbot_poke_other_target_still_bypasses():
+def test_astrbot_poke_other_target_is_admitted_as_bystander():
     result = PokeEventAdapter(enabled=True).adapt(
         Event("u2", poke_factory=AstrBotPoke)
     )
 
-    assert result.status is HostEventAdapterStatus.BYPASSED
-    assert result.reason_code == "target_not_bot"
+    assert result.status is HostEventAdapterStatus.ADMITTED
+    assert result.message.metadata["poke_role"] == "bystander"
+    assert result.message.metadata["target_id"] == "u2"
 
 
 def test_non_poke_is_not_matched():

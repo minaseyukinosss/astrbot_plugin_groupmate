@@ -174,7 +174,9 @@ class ContextAssembly:
 
         sections = ["<group_context>"]
 
-        history = format_history_block(active, self._relationships)
+        history = format_history_block(
+            active, self._relationships, character_name=self.character_name
+        )
         if history:
             sections.append(history)
 

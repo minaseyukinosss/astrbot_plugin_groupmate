@@ -25,12 +25,14 @@ def test_deployment_settings_contain_only_seven_public_values():
         "vision_enabled",
         "vision_provider",
         "poke_enabled",
+        "poke_back_enabled",
         "diagnostics",
     }
     assert settings.enabled_groups == ()
     assert settings.aliases_for("aemeath") == ("爱弥斯", "小爱", "飞行雪绒")
     assert settings.relationships_for("aemeath") == ()
     assert settings.poke_enabled is False
+    assert settings.poke_back_enabled is False
 
 
 def test_poke_enabled_is_nested_and_explicit():
@@ -39,7 +41,17 @@ def test_poke_enabled_is_nested_and_explicit():
     )
 
     assert settings.poke_enabled is True
+    assert settings.poke_back_enabled is False
     assert settings.diagnostics.unknown_keys == ()
+
+
+def test_poke_back_enabled_is_nested_and_explicit():
+    settings = AstrBotConfigParser().parse(
+        {"interaction_group": {"poke_back_enabled": True}}
+    )
+
+    assert settings.poke_back_enabled is True
+    assert settings.poke_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -202,9 +214,14 @@ def test_schema_exposes_exactly_seven_settings():
         "vision_enabled",
         "vision_provider",
         "poke_enabled",
+        "poke_back_enabled",
     }
     assert schema["scope_group"]["items"]["enabled_groups"]["default"] == []
     assert (
         schema["interaction_group"]["items"]["poke_enabled"]["default"]
+        is False
+    )
+    assert (
+        schema["interaction_group"]["items"]["poke_back_enabled"]["default"]
         is False
     )

@@ -304,3 +304,90 @@ def test_platform_port_rejects_quote_only_outbound(monkeypatch):
 
     assert result.error_code == "empty_outbound"
     assert context.calls == []
+
+
+class FakePokeClient:
+    def __init__(self):
+        self.calls = []
+
+    async def call_action(self, action, **payload):
+        self.calls.append((action, payload))
+        if action not in ("group_poke", "send_poke", "friend_poke"):
+            raise RuntimeError("unsupported")
+
+
+class FakePokePlatform:
+    def __init__(self, client):
+        self._client = client
+        self.meta = lambda: types.SimpleNamespace(name="aiocqhttp")
+
+    def get_client(self):
+        return self._client
+
+
+def test_platform_port_sends_poke_then_text(monkeypatch):
+    event_module = types.ModuleType("astrbot.api.event")
+    event_module.MessageChain = FakeMessageChain
+    component_module = types.ModuleType("astrbot.api.message_components")
+    component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", component_module
+    )
+
+    client = FakePokeClient()
+    context = FakeContext()
+    context.get_platform = lambda name: FakePokePlatform(client)
+    port = AstrBotPlatformPort(
+        context, lambda group_id: "aiocqhttp:GroupMessage:" + group_id
+    )
+
+    result = asyncio.run(
+        port.send_outbound(
+            "912113397",
+            (
+                OutboundSegment(OutboundKind.POKE, target_user_id="10001"),
+                OutboundSegment(OutboundKind.TEXT, text="别戳啦。"),
+            ),
+            "decision-poke",
+        )
+    )
+
+    assert result.kind is SendReceiptKind.CONFIRMED
+    assert client.calls[0][0] == "group_poke"
+    assert client.calls[0][1]["user_id"] == 10001
+    assert len(context.calls) == 1
+
+
+def test_platform_port_keeps_text_when_poke_client_missing(monkeypatch):
+    event_module = types.ModuleType("astrbot.api.event")
+    event_module.MessageChain = FakeMessageChain
+    component_module = types.ModuleType("astrbot.api.message_components")
+    component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", component_module
+    )
+
+    context = FakeContext()
+    port = AstrBotPlatformPort(
+        context, lambda group_id: "aiocqhttp:GroupMessage:" + group_id
+    )
+
+    result = asyncio.run(
+        port.send_outbound(
+            "912113397",
+            (
+                OutboundSegment(OutboundKind.POKE, target_user_id="10001"),
+                OutboundSegment(OutboundKind.TEXT, text="别戳啦。"),
+            ),
+            "decision-poke-fallback",
+        )
+    )
+
+    assert result.kind is SendReceiptKind.CONFIRMED
+    assert len(context.calls) == 1

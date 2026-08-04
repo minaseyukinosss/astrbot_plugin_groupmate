@@ -43,6 +43,19 @@ class ResourcePolicy:
 
 
 @dataclass(frozen=True)
+class InteractionPolicy:
+    """Code-owned host-interaction (poke) restraint rules."""
+
+    poke_react_probability: float = 0.88
+    poke_cooldown_seconds: int = 8
+    poke_session_per_minute: int = 6
+    poke_back_probability: float = 0.35
+    poke_bystander_probability: float = 0.28
+    poke_bystander_cooldown_seconds: int = 60
+    poke_bystander_target: str = "victim"
+
+
+@dataclass(frozen=True)
 class BehaviorPolicy:
     """Internal behavior policy bundle injected into runtime components."""
 
@@ -50,11 +63,13 @@ class BehaviorPolicy:
     conversation: ConversationPolicy = field(default_factory=ConversationPolicy)
     reply: ReplyPolicy = field(default_factory=ReplyPolicy)
     resources: ResourcePolicy = field(default_factory=ResourcePolicy)
+    interaction: InteractionPolicy = field(default_factory=InteractionPolicy)
 
 
 __all__ = [
     "BehaviorPolicy",
     "ConversationPolicy",
+    "InteractionPolicy",
     "ParticipationPolicy",
     "ReplyPolicy",
     "ResourcePolicy",

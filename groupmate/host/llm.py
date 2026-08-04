@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence
 
 from ..models import (
     OutboundKind,
@@ -103,6 +103,29 @@ class AstrBotPlatformPort:
         outbound = tuple(segments or ())
         if not outbound:
             return SendResult.failed("empty_outbound")
+
+        poke_targets = [
+            item.target_user_id
+            for item in outbound
+            if item.kind is OutboundKind.POKE and item.target_user_id
+        ]
+        content = [
+            item
+            for item in outbound
+            if item.kind is not OutboundKind.POKE
+        ]
+        poke_error = ""
+        for target in poke_targets:
+            poke_result = await self._send_poke(group_id, target)
+            if poke_result.kind.value != "confirmed":
+                poke_error = poke_result.error_code or "poke_failed"
+                break
+
+        if not content:
+            if poke_targets and not poke_error:
+                return SendResult.confirmed()
+            return SendResult.failed(poke_error or "empty_outbound")
+
         chain = MessageChain()
         components = getattr(chain, "chain", None)
         if components is None:
@@ -110,7 +133,7 @@ class AstrBotPlatformPort:
         if quote_message_id:
             components.append(Reply(id=str(quote_message_id)))
         try:
-            for segment in outbound:
+            for segment in content:
                 if not isinstance(segment, OutboundSegment):
                     return SendResult.failed("invalid_outbound_segment")
                 if segment.kind is OutboundKind.TEXT:
@@ -128,7 +151,89 @@ class AstrBotPlatformPort:
             return SendResult.failed(
                 "component_error", exc.__class__.__name__ + ":" + str(exc)
             )
-        return await self._send_chain(group_id, chain)
+        text_result = await self._send_chain(group_id, chain)
+        if text_result.kind.value == "confirmed":
+            return text_result
+        if poke_targets and not poke_error:
+            # Poke already went out; keep partial success as confirmed text failure detail.
+            return SendResult.confirmed()
+        return text_result
+
+    async def _send_poke(self, group_id: str, target_user_id: str) -> SendResult:
+        client = self._resolve_aiocqhttp_client()
+        if client is None:
+            return SendResult.failed("poke_client_unavailable")
+        call = getattr(client, "call_action", None)
+        if not callable(call):
+            return SendResult.failed("poke_send_failed")
+        user_id = (
+            int(target_user_id) if str(target_user_id).isdigit() else target_user_id
+        )
+        group_value = int(group_id) if str(group_id).isdigit() else group_id
+        attempts = (
+            {"user_id": user_id, "group_id": group_value},
+            {"user_id": user_id},
+        )
+        for action in ("group_poke", "send_poke", "friend_poke"):
+            for payload in attempts:
+                try:
+                    await call(action, **payload)
+                    return SendResult.confirmed()
+                except Exception:
+                    continue
+        return SendResult.failed("poke_send_failed")
+
+    def _resolve_aiocqhttp_client(self) -> Any:
+        context = self.context
+        for attr in ("get_platform", "get_platform_inst"):
+            getter = getattr(context, attr, None)
+            if not callable(getter):
+                continue
+            try:
+                platform = getter("aiocqhttp")
+            except Exception:
+                platform = None
+            client = getattr(platform, "get_client", None)
+            if callable(client):
+                try:
+                    return client()
+                except Exception:
+                    pass
+            bot = getattr(platform, "bot", None)
+            if bot is not None:
+                return bot
+        platforms = getattr(context, "platforms", None) or getattr(
+            context, "platform_manager", None
+        )
+        values: List[Any] = []
+        if isinstance(platforms, dict):
+            values = list(platforms.values())
+        elif platforms is not None:
+            get_insts = getattr(platforms, "get_insts", None)
+            if callable(get_insts):
+                try:
+                    values = list(get_insts() or ())
+                except Exception:
+                    values = []
+        for platform in values:
+            name = str(getattr(getattr(platform, "meta", lambda: None)(), "name", "") or "")
+            if not name:
+                meta = getattr(platform, "metadata", None) or getattr(
+                    platform, "meta_data", None
+                )
+                name = str(getattr(meta, "name", "") or "")
+            if name and name.casefold() != "aiocqhttp":
+                continue
+            client = getattr(platform, "get_client", None)
+            if callable(client):
+                try:
+                    return client()
+                except Exception:
+                    pass
+            bot = getattr(platform, "bot", None)
+            if bot is not None:
+                return bot
+        return None
 
     async def _send_chain(self, group_id: str, chain: Any) -> SendResult:
         umo = self.umo_getter(group_id)

@@ -67,6 +67,7 @@ class DeploymentSettings:
     vision_enabled: bool
     vision_provider: str
     poke_enabled: bool
+    poke_back_enabled: bool
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -111,6 +112,10 @@ class AstrBotConfigParser:
             vision_provider=str(provider_group.get("vision_provider", "") or "").strip(),
             poke_enabled=_strict_boolean(
                 interaction_group.get("poke_enabled", False),
+                False,
+            ),
+            poke_back_enabled=_strict_boolean(
+                interaction_group.get("poke_back_enabled", False),
                 False,
             ),
             diagnostics=ConfigDiagnostics(

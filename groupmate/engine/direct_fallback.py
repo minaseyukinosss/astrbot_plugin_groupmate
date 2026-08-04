@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from ..core.response_act import ResponseAct
 from ..social.affinity import ResponsePosture
 
@@ -66,7 +68,29 @@ class DirectFallbackComposer:
         },
     }
 
-    def compose(self, act: ResponseAct, posture: ResponsePosture) -> str:
+    _POKE_BY_ACT = {
+        ResponseAct.PLAYFUL_REPLY: {
+            ResponsePosture.FIRM: "别戳了，有事直说。",
+            ResponsePosture.RESERVED: "戳到了，有事直说。",
+            ResponsePosture.POLITE: "别老戳我，说正事吧。",
+            ResponsePosture.WARM: "别戳啦，有事快说呀。",
+            ResponsePosture.CLOSE: "再戳我可要回戳你了。",
+        },
+        ResponseAct.BOUNDARY: {
+            ResponsePosture.FIRM: "别一直戳。",
+            ResponsePosture.RESERVED: "有事直说，别一直戳。",
+            ResponsePosture.POLITE: "有事直接说吧，别一直戳。",
+            ResponsePosture.WARM: "好啦，别一直戳呀。",
+            ResponsePosture.CLOSE: "好啦，别光顾着戳我，说正事。",
+        },
+    }
+
+    def compose(
+        self,
+        act: ResponseAct,
+        posture: ResponsePosture,
+        reason_codes: Sequence[str] = (),
+    ) -> str:
         """compose（组装降级回应）：按行为与好感姿态返回固定短句。"""
 
         resolved_act = act if isinstance(act, ResponseAct) else ResponseAct(str(act))
@@ -75,4 +99,9 @@ class DirectFallbackComposer:
             if isinstance(posture, ResponsePosture)
             else ResponsePosture(str(posture))
         )
+        reasons = {str(item) for item in reason_codes or ()}
+        if reasons & {"poke_spam", "poke_direct", "poke_bystander"}:
+            poke_table = self._POKE_BY_ACT.get(resolved_act)
+            if poke_table is not None:
+                return poke_table[resolved_posture]
         return self._BY_ACT[resolved_act][resolved_posture]

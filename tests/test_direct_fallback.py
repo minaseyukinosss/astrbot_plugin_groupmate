@@ -23,6 +23,27 @@ def test_fallback_text_is_deterministic_for_act_and_affinity_posture():
     )
 
 
+def test_poke_spam_fallback_uses_poke_specific_copy():
+    composer = DirectFallbackComposer()
+
+    assert (
+        composer.compose(
+            ResponseAct.PLAYFUL_REPLY,
+            ResponsePosture.WARM,
+            reason_codes=("poke_direct", "poke_spam"),
+        )
+        == "别戳啦，有事快说呀。"
+    )
+    assert (
+        composer.compose(
+            ResponseAct.BOUNDARY,
+            ResponsePosture.FIRM,
+            reason_codes=("poke_spam",),
+        )
+        == "别一直戳。"
+    )
+
+
 def _direct_topic(message_factory):
     message = message_factory(message_id="direct-fallback", text="小爱")
     return TopicSnapshot("fallback-topic", "g1", (message,), 100, 100)

@@ -974,6 +974,7 @@ class SQLiteMemoryStore:
                     "text": segment.text,
                     "media_id": segment.media_id,
                     "media_ref": segment.media_ref,
+                    "target_user_id": segment.target_user_id,
                 }
             )
         return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
