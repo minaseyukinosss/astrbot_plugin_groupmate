@@ -96,32 +96,83 @@ class HostEventGate:
 
     @classmethod
     def _has_explicit_direct_target(cls, event: Any, bot_id: str) -> bool:
+        bot_id = str(bot_id or "").strip()
         raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
-        if isinstance(raw, dict):
-            if bool(raw.get("reply_to_bot", False)):
-                return True
-            for segment in raw.get("message", ()) or ():
-                if not isinstance(segment, dict):
-                    continue
-                if str(segment.get("type", "")).lower() != "at":
-                    continue
-                data = segment.get("data") or {}
-                target = str(data.get("qq", data.get("user_id", "")))
-                if target and target == bot_id:
-                    return True
+        if cls._raw_targets_bot(raw, bot_id):
+            return True
         components = getattr(
             getattr(event, "message_obj", None),
             "message",
             (),
         ) or ()
         for component in components:
-            component_type = str(getattr(component, "type", "")).lower()
+            component_type = str(getattr(component, "type", "") or "").lower()
             class_name = component.__class__.__name__.lower()
-            if class_name != "reply" and not component_type.endswith("reply"):
+            if class_name == "reply" or component_type.endswith("reply"):
+                if str(getattr(component, "sender_id", "") or "") == bot_id:
+                    return True
                 continue
-            if str(getattr(component, "sender_id", "") or "") == bot_id:
-                return True
+            if class_name == "poke" or component_type == "poke":
+                if cls._component_poke_target(component) == bot_id:
+                    return True
         return False
+
+    @classmethod
+    def _raw_targets_bot(cls, raw: Any, bot_id: str) -> bool:
+        if not bot_id:
+            return False
+        getter = getattr(raw, "get", None)
+        if not callable(getter):
+            return False
+        try:
+            if bool(getter("reply_to_bot", False)):
+                return True
+            if (
+                str(getter("sub_type", "") or "").lower() == "poke"
+                and str(getter("target_id", "") or "").strip() == bot_id
+            ):
+                return True
+            for segment in getter("message", ()) or ():
+                if not isinstance(segment, dict):
+                    continue
+                kind = str(segment.get("type", "") or "").lower()
+                data = segment.get("data") or {}
+                if not isinstance(data, dict):
+                    continue
+                if kind == "at":
+                    target = str(data.get("qq", data.get("user_id", "")) or "").strip()
+                    if target and target == bot_id:
+                        return True
+                elif kind == "poke":
+                    target = str(
+                        data.get("target_id", data.get("qq", data.get("id", "")))
+                        or ""
+                    ).strip()
+                    if target and target == bot_id:
+                        return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _component_poke_target(component: Any) -> str:
+        method = getattr(component, "target_id", None)
+        if callable(method):
+            try:
+                value = method()
+            except Exception:
+                value = None
+            text = str(value or "").strip()
+            if text and text != "0":
+                return text
+        for attr in ("qq", "id"):
+            value = getattr(component, attr, None)
+            if callable(value):
+                continue
+            text = str(value or "").strip()
+            if text and text != "0":
+                return text
+        return ""
 
     @staticmethod
     def _raw_text(event: Any) -> str:
