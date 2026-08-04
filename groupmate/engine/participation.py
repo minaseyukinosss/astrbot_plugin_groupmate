@@ -448,7 +448,7 @@ class ParticipationDecisionEngine:
         base = (
             "对方戳的是你；你是当事人，用「你」对说话者；"
             "一句约 15–30 字口语，少全标点，可软收尾呢/呀/啦；"
-            "禁句首嘿/噗，尽量不用～"
+            "禁单字起手再接下文，尽量不用～"
         )
         if act is ResponseAct.BOUNDARY or level in (
             DirectAddressPressureLevel.PESTER,

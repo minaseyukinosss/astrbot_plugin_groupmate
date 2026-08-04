@@ -44,8 +44,10 @@ class AemeathOutputFirewall:
         r"|(?:搞定了|完成了|做好了|弄好了|查好了|处理好了|发布成功)",
         re.IGNORECASE,
     )
+    # 语气/感叹单字起手后再接下文（整条仅一字应声不拦）
+    _LEADING_PARTICLES = "嘿噗呵哎唉哦啊哈欸唔切哼哇咦诶呃额呜嗯"
     _LEADING_MONO_INTERJECTION = re.compile(
-        r"^(?:嘿|噗|呵|哎|唉)[，,～~\s…]"
+        rf"^[{_LEADING_PARTICLES}](?=.)"
     )
     _DECORATIVE_PUNCT = re.compile(r"[～~]{1,}|——|…{2,}")
 

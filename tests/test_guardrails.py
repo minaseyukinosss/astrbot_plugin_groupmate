@@ -73,6 +73,9 @@ def test_guard_accepts_firm_response_without_hostility_escalation():
     [
         ("嘿，戳人的家伙被反戳咯～", "leading_mono_interjection"),
         ("噗，你俩这是戳上瘾了嘛～", "leading_mono_interjection"),
+        ("哦，那我知道了", "leading_mono_interjection"),
+        ("哦对了", "leading_mono_interjection"),
+        ("啊这样啊", "leading_mono_interjection"),
         ("别戳啦——再戳我可要让你看看后果哦！", "decorative_punctuation"),
         ("你戳戳我戳戳～", "decorative_punctuation"),
     ],
@@ -86,6 +89,27 @@ def test_guard_rejects_chatty_poke_style(text, code):
 
     assert result.accepted is False
     assert code in result.codes
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "嗯",
+        "在",
+        "行",
+        "好，那我去看看",
+        "眼光不错哦。",
+        "别戳啦有事快说",
+    ],
+)
+def test_guard_allows_short_ack_and_normal_openers(text):
+    result = AemeathOutputFirewall().validate(
+        text,
+        [],
+        response_act=ResponseAct.PLAYFUL_REPLY,
+    )
+
+    assert result.accepted is True
 
 
 def test_guard_allows_group_address_on_playful_reply():
