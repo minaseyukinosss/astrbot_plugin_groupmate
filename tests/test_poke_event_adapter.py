@@ -14,6 +14,34 @@ class Poke:
 
     def __init__(self, qq):
         self.qq = qq
+        self.id = 0
+
+
+class AstrBotPoke:
+    """Mirrors current AstrBot notice poke: Poke(id=target_id) + target_id()."""
+
+    type = "Poke"
+
+    def __init__(self, target):
+        self.id = str(target)
+        self.qq = 0
+
+    def target_id(self):
+        for value in (self.id, self.qq):
+            text = str(value or "").strip()
+            if text and text != "0":
+                return text
+        return None
+
+
+class MappingRaw:
+    """aiocqhttp Event-like object: has .get but is not a dict."""
+
+    def __init__(self, data):
+        self._data = dict(data)
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
 
 
 class Event:
@@ -24,8 +52,15 @@ class Event:
         component=True,
         raw_segment=False,
         raw_notice=False,
+        astrbot_component=False,
+        mapping_raw=False,
     ):
-        message = [Poke(target)] if component else []
+        if astrbot_component:
+            message = [AstrBotPoke(target)]
+        elif component:
+            message = [Poke(target)]
+        else:
+            message = []
         raw_message = {
             "message_id": "notice-1",
             "group_id": "g1",
@@ -41,6 +76,8 @@ class Event:
         }
         if raw_notice:
             raw_message["sub_type"] = "poke"
+        if mapping_raw:
+            raw_message = MappingRaw(raw_message)
         self.message_obj = SimpleNamespace(
             message_id="notice-1",
             timestamp=100,
@@ -82,6 +119,8 @@ def test_poke_targeting_another_user_is_bypassed():
         Event(component=True),
         Event(component=False, raw_segment=True),
         Event(component=False, raw_notice=True),
+        Event(component=False, astrbot_component=True),
+        Event(component=False, raw_notice=True, mapping_raw=True),
     ],
 )
 def test_poke_targeting_bot_becomes_whitelisted_synthetic_message(event):
@@ -99,6 +138,16 @@ def test_poke_targeting_bot_becomes_whitelisted_synthetic_message(event):
         "source_adapter": "aiocqhttp_poke",
     }
     assert "raw" not in repr(result.message.metadata).lower()
+
+
+def test_astrbot_poke_target_id_method_is_not_stringified():
+    """Regression: bound target_id() used to become target_not_bot."""
+    result = PokeEventAdapter(enabled=True).adapt(
+        Event(component=False, astrbot_component=True)
+    )
+
+    assert result.status is HostEventAdapterStatus.ADMITTED
+    assert result.message.metadata["target_id"] == "bot"
 
 
 def test_non_poke_is_not_matched():
