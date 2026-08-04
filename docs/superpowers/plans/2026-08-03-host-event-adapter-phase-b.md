@@ -72,7 +72,7 @@ Out of scope:
 - Modify: `groupmate/host/__init__.py`
 - Create: `tests/test_host_event_adapter_runtime.py`
 
-- [ ] **Step 1: Write failing contract and runtime tests**
+- [x] **Step 1: Write failing contract and runtime tests**
 
 Create `tests/test_host_event_adapter_runtime.py` with tests for immutable values, result invariants, duplicate ownership, ordered non-match dispatch, and exception isolation:
 
@@ -174,7 +174,7 @@ def test_runtime_invalid_adapter_behavior_fails_closed(value):
 
 Use `dataclasses.replace()` rather than the illustrative `__dict__` reconstruction if the frozen message implementation makes the last assertion clearer.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -184,7 +184,7 @@ python3 -m pytest tests/test_host_event_adapter_runtime.py -q
 
 Expected: collection fails because `groupmate.host.event_adapters` does not exist.
 
-- [ ] **Step 3: Implement the minimal contracts**
+- [x] **Step 3: Implement the minimal contracts**
 
 Create `base.py` with Python 3.7-compatible validation:
 
@@ -316,7 +316,7 @@ class HostEventAdapterRuntime:
 
 Export these values from `event_adapters/__init__.py` and `groupmate/host/__init__.py`.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -326,7 +326,7 @@ python3 -m pytest tests/test_host_event_adapter_runtime.py tests/test_host_event
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/event_adapters groupmate/host/__init__.py tests/test_host_event_adapter_runtime.py
@@ -342,7 +342,7 @@ git commit -m "feat: add host event adapter contract"
 - Modify: `groupmate/host/event_adapters/__init__.py`
 - Create: `tests/test_poke_event_adapter.py`
 
-- [ ] **Step 1: Write failing poke translation tests**
+- [x] **Step 1: Write failing poke translation tests**
 
 Create a local fake event exposing `get_group_id()`, `get_sender_id()`, `get_sender_name()`, `get_self_id()`, `message_obj`, and AIOCQHTTP raw data. Cover component and raw segment recognition:
 
@@ -441,7 +441,7 @@ def test_fallback_event_id_is_deterministic():
     assert first.startswith("poke-")
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -451,7 +451,7 @@ python3 -m pytest tests/test_poke_event_adapter.py -q
 
 Expected: import fails because `PokeEventAdapter` does not exist.
 
-- [ ] **Step 3: Implement minimal poke recognition and translation**
+- [x] **Step 3: Implement minimal poke recognition and translation**
 
 Create `poke.py`. Keep all extraction helpers private and whitelist every output field:
 
@@ -574,7 +574,7 @@ Do not copy raw data into the result.
 
 Export `PokeEventAdapter`.
 
-- [ ] **Step 4: Run adapter tests and verify GREEN**
+- [x] **Step 4: Run adapter tests and verify GREEN**
 
 Run:
 
@@ -584,7 +584,7 @@ python3 -m pytest tests/test_poke_event_adapter.py tests/test_host_event_adapter
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/event_adapters/poke.py groupmate/host/event_adapters/__init__.py tests/test_poke_event_adapter.py
@@ -602,7 +602,7 @@ git commit -m "feat: translate aiocqhttp poke events"
 - Modify: `tests/test_config.py`
 - Modify: `tests/test_plugin_loading.py`
 
-- [ ] **Step 1: Write failing configuration and assembly tests**
+- [x] **Step 1: Write failing configuration and assembly tests**
 
 Update the public settings contract from six to seven values and assert safe defaults:
 
@@ -638,7 +638,7 @@ def test_schema_exposes_exactly_seven_settings():
 
 Extend the plugin loading subprocess fake to instantiate `GroupmatePlugin` with fake `AstrBotBridge`, `GroupmateWebAPI`, and config, then assert `plugin.ingress.event_adapters.adapters` contains exactly one `PokeEventAdapter` whose enabled state matches parsed configuration.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -648,7 +648,7 @@ python3 -m pytest tests/test_config.py tests/test_plugin_loading.py -q
 
 Expected: failures because `poke_enabled` and `interaction_group` do not exist.
 
-- [ ] **Step 3: Implement config parsing and assembly**
+- [x] **Step 3: Implement config parsing and assembly**
 
 In `config.py`:
 
@@ -709,7 +709,7 @@ self.ingress = AstrBotEventIngress(
 
 Do not scan packages or accept configured class paths.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -719,7 +719,7 @@ python3 -m pytest tests/test_config.py tests/test_plugin_loading.py tests/test_p
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add groupmate/host/config.py _conf_schema.json main.py tests/test_config.py tests/test_plugin_loading.py
@@ -737,7 +737,7 @@ git commit -m "feat: configure static poke adapter"
 - Modify: `tests/test_host_event_ingress.py`
 - Modify: `tests/test_native_wake_suppress.py`
 
-- [ ] **Step 1: Write failing ownership and routing tests**
+- [x] **Step 1: Write failing ownership and routing tests**
 
 Extend `tests/test_host_event_ingress.py` with a recording adapter runtime and adapted Bridge method:
 
@@ -812,7 +812,7 @@ def test_not_matched_preserves_existing_owner_path():
 
 In `tests/test_native_wake_suppress.py`, test `AstrBotBridge.handle_adapted_event()` with a fake actor: accepted interaction sets `call_llm=True`, submits the exact provided synthetic message, and uses `schedule=False` while paused.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -822,7 +822,7 @@ python3 -m pytest tests/test_host_event_ingress.py tests/test_native_wake_suppre
 
 Expected: failures for missing dispositions, constructor argument, and Bridge method.
 
-- [ ] **Step 3: Implement gate-first ingress**
+- [x] **Step 3: Implement gate-first ingress**
 
 Add:
 
@@ -865,7 +865,7 @@ class AstrBotEventIngress:
 
 `enrich_request()` remains gate-only; synthetic interactions never create native LLM requests.
 
-- [ ] **Step 4: Implement the Bridge entry without duplicating workflow logic**
+- [x] **Step 4: Implement the Bridge entry without duplicating workflow logic**
 
 Add one private owner marker and reuse it from existing ownership code:
 
@@ -892,7 +892,7 @@ Make `apply_owner_to_event()` call `_mark_groupmate_owner()` for `TurnOwner.GROU
 
 Add `poke_adapter` to `bridge.status()` using `settings.poke_enabled`.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run:
 
@@ -906,7 +906,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass and command tests still show zero `stop_event()` calls.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/host/event_gate.py groupmate/host/ingress.py groupmate/host/bridge.py tests/test_host_event_ingress.py tests/test_native_wake_suppress.py
@@ -935,7 +935,7 @@ git commit -m "feat: route adapted host interactions"
 - Modify: `tests/test_runtime.py`
 - Modify: `tests/test_workflow.py`
 
-- [ ] **Step 1: Write failing domain classification tests**
+- [x] **Step 1: Write failing domain classification tests**
 
 Add a shared synthetic poke fixture locally in each focused test module:
 
@@ -970,7 +970,7 @@ Also assert unknown/mismatched synthetic metadata classifies as `IGNORE`.
 
 For targeting, assert reply audience is the poke sender while memory subject is ambiguous with `no_personal_memory`; social target may identify the sender only for relationship posture lookup.
 
-- [ ] **Step 2: Run classification tests and verify RED**
+- [x] **Step 2: Run classification tests and verify RED**
 
 Run:
 
@@ -980,7 +980,7 @@ python3 -m pytest tests/test_triggers.py tests/test_scenes.py tests/test_address
 
 Expected: enum members and interaction mappings are missing.
 
-- [ ] **Step 3: Implement explicit domain values and strict router validation**
+- [x] **Step 3: Implement explicit domain values and strict router validation**
 
 Add:
 
@@ -1018,7 +1018,7 @@ if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
 
 Map `HOST_INTERACTION` to `DIRECT_INTERACTION`; give that scene hard priority and `QuoteMode.NEVER`. Map the scene to `ResponseAct.PLAYFUL_REPLY` before generic empty-address handling.
 
-- [ ] **Step 4: Implement targeting and participation semantics**
+- [x] **Step 4: Implement targeting and participation semantics**
 
 Add `HOST_INTERACTION` to `AddresseeResolver` hard triggers. After resolving reply/social targets, override only memory subject:
 
@@ -1035,7 +1035,7 @@ Add `HOST_INTERACTION` to participation direct triggers. In direct-pressure bare
 
 Write tests that the first neutral poke speaks with `DIRECT_REQUIRED`, a friendly repeated poke stays playful, and a hostile repeated poke becomes a firm boundary.
 
-- [ ] **Step 5: Preserve synthetic origin and hard-turn scheduling in Actor**
+- [x] **Step 5: Preserve synthetic origin and hard-turn scheduling in Actor**
 
 Change `_stamp_message()`:
 
@@ -1054,7 +1054,7 @@ Add `HOST_INTERACTION` to every hard-trigger tuple used for duplicate admission,
 
 Add an Actor test proving a poke is evaluated immediately, retains `SYSTEM_SYNTHETIC` in window and memory, and creates no continuation grant after a sent outcome.
 
-- [ ] **Step 6: Add workflow interaction decision semantics**
+- [x] **Step 6: Add workflow interaction decision semantics**
 
 Treat `HOST_INTERACTION` as a direct trigger for fallback and urgency, but not as soft traffic. Extend `_build_decision()`:
 
@@ -1066,7 +1066,7 @@ if trigger is TriggerKind.HOST_INTERACTION:
 
 Add a workflow test using `RecordingGenerationModel` and `FakePlatform` to prove the response act is `PLAYFUL_REPLY`, the prompt passes through the Persona provider, the outbound reply uses Delivery/Outbox, and no direct quote is requested.
 
-- [ ] **Step 7: Run focused domain and workflow tests**
+- [x] **Step 7: Run focused domain and workflow tests**
 
 Run:
 
@@ -1084,7 +1084,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add groupmate/models.py groupmate/engine/triggers.py groupmate/core/scenes.py groupmate/core/addressee.py groupmate/core/response_act.py groupmate/engine/direct_pressure.py groupmate/engine/participation.py groupmate/engine/runtime.py groupmate/engine/workflow.py tests/test_triggers.py tests/test_scenes.py tests/test_addressee.py tests/test_response_act.py tests/test_direct_pressure.py tests/test_participation_decision.py tests/test_runtime.py tests/test_workflow.py
@@ -1104,7 +1104,7 @@ git commit -m "feat: handle explicit host interactions"
 - Modify: `tests/test_phase2_projections.py`
 - Modify: `tests/test_workflow.py`
 
-- [ ] **Step 1: Write failing prompt and memory boundary tests**
+- [x] **Step 1: Write failing prompt and memory boundary tests**
 
 Add tests proving the fixed prompt label and absence of raw metadata:
 
@@ -1122,7 +1122,7 @@ Add a workflow test proving a successful poke reply does not append either user 
 
 Add a projection test that persists a synthetic poke plus Bot delivery, rebuilds state, and asserts the poke remains in `snapshot.messages` for short-term audit while neither message pair becomes a synthetic user session turn or creates continuation state.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -1132,7 +1132,7 @@ python3 -m pytest tests/test_core_assembly.py tests/test_memory_writer.py tests/
 
 Expected: prompt renders `[图片]`, bot-promise extraction remains possible, or live session stores the reply.
 
-- [ ] **Step 3: Implement fixed interaction formatting**
+- [x] **Step 3: Implement fixed interaction formatting**
 
 Add a private content formatter:
 
@@ -1149,7 +1149,7 @@ def _message_content(message):
 
 Use it from `format_history_block()`. Do not interpolate metadata values.
 
-- [ ] **Step 4: Exclude synthetic-triggered long-term and session writes**
+- [x] **Step 4: Exclude synthetic-triggered long-term and session writes**
 
 At the start of `MemoryWriter.extract_candidates()` after selecting active messages:
 
@@ -1169,7 +1169,7 @@ if latest is not None and latest.origin is MessageOrigin.SYSTEM_SYNTHETIC:
 
 Keep the existing `StateProjector._session_turns()` synthetic skip. Do not add a database migration or delete synthetic ledger messages.
 
-- [ ] **Step 5: Run focused boundary tests and verify GREEN**
+- [x] **Step 5: Run focused boundary tests and verify GREEN**
 
 Run:
 
@@ -1184,7 +1184,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass; existing text memories and sessions remain unchanged.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add groupmate/core/history_format.py groupmate/engine/workflow.py groupmate/memory/memory_writer.py tests/test_core_assembly.py tests/test_memory_writer.py tests/test_phase2_projections.py tests/test_workflow.py
@@ -1202,7 +1202,7 @@ git commit -m "feat: isolate synthetic interaction state"
 - Modify: `docs/superpowers/specs/2026-08-03-host-event-adapter-phase-b-design.md`
 - Modify: `docs/superpowers/plans/2026-08-03-host-event-adapter-phase-b.md`
 
-- [ ] **Step 1: Write the end-to-end host interaction regression test**
+- [x] **Step 1: Write the end-to-end host interaction regression test**
 
 Build one test with a real `HostEventGate`, `HostEventAdapterRuntime`, `PokeEventAdapter`, and `AstrBotEventIngress`, plus a narrow recording Bridge/Actor seam. Verify in one flow:
 
@@ -1215,7 +1215,7 @@ Build one test with a real `HostEventGate`, `HostEventAdapterRuntime`, `PokeEven
 
 Use separate tests if needed to keep each assertion focused; the file is an integration boundary, not a monolithic scenario.
 
-- [ ] **Step 2: Run the end-to-end and host regression group**
+- [x] **Step 2: Run the end-to-end and host regression group**
 
 Run:
 
@@ -1233,7 +1233,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 3: Run core regression groups**
+- [x] **Step 3: Run core regression groups**
 
 Run:
 
@@ -1255,7 +1255,7 @@ python3 -m pytest \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 4: Run full automated verification**
+- [x] **Step 4: Run full automated verification**
 
 Run:
 
@@ -1271,7 +1271,7 @@ Expected:
 - deterministic evaluation reports 120/120 completed with no safety regression;
 - `git diff --check` prints no output.
 
-- [ ] **Step 5: Run residual architecture scans**
+- [x] **Step 5: Run residual architecture scans**
 
 Run:
 
@@ -1289,7 +1289,7 @@ Expected:
 - explicit interaction semantics appear in the planned core boundaries and tests;
 - production assembly is static and occurs only in `main.py`.
 
-- [ ] **Step 6: Update documentation and status**
+- [x] **Step 6: Update documentation and status**
 
 Update README configuration/status and architecture summary:
 
@@ -1300,7 +1300,7 @@ Update README configuration/status and architecture summary:
 
 Mark the Phase B design status implemented only after all verification succeeds. Mark every completed plan checkbox and add exact completion evidence with test counts and evaluation output.
 
-- [ ] **Step 7: Re-run documentation checks**
+- [x] **Step 7: Re-run documentation checks**
 
 Run:
 
@@ -1312,7 +1312,7 @@ git status --short
 
 Expected: no placeholders, no whitespace errors, and only planned files changed.
 
-- [ ] **Step 8: Commit closure**
+- [x] **Step 8: Commit closure**
 
 ```bash
 git add README.md docs/superpowers/specs/2026-07-31-groupmate-extension-spi-design.md docs/superpowers/specs/2026-08-03-host-event-adapter-phase-b-design.md docs/superpowers/plans/2026-08-03-host-event-adapter-phase-b.md tests/test_poke_interaction_flow.py
@@ -1321,12 +1321,28 @@ git commit -m "docs: close host event adapter phase b"
 
 ---
 
-## Completion Evidence Requirements
+## Completion Evidence
 
-At closure, replace this section with the exact focused host test count, focused core
-test count, full pytest count, deterministic evaluation summary, host pause result,
-Phase 2 projection result, residual scan result, and `git diff --check` result. Do not
-mark the plan complete without command output from the current implementation commit.
+Verified on 2026-08-04 from integrated implementation commit `909a4d8` plus the Task 7
+end-to-end regression file:
+
+- focused host regression: `96 passed in 0.73s`;
+- focused core regression: `164 passed in 1.68s`;
+- full pytest: `727 passed in 4.53s`;
+- deterministic evaluation: `120/120` passed, `pass_rate=1.0`, `errors=0`,
+  `sent_runs=96`, `silence_rate=0.2`; all guard, privacy, trigger, visible-ID, length,
+  outcome and required/forbidden-pattern checks passed;
+- host pause plus Phase 2 synthetic projection nodes: `2 passed in 0.11s`; pause used
+  `schedule=False` with no send, and projection retained the poke ledger message without
+  a synthetic user session turn or continuation;
+- adapter event-control/send scan returned no matches; raw host extraction references
+  were confined to `event_adapters/poke.py` (apart from the unrelated local name
+  `raw_kinds` in manifest normalization), with no raw value in result metadata;
+- explicit `HOST_INTERACTION` / `DIRECT_INTERACTION` / `SYSTEM_SYNTHETIC` usage was
+  confined to the planned host, domain, Actor, workflow, memory/projection boundaries
+  and tests; the production `PokeEventAdapter` instance is assembled only in `main.py`;
+- `git diff --check` exited 0 with no output;
+- `eval/results/phase-b.json` was generated and is ignored by the repository as designed.
 
 ## Design-to-Task Traceability
 

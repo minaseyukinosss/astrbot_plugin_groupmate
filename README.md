@@ -7,7 +7,7 @@
 ## 当前发布
 
 - 版本：`0.3.0`
-- V3 核心迁移、宿主命令隔离、能力治理和静态 Provider SPI 已落地并有测试覆盖；HostEventAdapter、外部插件 adapter、Tool Gateway 和外部能力接入仍按 2026-07-31 架构边界设计后续推进。
+- V3 核心迁移、宿主命令隔离、静态 CapabilityProvider SPI 和默认关闭的 HostEventAdapter Phase B 已落地并有测试覆盖；具体外部插件 Integration Adapter 仍属于 Phase C，Tool Gateway 不在当前实现范围。
 - 发布包只包含运行时、Pages、配置、README 和规格文档；不包含 `.git`、`.venv`、测试、离线评测语料或缓存。
 
 ## 目录结构
@@ -24,7 +24,7 @@ astrbot_plugin_groupmate/
 │   ├── memory/               # SQLite ledger / 投影 / 记忆候选 / 隐私仲裁
 │   ├── social/               # 社会事件与关系投影
 │   ├── capabilities/         # 类型化能力契约 / Registry / 内置 Provider
-│   └── host/                 # AstrBot 适配（bridge / onebot / llm）
+│   └── host/                 # AstrBot 适配（gate / event adapters / bridge / onebot / llm）
 └── tests/                    # 仓库测试；发布包不包含
 ```
 
@@ -39,6 +39,7 @@ astrbot_plugin_groupmate/
 - 保守长期记忆：候选抽取、敏感拦截、authority 仲裁、TTL、删除 tombstone
 - 管理命令：status / pause / resume / reset
 - 静态 CapabilityProvider 生命周期、启动健康采样与 Bridge 统一装配
+- 静态 HostEventAdapter：默认关闭的 AIOCQHTTP 戳一戳适配与显式互动语义
 
 刻意不包含：工具环全家桶、Kanban、心跳巡检、表达自学习。
 
@@ -60,10 +61,15 @@ astrbot_plugin_groupmate/
 | `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
 | `provider_group.vision_enabled` | 允许按需看图 | `true` |
 | `provider_group.vision_provider` | 看图模型；空=复用最终文本模型 | 空 |
+| `interaction_group.poke_enabled` | 接管目标为 Bot 的 AIOCQHTTP 戳一戳，并由 Groupmate 生成最终回复 | `false` |
 
 当前只注册 `aemeath` 人格，管理界面不提供未实现的人格切换入口。称呼和初始关系必须放在 `aemeath` 键下；旧扁平配置和未知字段不会参与运行时，并会在状态页的配置健康信息中报告。
 
 文本模型优先使用显式 `generation_provider`；只有留空时才读取当前群模型。图片理解关闭时不调用视觉模型；开启后优先使用显式 `vision_provider`，留空则复用已解析的文本模型。
+
+启用 `interaction_group.poke_enabled` 表示管理员选择 Groupmate 作为戳一戳的预期最终
+回复所有者。若另一个插件也会直接回复同一戳一戳，必须关闭其回复处理器，或将其切换为
+不发送消息的 service-only 模式；Groupmate 不自动探测或关闭第三方插件。
 
 ## 状态归属与数据库升级
 
@@ -86,7 +92,8 @@ astrbot_plugin_groupmate/
 3. **软提及 / 候选**：`ParticipationDecisionEngine（统一参与决策引擎）`按场景判断；路过提名、复读和无参与动机消息直接沉默，明确群体求助才允许短答
 4. **续聊**：窗口内同人；Session 注入近轮对话
 5. **AstrBot 指令**：已注册命令和使用宿主唤醒前缀的输入在进入 Groupmate Actor 前旁路；不写入话题、记忆或 outbox，也不阻止其他插件处理
-6. **联网例外**：交回 AstrBot Agent
+6. **宿主互动**：配置开启后，目标为 Bot 的 AIOCQHTTP 戳一戳以 `SYSTEM_SYNTHETIC` / `HOST_INTERACTION` 进入同一 Actor、Persona、Firewall、Delivery 和 Outbox 链路；不引用伪造文本，不创建长期人物记忆或续聊授权
+7. **联网例外**：交回 AstrBot Agent
 
 ## 管理命令
 
@@ -106,6 +113,12 @@ AstrBot 其他插件命令共存、Groupmate 内部 Capability Provider 扩展�
 [`docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md`](docs/superpowers/specs/2026-07-31-host-command-capability-boundary-design.md)。
 
 内部能力通过 `CapabilityManifest`、`CapabilityContext` 和 `CapabilityGovernor` 显式治理。Provider 只能返回结构化事实、媒体候选或 handoff 状态；最终表达和发送仍由人格、OutputFirewall、Composer 和 DeliveryService 统一处理。
+
+静态 CapabilityProvider Phase A、HostEventAdapter Phase B 与未来 Phase C 的具体外部插件
+Integration Adapter 边界见
+[`docs/superpowers/specs/2026-07-31-groupmate-extension-spi-design.md`](docs/superpowers/specs/2026-07-31-groupmate-extension-spi-design.md)
+和
+[`docs/superpowers/specs/2026-08-03-host-event-adapter-phase-b-design.md`](docs/superpowers/specs/2026-08-03-host-event-adapter-phase-b-design.md)。
 
 V3 目标架构与分阶段实施门槛见
 [`docs/superpowers/plans/2026-07-24-groupmate-humanlike-roadmap.md`](docs/superpowers/plans/2026-07-24-groupmate-humanlike-roadmap.md)。

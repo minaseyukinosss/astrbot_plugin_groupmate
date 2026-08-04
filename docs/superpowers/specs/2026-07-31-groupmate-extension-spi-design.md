@@ -2,7 +2,7 @@
 
 日期：2026-07-31
 
-状态：Phase A 静态 CapabilityProvider SPI 已实施；HostEventAdapter 与具体 IntegrationAdapter 待实施
+状态：Phase A 静态 CapabilityProvider SPI 与 Phase B HostEventAdapter 已实施；具体 IntegrationAdapter 属于 Phase C
 
 适用范围：Groupmate 内部能力扩展、AstrBot 特殊事件适配、第三方插件能力复用
 
@@ -73,6 +73,7 @@ Groupmate 的默认扩展方式是自行实现内部 Provider。只有目标插�
 ```text
 AstrBot Host
   -> HostEventGate
+  -> HostEventAdapterRuntime / PokeEventAdapter
   -> AstrBotBridge
   -> GroupRuntimeManager / 每群 Actor
   -> ParticipationDecisionEngine
@@ -91,10 +92,10 @@ AstrBot Host
 - CapabilityGovernor 已成为内部能力唯一执行入口；
 - DeliveryService 已成为唯一发送出口。
 
-当前缺口有两个：
-
-1. Bridge 直接创建 `vision_spec()`，缺少统一 Provider 生命周期和健康状态；
-2. 非文本宿主事件没有稳定的适配接口，只能在 Bridge 中继续增加特判。
+Phase A 与 Phase B 已关闭原先两个缺口：Bridge 通过 `CapabilityProviderRuntime` 静态装配
+Provider 生命周期与健康状态；非文本宿主事件通过 `HostEventAdapterRuntime` 的白名单合成
+消息进入统一 Actor 链路。剩余缺口是针对具体外部插件的稳定 service 与专用
+Integration Adapter，这属于 Phase C，不通过动态发现或命令模拟补齐。
 
 ## 4. Extension SPI 组成
 
@@ -356,7 +357,7 @@ groupmate/
     ├── bridge.py               # 装配根
     └── event_adapters/
         ├── base.py             # HostEventAdapter 窄接口
-        └── poke.py             # 后续示例，不是首阶段必做
+        └── poke.py             # Phase B 已实施的 AIOCQHTTP poke adapter
 ```
 
 不新建通用 `plugins/` 目录，避免与 AstrBot Plugin 概念混淆。
@@ -370,7 +371,7 @@ groupmate/
 - Bridge 通过 runtime 静态装配 Registry 和 Governor；
 - 覆盖启动、关闭、健康失败、重复名称和取消测试。
 
-### Phase B：HostEventAdapter 最小接口
+### Phase B：HostEventAdapter 最小接口（已实施）
 
 - 定义特殊事件到合成 `ChatMessage` 的窄接口；
 - 增加白名单 metadata 与 `SYSTEM_SYNTHETIC` 持久化限制；
@@ -415,9 +416,9 @@ Event Adapter SPI 至少覆盖：
 和发送出口已经分层。新增 Provider 时无需修改 TriggerRouter 或 DeliveryService，说明
 主边界是合理的。
 
-但当前还不是完整的内部扩展平台，因为 Provider 生命周期仍散落在 Bridge，非文本事件
-也没有统一适配入口。本设计补齐这两个接口，同时拒绝动态发现、命令模拟和直接发送，
-使后续外部能力可以小步接入而不会侵入 Groupmate 核心。
+Phase A 与 Phase B 已补齐 Provider 生命周期和非文本事件适配入口，同时拒绝动态发现、
+命令模拟和直接发送。当前仍不是通用第三方插件平台：具体外部能力必须在 Phase C 针对
+目标插件的稳定 service 单独设计 Integration Adapter，并继续满足唯一回复所有者约束。
 
 对“智能回复戳一戳”这类插件，最低安全接入成本通常包括插件侧抽出 service、Groupmate
 侧新增专用 IntegrationAdapter、一个可选 Event Adapter 和一处静态装配。如果插件不

@@ -2,7 +2,7 @@
 
 日期：2026-08-03
 
-状态：设计已确认，待实施计划
+状态：已实施并完成验证（2026-08-04）
 
 上位设计：`docs/superpowers/specs/2026-07-31-groupmate-extension-spi-design.md`
 
@@ -407,3 +407,25 @@ Phase B 完成门槛是：默认关闭不改变当前行为；开启后 AIOCQHTT
 Phase B 完成后才能进入 Phase C。Phase C 必须针对一个具体外部插件重新评估：是直接在
 Groupmate 内实现能力更便宜，还是要求目标插件抽出稳定 service 并编写专用 Integration
 Adapter。Phase B 不预先承诺第三方插件兼容。
+
+## 15. 完成证据
+
+在实现提交 `909a4d8` 基础上执行 Task 7 收口验证：
+
+- Host focused：`96 passed`，其中端到端互动边界新增 `5 passed`；
+- Core focused：`164 passed`；
+- Full pytest：`727 passed in 4.53s`；
+- deterministic evaluation：`120/120`，`pass_rate=1.0`，`errors=0`，
+  guard、privacy、trigger 检查均无回退；
+- host pause 与 Phase 2 projection 精确回归：`2 passed`；pause 向 Actor 传递
+  `schedule=False` 且无发送，projection 保留 synthetic poke 审计消息但不恢复 user
+  session turn 或 continuation；
+- adapter event-control/send scan 无匹配；raw host access 仅存在于 `poke.py` 的提取逻辑，
+  合成消息 metadata 仍为白名单字符串字段；
+- `PokeEventAdapter` 的生产实例化仅位于 `main.py`，核心显式 interaction 语义只出现在
+  计划的 host、domain、Actor、workflow、memory/projection 边界；
+- `git diff --check` 退出码为 0，无输出。
+
+Phase A 与 Phase B 均已实施。具体第三方插件仍需在 Phase C 暴露稳定、无发送副作用的
+service，并由专用 Integration Adapter 接入；Phase B 不声明自动兼容任何第三方 poke
+回复插件。
