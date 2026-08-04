@@ -88,15 +88,14 @@ def test_guard_rejects_chatty_poke_style(text, code):
     assert code in result.codes
 
 
-def test_guard_rejects_false_bystander_voice_on_playful_reply():
+def test_guard_allows_group_address_on_playful_reply():
     result = AemeathOutputFirewall().validate(
-        "你俩戳上瘾了嘛",
+        "你们复读也太整齐了吧",
         [],
         response_act=ResponseAct.PLAYFUL_REPLY,
     )
 
-    assert result.accepted is False
-    assert "false_bystander_voice" in result.codes
+    assert result.accepted is True
 
 
 def test_guard_accepts_plain_poke_pushback():

@@ -209,7 +209,7 @@ def test_first_neutral_poke_requires_playful_direct_response():
     assert decision.quote_mode is QuoteMode.NEVER
     assert decision.pressure.count == 1
     assert "对方戳的是你" in decision.contribution
-    assert "你俩" in decision.contribution
+    assert "用「你」对说话者" in decision.contribution
 
 
 def test_friendly_repeated_poke_stays_playful():

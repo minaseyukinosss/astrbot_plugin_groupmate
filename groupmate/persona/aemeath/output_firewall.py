@@ -48,7 +48,6 @@ class AemeathOutputFirewall:
         r"^(?:嘿|噗|呵|哎|唉)[，,～~\s…]"
     )
     _DECORATIVE_PUNCT = re.compile(r"[～~]{1,}|——|…{2,}")
-    _POKE_BYSTANDER_VOICE = re.compile(r"(?:你俩|你们俩|你们两个)")
 
     def validate(
         self,
@@ -88,11 +87,6 @@ class AemeathOutputFirewall:
             codes.append("leading_mono_interjection")
         if self._DECORATIVE_PUNCT.search(cleaned):
             codes.append("decorative_punctuation")
-        if (
-            response_act is ResponseAct.PLAYFUL_REPLY
-            and self._POKE_BYSTANDER_VOICE.search(cleaned)
-        ):
-            codes.append("false_bystander_voice")
         status = getattr(capability_status, "value", capability_status)
         status = str(status or "").strip().lower()
         task_not_successful = (

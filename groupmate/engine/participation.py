@@ -293,7 +293,7 @@ class ParticipationDecisionEngine:
             reason_codes=("poke_bystander",),
             contribution=(
                 "群里别人互戳，你可轻轻跟一脚或短句带过；"
-                "不要抢成话题中心，一句短口语少标点"
+                "不要抢成话题中心，一句约 15–30 字，少全标点可软收尾"
             ),
             quote_mode=QuoteMode.NEVER,
             media_policy=MediaPolicy(decorative_allowed=True),
@@ -446,9 +446,9 @@ class ParticipationDecisionEngine:
         band: AffinityBand,
     ) -> str:
         base = (
-            "对方戳的是你；你是当事人，用「你」对说话者，"
-            "禁止「你俩/你们俩」旁观口吻；"
-            "一句短口语，少语气词少标点"
+            "对方戳的是你；你是当事人，用「你」对说话者；"
+            "一句约 15–30 字口语，少全标点，可软收尾呢/呀/啦；"
+            "禁句首嘿/噗，尽量不用～"
         )
         if act is ResponseAct.BOUNDARY or level in (
             DirectAddressPressureLevel.PESTER,

@@ -288,7 +288,7 @@ def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(
     assert plan.response_act.act is response_act_module.ResponseAct.PLAYFUL_REPLY
     assert plan.urgency is Urgency.HIGH
     assert plan.contribution.startswith("对方戳的是你")
-    assert "禁止「你俩/你们俩」" in plan.contribution
+    assert "用「你」对说话者" in plan.contribution
     assert "爱弥斯" in plan.persona_prompt
     assert plan.contribution in plan.user_prompt
     assert platform.sent[0]["quote_message_id"] is None
