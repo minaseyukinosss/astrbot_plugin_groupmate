@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..capabilities import (
     CapabilityGovernor,
@@ -321,6 +321,13 @@ class AstrBotBridge:
             self.persona_context.persona_id
         ).items():
             enriched = dict(snapshot)
+            last_outcome = enriched.get("last_outcome")
+            if isinstance(last_outcome, dict):
+                # Keep reason only; never expose reply text on status surfaces.
+                enriched["last_outcome"] = {
+                    "sent": bool(last_outcome.get("sent")),
+                    "reason": str(last_outcome.get("reason") or ""),
+                }
             enriched["recent_ends"] = self.memory.recent_decision_ends(
                 self.persona_context.persona_id, group_id, limit=3
             )
@@ -376,6 +383,8 @@ class AstrBotBridge:
             "ignored_legacy_keys": list(
                 self.settings.diagnostics.ignored_legacy_keys
             ),
+            "unknown_keys": list(self.settings.diagnostics.unknown_keys),
+            "warnings": list(self.settings.diagnostics.warnings),
             "groups": groups,
             "bootstrapped": sorted(
                 group_id
@@ -383,6 +392,30 @@ class AstrBotBridge:
                 if persona_id == self.persona_context.persona_id
             ),
         }
+
+    def list_decisions(
+        self,
+        *,
+        group_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        items = self.memory.recent_decisions(
+            self.persona_context.persona_id,
+            group_id=group_id,
+            outcome=outcome,
+            limit=limit,
+        )
+        return {
+            "items": items,
+            "active_persona": self.persona_context.persona_id,
+        }
+
+    def get_decision_trace(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        return self.memory.decision_trace(
+            self.persona_context.persona_id,
+            decision_id,
+        )
 
     def _workflow_for(self, group_id: str, persona_context):
         getter = lambda gid: self._provider_by_group.get(

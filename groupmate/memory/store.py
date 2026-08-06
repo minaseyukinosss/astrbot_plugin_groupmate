@@ -848,6 +848,165 @@ class SQLiteMemoryStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def recent_decisions(
+        self,
+        persona_id: str,
+        *,
+        group_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return recent END decisions with path summary fields (no reply text)."""
+        persona_id = _require_persona_id(persona_id)
+        limit = max(1, min(100, int(limit)))
+        outcome_filter = str(outcome or "").strip().lower()
+        if outcome_filter in ("", "all"):
+            outcome_filter = ""
+        elif outcome_filter not in ("sent", "silent"):
+            raise ValueError("outcome must be all, sent, or silent")
+
+        group_filter = str(group_id).strip() if group_id else ""
+        params: List[Any] = [persona_id]
+        sql = """
+            SELECT decision_id, group_id, reason, timestamp
+            FROM decisions
+            WHERE persona_id = ? AND state = 'END'
+        """
+        if group_filter:
+            sql += " AND group_id = ?"
+            params.append(group_filter)
+        sql += " ORDER BY timestamp DESC, rowid DESC LIMIT ?"
+        # Over-fetch when filtering by outcome so sent/silent still fill the page.
+        fetch_limit = limit * 3 if outcome_filter else limit
+        params.append(fetch_limit)
+        ends = [dict(row) for row in self._db.execute(sql, params).fetchall()]
+        if not ends:
+            return []
+
+        decision_ids = [str(item["decision_id"]) for item in ends]
+        placeholders = ",".join("?" for _ in decision_ids)
+        sent_rows = self._db.execute(
+            f"""
+            SELECT DISTINCT decision_id
+            FROM decisions
+            WHERE persona_id = ? AND state = 'SEND'
+              AND decision_id IN ({placeholders})
+            """,
+            [persona_id, *decision_ids],
+        ).fetchall()
+        sent_ids = {str(row["decision_id"]) for row in sent_rows}
+
+        summary_states = (
+            "OBSERVE",
+            "SCENE",
+            "PARTICIPATION",
+            "INTENT",
+            "ACT",
+            "END",
+        )
+        state_placeholders = ",".join("?" for _ in summary_states)
+        stage_rows = self._db.execute(
+            f"""
+            SELECT decision_id, state, reason, timestamp
+            FROM decisions
+            WHERE persona_id = ?
+              AND decision_id IN ({placeholders})
+              AND state IN ({state_placeholders})
+            ORDER BY timestamp ASC, rowid ASC
+            """,
+            [persona_id, *decision_ids, *summary_states],
+        ).fetchall()
+        stages_by_id: Dict[str, Dict[str, str]] = {}
+        for row in stage_rows:
+            decision_id = str(row["decision_id"])
+            bucket = stages_by_id.setdefault(decision_id, {})
+            # Keep the latest reason for each state key.
+            bucket[str(row["state"])] = str(row["reason"] or "")
+
+        items: List[Dict[str, Any]] = []
+        for end in ends:
+            decision_id = str(end["decision_id"])
+            sent = decision_id in sent_ids
+            if outcome_filter == "sent" and not sent:
+                continue
+            if outcome_filter == "silent" and sent:
+                continue
+            stages = stages_by_id.get(decision_id, {})
+            items.append(
+                {
+                    "decision_id": decision_id,
+                    "group_id": str(end["group_id"]),
+                    "timestamp": int(end["timestamp"] or 0),
+                    "sent": sent,
+                    "end_reason": str(end["reason"] or ""),
+                    "trigger": stages.get("OBSERVE", ""),
+                    "scene": stages.get("SCENE", ""),
+                    "participation": stages.get("PARTICIPATION", ""),
+                    "intent": stages.get("INTENT", ""),
+                    "act": stages.get("ACT", ""),
+                }
+            )
+            if len(items) >= limit:
+                break
+        return items
+
+    def decision_trace(
+        self, persona_id: str, decision_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return ordered stage trail for one decision (no reply text)."""
+        persona_id = _require_persona_id(persona_id)
+        decision_id = str(decision_id or "").strip()
+        if not decision_id:
+            raise ValueError("decision_id is required")
+        rows = self._db.execute(
+            """
+            SELECT decision_id, group_id, state, reason, timestamp
+            FROM decisions
+            WHERE persona_id = ? AND decision_id = ?
+            ORDER BY timestamp ASC, rowid ASC
+            """,
+            (persona_id, decision_id),
+        ).fetchall()
+        if not rows:
+            return None
+        stages = [
+            {
+                "state": str(row["state"] or ""),
+                "reason": str(row["reason"] or ""),
+                "timestamp": int(row["timestamp"] or 0),
+            }
+            for row in rows
+        ]
+        sent = any(item["state"] == "SEND" for item in stages)
+        end_reason = ""
+        for item in reversed(stages):
+            if item["state"] == "END":
+                end_reason = item["reason"]
+                break
+        summary: Dict[str, str] = {}
+        for item in stages:
+            if item["state"] in {
+                "OBSERVE",
+                "SCENE",
+                "PARTICIPATION",
+                "INTENT",
+                "ACT",
+                "END",
+            }:
+                summary[item["state"]] = item["reason"]
+        return {
+            "decision_id": decision_id,
+            "group_id": str(rows[0]["group_id"]),
+            "sent": sent,
+            "end_reason": end_reason,
+            "trigger": summary.get("OBSERVE", ""),
+            "scene": summary.get("SCENE", ""),
+            "participation": summary.get("PARTICIPATION", ""),
+            "intent": summary.get("INTENT", ""),
+            "act": summary.get("ACT", ""),
+            "stages": stages,
+        }
+
     def enqueue_outbox(
         self,
         persona_id: str,

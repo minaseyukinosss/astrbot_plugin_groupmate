@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Groupmate 设置</title>
+    <title>Groupmate 决策</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -12,42 +12,88 @@
         <div>
           <p class="eyebrow">GROUPMATE</p>
           <h1>群聊伙伴</h1>
-          <p class="lede">运行状态与人格部署摘要。详细项在 AstrBot 插件「配置」里改。</p>
+          <p class="lede">决策路径透明化：触发 → 场景 → 路线 → 结果。</p>
         </div>
-        <span id="badge" class="badge" data-tone="neutral">读取中</span>
+        <div class="hero-actions">
+          <span id="badge" class="badge" data-tone="neutral">读取中</span>
+          <button id="refresh" class="btn quiet" type="button">刷新</button>
+          <button id="pause-toggle" class="btn" type="button">暂停</button>
+        </div>
       </header>
+
+      <nav class="modules" aria-label="插件模块">
+        <button type="button" class="module-tab is-active" data-module="decision">决策</button>
+        <button type="button" class="module-tab" data-module="runtime">运行</button>
+        <button type="button" class="module-tab" data-module="config">配置</button>
+        <button type="button" class="module-tab" data-module="future">预留</button>
+      </nav>
 
       <div id="error" class="notice" hidden></div>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>运行</h2>
-          <button id="refresh" class="btn quiet" type="button">刷新</button>
+      <section id="module-decision" class="module-panel" data-module-panel="decision">
+        <div class="toolbar">
+          <label class="field">
+            <span>群</span>
+            <select id="filter-group">
+              <option value="">全部</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>结果</span>
+            <select id="filter-outcome">
+              <option value="all">全部</option>
+              <option value="sent">已发送</option>
+              <option value="silent">沉默</option>
+            </select>
+          </label>
         </div>
-        <dl class="kv" id="runtime-kv">
-          <div><dt>状态</dt><dd id="paused-text">—</dd></div>
-          <div><dt>已初始化群</dt><dd id="group-count">—</dd></div>
-          <div><dt>当前人格</dt><dd id="active-persona">—</dd></div>
-          <div><dt>文本模型模式</dt><dd id="provider-mode">—</dd></div>
-          <div><dt>图片理解</dt><dd id="vision-status">—</dd></div>
-          <div><dt>配置健康</dt><dd id="config-health">—</dd></div>
-        </dl>
-        <div class="actions">
-          <button id="pause" class="btn" type="button">暂停观察</button>
-          <button id="resume" class="btn primary" type="button">恢复观察</button>
+
+        <div class="decision-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>最近决策</h2>
+              <span id="decision-count" class="muted small">—</span>
+            </div>
+            <div id="decision-list" class="decision-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>路径</h2>
+              <span id="trace-meta" class="muted small"></span>
+            </div>
+            <div id="path-summary" class="path-summary muted">选择左侧一条决策查看路径。</div>
+            <ol id="trace-list" class="trace-list"></ol>
+          </div>
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>部署摘要</h2>
+      <section id="module-runtime" class="module-panel" data-module-panel="runtime" hidden>
+        <div class="placeholder">
+          <h2>运行</h2>
+          <p class="muted">暂停与健康状态见顶栏。完整运维摘要后续再补，当前以决策透明为主。</p>
+          <dl class="kv compact" id="runtime-kv">
+            <div><dt>状态</dt><dd id="runtime-paused">—</dd></div>
+            <div><dt>配置健康</dt><dd id="runtime-health">—</dd></div>
+            <div><dt>已初始化群</dt><dd id="runtime-groups">—</dd></div>
+          </dl>
         </div>
-        <p class="muted">
-          启用群、分人格称呼、初始关系和模型，请到 WebUI
-          <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>
-          （齿轮）里编辑。当前只注册爱弥斯人格。
-        </p>
-        <pre id="config-preview" class="preview">加载中…</pre>
+      </section>
+
+      <section id="module-config" class="module-panel" data-module-panel="config" hidden>
+        <div class="placeholder">
+          <h2>配置</h2>
+          <p class="muted">
+            启用群、称呼、关系与模型请到 WebUI
+            <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>（齿轮）编辑。
+          </p>
+        </div>
+      </section>
+
+      <section id="module-future" class="module-panel" data-module-panel="future" hidden>
+        <div class="placeholder">
+          <h2>预留</h2>
+          <p class="muted">记忆 / 关系等模块占位，后续按需开放。</p>
+        </div>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

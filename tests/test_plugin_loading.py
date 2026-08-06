@@ -27,6 +27,8 @@ def test_status_api_returns_runtime_health_without_removed_config(monkeypatch):
             "bootstrapped": [],
             "active_persona": "aemeath",
             "config_health": "ok",
+            "warnings": [],
+            "unknown_keys": [],
         },
     )
 
@@ -36,6 +38,23 @@ def test_status_api_returns_runtime_health_without_removed_config(monkeypatch):
     assert payload["config_health"] == "ok"
     assert "group_brief" not in repr(payload)
     assert "max_reply_chars" not in repr(payload)
+
+
+def test_web_api_registers_decision_routes():
+    from groupmate.host.web_api import GroupmateWebAPI
+
+    registered = []
+
+    class FakeContext:
+        def register_web_api(self, path, handler, methods, description):
+            registered.append((path, handler.__name__, methods))
+
+    GroupmateWebAPI(types.SimpleNamespace()).register(FakeContext())
+    paths = {item[0] for item in registered}
+    assert "/astrbot_plugin_groupmate/status" in paths
+    assert "/astrbot_plugin_groupmate/runtime" in paths
+    assert "/astrbot_plugin_groupmate/decisions" in paths
+    assert "/astrbot_plugin_groupmate/decisions/<decision_id>" in paths
 
 
 def test_main_loads_via_astrbot_module_path(tmp_path):
