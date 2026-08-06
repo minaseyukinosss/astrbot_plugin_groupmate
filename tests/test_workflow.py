@@ -751,8 +751,8 @@ def test_false_completion_after_repair_uses_safe_direct_fallback(
     )
 
     assert outcome.sent is True
-    assert outcome.text == "这个我现在做不了。"
-    assert platform.sent[0]["text"] == "这个我现在做不了。"
+    assert outcome.text == "这个我搞不定呀"
+    assert platform.sent[0]["text"] == "这个我搞不定呀"
 
 
 def test_capability_cancellation_propagates(message_factory, balanced_policy):
