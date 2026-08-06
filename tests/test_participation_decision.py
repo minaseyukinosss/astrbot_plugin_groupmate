@@ -247,11 +247,49 @@ def test_poke_cooldown_silences_second_reaction():
     )
 
     first = decide_poke(participation, timestamp=100, interaction=interaction)
+    assert first.action is ParticipationAction.SPEAK
+    # Cooldown commits only after a successful outbound reaction.
+    participation.poke_throttle.mark_direct_reacted(
+        persona_id="aemeath",
+        group_id="g1",
+        sender_id="u1",
+        now=100,
+    )
     second = decide_poke(participation, timestamp=110, interaction=interaction)
 
-    assert first.action is ParticipationAction.SPEAK
     assert second.action is ParticipationAction.SILENCE
     assert "poke_cooldown" in second.reason_codes
+
+
+def test_poke_throttle_silence_does_not_inflate_spam_pressure():
+    participation = engine()
+    interaction = InteractionPolicy(
+        poke_react_probability=1.0,
+        poke_cooldown_seconds=30,
+    )
+
+    first = decide_poke(participation, timestamp=100, interaction=interaction)
+    participation.poke_throttle.mark_direct_reacted(
+        persona_id="aemeath",
+        group_id="g1",
+        sender_id="u1",
+        now=100,
+    )
+    silenced = decide_poke(participation, timestamp=105, interaction=interaction)
+    again = decide_poke(
+        participation,
+        timestamp=140,
+        interaction=InteractionPolicy(
+            poke_react_probability=1.0,
+            poke_cooldown_seconds=0,
+        ),
+    )
+
+    assert first.pressure.count == 1
+    assert silenced.action is ParticipationAction.SILENCE
+    assert silenced.pressure is None
+    assert again.pressure.count == 2
+    assert again.pressure.level is DirectAddressPressureLevel.NUDGE
 
 
 def test_bystander_poke_can_speak_or_skip_by_probability():

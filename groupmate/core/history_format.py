@@ -14,30 +14,59 @@ TOPIC_IDLE_GAP_SECONDS = 120
 MERGE_WINDOW_SECONDS = 8
 
 
-def format_outbound_poke_note(target_user_id: str) -> str:
+def format_outbound_poke_note(
+    target_user_id: str,
+    target_label: str = "",
+) -> str:
     """Short first-person-visible note that the character poked someone."""
-    target = str(target_user_id or "").strip() or "某人"
-    return "戳了戳 {}".format(target)
+    label = str(target_label or "").strip()
+    target = str(target_user_id or "").strip()
+    return "戳了戳 {}".format(label or target or "某人")
 
 
 def compose_bot_delivery_text(
     outbound: Sequence[OutboundSegment],
     spoken_text: str = "",
+    *,
+    target_labels: Optional[dict] = None,
 ) -> str:
     """Merge outbound poke actions with spoken text for short-term recall."""
+    labels = target_labels if isinstance(target_labels, dict) else {}
     parts = []
     for item in tuple(outbound or ()):
         if not isinstance(item, OutboundSegment):
             continue
         if item.kind is OutboundKind.POKE and item.target_user_id:
-            parts.append(format_outbound_poke_note(item.target_user_id))
+            parts.append(
+                format_outbound_poke_note(
+                    item.target_user_id,
+                    str(labels.get(item.target_user_id, "") or ""),
+                )
+            )
     spoken = str(spoken_text or "").strip()
     if spoken:
         parts.append(spoken)
     return " / ".join(parts)
 
 
-def _message_content(message: ChatMessage, *, character_name: str = "角色") -> str:
+def _peer_display_names(messages: Sequence[ChatMessage]) -> dict:
+    names = {}
+    for message in tuple(messages or ()):
+        user_id = str(message.sender_id or "").strip()
+        name = str(message.sender_name or "").strip()
+        if not user_id or not name or name == user_id:
+            continue
+        names[user_id] = name[:80]
+    return names
+
+
+def _message_content(
+    message: ChatMessage,
+    *,
+    character_name: str = "角色",
+    peer_names: Optional[dict] = None,
+) -> str:
+    peers = peer_names if isinstance(peer_names, dict) else {}
     if message.origin is MessageOrigin.SYSTEM_SYNTHETIC:
         kind = str(message.metadata.get("interaction_kind", "") or "")
         if kind == "poke":
@@ -45,7 +74,12 @@ def _message_content(message: ChatMessage, *, character_name: str = "角色") ->
             role = str(message.metadata.get("poke_role", "") or "").lower()
             if role == "bystander":
                 target = str(message.metadata.get("target_id", "") or "").strip()
-                target_label = target or "某人"
+                target_label = (
+                    str(message.metadata.get("target_name", "") or "").strip()
+                    or peers.get(target, "")
+                    or target
+                    or "某人"
+                )
                 return "{} 戳了戳 {}".format(speaker, target_label)
             character = (character_name or "角色").strip() or "角色"
             return "{} 戳了戳 {}".format(speaker, character)
@@ -55,9 +89,15 @@ def _message_content(message: ChatMessage, *, character_name: str = "角色") ->
         and "poke" in tuple(message.segment_types or ())
         and not (message.text or "").strip()
     ):
-        target = str(message.metadata.get("poke_target_id", "") or "").strip() or "某人"
+        target = str(message.metadata.get("poke_target_id", "") or "").strip()
+        target_label = (
+            str(message.metadata.get("poke_target_name", "") or "").strip()
+            or peers.get(target, "")
+            or target
+            or "某人"
+        )
         speaker = (message.sender_name or character_name or "角色").strip() or "角色"
-        return "{} 戳了戳 {}".format(speaker, target)
+        return "{} 戳了戳 {}".format(speaker, target_label)
     content = message.text or "[图片]"
     if message.image_urls and message.text:
         content += " [图片]"
@@ -105,6 +145,7 @@ def format_history_block(
     """Format active messages; merge same-sender bursts within a short window."""
     if not messages:
         return ""
+    peer_names = _peer_display_names(messages)
     lines = []
     buffer_sender_id = ""
     buffer_speaker = ""
@@ -130,7 +171,11 @@ def format_history_block(
         buffer_parts = []
 
     for message in messages:
-        content = _message_content(message, character_name=character_name)
+        content = _message_content(
+            message,
+            character_name=character_name,
+            peer_names=peer_names,
+        )
         speaker, relationship, suggested_address = resolve_speaker(
             message.sender_id, message.sender_name, relationships
         )

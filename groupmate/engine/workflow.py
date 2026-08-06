@@ -378,6 +378,7 @@ class CognitiveWorkflow:
                 soft_trigger=soft_trigger,
                 still_valid=still_valid,
                 now=now,
+                affinity_band=affinity.band,
             )
             if poke_only is not None:
                 return poke_only
@@ -663,6 +664,11 @@ class CognitiveWorkflow:
                 decision_id, topic.group_id, "END", outcome.reason, send_now
             )
             return outcome
+        self._commit_poke_throttle(
+            topic=topic,
+            participation=participation,
+            now=send_now,
+        )
         if participation.obligation is ParticipationObligation.OPEN_OPTIONAL:
             self.budgets.record_send(send_now)
         self._recent_outputs[topic.group_id].append(outcome.text)
@@ -945,6 +951,7 @@ class CognitiveWorkflow:
         soft_trigger: bool,
         still_valid: Optional[Callable[[], bool]],
         now: int,
+        affinity_band=None,
     ):
         target = self._poke_outbound_target(
             topic, participation, behavior.interaction
@@ -959,7 +966,7 @@ class CognitiveWorkflow:
             poke_role=self._poke_role(topic) or "bystander",
             poke_target_user_id=target,
             interaction=behavior.interaction,
-            affinity_band=None,
+            affinity_band=affinity_band,
             pressure=participation.pressure,
             reason_codes=participation.reason_codes,
         )
@@ -1006,12 +1013,43 @@ class CognitiveWorkflow:
         if not outcome.sent:
             self._record(decision_id, topic.group_id, "END", outcome.reason, send_now)
             return outcome
+        self._commit_poke_throttle(
+            topic=topic,
+            participation=participation,
+            now=send_now,
+        )
         if participation.obligation is ParticipationObligation.OPEN_OPTIONAL:
             self.budgets.record_send(send_now)
         if outcome.text:
             self._recent_outputs[topic.group_id].append(outcome.text)
         self._remember_session_turns(topic, outcome.text, send_now)
         return outcome
+
+    def _commit_poke_throttle(
+        self,
+        *,
+        topic: TopicSnapshot,
+        participation,
+        now: int,
+    ) -> None:
+        reasons = set(participation.reason_codes or ())
+        latest = topic.latest
+        if latest is None:
+            return
+        if "poke_direct" in reasons:
+            self.participation_engine.poke_throttle.mark_direct_reacted(
+                persona_id=self.persona_context.persona_id,
+                group_id=topic.group_id,
+                sender_id=latest.sender_id,
+                now=now,
+            )
+            return
+        if "poke_bystander" in reasons:
+            self.participation_engine.poke_throttle.mark_bystander_reacted(
+                persona_id=self.persona_context.persona_id,
+                group_id=topic.group_id,
+                now=now,
+            )
 
     def _poke_outbound_target(
         self,

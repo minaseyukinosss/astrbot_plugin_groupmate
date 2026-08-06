@@ -51,6 +51,7 @@ class OutboundKind(StringEnum):
     TEXT = "text"
     IMAGE = "image"
     POKE = "poke"
+    FACE = "face"
 
 
 @dataclass(frozen=True)
@@ -79,8 +80,16 @@ class OutboundSegment:
                 raise ValueError("poke outbound segment requires target_user_id")
             if text or media_id or media_ref:
                 raise ValueError("poke outbound segment cannot contain text or media")
-        elif not media_id or not media_ref:
-            raise ValueError("image outbound segment requires media_id and media_ref")
+        elif kind is OutboundKind.FACE:
+            if not media_id:
+                raise ValueError("face outbound segment requires media_id")
+            if text or media_ref or target_user_id:
+                raise ValueError("face outbound segment cannot contain text or poke target")
+        elif kind is OutboundKind.IMAGE:
+            if not media_id or not media_ref:
+                raise ValueError("image outbound segment requires media_id and media_ref")
+        else:
+            raise ValueError("unsupported outbound kind: {}".format(kind))
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "text", text)
         object.__setattr__(self, "media_id", media_id)

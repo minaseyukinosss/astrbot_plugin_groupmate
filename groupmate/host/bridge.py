@@ -69,7 +69,9 @@ class AstrBotBridge:
             aliases=settings.aliases_for(persona_id),
             relationships=settings.relationships_for(persona_id),
         )
-        self.behavior = BehaviorPolicy()
+        self.behavior = BehaviorPolicy(
+            interaction=settings.interaction_policy()
+        )
         self.runtime = GroupRuntimeManager(
             self._workflow_for,
             lambda group_id: self.persona_context,
@@ -95,6 +97,11 @@ class AstrBotBridge:
         if actor is None:
             return False
         self._mark_groupmate_owner(event)
+        settings = getattr(self, "settings", None)
+        if settings is not None and getattr(settings, "poke_exclusive", False):
+            stopper = getattr(event, "stop_event", None)
+            if callable(stopper):
+                stopper()
         await actor.submit(message, schedule=not self.paused)
         return True
 
@@ -350,6 +357,12 @@ class AstrBotBridge:
             "poke_back": (
                 "enabled" if self.settings.poke_back_enabled else "disabled"
             ),
+            "poke_exclusive": (
+                "enabled" if self.settings.poke_exclusive else "disabled"
+            ),
+            "poke_face": (
+                "enabled" if self.settings.poke_face_enabled else "disabled"
+            ),
             "database_schema": SCHEMA_VERSION,
             "config_health": (
                 "warning"
@@ -415,7 +428,13 @@ class AstrBotBridge:
                 persona_context.prompt_provider,
             ),
             vision=vision,
-            platform=AstrBotPlatformPort(self.context, lambda gid: self._umo_by_group[gid]),
+            platform=AstrBotPlatformPort(
+                self.context,
+                lambda gid: self._umo_by_group[gid],
+                poke_interval_seconds=(
+                    self.behavior.interaction.poke_interval_seconds
+                ),
+            ),
             memory=self.memory,
             persona_context=persona_context,
             behavior=self.behavior,

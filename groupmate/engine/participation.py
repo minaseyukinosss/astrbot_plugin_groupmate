@@ -190,6 +190,13 @@ class ParticipationDecisionEngine:
             now=now,
             policy=interaction,
         )
+        if not throttle.allow:
+            # Throttle silence must not inflate spam pressure.
+            return ParticipationDecision.silence(
+                scene=InteractionScene.DIRECT_INTERACTION,
+                reason_codes=(throttle.reason_code,),
+                posture=affinity.response_posture,
+            )
         pressure = self.pressure.observe(
             persona_id,
             latest,
@@ -197,13 +204,6 @@ class ParticipationDecisionEngine:
             now=now,
             aliases=aliases,
         )
-        if not throttle.allow:
-            return ParticipationDecision.silence(
-                scene=InteractionScene.DIRECT_INTERACTION,
-                reason_codes=(throttle.reason_code,),
-                posture=affinity.response_posture,
-                pressure=pressure,
-            )
         if (
             pressure.level is DirectAddressPressureLevel.AFTER_BOUNDARY
             and affinity.band in (AffinityBand.HOSTILE, AffinityBand.WARY)
@@ -226,13 +226,6 @@ class ParticipationDecisionEngine:
             task_resolution=task_resolution,
             precomputed_pressure=pressure,
         )
-        if decision.action.value == "speak":
-            self.poke_throttle.mark_direct_reacted(
-                persona_id=persona_id,
-                group_id=topic.group_id,
-                sender_id=latest.sender_id,
-                now=now,
-            )
         contribution = self._poke_contribution(
             decision.act,
             pressure.level,
@@ -267,6 +260,7 @@ class ParticipationDecisionEngine:
             group_id=topic.group_id,
             now=now,
             policy=interaction,
+            affinity_band=affinity.band,
         )
         if not throttle.allow:
             return ParticipationDecision.silence(
@@ -280,11 +274,7 @@ class ParticipationDecisionEngine:
                 reason_codes=("poke_bystander_hostile",),
                 posture=ResponsePosture.FIRM,
             )
-        self.poke_throttle.mark_bystander_reacted(
-            persona_id=persona_id,
-            group_id=topic.group_id,
-            now=now,
-        )
+        # Cooldown is committed after successful outbound delivery.
         return ParticipationDecision.speak(
             scene=InteractionScene.DIRECT_INTERACTION,
             act=ResponseAct.PLAYFUL_REPLY,

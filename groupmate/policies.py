@@ -44,15 +44,21 @@ class ResourcePolicy:
 
 @dataclass(frozen=True)
 class InteractionPolicy:
-    """Code-owned host-interaction (poke) restraint rules."""
+    """Host-interaction (poke) restraint rules; defaults code-owned, subset overridable."""
 
     poke_react_probability: float = 0.88
     poke_cooldown_seconds: int = 8
     poke_session_per_minute: int = 6
     poke_back_probability: float = 0.35
+    poke_only_share: float = 0.28
+    poke_burst_probability: float = 0.18
+    poke_burst_max: int = 2
+    poke_interval_seconds: float = 0.45
     poke_bystander_probability: float = 0.33
     poke_bystander_cooldown_seconds: int = 20
     poke_bystander_target: str = "victim"
+    poke_face_probability: float = 0.0
+    poke_face_pool: tuple = (1, 2, 4, 5, 28, 39, 178)
 
 
 @dataclass(frozen=True)

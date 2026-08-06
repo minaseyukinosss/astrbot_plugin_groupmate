@@ -234,6 +234,28 @@ def test_enabled_bot_poke_submits_one_synthetic_owned_message():
     assert event.stop_calls == 0
 
 
+def test_exclusive_adapted_poke_stops_event(tmp_path):
+    from tests.test_native_wake_suppress import _bridge
+
+    bridge = _bridge(tmp_path, poke_enabled=True, poke_exclusive=True)
+    event = Event(poke_target="bot")
+    message = PokeEventAdapter(enabled=True).adapt(event).message
+
+    class _Actor:
+        async def submit(self, submitted, schedule=True):
+            self.submitted = (submitted, schedule)
+
+    async def _prepare(_event):
+        return _Actor()
+
+    bridge._prepare_actor = _prepare  # type: ignore[method-assign]
+    ok = asyncio.run(bridge.handle_adapted_event(event, message))
+
+    assert ok is True
+    assert event.stop_calls == 1
+    assert event.call_llm_values == [True]
+
+
 def test_normal_owner_path_recovers_after_one_adapter_exception():
     failure = FailOnceAdapter()
     poke = PokeEventAdapter(enabled=True)

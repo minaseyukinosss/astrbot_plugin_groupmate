@@ -67,9 +67,18 @@ def test_synthetic_poke_uses_readable_history_without_raw_metadata():
     assert "target_id" not in block
 
 
-def test_bystander_poke_history_shows_victim_id():
+def test_bystander_poke_history_prefers_victim_display_name():
+    victim = ChatMessage(
+        message_id="m0",
+        group_id="g1",
+        sender_id="u9",
+        sender_name="Bob",
+        text="在呢",
+        timestamp=99,
+    )
     block = format_history_block(
         (
+            victim,
             poke_message(
                 metadata={
                     "interaction_kind": "poke",
@@ -84,7 +93,7 @@ def test_bystander_poke_history_shows_victim_id():
         character_name="爱弥斯",
     )
 
-    assert "Alice 戳了戳 u9" in block
+    assert "Alice 戳了戳 Bob" in block
 
 
 def test_bot_outbound_poke_delivery_is_readable_in_history():
@@ -95,7 +104,7 @@ def test_bot_outbound_poke_delivery_is_readable_in_history():
         group_id="g1",
         sender_id="__bot__",
         sender_name="爱弥斯",
-        text="戳了戳 u1 / 别戳啦。",
+        text="戳了戳 小明 / 别戳啦。",
         timestamp=101,
         is_bot=True,
         segment_types=("poke", "text"),
@@ -105,11 +114,12 @@ def test_bot_outbound_poke_delivery_is_readable_in_history():
             "origin": "bot_delivery",
             "decision_id": "d1",
             "poke_target_id": "u1",
+            "poke_target_name": "小明",
         },
     )
     block = format_history_block((bot_poke,), {}, character_name="爱弥斯")
 
-    assert "戳了戳 u1" in block
+    assert "戳了戳 小明" in block
     assert "别戳啦" in block
 
 

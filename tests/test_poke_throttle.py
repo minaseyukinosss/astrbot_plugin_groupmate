@@ -1,5 +1,7 @@
 """Poke throttle cooldown / rate / bystander targeting."""
 
+import pytest
+
 from groupmate.engine.poke_throttle import PokeThrottle
 from groupmate.policies import InteractionPolicy
 
@@ -96,3 +98,18 @@ def test_bystander_target_strategies():
 
     assert victim == "victim"
     assert poker == "poker"
+
+
+def test_bystander_probability_scales_with_affinity():
+    from groupmate.social.affinity import AffinityBand
+
+    base = 0.40
+    wary = PokeThrottle._bystander_probability(base, AffinityBand.WARY)
+    friendly = PokeThrottle._bystander_probability(base, AffinityBand.FRIENDLY)
+    close = PokeThrottle._bystander_probability(base, AffinityBand.CLOSE)
+    hostile = PokeThrottle._bystander_probability(base, AffinityBand.HOSTILE)
+
+    assert wary == pytest.approx(0.22)
+    assert friendly == pytest.approx(0.50)
+    assert close == pytest.approx(0.56)
+    assert hostile == 0.0

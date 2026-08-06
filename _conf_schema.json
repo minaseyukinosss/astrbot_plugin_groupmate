@@ -98,19 +98,67 @@
   "interaction_group": {
     "description": "宿主互动",
     "type": "object",
-    "hint": "宿主特殊互动默认关闭，开启后 Groupmate 成为对应互动的预期最终回复所有者。",
+    "hint": "戳一戳默认关闭。下方高级项可覆盖内置概率/冷却；留空或非法值回退默认。",
     "items": {
       "poke_enabled": {
         "description": "戳一戳互动",
         "type": "bool",
         "default": false,
-        "hint": "开启后由 Groupmate 回复戳 Bot 事件，并可观察他人互戳以跟风；请停用其他直接回复戳一戳的插件。"
+        "hint": "开启后由 Groupmate 回复戳 Bot 事件，并可观察他人互戳以跟风。"
       },
       "poke_back_enabled": {
         "description": "允许回戳 / 跟风戳",
         "type": "bool",
         "default": false,
         "hint": "开启后可对戳你的人或互戳目标发送平台戳一戳；关闭时只可能文字回应。"
+      },
+      "poke_exclusive": {
+        "description": "独占戳事件",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后对已接管的戳事件调用 stop_event，避免与其他戳插件双响。默认关闭以保持旁路兼容。"
+      },
+      "poke_face_enabled": {
+        "description": "被戳偶发 QQ 表情",
+        "type": "bool",
+        "default": false,
+        "hint": "仅发送少量系统表情（Face），不走表情包图库。"
+      },
+      "poke_react_probability": {
+        "description": "被戳回应概率",
+        "type": "float",
+        "default": 0.88,
+        "hint": "高级：0~1，默认 0.88。"
+      },
+      "poke_cooldown_seconds": {
+        "description": "被戳冷却（秒）",
+        "type": "int",
+        "default": 8,
+        "hint": "高级：同人冷却，默认 8。"
+      },
+      "poke_back_probability": {
+        "description": "回戳动作概率",
+        "type": "float",
+        "default": 0.35,
+        "hint": "高级：被戳回应中含出站戳的概率，默认 0.35。"
+      },
+      "poke_bystander_probability": {
+        "description": "跟戳基础概率",
+        "type": "float",
+        "default": 0.33,
+        "hint": "高级：他人互戳时跟风基础概率（再按好感缩放），默认 0.33。"
+      },
+      "poke_bystander_cooldown_seconds": {
+        "description": "跟戳冷却（秒）",
+        "type": "int",
+        "default": 20,
+        "hint": "高级：同群跟风冷却，默认 20。"
+      },
+      "poke_face_probability": {
+        "description": "表情触发概率",
+        "type": "float",
+        "default": 0.12,
+        "hint": "高级：开启「偶发 QQ 表情」后的触发概率，默认 0.12。"
       }
     }
   }

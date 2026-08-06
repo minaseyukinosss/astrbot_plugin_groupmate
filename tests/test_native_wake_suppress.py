@@ -93,6 +93,8 @@ def _bridge(tmp_path: Path, **settings) -> AstrBotBridge:
         "interaction_group": {
             "poke_enabled": settings.pop("poke_enabled", False),
             "poke_back_enabled": settings.pop("poke_back_enabled", False),
+            "poke_exclusive": settings.pop("poke_exclusive", False),
+            "poke_face_enabled": settings.pop("poke_face_enabled", False),
         },
     }
     assert not settings

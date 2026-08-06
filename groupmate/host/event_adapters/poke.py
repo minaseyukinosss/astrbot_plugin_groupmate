@@ -39,9 +39,21 @@ class PokeEventAdapter(HostEventAdapter):
         if target_id == bot_id:
             poke_role = "direct"
             metadata_target = bot_id
+            target_name = ""
         else:
             poke_role = "bystander"
             metadata_target = target_id
+            target_name = self._target_display_name(event, target_id)
+
+        metadata = {
+            "interaction_kind": "poke",
+            "poke_role": poke_role,
+            "target_id": metadata_target,
+            "poker_id": sender_id,
+            "source_adapter": "aiocqhttp_poke",
+        }
+        if target_name and target_name != metadata_target:
+            metadata["target_name"] = target_name
 
         return HostEventAdapterResult.admitted(
             ChatMessage(
@@ -61,13 +73,7 @@ class PokeEventAdapter(HostEventAdapter):
                 origin=MessageOrigin.SYSTEM_SYNTHETIC,
                 platform="aiocqhttp",
                 bot_id=bot_id,
-                metadata={
-                    "interaction_kind": "poke",
-                    "poke_role": poke_role,
-                    "target_id": metadata_target,
-                    "poker_id": sender_id,
-                    "source_adapter": "aiocqhttp_poke",
-                },
+                metadata=metadata,
             )
         )
 
@@ -149,6 +155,29 @@ class PokeEventAdapter(HostEventAdapter):
         if text in ("", "0", "None"):
             return ""
         return text
+
+    @classmethod
+    def _target_display_name(cls, event: Any, target_id: str) -> str:
+        target_id = str(target_id or "").strip()
+        message_obj = getattr(event, "message_obj", None)
+        raw = getattr(message_obj, "raw_message", None)
+        candidates = []
+        if isinstance(raw, dict):
+            for key in ("target_name", "target_nickname", "target_card"):
+                candidates.append(raw.get(key))
+            data = raw.get("data")
+            if isinstance(data, dict):
+                for key in ("target_name", "name", "nickname", "card"):
+                    candidates.append(data.get(key))
+        for component in getattr(message_obj, "message", ()) or ():
+            for attr in ("target_name", "name", "nickname", "card"):
+                if hasattr(component, attr):
+                    candidates.append(getattr(component, attr, None))
+        for value in candidates:
+            name = str(value or "").strip()
+            if name and name not in ("0", "None") and name != target_id:
+                return name[:80]
+        return ""
 
     @staticmethod
     def _identifier(event: Any, method_name: str) -> str:

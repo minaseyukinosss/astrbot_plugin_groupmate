@@ -1,8 +1,8 @@
 """Strict AstrBot deployment configuration for Groupmate.
 
-Only this module reads AstrBot-owned installation settings. Runtime behavior
-knobs stay code-owned so old plugin switches cannot silently alter the new
-scene-driven mechanism.
+This module reads AstrBot-owned installation settings. Most runtime behavior
+stays code-owned; a curated poke advanced subset may override InteractionPolicy
+defaults from WebUI.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, Tuple
 
 from ..core.relationships import RelationshipEntry
+from ..policies import InteractionPolicy
 
 
 DEFAULT_PERSONA_ID = "aemeath"
@@ -68,6 +69,14 @@ class DeploymentSettings:
     vision_provider: str
     poke_enabled: bool
     poke_back_enabled: bool
+    poke_exclusive: bool
+    poke_face_enabled: bool
+    poke_react_probability: float
+    poke_cooldown_seconds: int
+    poke_back_probability: float
+    poke_bystander_probability: float
+    poke_bystander_cooldown_seconds: int
+    poke_face_probability: float
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -75,6 +84,27 @@ class DeploymentSettings:
 
     def relationships_for(self, persona_id: str) -> Tuple[RelationshipEntry, ...]:
         return dict(self.relationships).get(str(persona_id), ())
+
+    def interaction_policy(self) -> InteractionPolicy:
+        defaults = InteractionPolicy()
+        face_probability = (
+            self.poke_face_probability if self.poke_face_enabled else 0.0
+        )
+        return InteractionPolicy(
+            poke_react_probability=self.poke_react_probability,
+            poke_cooldown_seconds=self.poke_cooldown_seconds,
+            poke_session_per_minute=defaults.poke_session_per_minute,
+            poke_back_probability=self.poke_back_probability,
+            poke_only_share=defaults.poke_only_share,
+            poke_burst_probability=defaults.poke_burst_probability,
+            poke_burst_max=defaults.poke_burst_max,
+            poke_interval_seconds=defaults.poke_interval_seconds,
+            poke_bystander_probability=self.poke_bystander_probability,
+            poke_bystander_cooldown_seconds=self.poke_bystander_cooldown_seconds,
+            poke_bystander_target=defaults.poke_bystander_target,
+            poke_face_probability=face_probability,
+            poke_face_pool=defaults.poke_face_pool,
+        )
 
 
 class AstrBotConfigParser:
@@ -88,6 +118,7 @@ class AstrBotConfigParser:
         persona_group = _as_mapping(source.get("persona_group"))
         provider_group = _as_mapping(source.get("provider_group"))
         interaction_group = _as_mapping(source.get("interaction_group"))
+        defaults = InteractionPolicy()
 
         enabled_groups = _parse_digit_tuple(
             scope_group.get("enabled_groups", ()),
@@ -117,6 +148,50 @@ class AstrBotConfigParser:
             poke_back_enabled=_strict_boolean(
                 interaction_group.get("poke_back_enabled", False),
                 False,
+            ),
+            poke_exclusive=_strict_boolean(
+                interaction_group.get("poke_exclusive", False),
+                False,
+            ),
+            poke_face_enabled=_strict_boolean(
+                interaction_group.get("poke_face_enabled", False),
+                False,
+            ),
+            poke_react_probability=_float_clamped(
+                interaction_group.get("poke_react_probability"),
+                defaults.poke_react_probability,
+                0.0,
+                1.0,
+            ),
+            poke_cooldown_seconds=_int_clamped(
+                interaction_group.get("poke_cooldown_seconds"),
+                defaults.poke_cooldown_seconds,
+                0,
+                120,
+            ),
+            poke_back_probability=_float_clamped(
+                interaction_group.get("poke_back_probability"),
+                defaults.poke_back_probability,
+                0.0,
+                1.0,
+            ),
+            poke_bystander_probability=_float_clamped(
+                interaction_group.get("poke_bystander_probability"),
+                defaults.poke_bystander_probability,
+                0.0,
+                1.0,
+            ),
+            poke_bystander_cooldown_seconds=_int_clamped(
+                interaction_group.get("poke_bystander_cooldown_seconds"),
+                defaults.poke_bystander_cooldown_seconds,
+                0,
+                300,
+            ),
+            poke_face_probability=_float_clamped(
+                interaction_group.get("poke_face_probability"),
+                0.12,
+                0.0,
+                1.0,
             ),
             diagnostics=ConfigDiagnostics(
                 ignored_legacy_keys=diagnostics.ignored_legacy_keys,
@@ -164,6 +239,26 @@ def _boolean(value: Any, default: bool) -> bool:
 
 def _strict_boolean(value: Any, default: bool) -> bool:
     return value if isinstance(value, bool) else default
+
+
+def _float_clamped(value: Any, default: float, low: float, high: float) -> float:
+    if value is None or value == "":
+        return float(default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return max(float(low), min(float(high), number))
+
+
+def _int_clamped(value: Any, default: int, low: int, high: int) -> int:
+    if value is None or value == "":
+        return int(default)
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+    return max(int(low), min(int(high), number))
 
 
 def _parse_digit_tuple(raw: Any, *, path: str) -> Tuple[str, ...]:

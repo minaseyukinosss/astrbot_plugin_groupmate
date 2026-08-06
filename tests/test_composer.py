@@ -234,6 +234,62 @@ def test_composer_can_emit_direct_poke_with_text():
     assert draft.segments[0].target_user_id == "u1"
 
 
+def test_composer_can_emit_direct_poke_only():
+    from groupmate.policies import InteractionPolicy
+    from groupmate.social.affinity import AffinityBand
+
+    rolls = iter([0.0, 0.9, 0.0])  # include poke, poke-only, no burst
+
+    draft = ResponseComposer(rng=lambda: next(rolls)).compose(
+        text="别戳啦。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=True,
+        poke_role="direct",
+        poke_target_user_id="u1",
+        interaction=InteractionPolicy(
+            poke_back_probability=1.0,
+            poke_only_share=0.28,
+            poke_burst_probability=0.18,
+        ),
+        affinity_band=AffinityBand.FRIENDLY,
+        reason_codes=("poke_direct",),
+    )
+
+    assert [item.kind for item in draft.segments] == [OutboundKind.POKE]
+    assert draft.segments[0].target_user_id == "u1"
+
+
+def test_composer_friendly_can_double_poke():
+    from groupmate.policies import InteractionPolicy
+    from groupmate.social.affinity import AffinityBand
+
+    rolls = iter([0.0, 0.0, 0.95])  # poke, keep text, burst
+
+    draft = ResponseComposer(rng=lambda: next(rolls)).compose(
+        text="别戳啦。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=True,
+        poke_role="direct",
+        poke_target_user_id="u1",
+        interaction=InteractionPolicy(
+            poke_back_probability=1.0,
+            poke_only_share=0.28,
+            poke_burst_probability=0.18,
+            poke_burst_max=2,
+        ),
+        affinity_band=AffinityBand.FRIENDLY,
+        reason_codes=("poke_direct",),
+    )
+
+    assert [item.kind for item in draft.segments] == [
+        OutboundKind.POKE,
+        OutboundKind.POKE,
+        OutboundKind.TEXT,
+    ]
+
+
 def test_composer_bystander_prefers_poke_only():
     draft = ResponseComposer(rng=lambda: 0.0).compose(
         text="跟风一句。",
@@ -247,3 +303,33 @@ def test_composer_bystander_prefers_poke_only():
 
     assert [item.kind for item in draft.segments] == [OutboundKind.POKE]
     assert draft.segments[0].target_user_id == "u2"
+
+
+def test_composer_can_append_light_face_on_poke():
+    from groupmate.policies import InteractionPolicy
+
+    rolls = iter([0.0, 0.95, 0.0])  # include poke, trigger face, pick pool
+
+    draft = ResponseComposer(rng=lambda: next(rolls)).compose(
+        text="别戳啦。",
+        act_plan=_act(ResponseAct.PLAYFUL_REPLY, InteractionScene.DIRECT_INTERACTION),
+        quote_message_id=None,
+        poke_back_enabled=True,
+        poke_role="direct",
+        poke_target_user_id="u1",
+        interaction=InteractionPolicy(
+            poke_back_probability=1.0,
+            poke_only_share=0.0,
+            poke_burst_probability=0.0,
+            poke_face_probability=0.12,
+            poke_face_pool=(39,),
+        ),
+        reason_codes=("poke_direct",),
+    )
+
+    assert [item.kind for item in draft.segments] == [
+        OutboundKind.POKE,
+        OutboundKind.TEXT,
+        OutboundKind.FACE,
+    ]
+    assert draft.segments[-1].media_id == "39"

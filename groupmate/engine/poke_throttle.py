@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..policies import InteractionPolicy
+from ..social.affinity import AffinityBand
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,14 @@ class PokeThrottleDecision:
 
     allow: bool
     reason_code: str = ""
+
+
+_BYSTANDER_AFFINITY_SCALE = {
+    AffinityBand.WARY: 0.55,
+    AffinityBand.NEUTRAL: 1.0,
+    AffinityBand.FRIENDLY: 1.25,
+    AffinityBand.CLOSE: 1.4,
+}
 
 
 class PokeThrottle:
@@ -104,6 +113,7 @@ class PokeThrottle:
         group_id: str,
         now: int,
         policy: InteractionPolicy,
+        affinity_band: Optional[AffinityBand] = None,
     ) -> PokeThrottleDecision:
         persona_id = str(persona_id or "").strip()
         group_id = str(group_id or "").strip()
@@ -116,12 +126,26 @@ class PokeThrottle:
         if cooldown > 0 and last > 0 and now - last < cooldown:
             return PokeThrottleDecision(False, "poke_bystander_cooldown")
 
-        probability = float(policy.poke_bystander_probability)
+        probability = self._bystander_probability(
+            float(policy.poke_bystander_probability),
+            affinity_band,
+        )
         if probability <= 0:
             return PokeThrottleDecision(False, "poke_bystander_skip")
         if probability < 1.0 and self._rng() > probability:
             return PokeThrottleDecision(False, "poke_bystander_skip")
         return PokeThrottleDecision(True, "")
+
+    @staticmethod
+    def _bystander_probability(
+        base: float,
+        affinity_band: Optional[AffinityBand],
+    ) -> float:
+        scaled = max(0.0, float(base))
+        if affinity_band is AffinityBand.HOSTILE:
+            return 0.0
+        factor = _BYSTANDER_AFFINITY_SCALE.get(affinity_band, 1.0)
+        return min(0.85, scaled * float(factor))
 
     def mark_bystander_reacted(
         self,

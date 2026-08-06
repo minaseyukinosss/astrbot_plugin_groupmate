@@ -143,6 +143,34 @@ class DeliveryService:
             raise ValueError("persona_id is required")
         self.character_name = character_name
 
+    def _poke_display_name(self, group_id: str, user_id: str) -> str:
+        uid = str(user_id or "").strip()
+        if not uid:
+            return "某人"
+        getter = getattr(self.memory, "get_profile", None)
+        if callable(getter):
+            try:
+                profile = getter(self.persona_id, group_id, uid)
+            except Exception:
+                profile = None
+            if isinstance(profile, dict):
+                name = str(profile.get("display_name") or "").strip()
+                if name and name != uid:
+                    return name[:80]
+        recent = getattr(self.memory, "recent_messages", None)
+        if callable(recent):
+            try:
+                messages = recent(self.persona_id, group_id, 40) or ()
+            except Exception:
+                messages = ()
+            for message in reversed(tuple(messages)):
+                if str(getattr(message, "sender_id", "") or "") != uid:
+                    continue
+                name = str(getattr(message, "sender_name", "") or "").strip()
+                if name and name != uid:
+                    return name[:80]
+        return uid
+
     async def deliver(
         self,
         plan: DeliveryPlan,
@@ -261,7 +289,20 @@ class DeliveryService:
         sent_at = self.clock.now()
         outbound = tuple(plan.outbound or ())
         spoken_text = text
-        display_text = compose_bot_delivery_text(outbound, spoken_text)
+        poke_targets = [
+            item.target_user_id
+            for item in outbound
+            if item.kind is OutboundKind.POKE and item.target_user_id
+        ]
+        poke_labels = {
+            target: self._poke_display_name(plan.group_id, target)
+            for target in poke_targets
+        }
+        display_text = compose_bot_delivery_text(
+            outbound,
+            spoken_text,
+            target_labels=poke_labels,
+        )
         segment_types = (
             tuple(item.kind.value for item in outbound)
             if outbound
@@ -277,11 +318,6 @@ class DeliveryService:
             for item in outbound
             if item.kind is OutboundKind.IMAGE
         ]
-        poke_targets = [
-            item.target_user_id
-            for item in outbound
-            if item.kind is OutboundKind.POKE and item.target_user_id
-        ]
         metadata = {
             "origin": "bot_delivery",
             "decision_id": plan.decision_id,
@@ -290,6 +326,9 @@ class DeliveryService:
         }
         if poke_targets:
             metadata["poke_target_id"] = poke_targets[0]
+            label = poke_labels.get(poke_targets[0], "")
+            if label and label != poke_targets[0]:
+                metadata["poke_target_name"] = label
         bot_message = ChatMessage(
             message_id="bot-" + plan.decision_id,
             group_id=plan.group_id,

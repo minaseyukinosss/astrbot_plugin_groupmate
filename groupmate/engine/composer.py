@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from ..capabilities.contracts import (
@@ -47,24 +47,38 @@ class ResponseComposer:
             raise TypeError("act_plan must be a ResponseActPlan")
         segments = []
         cleaned_text = str(text or "").strip()
-        poke_target = self._resolve_poke_target(
+        policy = interaction or InteractionPolicy()
+        poke_target, poke_count, drop_text = self._resolve_poke_plan(
             poke_back_enabled=poke_back_enabled,
             poke_role=poke_role,
             poke_target_user_id=poke_target_user_id,
-            interaction=interaction or InteractionPolicy(),
+            interaction=policy,
             affinity_band=affinity_band,
             act=act_plan.act,
             pressure=pressure,
             reason_codes=reason_codes,
+            has_text=bool(cleaned_text),
         )
-        if poke_target:
+        if drop_text:
+            cleaned_text = ""
+        for _ in range(max(0, int(poke_count))):
             segments.append(
                 OutboundSegment(OutboundKind.POKE, target_user_id=poke_target)
             )
-            if str(poke_role or "").lower() == "bystander":
-                cleaned_text = ""
         if cleaned_text:
             segments.append(OutboundSegment(OutboundKind.TEXT, text=cleaned_text))
+
+        face_id = self._maybe_face_id(
+            policy=policy,
+            poke_role=poke_role,
+            reason_codes=reason_codes,
+            act=act_plan.act,
+            has_payload=bool(segments),
+        )
+        if face_id:
+            segments.append(
+                OutboundSegment(OutboundKind.FACE, media_id=str(face_id))
+            )
 
         if (
             capability_result is not None
@@ -81,7 +95,7 @@ class ResponseComposer:
             capability_name=act_plan.capability_name,
         )
 
-    def _resolve_poke_target(
+    def _resolve_poke_plan(
         self,
         *,
         poke_back_enabled: bool,
@@ -92,24 +106,34 @@ class ResponseComposer:
         act: ResponseAct,
         pressure: Optional[DirectAddressPressureState],
         reason_codes: Sequence[str],
-    ) -> str:
+        has_text: bool,
+    ) -> Tuple[str, int, bool]:
+        """Return (target, poke_count, drop_text)."""
         if not poke_back_enabled:
-            return ""
+            return "", 0, False
         target = str(poke_target_user_id or "").strip()
         if not target:
-            return ""
+            return "", 0, False
         role = str(poke_role or "").strip().lower()
         reasons = set(str(item) for item in reason_codes or ())
-        if role == "bystander" or "poke_bystander" in reasons:
-            return target
-        if role != "direct" and "poke_direct" not in reasons:
-            return ""
+        is_bystander = role == "bystander" or "poke_bystander" in reasons
+        is_direct = role == "direct" or "poke_direct" in reasons
+        if not is_bystander and not is_direct:
+            return "", 0, False
+
+        if is_bystander:
+            count = self._burst_count(
+                interaction=interaction,
+                affinity_band=affinity_band,
+                pressure=pressure,
+                allow_burst=True,
+            )
+            return target, count, True
+
         if act is ResponseAct.BOUNDARY:
-            return ""
-        if affinity_band is AffinityBand.HOSTILE:
-            return ""
-        if affinity_band is AffinityBand.WARY:
-            return ""
+            return "", 0, False
+        if affinity_band in (AffinityBand.HOSTILE, AffinityBand.WARY):
+            return "", 0, False
         level = (
             pressure.level
             if pressure is not None
@@ -119,13 +143,88 @@ class ResponseComposer:
             DirectAddressPressureLevel.PESTER,
             DirectAddressPressureLevel.AFTER_BOUNDARY,
         ):
+            return "", 0, False
+
+        poke_chance = max(0.0, min(1.0, float(interaction.poke_back_probability)))
+        if poke_chance <= 0:
+            return "", 0, False
+        if self._rng() >= poke_chance:
+            return "", 0, False
+
+        only_share = max(0.0, min(1.0, float(interaction.poke_only_share)))
+        # Low rolls keep poke+text; high rolls (top only_share) drop to poke-only.
+        drop_text = (not has_text) or (
+            only_share > 0 and self._rng() >= (1.0 - only_share)
+        )
+        count = self._burst_count(
+            interaction=interaction,
+            affinity_band=affinity_band,
+            pressure=pressure,
+            allow_burst=True,
+        )
+        return target, count, drop_text
+
+    def _maybe_face_id(
+        self,
+        *,
+        policy: InteractionPolicy,
+        poke_role: str,
+        reason_codes: Sequence[str],
+        act: ResponseAct,
+        has_payload: bool,
+    ) -> str:
+        if not has_payload or act is ResponseAct.BOUNDARY:
             return ""
-        probability = float(interaction.poke_back_probability)
+        probability = max(0.0, min(1.0, float(policy.poke_face_probability)))
         if probability <= 0:
             return ""
-        if probability < 1.0 and self._rng() > probability:
+        reasons = set(str(item) for item in reason_codes or ())
+        role = str(poke_role or "").strip().lower()
+        is_poke = (
+            role in {"direct", "bystander"}
+            or "poke_direct" in reasons
+            or "poke_bystander" in reasons
+        )
+        if not is_poke:
             return ""
-        return target
+        # High rolls trigger rare face; rng=0 keeps tests face-free.
+        if self._rng() < (1.0 - probability):
+            return ""
+        pool = tuple(
+            str(item).strip()
+            for item in (policy.poke_face_pool or ())
+            if str(item).strip()
+        )
+        if not pool:
+            return ""
+        index = min(len(pool) - 1, int(self._rng() * len(pool)))
+        return pool[index]
+
+    def _burst_count(
+        self,
+        *,
+        interaction: InteractionPolicy,
+        affinity_band: Optional[AffinityBand],
+        pressure: Optional[DirectAddressPressureState],
+        allow_burst: bool,
+    ) -> int:
+        max_burst = max(1, int(interaction.poke_burst_max or 1))
+        if not allow_burst or max_burst <= 1:
+            return 1
+        if affinity_band not in (AffinityBand.FRIENDLY, AffinityBand.CLOSE):
+            return 1
+        level = (
+            pressure.level
+            if pressure is not None
+            else DirectAddressPressureLevel.NORMAL
+        )
+        if level is not DirectAddressPressureLevel.NORMAL:
+            return 1
+        burst_prob = max(0.0, min(1.0, float(interaction.poke_burst_probability)))
+        # High rolls trigger rare double-poke; rng=0 keeps single poke in tests.
+        if burst_prob <= 0 or self._rng() < (1.0 - burst_prob):
+            return 1
+        return max_burst
 
     @staticmethod
     def _safe_capability_media(candidate: MediaCandidate) -> bool:

@@ -54,6 +54,15 @@ def test_confirmed_delivery_atomically_writes_bot_message(tmp_path):
 def test_poke_outbound_delivery_persists_readable_action_text(tmp_path):
     async def scenario():
         store = SQLiteMemoryStore(tmp_path / "poke-delivery.db")
+        store.upsert_profile(
+            "aemeath",
+            "g",
+            "10001",
+            "小明",
+            "普通群友",
+            authority=1,
+            updated_at=100,
+        )
         platform = ReceiptPlatform(SendResult.confirmed())
         service = DeliveryService(
             platform, store, FakeClock(101), persona_id="aemeath", character_name="爱弥斯"
@@ -75,10 +84,11 @@ def test_poke_outbound_delivery_persists_readable_action_text(tmp_path):
 
     outcome, messages = asyncio.run(scenario())
     assert outcome.sent is True
-    assert outcome.text == "戳了戳 10001"
-    assert messages[0].text == "戳了戳 10001"
+    assert outcome.text == "戳了戳 小明"
+    assert messages[0].text == "戳了戳 小明"
     assert messages[0].segment_types == ("poke",)
     assert messages[0].metadata["poke_target_id"] == "10001"
+    assert messages[0].metadata["poke_target_name"] == "小明"
 
 
 def test_rich_delivery_persists_one_ordered_outbox_and_accurate_bot_message(tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
 
@@ -85,9 +86,16 @@ class AstrBotVisionPort:
 
 
 class AstrBotPlatformPort:
-    def __init__(self, context: Any, umo_getter: Callable[[str], str]) -> None:
+    def __init__(
+        self,
+        context: Any,
+        umo_getter: Callable[[str], str],
+        *,
+        poke_interval_seconds: float = 0.45,
+    ) -> None:
         self.context = context
         self.umo_getter = umo_getter
+        self.poke_interval_seconds = max(0.0, float(poke_interval_seconds))
 
     async def send_outbound(
         self,
@@ -99,6 +107,11 @@ class AstrBotPlatformPort:
         del decision_id
         from astrbot.api.event import MessageChain
         from astrbot.api.message_components import Image, Plain, Reply
+
+        try:
+            from astrbot.api.message_components import Face as FaceComponent
+        except ImportError:  # pragma: no cover - older AstrBot stubs
+            FaceComponent = None
 
         outbound = tuple(segments or ())
         if not outbound:
@@ -115,7 +128,9 @@ class AstrBotPlatformPort:
             if item.kind is not OutboundKind.POKE
         ]
         poke_error = ""
-        for target in poke_targets:
+        for index, target in enumerate(poke_targets):
+            if index > 0 and self.poke_interval_seconds > 0:
+                await asyncio.sleep(self.poke_interval_seconds)
             poke_result = await self._send_poke(group_id, target)
             if poke_result.kind.value != "confirmed":
                 poke_error = poke_result.error_code or "poke_failed"
@@ -138,6 +153,16 @@ class AstrBotPlatformPort:
                     return SendResult.failed("invalid_outbound_segment")
                 if segment.kind is OutboundKind.TEXT:
                     components.append(Plain(segment.text))
+                    continue
+                if segment.kind is OutboundKind.FACE:
+                    if FaceComponent is None:
+                        return SendResult.failed("face_component_unavailable")
+                    face_id = (
+                        int(segment.media_id)
+                        if str(segment.media_id).isdigit()
+                        else segment.media_id
+                    )
+                    components.append(FaceComponent(id=face_id))
                     continue
                 media_ref = segment.media_ref
                 if media_ref.startswith(("http://", "https://")):
