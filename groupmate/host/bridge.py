@@ -400,15 +400,27 @@ class AstrBotBridge:
         outcome: Optional[str] = None,
         limit: int = 50,
     ) -> Dict[str, Any]:
+        persona_id = self.persona_context.persona_id
         items = self.memory.recent_decisions(
-            self.persona_context.persona_id,
+            persona_id,
             group_id=group_id,
             outcome=outcome,
             limit=limit,
         )
+        groups = self.memory.decision_group_ids(persona_id)
+        bootstrapped = sorted(
+            group
+            for persona, group in self._bootstrapped
+            if persona == persona_id
+        )
+        # Prefer ledger groups; keep bootstrapped ids that are not yet in ledger.
+        for group in bootstrapped:
+            if group not in groups:
+                groups.append(group)
         return {
             "items": items,
-            "active_persona": self.persona_context.persona_id,
+            "groups": groups,
+            "active_persona": persona_id,
         }
 
     def get_decision_trace(self, decision_id: str) -> Optional[Dict[str, Any]]:

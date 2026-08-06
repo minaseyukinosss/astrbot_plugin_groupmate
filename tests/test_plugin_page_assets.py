@@ -15,7 +15,19 @@ def test_settings_plugin_page_assets_exist():
     assert 'data-module="runtime"' in html
     assert 'data-module="config"' in html
     assert 'data-module="future"' in html
+    assert "sidebar" in html
+    assert "workspace" in html
     assert "apiGet(\"decisions\"" in script or "apiGet('decisions'" in script
+    assert "describeValue" in script
+    assert "host_interaction" in script
+    assert "宿主互动" in script
+    assert "playful_reply" in script
+    assert "玩笑回应" in script
+    assert "context-list" in html
+    assert "当时上下文" in html
+    assert "renderContext" in script
+    assert "applyFilters" in script
+    assert "fillGroupFilter" in script
     assert "部署摘要" not in html
     assert "整份人格覆盖" not in combined
     assert "persona_id" not in combined

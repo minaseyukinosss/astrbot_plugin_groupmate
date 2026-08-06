@@ -7,95 +7,127 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">GROUPMATE</p>
-          <h1>群聊伙伴</h1>
-          <p class="lede">决策路径透明化：触发 → 场景 → 路线 → 结果。</p>
-        </div>
-        <div class="hero-actions">
-          <span id="badge" class="badge" data-tone="neutral">读取中</span>
-          <button id="refresh" class="btn quiet" type="button">刷新</button>
-          <button id="pause-toggle" class="btn" type="button">暂停</button>
-        </div>
-      </header>
-
-      <nav class="modules" aria-label="插件模块">
-        <button type="button" class="module-tab is-active" data-module="decision">决策</button>
-        <button type="button" class="module-tab" data-module="runtime">运行</button>
-        <button type="button" class="module-tab" data-module="config">配置</button>
-        <button type="button" class="module-tab" data-module="future">预留</button>
-      </nav>
-
-      <div id="error" class="notice" hidden></div>
-
-      <section id="module-decision" class="module-panel" data-module-panel="decision">
-        <div class="toolbar">
-          <label class="field">
-            <span>群</span>
-            <select id="filter-group">
-              <option value="">全部</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>结果</span>
-            <select id="filter-outcome">
-              <option value="all">全部</option>
-              <option value="sent">已发送</option>
-              <option value="silent">沉默</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="decision-layout">
-          <div class="panel">
-            <div class="panel-head">
-              <h2>最近决策</h2>
-              <span id="decision-count" class="muted small">—</span>
-            </div>
-            <div id="decision-list" class="decision-list"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head">
-              <h2>路径</h2>
-              <span id="trace-meta" class="muted small"></span>
-            </div>
-            <div id="path-summary" class="path-summary muted">选择左侧一条决策查看路径。</div>
-            <ol id="trace-list" class="trace-list"></ol>
+    <div class="app">
+      <aside class="sidebar" aria-label="插件模块">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">G</span>
+          <div>
+            <strong>Groupmate</strong>
+            <span>群聊伙伴</span>
           </div>
         </div>
-      </section>
-
-      <section id="module-runtime" class="module-panel" data-module-panel="runtime" hidden>
-        <div class="placeholder">
-          <h2>运行</h2>
-          <p class="muted">暂停与健康状态见顶栏。完整运维摘要后续再补，当前以决策透明为主。</p>
-          <dl class="kv compact" id="runtime-kv">
-            <div><dt>状态</dt><dd id="runtime-paused">—</dd></div>
-            <div><dt>配置健康</dt><dd id="runtime-health">—</dd></div>
-            <div><dt>已初始化群</dt><dd id="runtime-groups">—</dd></div>
-          </dl>
+        <nav class="side-nav">
+          <p class="side-label">功能</p>
+          <button type="button" class="nav-item is-active" data-module="decision">
+            <span class="nav-ico" aria-hidden="true"></span>
+            决策
+          </button>
+          <button type="button" class="nav-item" data-module="runtime">
+            <span class="nav-ico" aria-hidden="true"></span>
+            运行
+          </button>
+          <button type="button" class="nav-item" data-module="config">
+            <span class="nav-ico" aria-hidden="true"></span>
+            配置
+          </button>
+          <p class="side-label">预留</p>
+          <button type="button" class="nav-item" data-module="future">
+            <span class="nav-ico" aria-hidden="true"></span>
+            扩展
+          </button>
+        </nav>
+        <div class="side-foot">
+          <span id="badge" class="status-pill" data-tone="neutral">读取中</span>
+          <button id="pause-toggle" class="btn ghost" type="button">暂停</button>
         </div>
-      </section>
+      </aside>
 
-      <section id="module-config" class="module-panel" data-module-panel="config" hidden>
-        <div class="placeholder">
-          <h2>配置</h2>
-          <p class="muted">
-            启用群、称呼、关系与模型请到 WebUI
-            <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>（齿轮）编辑。
+      <div class="workspace">
+        <header class="topbar">
+          <div class="crumb">
+            <span>Groupmate</span>
+            <span class="sep">/</span>
+            <strong id="crumb-current">决策</strong>
+          </div>
+          <div class="top-actions">
+            <button id="refresh" class="btn soft" type="button">刷新</button>
+          </div>
+        </header>
+
+        <div id="error" class="notice" hidden></div>
+
+        <section id="module-decision" class="module-panel" data-module-panel="decision">
+          <div class="toolbar">
+            <label class="field grow">
+              <span class="field-label">群</span>
+              <select id="filter-group">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">结果</span>
+              <select id="filter-outcome">
+                <option value="all">全部</option>
+                <option value="sent">已发送</option>
+                <option value="silent">沉默</option>
+              </select>
+            </label>
+          </div>
+
+          <p class="list-meta">
+            共 <span id="decision-count">0</span> 条决策
           </p>
-        </div>
-      </section>
 
-      <section id="module-future" class="module-panel" data-module-panel="future" hidden>
-        <div class="placeholder">
-          <h2>预留</h2>
-          <p class="muted">记忆 / 关系等模块占位，后续按需开放。</p>
-        </div>
-      </section>
-    </main>
+          <div class="decision-layout">
+            <div class="list-pane">
+              <div id="decision-list" class="decision-list"></div>
+            </div>
+            <div class="detail-pane">
+              <div class="detail-head">
+                <h2>路径</h2>
+                <span id="trace-meta" class="muted"></span>
+              </div>
+              <div id="path-summary" class="path-summary muted">选择一条决策查看路径。</div>
+              <div class="context-block">
+                <div class="section-label">当时上下文</div>
+                <div id="context-list" class="context-list muted">选择决策后显示附近聊天。</div>
+              </div>
+              <div class="section-label">阶段轨迹</div>
+              <ol id="trace-list" class="trace-list"></ol>
+            </div>
+          </div>
+        </section>
+
+        <section id="module-runtime" class="module-panel" data-module-panel="runtime" hidden>
+          <div class="blank">
+            <h2>运行</h2>
+            <p class="muted">暂停与健康状态见左侧。完整运维摘要后续再补。</p>
+            <dl class="stats" id="runtime-kv">
+              <div><dt>状态</dt><dd id="runtime-paused">—</dd></div>
+              <div><dt>配置健康</dt><dd id="runtime-health">—</dd></div>
+              <div><dt>已初始化群</dt><dd id="runtime-groups">—</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section id="module-config" class="module-panel" data-module-panel="config" hidden>
+          <div class="blank">
+            <h2>配置</h2>
+            <p class="muted">
+              启用群、称呼、关系与模型请到 WebUI
+              <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>（齿轮）编辑。
+            </p>
+          </div>
+        </section>
+
+        <section id="module-future" class="module-panel" data-module-panel="future" hidden>
+          <div class="blank">
+            <h2>扩展</h2>
+            <p class="muted">记忆 / 关系等模块占位，后续按需开放。</p>
+          </div>
+        </section>
+      </div>
+    </div>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

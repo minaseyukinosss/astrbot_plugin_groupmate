@@ -848,6 +848,20 @@ class SQLiteMemoryStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def decision_group_ids(self, persona_id: str) -> List[str]:
+        """Distinct group ids that have decision ledger rows."""
+        persona_id = _require_persona_id(persona_id)
+        rows = self._db.execute(
+            """
+            SELECT DISTINCT group_id
+            FROM decisions
+            WHERE persona_id = ?
+            ORDER BY group_id ASC
+            """,
+            (persona_id,),
+        ).fetchall()
+        return [str(row["group_id"]) for row in rows if str(row["group_id"] or "").strip()]
+
     def recent_decisions(
         self,
         persona_id: str,
@@ -866,15 +880,25 @@ class SQLiteMemoryStore:
             raise ValueError("outcome must be all, sent, or silent")
 
         group_filter = str(group_id).strip() if group_id else ""
+        # Support comma-separated multi-group filter from the plugin page.
+        group_filters = [
+            part.strip()
+            for part in group_filter.split(",")
+            if part.strip()
+        ] if group_filter else []
         params: List[Any] = [persona_id]
         sql = """
             SELECT decision_id, group_id, reason, timestamp
             FROM decisions
             WHERE persona_id = ? AND state = 'END'
         """
-        if group_filter:
+        if len(group_filters) == 1:
             sql += " AND group_id = ?"
-            params.append(group_filter)
+            params.append(group_filters[0])
+        elif len(group_filters) > 1:
+            placeholders = ",".join("?" for _ in group_filters)
+            sql += f" AND group_id IN ({placeholders})"
+            params.extend(group_filters)
         sql += " ORDER BY timestamp DESC, rowid DESC LIMIT ?"
         # Over-fetch when filtering by outcome so sent/silent still fill the page.
         fetch_limit = limit * 3 if outcome_filter else limit
@@ -951,9 +975,9 @@ class SQLiteMemoryStore:
         return items
 
     def decision_trace(
-        self, persona_id: str, decision_id: str
+        self, persona_id: str, decision_id: str, *, context_limit: int = 12
     ) -> Optional[Dict[str, Any]]:
-        """Return ordered stage trail for one decision (no reply text)."""
+        """Return stage trail plus nearby chat context for one decision."""
         persona_id = _require_persona_id(persona_id)
         decision_id = str(decision_id or "").strip()
         if not decision_id:
@@ -994,9 +1018,14 @@ class SQLiteMemoryStore:
                 "END",
             }:
                 summary[item["state"]] = item["reason"]
+        group_id = str(rows[0]["group_id"])
+        observe_at = next(
+            (item["timestamp"] for item in stages if item["state"] == "OBSERVE"),
+            stages[0]["timestamp"],
+        )
         return {
             "decision_id": decision_id,
-            "group_id": str(rows[0]["group_id"]),
+            "group_id": group_id,
             "sent": sent,
             "end_reason": end_reason,
             "trigger": summary.get("OBSERVE", ""),
@@ -1005,7 +1034,94 @@ class SQLiteMemoryStore:
             "intent": summary.get("INTENT", ""),
             "act": summary.get("ACT", ""),
             "stages": stages,
+            "context": self.decision_context_messages(
+                persona_id,
+                group_id,
+                decision_id=decision_id,
+                at_timestamp=observe_at,
+                limit=context_limit,
+            ),
         }
+
+    def decision_context_messages(
+        self,
+        persona_id: str,
+        group_id: str,
+        *,
+        decision_id: str,
+        at_timestamp: int,
+        limit: int = 12,
+        text_limit: int = 160,
+    ) -> List[Dict[str, Any]]:
+        """Nearby messages at decision time (admin page context; truncated text)."""
+        persona_id = _require_persona_id(persona_id)
+        group_id = str(group_id)
+        decision_id = str(decision_id or "").strip()
+        limit = max(1, min(30, int(limit)))
+        text_limit = max(40, min(400, int(text_limit)))
+        at_timestamp = int(at_timestamp or 0)
+
+        before_rows = self._db.execute(
+            """
+            SELECT * FROM messages
+            WHERE persona_id = ? AND group_id = ? AND timestamp <= ?
+            ORDER BY timestamp DESC, rowid DESC
+            LIMIT ?
+            """,
+            (persona_id, group_id, at_timestamp, limit),
+        ).fetchall()
+        messages = [self._row_to_message(row) for row in reversed(before_rows)]
+        seen = {(item.group_id, item.message_id) for item in messages}
+
+        if decision_id:
+            delivery_rows = self._db.execute(
+                """
+                SELECT * FROM messages
+                WHERE persona_id = ? AND group_id = ? AND decision_id = ?
+                ORDER BY timestamp ASC, rowid ASC
+                """,
+                (persona_id, group_id, decision_id),
+            ).fetchall()
+            for row in delivery_rows:
+                message = self._row_to_message(row)
+                key = (message.group_id, message.message_id)
+                if key not in seen:
+                    messages.append(message)
+                    seen.add(key)
+
+        focus_id = ""
+        for message in reversed(messages):
+            if not message.is_bot and message.origin is not MessageOrigin.BOT_DELIVERY:
+                focus_id = message.message_id
+                break
+
+        payload: List[Dict[str, Any]] = []
+        for message in messages:
+            text = str(message.text or "").strip()
+            has_image = bool(message.image_urls)
+            if len(text) > text_limit:
+                text = text[: text_limit - 1] + "…"
+            if not text and has_image:
+                text = "[图片]"
+            if not text and "poke" in {
+                str(item).lower() for item in (message.segment_types or ())
+            }:
+                text = "[戳一戳]"
+            payload.append(
+                {
+                    "message_id": message.message_id,
+                    "sender_name": message.sender_name or ("机器人" if message.is_bot else "群友"),
+                    "is_bot": bool(message.is_bot),
+                    "text": text,
+                    "timestamp": int(message.timestamp or 0),
+                    "has_image": has_image,
+                    "is_focus": message.message_id == focus_id,
+                    "is_reply": bool(
+                        message.decision_id == decision_id and decision_id
+                    ),
+                }
+            )
+        return payload
 
     def enqueue_outbox(
         self,
