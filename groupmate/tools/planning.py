@@ -43,6 +43,9 @@ class AstrBotToolPlanner:
                 "若消息含「消息中@的用户ID」，优先填入 user_id/target_id 等目标用户参数。",
                 "口语时间如「十分钟」「1小时」要换算成对应参数单位（通常为秒）。",
                 "点歌类请求要把歌名（可含歌手）填入 song_name 等参数。",
+                "邮件类请求：只要用户明确要发/寄邮件就 selected=true；",
+                "冒充、整蛊、客服、玩梗等主题直接写入 theme，不要当成缺参，",
+                "也不要因为玩笑口吻而拒绝或追问确认。",
                 "parameters.required 以外的参数都是可选的：用户没提就不要放进",
                 "missing_arguments，直接省略即可使用默认值。",
                 "只输出单个 JSON 对象，格式：",
@@ -119,20 +122,25 @@ class AstrBotToolPersonaRenderer:
         group_id: str,
         descriptor: ToolDescriptor,
         user_message: str,
+        *,
+        note: str = "",
     ) -> str:
+        extra = str(note or "").strip()
+        lines = [
+            "你即将替群友处理一件事。",
+            "用当前人格即兴说一句很短的等待提示。",
+            "不要提工具、插件、系统、参数或调用。",
+            "不要声称已经完成，不要复述敏感信息。",
+            "禁止反问、禁止疑问句、禁止让对方先说清楚；直接去办。",
+            "要做的事：" + _safe_purpose(descriptor),
+            "群友原话：" + str(user_message or "")[:500],
+        ]
+        if extra:
+            lines.append("额外约束：" + extra)
+        lines.append("只输出一句陈述句最终文案。")
         return await self._generate(
             group_id,
-            "\n".join(
-                (
-                    "你即将替群友处理一件事。",
-                    "用当前人格即兴说一句很短的等待提示。",
-                    "不要提工具、插件、系统、参数或调用。",
-                    "不要声称已经完成，不要复述敏感信息。",
-                    "要做的事：" + _safe_purpose(descriptor),
-                    "群友原话：" + str(user_message or "")[:500],
-                    "只输出一句最终文案。",
-                )
-            ),
+            "\n".join(lines),
             "我去看看，稍等一下。",
         )
 
@@ -199,8 +207,9 @@ class AstrBotToolPersonaRenderer:
                         "用当前人格只说一句很短的确认即可。",
                         "禁止说空白、空壳、没内容、没生成或失败。",
                         "不要提工具、插件、系统、参数或内部过程。",
+                        "禁止反问、禁止疑问句、禁止让对方补充说明。",
                         "事情：" + _safe_purpose(descriptor),
-                        "只输出一句。",
+                        "只输出一句陈述句。",
                     )
                 ),
                 fallback,
@@ -214,12 +223,13 @@ class AstrBotToolPersonaRenderer:
                     "不得编造结果；失败或超时时必须明确没完成。",
                     "执行状态为 success 时，即使正文很短也视为已完成，禁止说空白或空壳。",
                     "不要提工具、插件、系统、错误码、参数或内部过程。",
+                    "禁止反问、禁止疑问句、禁止让对方先说清楚或确认意图。",
                     "事情：" + _safe_purpose(descriptor),
                     "执行状态：" + result.status.value,
                     "结果数据开始",
                     result_payload,
                     "结果数据结束",
-                    "只输出最终回复。",
+                    "只输出一句陈述句最终回复。",
                 )
             ),
             fallback,

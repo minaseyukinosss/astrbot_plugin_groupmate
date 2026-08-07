@@ -67,9 +67,14 @@ _NORMAL_WORDS = (
     "音乐",
     "提醒",
     "抽签",
+    "邮件",
+    "邮箱",
+    "祝福",
     "music",
     "play",
     "remind",
+    "mail",
+    "email",
 )
 _PASSTHROUGH_SEND_WORDS = (
     "点歌",
@@ -81,12 +86,16 @@ _PASSTHROUGH_SEND_WORDS = (
     "语音",
     "报告",
     "分析",
+    "邮件",
+    "邮箱",
     "music",
     "play_song",
     "image",
     "file",
     "report",
     "analysis",
+    "mail",
+    "email",
 )
 
 
@@ -101,14 +110,21 @@ class UniversalToolCatalog:
         exclude_module_prefixes: Sequence[str] = (
             "data.plugins.astrbot_plugin_groupmate",
         ),
+        builtin_tools: Sequence[ToolDescriptor] = (),
     ) -> None:
         self.context = context
         self.command_bridge_enabled = bool(command_bridge_enabled)
         self.exclude_module_prefixes = tuple(exclude_module_prefixes)
+        self._builtin_tools: Tuple[ToolDescriptor, ...] = tuple(builtin_tools or ())
         self._items: Dict[str, ToolDescriptor] = {}
+
+    def set_builtin_tools(self, tools: Sequence[ToolDescriptor]) -> None:
+        self._builtin_tools = tuple(tools or ())
 
     def refresh(self) -> Tuple[ToolDescriptor, ...]:
         items: Dict[str, ToolDescriptor] = {}
+        for descriptor in self._builtin_tools:
+            items[descriptor.tool_id] = descriptor
         for descriptor in self._discover_llm_tools():
             items[descriptor.tool_id] = descriptor
         if self.command_bridge_enabled:
@@ -510,6 +526,7 @@ def _semantic_score(query: str, haystack: str) -> int:
         ("天气", "气温", "下雨", "晴天"),
         ("搜索", "查询", "查找", "搜一下", "查一下"),
         ("转发", "发送", "发给", "传话"),
+        ("邮件", "邮箱", "QQ邮箱", "发邮件", "寄邮件", "祝福邮件", "冒充", "整蛊", "客服"),
     )
     score = 0
     for group in synonym_groups:

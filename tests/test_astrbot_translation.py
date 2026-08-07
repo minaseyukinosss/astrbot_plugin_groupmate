@@ -55,7 +55,8 @@ def test_onebot_translation_keeps_at_id_when_display_name_missing():
     message = OneBotTranslator.from_history(raw, bot_id="9")
 
     assert message.mentioned_user_ids == ("3229586160",)
-    assert "[At:3229586160]" in message.text
+    assert "@某人" in message.text
+    assert "3229586160" not in message.text
     assert "禁言十分钟" in message.text
 
 

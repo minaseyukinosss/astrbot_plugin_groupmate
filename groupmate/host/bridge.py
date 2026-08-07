@@ -20,6 +20,7 @@ from ..engine.rate_limit import SlidingWindowRateLimiter
 from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
+from ..mail import MailService, build_send_qq_mail_descriptor
 from ..memory import SQLiteMemoryStore
 from ..memory.migrations import SCHEMA_VERSION
 from ..models import ChatMessage, MessageOrigin, StringEnum, TriggerKind
@@ -88,10 +89,23 @@ class AstrBotBridge:
             str(group_id),
             self.settings.generation_provider,
         )
+        self.mail_service = MailService(
+            settings.mail,
+            context=context,
+            provider_getter=tool_provider_getter,
+            persona_system_getter=lambda: self.persona_context.prompt_provider.system_text(),
+            character_name_getter=lambda: self.persona_context.display_name,
+            member_name_getter=self._mail_member_display_name,
+            qq_nickname_getter=self._mail_qq_nickname,
+        )
+        builtin_tools = ()
+        if self.mail_service.available():
+            builtin_tools = (build_send_qq_mail_descriptor(self.mail_service),)
         self.tool_orchestrator = GroupmateToolOrchestrator(
             catalog=UniversalToolCatalog(
                 context,
                 command_bridge_enabled=settings.command_bridge_enabled,
+                builtin_tools=builtin_tools,
             ),
             planner=AstrBotToolPlanner(context, tool_provider_getter),
             renderer=AstrBotToolPersonaRenderer(
@@ -260,6 +274,65 @@ class AstrBotBridge:
                     await self._bootstrap_group(actor, event)
                     self._bootstrapped.add(runtime_key)
         return actor
+
+    def _mail_member_display_name(self, group_id: str, user_id: str) -> str:
+        uid = str(user_id or "").strip()
+        gid = str(group_id or "").strip()
+        if not uid:
+            return ""
+        persona_id = self.persona_context.persona_id
+        try:
+            profile = self.memory.get_profile(persona_id, gid, uid)
+        except Exception:
+            profile = None
+        if isinstance(profile, dict):
+            name = str(profile.get("display_name") or "").strip()
+            if name and name != uid and not name.isdigit():
+                return name[:80]
+        try:
+            messages = self.memory.recent_messages(persona_id, gid, 40) or ()
+        except Exception:
+            messages = ()
+        for message in reversed(tuple(messages)):
+            if str(getattr(message, "sender_id", "") or "") != uid:
+                continue
+            name = str(getattr(message, "sender_name", "") or "").strip()
+            if name and name != uid and not name.isdigit():
+                return name[:80]
+        return ""
+
+    async def _mail_qq_nickname(self, group_id: str, user_id: str) -> str:
+        """Fetch platform QQ nickname (not group card) for mail greetings."""
+
+        uid = str(user_id or "").strip()
+        gid = str(group_id or "").strip()
+        if not uid:
+            return ""
+        client = None
+        try:
+            from .llm import AstrBotPlatformPort
+
+            port = AstrBotPlatformPort(self.context, lambda _gid: "")
+            client = port._resolve_aiocqhttp_client()
+        except Exception:
+            client = None
+        call = getattr(client, "call_action", None) if client is not None else None
+        if not callable(call):
+            return ""
+        try:
+            user_value = int(uid) if uid.isdigit() else uid
+            group_value = int(gid) if gid.isdigit() else gid
+            info = await call(
+                "get_group_member_info",
+                group_id=group_value,
+                user_id=user_value,
+                no_cache=True,
+            )
+        except Exception:
+            return ""
+        if isinstance(info, dict):
+            return str(info.get("nickname") or "").strip()
+        return str(getattr(info, "nickname", "") or "").strip()
 
     async def _bootstrap_group(self, actor, event: Any) -> None:
         group_id = actor.group_id
@@ -431,6 +504,15 @@ class AstrBotBridge:
                 "enabled"
                 if self.settings.command_bridge_enabled
                 else "disabled"
+            ),
+            "mail": (
+                "ready"
+                if self.mail_service.available()
+                else (
+                    "enabled_incomplete"
+                    if self.settings.mail.enabled
+                    else "disabled"
+                )
             ),
             "tool_candidate_limit": self.settings.tool_candidate_limit,
             "tool_count": sum(tool_counts.values()),

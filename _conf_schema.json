@@ -120,6 +120,79 @@
       }
     }
   },
+  "mail_group": {
+    "description": "QQ 邮件",
+    "type": "object",
+    "hint": "内置发信能力。默认关闭；需填写发件 QQ 邮箱与授权码后才会出现在工具候选中。",
+    "items": {
+      "enabled": {
+        "description": "启用 QQ 邮件",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时不会提供发信工具。开启后仍需配置发件邮箱与授权码。"
+      },
+      "smtp_host": {
+        "description": "SMTP 主机",
+        "type": "string",
+        "default": "smtp.qq.com"
+      },
+      "smtp_port": {
+        "description": "SMTP 端口",
+        "type": "int",
+        "default": 465,
+        "hint": "推荐 465（SSL）；也可 587（STARTTLS，需关闭 use_ssl）。"
+      },
+      "use_ssl": {
+        "description": "使用 SSL 直连",
+        "type": "bool",
+        "default": true,
+        "hint": "465 端口保持开启；改用 587 时请关闭并依赖 STARTTLS。"
+      },
+      "from_address": {
+        "description": "发件 QQ 邮箱",
+        "type": "string",
+        "default": "",
+        "hint": "例如 123456789@qq.com"
+      },
+      "auth_code": {
+        "description": "SMTP 授权码",
+        "type": "string",
+        "default": "",
+        "hint": "QQ 邮箱网页生成的 16 位授权码，不是登录密码。"
+      },
+      "from_display_name": {
+        "description": "发件显示名",
+        "type": "string",
+        "default": "",
+        "hint": "留空则使用当前启用人格的显示名；人格切换后自动跟随。"
+      },
+      "unauthorized_mode": {
+        "description": "越权处理",
+        "type": "string",
+        "default": "random",
+        "options": ["tease_reply", "tease_mail", "random"],
+        "hint": "普通成员指定他人时：群内调侃 / 给请求者寄调侃信 / 随机。仅 AstrBot 管理员或 QQ 群主可指定他人；普通群管不算。"
+      },
+      "daily_limit_per_user": {
+        "description": "每用户每日限额",
+        "type": "int",
+        "default": 5,
+        "hint": "0 表示不限制日次数。"
+      },
+      "send_interval_seconds": {
+        "description": "发送最短间隔（秒）",
+        "type": "int",
+        "default": 60,
+        "hint": "同一用户两次发信最短间隔；0 表示不限制。"
+      },
+      "dry_run": {
+        "description": "演练模式",
+        "type": "bool",
+        "default": false,
+        "hint": "走完整链路但不真实 SMTP，便于联调。"
+      }
+    }
+  },
   "interaction_group": {
     "description": "宿主互动",
     "type": "object",

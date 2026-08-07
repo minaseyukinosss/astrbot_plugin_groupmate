@@ -219,11 +219,23 @@ class HostToolExecutor:
         arguments: Mapping[str, Any],
         proxy: CapturingEventProxy,
     ) -> Any:
+        if descriptor.source is ToolSource.BUILTIN:
+            return await self._execute_builtin(descriptor.native, arguments, proxy)
         if descriptor.source is ToolSource.LLM_TOOL:
             return await self._execute_llm_tool(descriptor.native, arguments, proxy)
         if descriptor.source is ToolSource.COMMAND:
             return await self._execute_command(descriptor.native, arguments, proxy)
         raise RuntimeError("unsupported tool source")
+
+    async def _execute_builtin(
+        self,
+        handler: Any,
+        arguments: Mapping[str, Any],
+        proxy: CapturingEventProxy,
+    ) -> Any:
+        if not callable(handler):
+            raise RuntimeError("builtin tool has no callable entry")
+        return await _consume(handler(proxy, **dict(arguments)))
 
     async def _execute_llm_tool(
         self,

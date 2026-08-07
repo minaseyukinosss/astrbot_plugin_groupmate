@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, Tuple
 
 from ..core.relationships import RelationshipEntry
+from ..mail.models import MailSettings, UnauthorizedMode
 from ..policies import InteractionPolicy
 
 
@@ -24,6 +25,7 @@ _KNOWN_GROUPS = (
     "provider_group",
     "interaction_group",
     "tools_group",
+    "mail_group",
 )
 _LEGACY_TOP_LEVEL_KEYS = (
     "aliases",
@@ -81,6 +83,7 @@ class DeploymentSettings:
     tools_enabled: bool
     command_bridge_enabled: bool
     tool_candidate_limit: int
+    mail: MailSettings
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -123,6 +126,7 @@ class AstrBotConfigParser:
         provider_group = _as_mapping(source.get("provider_group"))
         interaction_group = _as_mapping(source.get("interaction_group"))
         tools_group = _as_mapping(source.get("tools_group"))
+        mail_group = _as_mapping(source.get("mail_group"))
         defaults = InteractionPolicy()
 
         enabled_groups = _parse_digit_tuple(
@@ -212,6 +216,7 @@ class AstrBotConfigParser:
                 1,
                 20,
             ),
+            mail=_parse_mail_settings(mail_group),
             diagnostics=ConfigDiagnostics(
                 ignored_legacy_keys=diagnostics.ignored_legacy_keys,
                 unknown_keys=diagnostics.unknown_keys,
@@ -300,6 +305,32 @@ def _parse_digit_tuple(raw: Any, *, path: str) -> Tuple[str, ...]:
         if text not in result:
             result.append(text)
     return tuple(result)
+
+
+def _parse_mail_settings(raw: Mapping[str, Any]) -> MailSettings:
+    mode_raw = str(raw.get("unauthorized_mode") or UnauthorizedMode.RANDOM.value).strip()
+    try:
+        mode = UnauthorizedMode(mode_raw)
+    except ValueError:
+        mode = UnauthorizedMode.RANDOM
+    return MailSettings(
+        enabled=_strict_boolean(raw.get("enabled", False), False),
+        smtp_host=str(raw.get("smtp_host") or "smtp.qq.com").strip() or "smtp.qq.com",
+        smtp_port=_int_clamped(raw.get("smtp_port"), 465, 1, 65535),
+        use_ssl=_strict_boolean(raw.get("use_ssl", True), True),
+        from_address=str(raw.get("from_address") or "").strip(),
+        auth_code=str(raw.get("auth_code") or "").strip(),
+        from_display_name=str(raw.get("from_display_name") or "").strip(),
+        unauthorized_mode=mode,
+        daily_limit_per_user=_int_clamped(raw.get("daily_limit_per_user"), 5, 0, 100),
+        send_interval_seconds=_int_clamped(
+            raw.get("send_interval_seconds"),
+            60,
+            0,
+            3600,
+        ),
+        dry_run=_strict_boolean(raw.get("dry_run", False), False),
+    )
 
 
 def _parse_persona_aliases_with_warnings(

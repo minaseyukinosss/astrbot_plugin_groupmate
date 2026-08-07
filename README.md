@@ -68,6 +68,9 @@ astrbot_plugin_groupmate/
 | `tools_group.enabled` | 启用自然语言工具发现与调用 | `true` |
 | `tools_group.command_bridge_enabled` | 兼容只有 command、没有 llm_tool 的插件 | `true` |
 | `tools_group.candidate_limit` | 每轮交给路由模型的候选工具上限（1~20） | `8` |
+| `mail_group.enabled` | 启用内置 QQ 邮件发信 | `false` |
+| `mail_group.from_address` / `auth_code` | 发件 QQ 邮箱与 SMTP 授权码；齐全后才进入工具候选 | 空 |
+| `mail_group.unauthorized_mode` | 普通成员指定他人时：`tease_reply` / `tease_mail` / `random` | `random` |
 | `interaction_group.poke_enabled` | 接管 AIOCQHTTP 戳一戳（戳 Bot 必回应路径；他人互戳可跟风观察） | `false` |
 | `interaction_group.poke_back_enabled` | 允许回戳 / 跟风戳出站；关闭时仅可能文字回应 | `false` |
 

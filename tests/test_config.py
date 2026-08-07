@@ -62,10 +62,46 @@ def test_natural_language_tools_are_nested_and_bounded():
     assert defaults.tools_enabled is True
     assert defaults.command_bridge_enabled is True
     assert defaults.tool_candidate_limit == 8
+    assert defaults.mail.enabled is False
+    assert defaults.mail.smtp_host == "smtp.qq.com"
+    assert defaults.mail.from_display_name == ""
     assert configured.tools_enabled is False
     assert configured.command_bridge_enabled is False
     assert configured.tool_candidate_limit == 20
     assert configured.diagnostics.unknown_keys == ()
+
+
+def test_mail_group_is_nested_and_parsed():
+    from groupmate.mail import UnauthorizedMode
+
+    settings = AstrBotConfigParser().parse(
+        {
+            "mail_group": {
+                "enabled": True,
+                "from_address": "123@qq.com",
+                "auth_code": "abcd1234efgh5678",
+                "unauthorized_mode": "tease_mail",
+                "daily_limit_per_user": 3,
+                "send_interval_seconds": 120,
+                "dry_run": True,
+                "from_display_name": "小爱",
+                "use_ssl": False,
+                "smtp_port": 587,
+            }
+        }
+    )
+
+    assert settings.mail.enabled is True
+    assert settings.mail.ready is True
+    assert settings.mail.from_address == "123@qq.com"
+    assert settings.mail.unauthorized_mode is UnauthorizedMode.TEASE_MAIL
+    assert settings.mail.daily_limit_per_user == 3
+    assert settings.mail.send_interval_seconds == 120
+    assert settings.mail.dry_run is True
+    assert settings.mail.from_display_name == "小爱"
+    assert settings.mail.use_ssl is False
+    assert settings.mail.smtp_port == 587
+    assert settings.diagnostics.unknown_keys == ()
 
 
 def test_poke_back_enabled_is_nested_and_explicit():

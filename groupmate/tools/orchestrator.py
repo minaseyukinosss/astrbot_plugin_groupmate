@@ -19,6 +19,7 @@ _USER_ARG_NAMES = (
     "user_id",
     "target_id",
     "target_user_id",
+    "to_qq",
     "qq",
     "uid",
     "member_id",
@@ -182,11 +183,30 @@ class GroupmateToolOrchestrator:
                 )
                 return True
 
-            progress = await self.renderer.progress(
-                message.group_id,
-                descriptor,
-                message.text,
-            )
+            progress_note = ""
+            if descriptor.tool_id == "builtin:send_qq_mail":
+                from ..mail.service import preview_mail_route
+
+                if preview_mail_route(event, arguments) == "unauthorized":
+                    progress_note = (
+                        "群友想给别人寄邮件但没有代寄权限。"
+                        "等待句要俏皮、像准备整蛊，"
+                        "严禁说「寄过去」「帮他寄」「写好寄给对方」这类话；"
+                        "禁止反问。"
+                    )
+            try:
+                progress = await self.renderer.progress(
+                    message.group_id,
+                    descriptor,
+                    message.text,
+                    note=progress_note,
+                )
+            except TypeError:
+                progress = await self.renderer.progress(
+                    message.group_id,
+                    descriptor,
+                    message.text,
+                )
             await self._deliver(
                 actor,
                 message,
