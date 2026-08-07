@@ -95,6 +95,31 @@
       }
     }
   },
+  "tools_group": {
+    "description": "自然语言工具",
+    "type": "object",
+    "hint": "由 Groupmate 自己发现、选择并调用 AstrBot 已注册工具；权限始终使用真实用户身份。",
+    "items": {
+      "enabled": {
+        "description": "启用自然语言工具调用",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，仅在用户明确呼叫当前人格并提出工具请求时尝试执行。"
+      },
+      "command_bridge_enabled": {
+        "description": "兼容只有命令的插件",
+        "type": "bool",
+        "default": true,
+        "hint": "允许发现并受控调用其他插件的 command handler；关闭后只使用原生 llm_tool。"
+      },
+      "candidate_limit": {
+        "description": "候选工具数量",
+        "type": "int",
+        "default": 8,
+        "hint": "每次最多交给路由模型的候选数，范围 1~20。"
+      }
+    }
+  },
   "interaction_group": {
     "description": "宿主互动",
     "type": "object",

@@ -6,8 +6,8 @@
 
 ## 当前发布
 
-- 版本：`0.3.0`
-- V3 核心迁移、宿主命令隔离、静态 CapabilityProvider SPI 和默认关闭的 HostEventAdapter Phase B 已落地并有测试覆盖；具体外部插件 Integration Adapter 仍属于 Phase C，Tool Gateway 不在当前实现范围。
+- 版本：`0.4.0`
+- V3 核心迁移、宿主命令隔离、静态 CapabilityProvider SPI、HostEventAdapter Phase B 与通用 AstrBot Tool Gateway 已落地并有测试覆盖。
 - 发布包只包含运行时、Pages、配置、README 和规格文档；不包含 `.git`、`.venv`、测试、离线评测语料或缓存。
 
 ## 目录结构
@@ -24,6 +24,7 @@ astrbot_plugin_groupmate/
 │   ├── memory/               # SQLite ledger / 投影 / 记忆候选 / 隐私仲裁
 │   ├── social/               # 社会事件与关系投影
 │   ├── capabilities/         # 类型化能力契约 / Registry / 内置 Provider
+│   ├── tools/                # 宿主工具发现 / 路由 / 权限 / 执行 / 人格化收口
 │   └── host/                 # AstrBot 适配（gate / event adapters / bridge / onebot / llm）
 └── tests/                    # 仓库测试；发布包不包含
 ```
@@ -40,8 +41,11 @@ astrbot_plugin_groupmate/
 - 管理命令：status / pause / resume / reset
 - 静态 CapabilityProvider 生命周期、启动健康采样与 Bridge 统一装配
 - 静态 HostEventAdapter：默认关闭的 AIOCQHTTP 戳一戳适配与显式互动语义
+- 自持工具环：自然语言发现并调用其他插件的 `llm_tool` 与兼容 command
+- 确定性工具治理：危险/未知能力要求管理员，且不绕过原插件权限
+- 人格化工具状态、缺参追问续接、执行结果统一 Delivery
 
-刻意不包含：工具环全家桶、Kanban、心跳巡检、表达自学习。
+刻意不包含：Kanban、心跳巡检、表达自学习。
 
 ## 安装
 
@@ -49,7 +53,7 @@ astrbot_plugin_groupmate/
 
 至少包含：`main.py`、`metadata.yaml`、`_conf_schema.json`、`groupmate/`。
 
-仓库根目录的 `astrbot_plugin_groupmate-v0.3.0-clean.zip` 是干净安装包，可直接解压到 AstrBot 插件目录。
+发布归档按 `astrbot_plugin_groupmate-v<版本>-clean.zip` 命名，可直接解压到 AstrBot 插件目录。
 
 ## 配置
 
@@ -61,6 +65,9 @@ astrbot_plugin_groupmate/
 | `provider_group.generation_provider` | 回复模型；空=当前群模型 | 空 |
 | `provider_group.vision_enabled` | 允许按需看图 | `true` |
 | `provider_group.vision_provider` | 看图模型；空=复用最终文本模型 | 空 |
+| `tools_group.enabled` | 启用自然语言工具发现与调用 | `true` |
+| `tools_group.command_bridge_enabled` | 兼容只有 command、没有 llm_tool 的插件 | `true` |
+| `tools_group.candidate_limit` | 每轮交给路由模型的候选工具上限（1~20） | `8` |
 | `interaction_group.poke_enabled` | 接管 AIOCQHTTP 戳一戳（戳 Bot 必回应路径；他人互戳可跟风观察） | `false` |
 | `interaction_group.poke_back_enabled` | 允许回戳 / 跟风戳出站；关闭时仅可能文字回应 | `false` |
 
@@ -95,7 +102,13 @@ astrbot_plugin_groupmate/
 4. **续聊**：窗口内同人；Session 注入近轮对话
 5. **AstrBot 指令**：已注册命令和使用宿主唤醒前缀的输入在进入 Groupmate Actor 前旁路；不写入话题、记忆或 outbox，也不阻止其他插件处理
 6. **宿主互动**：配置开启后，AIOCQHTTP 戳一戳以 `SYSTEM_SYNTHETIC` / `HOST_INTERACTION` 进入同一 Actor、Persona、Firewall、Delivery 和 Outbox 链路；戳 Bot 走冷却 / 概率沉默 / 暴戳压力；他人互戳可按策略跟风；`poke_back_enabled` 时才出站回戳。不引用伪造文本，不创建长期人物记忆或续聊授权
-7. **联网例外**：交回 AstrBot Agent
+7. **自然语言工具**：明确呼叫当前人格并提出操作时，先检索已启用 `llm_tool` 与兼容 command；模型只选型和抽参，代码执行权限、风险、超时与原插件 Filter；缺参会在续聊窗口内追问
+8. **联网例外**：有高置信工具候选时由 Groupmate 自己执行；没有候选时仍交回 AstrBot Agent
+
+命令兼容桥属于 best-effort：它会保留真实平台事件类型并隔离常见 `yield` /
+`event.send` 输出，但无法统一控制第三方插件经全局 Context、adapter、Bot API 或后台
+任务直接发送的内容。媒体/点歌类能力允许保留必要的直接发送；未知或不可安全构造运行
+上下文的工具会拒绝执行。
 
 ## 管理命令
 

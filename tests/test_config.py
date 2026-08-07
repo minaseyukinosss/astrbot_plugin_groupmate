@@ -47,6 +47,27 @@ def test_poke_enabled_is_nested_and_explicit():
     assert settings.diagnostics.unknown_keys == ()
 
 
+def test_natural_language_tools_are_nested_and_bounded():
+    defaults = AstrBotConfigParser().parse({})
+    configured = AstrBotConfigParser().parse(
+        {
+            "tools_group": {
+                "enabled": False,
+                "command_bridge_enabled": False,
+                "candidate_limit": 99,
+            }
+        }
+    )
+
+    assert defaults.tools_enabled is True
+    assert defaults.command_bridge_enabled is True
+    assert defaults.tool_candidate_limit == 8
+    assert configured.tools_enabled is False
+    assert configured.command_bridge_enabled is False
+    assert configured.tool_candidate_limit == 20
+    assert configured.diagnostics.unknown_keys == ()
+
+
 def test_poke_back_enabled_is_nested_and_explicit():
     settings = AstrBotConfigParser().parse(
         {"interaction_group": {"poke_back_enabled": True}}
@@ -263,6 +284,9 @@ def test_schema_exposes_poke_advanced_settings():
         "poke_bystander_probability",
         "poke_bystander_cooldown_seconds",
         "poke_face_probability",
+        "enabled",
+        "command_bridge_enabled",
+        "candidate_limit",
     }.issubset(items)
     assert schema["scope_group"]["items"]["enabled_groups"]["default"] == []
     assert (

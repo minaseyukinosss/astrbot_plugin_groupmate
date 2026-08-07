@@ -23,6 +23,7 @@ _KNOWN_GROUPS = (
     "persona_group",
     "provider_group",
     "interaction_group",
+    "tools_group",
 )
 _LEGACY_TOP_LEVEL_KEYS = (
     "aliases",
@@ -77,6 +78,9 @@ class DeploymentSettings:
     poke_bystander_probability: float
     poke_bystander_cooldown_seconds: int
     poke_face_probability: float
+    tools_enabled: bool
+    command_bridge_enabled: bool
+    tool_candidate_limit: int
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -118,6 +122,7 @@ class AstrBotConfigParser:
         persona_group = _as_mapping(source.get("persona_group"))
         provider_group = _as_mapping(source.get("provider_group"))
         interaction_group = _as_mapping(source.get("interaction_group"))
+        tools_group = _as_mapping(source.get("tools_group"))
         defaults = InteractionPolicy()
 
         enabled_groups = _parse_digit_tuple(
@@ -192,6 +197,20 @@ class AstrBotConfigParser:
                 0.12,
                 0.0,
                 1.0,
+            ),
+            tools_enabled=_strict_boolean(
+                tools_group.get("enabled", True),
+                True,
+            ),
+            command_bridge_enabled=_strict_boolean(
+                tools_group.get("command_bridge_enabled", True),
+                True,
+            ),
+            tool_candidate_limit=_int_clamped(
+                tools_group.get("candidate_limit"),
+                8,
+                1,
+                20,
             ),
             diagnostics=ConfigDiagnostics(
                 ignored_legacy_keys=diagnostics.ignored_legacy_keys,

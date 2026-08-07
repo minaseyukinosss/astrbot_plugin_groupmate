@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -28,6 +29,14 @@ from ..persona.aemeath import (
     AemeathOutputFirewall,
 )
 from ..policies import BehaviorPolicy
+from ..tools import (
+    AstrBotToolPersonaRenderer,
+    AstrBotToolPlanner,
+    GroupmateToolOrchestrator,
+    HostToolExecutor,
+    ToolPolicyEngine,
+    UniversalToolCatalog,
+)
 from .config import DeploymentSettings
 from .llm import (
     AstrBotGenerationModel,
@@ -35,6 +44,9 @@ from .llm import (
     AstrBotVisionPort,
 )
 from .onebot import NapCatHistoryPort, OneBotTranslator
+
+
+logger = logging.getLogger(__name__)
 
 
 class TurnOwner(StringEnum):
@@ -72,6 +84,26 @@ class AstrBotBridge:
         self.behavior = BehaviorPolicy(
             interaction=settings.interaction_policy()
         )
+        tool_provider_getter = lambda group_id: self._provider_by_group.get(
+            str(group_id),
+            self.settings.generation_provider,
+        )
+        self.tool_orchestrator = GroupmateToolOrchestrator(
+            catalog=UniversalToolCatalog(
+                context,
+                command_bridge_enabled=settings.command_bridge_enabled,
+            ),
+            planner=AstrBotToolPlanner(context, tool_provider_getter),
+            renderer=AstrBotToolPersonaRenderer(
+                context,
+                tool_provider_getter,
+                self.persona_context.prompt_provider,
+            ),
+            executor=HostToolExecutor(context),
+            policy=ToolPolicyEngine(),
+            candidate_limit=settings.tool_candidate_limit,
+            enabled=settings.tools_enabled,
+        )
         self.runtime = GroupRuntimeManager(
             self._workflow_for,
             lambda group_id: self.persona_context,
@@ -82,9 +114,20 @@ class AstrBotBridge:
         actor = await self._prepare_actor(event)
         if actor is None:
             return
-        await actor.submit(
-            self._message_from_event(event), schedule=not self.paused
-        )
+        message = self._message_from_event(event)
+        if not self.paused:
+            try:
+                handled = await self.tool_orchestrator.try_handle(
+                    event,
+                    actor,
+                    message,
+                )
+            except Exception:
+                logger.exception("Groupmate host tool orchestration failed")
+                handled = False
+            if handled:
+                return
+        await actor.submit(message, schedule=not self.paused)
 
     async def handle_adapted_event(
         self,
@@ -170,7 +213,10 @@ class AstrBotBridge:
         """Return the single final-response owner for this host event."""
         if not self.should_take_native_wake(event):
             return TurnOwner.OBSERVE_ONLY
-        if needs_external_knowledge(self._message_from_event(event).text):
+        message = self._message_from_event(event)
+        if needs_external_knowledge(message.text) and not self.tool_orchestrator.has_candidate(
+            message.text
+        ):
             return TurnOwner.ASTRBOT_AGENT
         return TurnOwner.GROUPMATE
 
@@ -317,6 +363,14 @@ class AstrBotBridge:
 
     def status(self) -> Dict[str, Any]:
         groups: Dict[str, Any] = {}
+        tool_counts = {"llm_tool": 0, "command": 0}
+        if self.settings.tools_enabled:
+            try:
+                for item in self.tool_orchestrator.catalog.refresh():
+                    source = item.source.value
+                    tool_counts[source] = tool_counts.get(source, 0) + 1
+            except Exception:
+                logger.exception("Groupmate host tool discovery failed")
         for group_id, snapshot in self.runtime.snapshots(
             self.persona_context.persona_id
         ).items():
@@ -370,6 +424,17 @@ class AstrBotBridge:
             "poke_face": (
                 "enabled" if self.settings.poke_face_enabled else "disabled"
             ),
+            "tools": (
+                "enabled" if self.settings.tools_enabled else "disabled"
+            ),
+            "command_bridge": (
+                "enabled"
+                if self.settings.command_bridge_enabled
+                else "disabled"
+            ),
+            "tool_candidate_limit": self.settings.tool_candidate_limit,
+            "tool_count": sum(tool_counts.values()),
+            "tool_counts": tool_counts,
             "database_schema": SCHEMA_VERSION,
             "config_health": (
                 "warning"

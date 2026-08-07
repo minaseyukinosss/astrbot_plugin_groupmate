@@ -51,6 +51,9 @@ class OneBotTranslator:
                 name = data.get("name") or data.get("display_name")
                 if name:
                     text_parts.append("@" + str(name))
+                elif qq and qq not in ("all", "0") and qq != str(bot_id):
+                    # Keep a stable textual cue when the platform omits display name.
+                    text_parts.append("[At:{}]".format(qq))
             elif kind == "reply":
                 reply_id = str(data.get("id", data.get("message_id", ""))) or None
             elif kind == "image":

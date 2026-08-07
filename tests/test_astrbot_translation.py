@@ -38,6 +38,27 @@ def test_onebot_translation_detects_bot_mention_and_self_message():
     assert OneBotTranslator.from_history(self_message, bot_id="9").is_bot is True
 
 
+def test_onebot_translation_keeps_at_id_when_display_name_missing():
+    raw = {
+        "message_id": "5",
+        "group_id": "2",
+        "user_id": "3",
+        "time": 10,
+        "sender": {"nickname": "Alice"},
+        "message": [
+            {"type": "text", "data": {"text": "小爱把她"}},
+            {"type": "at", "data": {"qq": "3229586160"}},
+            {"type": "text", "data": {"text": "禁言十分钟"}},
+        ],
+    }
+
+    message = OneBotTranslator.from_history(raw, bot_id="9")
+
+    assert message.mentioned_user_ids == ("3229586160",)
+    assert "[At:3229586160]" in message.text
+    assert "禁言十分钟" in message.text
+
+
 def test_onebot_translation_coerces_missing_timestamp():
     raw = {
         "message_id": "4",
