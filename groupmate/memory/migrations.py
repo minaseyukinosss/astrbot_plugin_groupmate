@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 18
 
 
 class SchemaMigrationError(RuntimeError):
@@ -747,6 +747,462 @@ def _verify_v11(db: sqlite3.Connection) -> None:
         raise SchemaMigrationError("schema v11 integrity check failed")
 
 
+def _v11_to_v12(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS governance_actions (
+            action_id TEXT PRIMARY KEY,
+            persona_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            target_kind TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            before_json TEXT NOT NULL,
+            after_json TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            reverts_action_id TEXT,
+            reverted_at INTEGER,
+            reverted_by TEXT,
+            revert_reason TEXT,
+            revert_action_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_governance_persona_time
+            ON governance_actions(persona_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_governance_persona_target
+            ON governance_actions(persona_id, target_kind, target_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_governance_persona_group
+            ON governance_actions(persona_id, group_id, created_at DESC);
+        """
+    )
+
+
+def _verify_v12(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row
+        for row in db.execute("PRAGMA table_info(governance_actions)")
+    }
+    required = {
+        "action_id",
+        "persona_id",
+        "action_type",
+        "target_kind",
+        "target_id",
+        "before_json",
+        "after_json",
+        "reason",
+        "actor",
+        "created_at",
+        "reverts_action_id",
+        "reverted_at",
+        "revert_action_id",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v12 governance verification failed")
+    persona = columns.get("persona_id")
+    if persona is None or persona[3] != 1 or persona[4] is not None:
+        raise SchemaMigrationError("schema v12 persona verification failed")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v12 integrity check failed")
+
+
+def _v12_to_v13(db: sqlite3.Connection) -> None:
+    additions = (
+        ("evidence_text", "TEXT NOT NULL DEFAULT ''"),
+        ("reason_code", "TEXT NOT NULL DEFAULT ''"),
+        ("extractor_version", "TEXT NOT NULL DEFAULT 'legacy-verified'"),
+        ("status", "TEXT NOT NULL DEFAULT 'accepted'"),
+        ("reviewed_at", "INTEGER"),
+        ("review_reason", "TEXT NOT NULL DEFAULT ''"),
+    )
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(social_events)")
+    }
+    for name, declaration in additions:
+        if name not in existing:
+            db.execute(
+                "ALTER TABLE social_events ADD COLUMN {} {}".format(
+                    name, declaration
+                )
+            )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_social_persona_status_time "
+        "ON social_events(persona_id, status, occurred_at DESC)"
+    )
+
+
+def _verify_v13(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row for row in db.execute("PRAGMA table_info(social_events)")
+    }
+    required = {
+        "event_id",
+        "persona_id",
+        "group_id",
+        "user_id",
+        "kind",
+        "source_message_id",
+        "confidence",
+        "occurred_at",
+        "evidence_text",
+        "reason_code",
+        "extractor_version",
+        "status",
+        "reviewed_at",
+        "review_reason",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v13 social evidence verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM social_events WHERE status NOT IN ('accepted','rejected')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v13 contains invalid evidence status")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v13 integrity check failed")
+
+
+def _v13_to_v14(db: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(social_events)")
+    }
+    if "review_code" not in existing:
+        db.execute(
+            "ALTER TABLE social_events ADD COLUMN review_code TEXT NOT NULL DEFAULT ''"
+        )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_social_persona_group_status "
+        "ON social_events(persona_id, group_id, status, occurred_at DESC)"
+    )
+
+
+def _verify_v14(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row for row in db.execute("PRAGMA table_info(social_events)")
+    }
+    if "review_code" not in columns:
+        raise SchemaMigrationError("schema v14 evidence review verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM social_events "
+        "WHERE status NOT IN ('pending','accepted','rejected')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v14 contains invalid evidence status")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v14 integrity check failed")
+
+
+def _v14_to_v15(db: sqlite3.Connection) -> None:
+    additions = (
+        ("preferred_address", "TEXT NOT NULL DEFAULT ''"),
+        ("nickname_history_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("first_seen_at", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_seen_at", "INTEGER NOT NULL DEFAULT 0"),
+    )
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(profiles)")
+    }
+    for name, declaration in additions:
+        if name not in existing:
+            db.execute(
+                "ALTER TABLE profiles ADD COLUMN {} {}".format(name, declaration)
+            )
+    db.execute(
+        "UPDATE profiles SET first_seen_at=updated_at "
+        "WHERE first_seen_at=0 AND updated_at>0"
+    )
+    db.execute(
+        "UPDATE profiles SET last_seen_at=updated_at "
+        "WHERE last_seen_at=0 AND updated_at>0"
+    )
+    rows = db.execute(
+        "SELECT persona_id, group_id, subject_id, display_name, first_seen_at, "
+        "last_seen_at, nickname_history_json FROM profiles"
+    ).fetchall()
+    for row in rows:
+        try:
+            history = json.loads(row[6] or "[]")
+        except (TypeError, ValueError):
+            history = []
+        if history or not str(row[3] or "").strip():
+            continue
+        history = [
+            {
+                "name": str(row[3]).strip(),
+                "first_seen_at": int(row[4] or row[5] or 0),
+                "last_seen_at": int(row[5] or row[4] or 0),
+            }
+        ]
+        db.execute(
+            "UPDATE profiles SET nickname_history_json=? "
+            "WHERE persona_id=? AND group_id=? AND subject_id=?",
+            (json.dumps(history, ensure_ascii=False), row[0], row[1], row[2]),
+        )
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS member_identity_links (
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            source_subject_id TEXT NOT NULL,
+            canonical_subject_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (persona_id, group_id, source_subject_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_member_links_canonical
+            ON member_identity_links(
+                persona_id, group_id, canonical_subject_id, active
+            );
+        CREATE INDEX IF NOT EXISTS idx_profiles_persona_seen
+            ON profiles(persona_id, last_seen_at DESC);
+        """
+    )
+
+
+def _verify_v15(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row for row in db.execute("PRAGMA table_info(profiles)")
+    }
+    required = {
+        "preferred_address",
+        "nickname_history_json",
+        "first_seen_at",
+        "last_seen_at",
+    }
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if not required.issubset(columns) or "member_identity_links" not in tables:
+        raise SchemaMigrationError("schema v15 member profile verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM member_identity_links "
+        "WHERE active NOT IN (0,1) OR source_subject_id=canonical_subject_id"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v15 contains invalid member links")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v15 integrity check failed")
+
+
+def _v15_to_v16(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS continuity_items (
+            item_id TEXT PRIMARY KEY,
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            source_message_id TEXT NOT NULL,
+            source_quote TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            due_at INTEGER,
+            confidence REAL NOT NULL,
+            extractor_version TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            resolution_message_id TEXT,
+            resolution_quote TEXT NOT NULL DEFAULT '',
+            resolved_at INTEGER,
+            UNIQUE(persona_id, group_id, source_message_id, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_continuity_persona_subject_status
+            ON continuity_items(
+                persona_id, group_id, subject_id, status, updated_at DESC
+            );
+        CREATE INDEX IF NOT EXISTS idx_continuity_persona_group_time
+            ON continuity_items(persona_id, group_id, updated_at DESC);
+        """
+    )
+
+
+def _verify_v16(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row for row in db.execute("PRAGMA table_info(continuity_items)")
+    }
+    required = {
+        "item_id",
+        "persona_id",
+        "group_id",
+        "subject_id",
+        "kind",
+        "summary",
+        "source_message_id",
+        "source_quote",
+        "created_at",
+        "updated_at",
+        "due_at",
+        "confidence",
+        "extractor_version",
+        "status",
+        "resolution_message_id",
+        "resolution_quote",
+        "resolved_at",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v16 continuity verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM continuity_items "
+        "WHERE status NOT IN ('open','completed','cancelled','deleted') "
+        "OR kind NOT IN ('plan','promise','follow_up')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v16 contains invalid continuity items")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v16 integrity check failed")
+
+
+def _v16_to_v17(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS self_commitments (
+            commitment_id TEXT PRIMARY KEY,
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            beneficiary_subject_id TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            source_decision_id TEXT NOT NULL,
+            source_message_id TEXT NOT NULL,
+            source_quote TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            required_capability TEXT NOT NULL DEFAULT '',
+            due_at INTEGER,
+            confidence REAL NOT NULL,
+            extractor_version TEXT NOT NULL,
+            result_decision_id TEXT,
+            result_quote TEXT NOT NULL DEFAULT '',
+            result_facts_json TEXT NOT NULL DEFAULT '[]',
+            failure_code TEXT NOT NULL DEFAULT '',
+            resolved_at INTEGER,
+            UNIQUE(persona_id, group_id, source_decision_id, source_quote)
+        );
+        CREATE INDEX IF NOT EXISTS idx_self_commitment_persona_group_status
+            ON self_commitments(persona_id, group_id, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_self_commitment_persona_beneficiary
+            ON self_commitments(
+                persona_id, group_id, beneficiary_subject_id, status, updated_at DESC
+            );
+        """
+    )
+
+
+def _verify_v17(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row for row in db.execute("PRAGMA table_info(self_commitments)")
+    }
+    required = {
+        "commitment_id",
+        "persona_id",
+        "group_id",
+        "beneficiary_subject_id",
+        "summary",
+        "source_decision_id",
+        "source_message_id",
+        "source_quote",
+        "created_at",
+        "updated_at",
+        "status",
+        "required_capability",
+        "due_at",
+        "confidence",
+        "extractor_version",
+        "result_decision_id",
+        "result_quote",
+        "result_facts_json",
+        "failure_code",
+        "resolved_at",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v17 self commitment verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM self_commitments WHERE status NOT IN "
+        "('pending','in_progress','completed','blocked','withdrawn','deleted')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v17 contains invalid self commitments")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v17 integrity check failed")
+
+
+def _v17_to_v18(db: sqlite3.Connection) -> None:
+    additions = (
+        ("request_message_id", "TEXT NOT NULL DEFAULT ''"),
+        ("fulfillment_mode", "TEXT NOT NULL DEFAULT 'follow_up'"),
+        ("next_attempt_at", "INTEGER"),
+        ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("lease_owner", "TEXT NOT NULL DEFAULT ''"),
+        ("lease_until", "INTEGER"),
+        ("last_attempt_at", "INTEGER"),
+        ("last_delivery_at", "INTEGER"),
+    )
+    existing = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(self_commitments)").fetchall()
+    }
+    for name, declaration in additions:
+        if name not in existing:
+            db.execute(
+                "ALTER TABLE self_commitments ADD COLUMN {} {}".format(
+                    name, declaration
+                )
+            )
+    db.execute(
+        "UPDATE self_commitments SET fulfillment_mode='capability' "
+        "WHERE required_capability <> '' AND fulfillment_mode='follow_up'"
+    )
+    db.execute(
+        "UPDATE self_commitments SET next_attempt_at=due_at "
+        "WHERE due_at IS NOT NULL AND next_attempt_at IS NULL "
+        "AND status IN ('pending','in_progress')"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_self_commitment_due "
+        "ON self_commitments(persona_id, status, next_attempt_at, lease_until)"
+    )
+
+
+def _verify_v18(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row
+        for row in db.execute("PRAGMA table_info(self_commitments)")
+    }
+    required = {
+        "next_attempt_at",
+        "request_message_id",
+        "fulfillment_mode",
+        "attempt_count",
+        "lease_owner",
+        "lease_until",
+        "last_attempt_at",
+        "last_delivery_at",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v18 commitment scheduler verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM self_commitments WHERE attempt_count < 0 "
+        "OR fulfillment_mode NOT IN ('reminder','capability','follow_up')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v18 contains invalid attempt counts")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v18 integrity check failed")
+
+
 def _set_version(db: sqlite3.Connection, version: int) -> None:
     db.execute(
         "UPDATE schema_meta SET value=? WHERE key='version'",
@@ -755,7 +1211,7 @@ def _set_version(db: sqlite3.Connection, version: int) -> None:
 
 
 def migrate_database(path: Path) -> Optional[Path]:
-    """Migrate an empty, v5, or v6 database and return the optional backup path."""
+    """Migrate a supported database to the current schema and return its backup."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(path))
@@ -770,7 +1226,7 @@ def migrate_database(path: Path) -> Optional[Path]:
                 current, SCHEMA_VERSION
             )
         )
-    if current not in (0, 5, 6, 7, 8, 9, 10, SCHEMA_VERSION):
+    if current not in (0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, SCHEMA_VERSION):
         db.close()
         raise UnsupportedSchemaError(
             "no safe migration path from schema {}".format(current)
@@ -791,6 +1247,21 @@ def migrate_database(path: Path) -> Optional[Path]:
         if current == 0:
             with db:
                 _bootstrap_v11(db)
+                _v11_to_v12(db)
+                _verify_v12(db)
+                _v12_to_v13(db)
+                _verify_v13(db)
+                _v13_to_v14(db)
+                _verify_v14(db)
+                _v14_to_v15(db)
+                _verify_v15(db)
+                _v15_to_v16(db)
+                _verify_v16(db)
+                _v16_to_v17(db)
+                _verify_v17(db)
+                _v17_to_v18(db)
+                _verify_v18(db)
+                _set_version(db, SCHEMA_VERSION)
             current = SCHEMA_VERSION
         if current == 5:
             db.execute("BEGIN IMMEDIATE")
@@ -939,6 +1410,83 @@ def migrate_database(path: Path) -> Optional[Path]:
             try:
                 _v10_to_v11(db)
                 _verify_v11(db)
+                _set_version(db, 11)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 11
+        if current == 11:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v11_to_v12(db)
+                _verify_v12(db)
+                _set_version(db, 12)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 12
+        if current == 12:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v12_to_v13(db)
+                _verify_v13(db)
+                _set_version(db, 13)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 13
+        if current == 13:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v13_to_v14(db)
+                _verify_v14(db)
+                _set_version(db, 14)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 14
+        if current == 14:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v14_to_v15(db)
+                _verify_v15(db)
+                _set_version(db, 15)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 15
+        if current == 15:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v15_to_v16(db)
+                _verify_v16(db)
+                _set_version(db, 16)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 16
+        if current == 16:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v16_to_v17(db)
+                _verify_v17(db)
+                _set_version(db, 17)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 17
+        if current == 17:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v17_to_v18(db)
+                _verify_v18(db)
                 _set_version(db, SCHEMA_VERSION)
                 db.commit()
             except BaseException:

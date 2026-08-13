@@ -3,6 +3,7 @@
 import sqlite3
 
 from groupmate.memory.migrations import (
+    SCHEMA_VERSION,
     _bootstrap_v5,
     _v5_to_v6,
     _v6_to_v7,
@@ -35,8 +36,8 @@ def test_v9_database_migrates_to_v10_with_outbound_json(tmp_path):
     }
     row = store.outbox_record("aemeath", "legacy")
 
-    assert store.schema_version() == 11
+    assert store.schema_version() == SCHEMA_VERSION
     assert "outbound_json" in columns
     assert row["outbound_json"] == "[]"
     store.close()
-    assert list(tmp_path.glob("legacy-v9.db.pre-migrate-v9-to-v11.*"))
+    assert list(tmp_path.glob(f"legacy-v9.db.pre-migrate-v9-to-v{SCHEMA_VERSION}.*"))

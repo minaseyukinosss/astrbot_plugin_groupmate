@@ -45,6 +45,19 @@ class GroupmatePlugin(Star):
         self.web_api.register(context)
         logger.info("Groupmate initialized")
 
+    async def initialize(self):
+        """Hot-reload and cold start both enter here; cron wake must start every time."""
+        await self.bridge.start()
+        logger.info(
+            "Groupmate scheduler mode=%s",
+            self.bridge.commitment_scheduler.mode,
+        )
+
+    @filter.on_astrbot_loaded()
+    async def on_astrbot_loaded(self):
+        # Keep as a safety net for hosts that only fire this hook once.
+        await self.bridge.start()
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def observe_group_message(self, event: AstrMessageEvent):

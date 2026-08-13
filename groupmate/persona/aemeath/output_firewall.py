@@ -10,6 +10,7 @@ from ...models import ReplyMode
 from ...ports import GuardResult
 from ...core.intent import constraints_for
 from ...core.response_act import ResponseAct
+from ...social.reminder_infer import looks_like_premature_reminder_delivery
 
 
 class AemeathOutputFirewall:
@@ -30,6 +31,17 @@ class AemeathOutputFirewall:
         r"(?:prompt|system\s*prompt|模型输出|插件配置|人格调参|系统决定)",
         re.IGNORECASE,
     )
+    _TECHNICAL_IDENTITY = re.compile(
+        r"(?:(?:我|本人|本质上|其实)(?:是|属于)|作为).{0,5}"
+        r"(?:AI|人工智能|语言模型|机器人|程序)",
+        re.IGNORECASE,
+    )
+    _CANNED_IDENTITY = re.compile(
+        r"^(?:(?:我就?是|我是)(?:鸣潮的)?爱弥斯"
+        r"|就是一直在群里(?:的)?爱弥斯(?:呀|啊)?)"
+        r"[\s，,。.!！?？~～]*$",
+        re.IGNORECASE,
+    )
     _FORCED_FOLLOWUP = re.compile(
         r"(?:(?:你呢|那你呢|然后呢)[\s？?。！!~～.…]*$"
         r"|(?:^|[，,。！？!?；;：:.…\r\n])[^\S\r\n]*(?:怎么啦|怎么了)"
@@ -42,6 +54,11 @@ class AemeathOutputFirewall:
         r"(?:(?:已经|已|刚刚).{0,16}"
         r"(?:完成(?:了)?|成功(?:了)?|搞定(?:了)?|好(?:了)?))"
         r"|(?:搞定了|完成了|做好了|弄好了|查好了|处理好了|发布成功)",
+        re.IGNORECASE,
+    )
+    _UNSUPPORTED_FUTURE_PROMISE = re.compile(
+        r"(?:我会|我来|交给我|包在我身上).{0,24}"
+        r"(?:查|找|发送|发给|修改|处理|完成|搞定|弄好)",
         re.IGNORECASE,
     )
     # 语气/感叹单字起手后再接下文（整条仅一字应声不拦）
@@ -59,6 +76,7 @@ class AemeathOutputFirewall:
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseAct] = None,
         capability_status=None,
+        source_text: str = "",
     ) -> GuardResult:
         cleaned = (text or "").strip().strip("`").strip()
         codes: List[str] = []
@@ -80,6 +98,10 @@ class AemeathOutputFirewall:
             codes.append("customer_service_template")
         if self._SYSTEM_VOCABULARY.search(cleaned):
             codes.append("system_vocabulary")
+        if self._TECHNICAL_IDENTITY.search(cleaned):
+            codes.append("technical_identity_disclosure")
+        if self._CANNED_IDENTITY.search(cleaned):
+            codes.append("canned_identity_reply")
         if self._FORCED_FOLLOWUP.search(cleaned):
             codes.append("forced_followup")
         if self._INTERNAL_ID.search(cleaned):
@@ -89,6 +111,11 @@ class AemeathOutputFirewall:
             codes.append("leading_mono_interjection")
         if self._DECORATIVE_PUNCT.search(cleaned):
             codes.append("decorative_punctuation")
+        if looks_like_premature_reminder_delivery(
+            user_text=source_text,
+            reply_text=cleaned,
+        ):
+            codes.append("premature_reminder_delivery")
         status = getattr(capability_status, "value", capability_status)
         status = str(status or "").strip().lower()
         task_not_successful = (
@@ -101,9 +128,13 @@ class AemeathOutputFirewall:
         )
         if task_not_successful and self._COMPLETION_CLAIM.search(cleaned):
             codes.append("false_task_completion")
+        if status != "success" and self._UNSUPPORTED_FUTURE_PROMISE.search(cleaned):
+            codes.append("unsupported_future_promise")
         if self._is_duplicate(cleaned, recent_outputs):
             codes.append("duplicate_output")
-            non_repairable.add("duplicate_output")
+            # 提前履约文案常与上次撞车；优先按 premature 修复，不要因 duplicate 锁死
+            if "premature_reminder_delivery" not in codes:
+                non_repairable.add("duplicate_output")
 
         unique_codes = tuple(dict.fromkeys(codes))
         return GuardResult(

@@ -10,12 +10,18 @@ from .affinity import (
     snapshot_for_relationship,
 )
 from .projector import SocialStateProjector
+from .evidence import RelationshipEvidenceWriter
+from .continuity import ContinuityWriter
+from .commitments import SelfCommitmentWriter
 
 __all__ = [
     "AffinityBand",
     "AffinitySnapshot",
     "ResponsePosture",
     "SocialStateProjector",
+    "RelationshipEvidenceWriter",
+    "ContinuityWriter",
+    "SelfCommitmentWriter",
     "band_for_affinity",
     "clamp_affinity",
     "initial_affinity_for_relationship",

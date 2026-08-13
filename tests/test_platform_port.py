@@ -34,6 +34,11 @@ class FakeReply:
         self.id = str(id)
 
 
+class FakeAt:
+    def __init__(self, *, qq):
+        self.qq = qq
+
+
 class FakePlain:
     def __init__(self, text):
         self.text = str(text)
@@ -57,8 +62,9 @@ class FakeStarTools:
     calls = []
 
     @classmethod
-    async def send_message_by_id(cls, message_type, target_id, chain, platform="aiocqhttp"):
-        cls.calls.append((message_type, target_id, chain, platform))
+    async def send_message(cls, session, chain):
+        cls.calls.append(("send_message", session, chain))
+        return True
 
 
 def test_platform_port_uses_event_message_chain(monkeypatch):
@@ -66,6 +72,7 @@ def test_platform_port_uses_event_message_chain(monkeypatch):
     event_module.MessageChain = FakeMessageChain
     component_module = types.ModuleType("astrbot.api.message_components")
     component_module.Reply = FakeReply
+    component_module.At = FakeAt
     component_module.Plain = FakePlain
     component_module.Image = FakeImage
     star_module = types.ModuleType("astrbot.api.star")
@@ -96,6 +103,42 @@ def test_platform_port_uses_event_message_chain(monkeypatch):
         "在呢。"
     ]
     assert FakeStarTools.calls == []
+    assert result.kind is SendReceiptKind.CONFIRMED
+
+
+def test_platform_port_sends_real_member_mention(monkeypatch):
+    event_module = types.ModuleType("astrbot.api.event")
+    event_module.MessageChain = FakeMessageChain
+    component_module = types.ModuleType("astrbot.api.message_components")
+    component_module.Reply = FakeReply
+    component_module.Plain = FakePlain
+    component_module.Image = FakeImage
+    component_module.At = FakeAt
+    star_module = types.ModuleType("astrbot.api.star")
+    star_module.StarTools = FakeStarTools
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", component_module
+    )
+    monkeypatch.setitem(sys.modules, "astrbot.api.star", star_module)
+    context = FakeContext()
+    port = AstrBotPlatformPort(
+        context, lambda group_id: "aiocqhttp:GroupMessage:" + group_id
+    )
+
+    result = asyncio.run(
+        port.send_outbound(
+            "912113397",
+            (
+                OutboundSegment(OutboundKind.MENTION, target_user_id="10001"),
+                OutboundSegment(OutboundKind.TEXT, text="到时间了。"),
+            ),
+            "commitment-delivery",
+        )
+    )
+
+    chain = context.calls[0][2].chain
+    assert [item.qq for item in chain if isinstance(item, FakeAt)] == [10001]
     assert result.kind is SendReceiptKind.CONFIRMED
 
 
@@ -135,9 +178,9 @@ def test_platform_port_falls_back_to_group_id_send(monkeypatch):
 
     assert len(context.calls) == 1
     assert FakeStarTools.calls == [
-        ("GroupMessage", "912113397", context.calls[0][2], "aiocqhttp")
+        ("send_message", "broken:GroupMessage:912113397", context.calls[0][2])
     ]
-    assert result.kind is SendReceiptKind.UNKNOWN
+    assert result.kind is SendReceiptKind.CONFIRMED
 
 
 def test_platform_port_quotes_ordered_text_segments_once(monkeypatch):

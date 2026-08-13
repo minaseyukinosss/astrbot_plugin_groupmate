@@ -21,6 +21,8 @@ from groupmate.models import (
     MessageOrigin,
     RelationshipState,
     ReplyMode,
+    SelfCommitment,
+    SelfCommitmentStatus,
     SendResult,
     TopicSnapshot,
     TriggerKind,
@@ -100,6 +102,90 @@ class RecordingGenerationModel(StaticGenerationModel):
     async def generate(self, plan, topic, memories):
         self.plans.append(plan)
         return await super().generate(plan, topic, memories)
+
+
+def test_workflow_uses_canonical_member_for_history_text_name_and_trace(message_factory):
+    memory = FakeMemoryRepository()
+    memory.member_links[("g1", "old-id")] = "current-id"
+    memory.member_names[("g1", "current-id")] = "小明"
+    memory.member_aliases[("g1", "旧昵称")] = "current-id"
+    generator = RecordingGenerationModel("在呢。")
+    workflow = build_workflow(
+        generator=generator,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    topic = TopicSnapshot(
+        "canonical-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="old-message", sender_id="old-id",
+                sender_name="旧昵称", text="刚才那句", timestamp=99,
+            ),
+            message_factory(
+                message_id="latest", sender_id="u2", sender_name="小红",
+                text="旧昵称，你怎么看", timestamp=100,
+            ),
+        ),
+        99,
+        100,
+    )
+
+    canonical_topic = workflow._canonical_member_topic(topic)
+    targeting = workflow._resolve_targeting(canonical_topic, TriggerKind.CANDIDATE)
+    assert targeting.reply_audience.target_user_ids == ("current-id",)
+    trace_payload = workflow._targeting_trace(canonical_topic, targeting)
+    assert '"name": "小明"' in trace_payload
+    assert '"source": "leading_address"' in trace_payload
+
+    direct_topic = TopicSnapshot(
+        "direct-canonical-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="direct", sender_id="old-id",
+                sender_name="旧昵称", text="爱弥斯，在吗", timestamp=101,
+            ),
+        ),
+        101,
+        101,
+    )
+    outcome = asyncio.run(
+        workflow.evaluate(direct_topic, TriggerKind.ALIAS_DIRECT, workflow.behavior)
+    )
+    assert outcome.sent is True
+    prompt = generator.plans[-1].user_prompt
+    assert 'speaker="小明"' in prompt
+    assert '建议称呼：小明' in prompt
+
+
+def test_workflow_does_not_guess_text_name_when_profiles_are_duplicated(message_factory):
+    memory = FakeMemoryRepository()
+    memory.member_aliases[("g1", "同名")] = ""
+    workflow = build_workflow(memory=memory)
+    topic = TopicSnapshot(
+        "duplicate-name",
+        "g1",
+        (
+            message_factory(
+                message_id="u1", sender_id="u1", sender_name="同名",
+                text="上一句", timestamp=99,
+            ),
+            message_factory(
+                message_id="latest", sender_id="u3", sender_name="小红",
+                text="同名，你怎么看", timestamp=100,
+            ),
+        ),
+        99,
+        100,
+    )
+
+    targeting = workflow._resolve_targeting(
+        workflow._canonical_member_topic(topic), TriggerKind.CANDIDATE
+    )
+    assert "leading_address" not in targeting.reply_audience.reason_codes
+    assert targeting.reply_audience.target_user_ids != ("u1",)
 
 
 class CountingVision(NullVision):
@@ -262,6 +348,289 @@ def test_alias_direct_sends(topic_snapshot, balanced_policy):
     )
 
     assert outcome.sent is True
+
+
+def test_timed_reminder_falls_back_when_model_delivers_prematurely(
+    message_factory, balanced_policy
+):
+    generator = RecordingGenerationModel("交材料了")
+    platform = FakePlatform()
+    memory = FakeMemoryRepository()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    workflow._recent_outputs["g1"].append("交材料了")
+    topic = TopicSnapshot(
+        "reminder-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="m-rem",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="小爱，1 分钟后提醒我交材料",
+                timestamp=100,
+                mentions_bot=True,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert generator.plans
+    assert platform.sent
+    assert platform.sent[0]["text"] == "好嘞，1分钟倒计时开始哦"
+    assert any(
+        state == "FALLBACK" and reason == "timed_reminder_accept"
+        for _, _, state, reason, _ in memory.transitions
+    )
+    assert any(
+        state == "PLAN" and "倒计时" in reason
+        for _, _, state, reason, _ in memory.transitions
+    )
+
+
+def test_timed_reminder_keeps_model_acceptance(message_factory, balanced_policy):
+    generator = RecordingGenerationModel("好呀，1分钟倒计时开始")
+    platform = FakePlatform()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        persona=AemeathPersonaProvider(),
+    )
+    topic = TopicSnapshot(
+        "reminder-accept",
+        "g1",
+        (
+            message_factory(
+                message_id="m-rem-ok",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="小爱，1分钟后提醒我交材料",
+                timestamp=100,
+                mentions_bot=True,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert generator.plans
+    assert "好嘞，1分钟倒计时开始哦" not in (generator.plans[0].user_prompt or "")
+    assert platform.sent[0]["text"] == "好呀，1分钟倒计时开始"
+
+
+def test_cancel_withdraws_reminder_even_without_alias(message_factory, balanced_policy):
+    memory = FakeMemoryRepository()
+    memory.self_commitments.append(
+        SelfCommitment(
+            commitment_id="c-rem",
+            group_id="g1",
+            beneficiary_subject_id="u1",
+            summary="提醒交材料",
+            source_decision_id="d0",
+            source_message_id="bot-d0",
+            source_quote="好嘞，1分钟倒计时开始哦",
+            created_at=90,
+            updated_at=90,
+            fulfillment_mode="reminder",
+            status=SelfCommitmentStatus.PENDING,
+            due_at=160,
+            next_attempt_at=160,
+        )
+    )
+    generator = RecordingGenerationModel("行，那不喊了")
+    platform = FakePlatform()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    topic = TopicSnapshot(
+        "cancel-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="m-cancel",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="算了，不用提醒我了",
+                timestamp=120,
+                mentions_bot=False,
+            ),
+        ),
+        120,
+        120,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert generator.plans == []
+    assert platform.sent[0]["text"] == "好，那就不喊了"
+    assert memory.self_commitments[0].status is SelfCommitmentStatus.WITHDRAWN
+    assert memory.self_commitments[0].next_attempt_at is None
+
+
+def test_continuation_cancel_does_not_reaccept_stitched_request(
+    message_factory, balanced_policy
+):
+    memory = FakeMemoryRepository()
+    memory.self_commitments.append(
+        SelfCommitment(
+            commitment_id="c-rem",
+            group_id="g1",
+            beneficiary_subject_id="u1",
+            summary="提醒交材料",
+            source_decision_id="d0",
+            source_message_id="bot-d0",
+            source_quote="行 两分钟倒计时开始啦 到点叫你",
+            created_at=90,
+            updated_at=90,
+            fulfillment_mode="reminder",
+            status=SelfCommitmentStatus.PENDING,
+            due_at=220,
+            next_attempt_at=220,
+        )
+    )
+    generator = RecordingGenerationModel("行，那不喊了")
+    platform = FakePlatform()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    topic = TopicSnapshot(
+        "cancel-cont",
+        "g1",
+        (
+            message_factory(
+                message_id="m-req",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="小爱，2分钟后提醒我交材料",
+                timestamp=100,
+                mentions_bot=True,
+            ),
+            message_factory(
+                message_id="bot-d0",
+                sender_id="__bot__",
+                sender_name="爱弥斯",
+                text="行 两分钟倒计时开始啦 到点叫你",
+                timestamp=101,
+                is_bot=True,
+            ),
+            message_factory(
+                message_id="m-cancel",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="算了，不用提醒我了",
+                timestamp=110,
+                mentions_bot=False,
+            ),
+        ),
+        100,
+        110,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CONTINUATION, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert generator.plans == []
+    assert platform.sent[0]["text"] == "好，那就不喊了"
+    assert memory.self_commitments[0].status is SelfCommitmentStatus.WITHDRAWN
+    assert memory.self_commitments[0].next_attempt_at is None
+
+
+def test_cancel_acks_even_when_bot_projection_is_latest(
+    message_factory, balanced_policy
+):
+    memory = FakeMemoryRepository()
+    memory.self_commitments.append(
+        SelfCommitment(
+            commitment_id="c-rem",
+            group_id="g1",
+            beneficiary_subject_id="u1",
+            summary="提醒交材料",
+            source_decision_id="d0",
+            source_message_id="bot-d0",
+            source_quote="两分钟倒计时开始啦 到点我喊你",
+            created_at=90,
+            updated_at=90,
+            fulfillment_mode="reminder",
+            status=SelfCommitmentStatus.PENDING,
+            due_at=220,
+            next_attempt_at=220,
+        )
+    )
+    generator = RecordingGenerationModel("<SILENCE>")
+    platform = FakePlatform()
+    workflow = build_workflow(
+        generator=generator,
+        platform=platform,
+        memory=memory,
+        persona=AemeathPersonaProvider(),
+    )
+    topic = TopicSnapshot(
+        "cancel-bot-latest",
+        "g1",
+        (
+            message_factory(
+                message_id="m-req",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="小爱，2分钟后提醒我交材料",
+                timestamp=100,
+                mentions_bot=True,
+            ),
+            message_factory(
+                message_id="m-cancel",
+                sender_id="u1",
+                sender_name="复读斥候",
+                text="算了，不用提醒我了",
+                timestamp=110,
+                mentions_bot=False,
+            ),
+            message_factory(
+                message_id="bot-d0",
+                sender_id="__bot__",
+                sender_name="爱弥斯",
+                text="两分钟倒计时开始啦 到点我喊你",
+                timestamp=101,
+                is_bot=True,
+            ),
+        ),
+        100,
+        110,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CONTINUATION, balanced_policy)
+    )
+
+    assert outcome.sent is True
+    assert generator.plans == []
+    assert platform.sent[0]["text"] == "好，那就不喊了"
+    assert memory.self_commitments[0].status is SelfCommitmentStatus.WITHDRAWN
 
 
 def test_host_interaction_uses_persona_delivery_outbox_and_never_quotes(

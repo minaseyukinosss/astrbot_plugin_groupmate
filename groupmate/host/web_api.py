@@ -50,6 +50,72 @@ class GroupmateWebAPI:
             ["GET"],
             "Decision stage trail",
         )
+        register(
+            f"/{PLUGIN_NAME}/cognition",
+            self.cognition,
+            ["GET"],
+            "Groupmate cognition governance snapshot",
+        )
+        register(
+            f"/{PLUGIN_NAME}/memories/<memory_id>/delete",
+            self.delete_memory,
+            ["POST"],
+            "Delete a governed memory",
+        )
+        register(
+            f"/{PLUGIN_NAME}/relationships/correct",
+            self.correct_relationship,
+            ["POST"],
+            "Correct a relationship state",
+        )
+        register(
+            f"/{PLUGIN_NAME}/members/correct",
+            self.correct_member,
+            ["POST"],
+            "Correct a member address",
+        )
+        register(
+            f"/{PLUGIN_NAME}/members/link",
+            self.link_member,
+            ["POST"],
+            "Link a mistaken member identity",
+        )
+        register(
+            f"/{PLUGIN_NAME}/continuity/<item_id>/status",
+            self.correct_continuity,
+            ["POST"],
+            "Correct an ongoing continuity item",
+        )
+        register(
+            f"/{PLUGIN_NAME}/commitments/<commitment_id>/status",
+            self.correct_self_commitment,
+            ["POST"],
+            "Correct an Aemeath self commitment",
+        )
+        register(
+            f"/{PLUGIN_NAME}/commitments/<commitment_id>/run",
+            self.run_self_commitment,
+            ["POST"],
+            "Run an Aemeath self commitment now",
+        )
+        register(
+            f"/{PLUGIN_NAME}/relationships/evidence/<event_id>/review",
+            self.review_relationship_evidence,
+            ["POST"],
+            "Review pending relationship evidence",
+        )
+        register(
+            f"/{PLUGIN_NAME}/relationships/evidence/<event_id>/reject",
+            self.reject_relationship_evidence,
+            ["POST"],
+            "Reject relationship evidence and rebuild state",
+        )
+        register(
+            f"/{PLUGIN_NAME}/governance/<action_id>/revert",
+            self.revert_governance,
+            ["POST"],
+            "Revert a governance action",
+        )
 
     async def status(self):
         from astrbot.api.web import json_response
@@ -95,3 +161,279 @@ class GroupmateWebAPI:
         if payload is None:
             return error_response("decision not found", status_code=404)
         return json_response(payload)
+
+    async def cognition(self):
+        from astrbot.api.web import json_response
+
+        return json_response(self.bridge.cognition_snapshot())
+
+    async def delete_memory(self, memory_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        memory_id = str(memory_id or "").strip()
+        if not memory_id:
+            return error_response("memory_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        action = self.bridge.delete_governed_memory(memory_id, reason)
+        if action is None:
+            return error_response("memory not found", status_code=404)
+        return json_response(
+            {"deleted": True, "memory_id": memory_id, "action": action}
+        )
+
+    async def correct_relationship(self):
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        group_id = str(payload.get("group_id") or "").strip()
+        user_id = str(payload.get("user_id") or "").strip()
+        if not group_id or not user_id:
+            return error_response("group_id and user_id are required", status_code=400)
+        fields = ("familiarity", "affinity", "trust", "boundary_pressure")
+        try:
+            values = {name: int(payload[name]) for name in fields}
+        except (KeyError, TypeError, ValueError):
+            return error_response(
+                "relationship values must be integers", status_code=400
+            )
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        result = self.bridge.correct_relationship(
+            group_id=group_id,
+            user_id=user_id,
+            reason=reason,
+            **values,
+        )
+        return json_response({"corrected": True, **result})
+
+    async def correct_member(self):
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        group_id = str(payload.get("group_id") or "").strip()
+        subject_id = str(payload.get("subject_id") or "").strip()
+        preferred_address = str(payload.get("preferred_address") or "").strip()
+        reason = str(payload.get("reason") or "").strip()
+        if not group_id or not subject_id:
+            return error_response("group_id and subject_id are required", status_code=400)
+        if len(preferred_address) > 80:
+            return error_response("preferred_address is too long", status_code=400)
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            result = self.bridge.correct_member_profile(
+                group_id=group_id,
+                subject_id=subject_id,
+                preferred_address=preferred_address,
+                reason=reason,
+            )
+        except KeyError:
+            return error_response("member profile not found", status_code=404)
+        return json_response({"corrected": True, **result})
+
+    async def link_member(self):
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        group_id = str(payload.get("group_id") or "").strip()
+        source_subject_id = str(payload.get("source_subject_id") or "").strip()
+        canonical_subject_id = str(payload.get("canonical_subject_id") or "").strip()
+        reason = str(payload.get("reason") or "").strip()
+        if not group_id or not source_subject_id or not canonical_subject_id:
+            return error_response("member identity fields are required", status_code=400)
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            action = self.bridge.link_member_identity(
+                group_id=group_id,
+                source_subject_id=source_subject_id,
+                canonical_subject_id=canonical_subject_id,
+                reason=reason,
+            )
+        except KeyError:
+            return error_response("member profile not found", status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        return json_response({"linked": True, "action": action})
+
+    async def correct_continuity(self, item_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        item_id = str(item_id or "").strip()
+        if not item_id:
+            return error_response("item_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        status = str(payload.get("status") or "").strip()
+        if status not in {"open", "completed", "cancelled", "deleted"}:
+            return error_response("unsupported continuity status", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            result = self.bridge.correct_continuity_status(
+                item_id=item_id,
+                status=status,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        if result is None:
+            return error_response("continuity item not found", status_code=404)
+        return json_response({"corrected": True, **result})
+
+    async def correct_self_commitment(self, commitment_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        commitment_id = str(commitment_id or "").strip()
+        if not commitment_id:
+            return error_response("commitment_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        status = str(payload.get("status") or "").strip()
+        if status not in {
+            "pending",
+            "in_progress",
+            "completed",
+            "blocked",
+            "withdrawn",
+            "deleted",
+        }:
+            return error_response("unsupported self commitment status", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            result = self.bridge.correct_self_commitment_status(
+                commitment_id=commitment_id,
+                status=status,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        if result is None:
+            return error_response("self commitment not found", status_code=404)
+        return json_response({"corrected": True, **result})
+
+    async def run_self_commitment(self, commitment_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        commitment_id = str(commitment_id or "").strip()
+        if not commitment_id:
+            return error_response("commitment_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        try:
+            result = await self.bridge.run_self_commitment_now(commitment_id)
+        except KeyError:
+            return error_response("self commitment not found", status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        return json_response({"started": True, **result})
+
+    async def revert_governance(self, action_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        action_id = str(action_id or "").strip()
+        if not action_id:
+            return error_response("action_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            action = self.bridge.revert_governance_action(action_id, reason)
+        except KeyError:
+            return error_response("governance action not found", status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        return json_response({"reverted": True, "action": action})
+
+    async def reject_relationship_evidence(self, event_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return error_response("event_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            action = self.bridge.reject_relationship_evidence(event_id, reason)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        if action is None:
+            return error_response("relationship evidence not found", status_code=404)
+        return json_response(
+            {"rejected": True, "event_id": event_id, "action": action}
+        )
+
+    async def review_relationship_evidence(self, event_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return error_response("event_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        outcome = str(payload.get("outcome") or "").strip()
+        if outcome not in {
+            "correct",
+            "wrong_person",
+            "wrong_kind",
+            "insufficient_context",
+        }:
+            return error_response("unsupported review outcome", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            action = self.bridge.review_relationship_evidence(
+                event_id, outcome, reason
+            )
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        if action is None:
+            return error_response("relationship evidence not found", status_code=404)
+        return json_response(
+            {"reviewed": True, "event_id": event_id, "action": action}
+        )

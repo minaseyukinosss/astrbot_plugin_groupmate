@@ -5,6 +5,7 @@ import pytest
 
 import groupmate.memory.migrations as migrations
 from groupmate.memory.migrations import (
+    SCHEMA_VERSION,
     SchemaTooNewError,
     _bootstrap_v5,
 )
@@ -23,10 +24,10 @@ def test_v5_database_is_backed_up_and_migrated(tmp_path):
     db.close()
 
     store = SQLiteMemoryStore(path)
-    assert store.schema_version() == 11
+    assert store.schema_version() == SCHEMA_VERSION
     assert store.outbox_record("aemeath", "sent-one")["status"] == "sent"
     store.close()
-    assert list(tmp_path.glob("legacy.db.pre-migrate-v5-to-v11.*"))
+    assert list(tmp_path.glob(f"legacy.db.pre-migrate-v5-to-v{SCHEMA_VERSION}.*"))
 
 
 def test_newer_database_is_rejected(tmp_path):
@@ -64,7 +65,7 @@ def test_failed_migration_rolls_back_and_keeps_backup(tmp_path, monkeypatch):
     db.close()
     assert version == "5"
     assert "temporary_column" not in columns
-    assert list(tmp_path.glob("broken.db.pre-migrate-v5-to-v11.*"))
+    assert list(tmp_path.glob(f"broken.db.pre-migrate-v5-to-v{SCHEMA_VERSION}.*"))
 
 
 def test_single_writer_serializes_concurrent_groups(tmp_path, message_factory):

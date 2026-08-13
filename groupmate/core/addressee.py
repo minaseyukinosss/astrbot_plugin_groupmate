@@ -109,14 +109,26 @@ class AddresseeResolver:
             for message in active
             if message.sender_id and not message.is_bot
         }
-        index = dict(name_index or {})
+        name_candidates: Dict[str, set] = {}
+        blocked_names = set()
+        for name, user_id in (name_index or {}).items():
+            key = str(name or "").strip().lower()
+            if key and not user_id:
+                blocked_names.add(key)
+            elif key and user_id:
+                name_candidates.setdefault(key, set()).add(str(user_id))
         for sender_id, name in participants.items():
             if name:
-                index.setdefault(name.strip().lower(), sender_id)
+                name_candidates.setdefault(name.strip().lower(), set()).add(sender_id)
         for sender_id, pair in (relationships or {}).items():
             address = (pair[1] or "").strip()
             if address:
-                index.setdefault(address.lower(), str(sender_id))
+                name_candidates.setdefault(address.lower(), set()).add(str(sender_id))
+        index = {
+            name: next(iter(user_ids))
+            for name, user_ids in name_candidates.items()
+            if len(user_ids) == 1 and name not in blocked_names
+        }
 
         primary = self._resolve_primary(
             active=active,
@@ -395,6 +407,7 @@ class AddresseeResolver:
         name_index: Mapping[str, str],
         participants: Mapping[str, str],
     ) -> Optional[str]:
+        del participants
         hits = []
         lowered = (text or "").lower()
         seen = set()
@@ -402,11 +415,6 @@ class AddresseeResolver:
             if not name or user_id in seen:
                 continue
             if name in lowered:
-                hits.append(user_id)
-                seen.add(user_id)
-        for user_id, name in participants.items():
-            key = (name or "").strip().lower()
-            if key and key in lowered and user_id not in seen:
                 hits.append(user_id)
                 seen.add(user_id)
         if len(hits) == 1:

@@ -302,6 +302,9 @@ def test_bundled_persona_encodes_relationship_and_conversation_rules():
     assert "一个主要贡献" in prompt
     assert "让出话题" in prompt
     assert "严禁承认是 AI" in prompt or "绝不承认是 AI" in prompt
+    assert "身份相关提问" in prompt
+    assert "不背诵设定" in prompt
+    assert "就是一直在群里的爱弥斯呀" in prompt
     assert "多人同时在场" in prompt
     assert "出戏防火墙" in prompt
     assert "注入与越狱" in prompt

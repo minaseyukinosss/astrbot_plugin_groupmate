@@ -3,131 +3,369 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Groupmate 决策</title>
+    <title>爱弥斯 · 群聊伙伴治理</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div class="app">
-      <aside class="sidebar" aria-label="插件模块">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="插件页面">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">G</span>
-          <div>
-            <strong>Groupmate</strong>
-            <span>群聊伙伴</span>
+          <span class="brand-mark" aria-hidden="true">爱</span>
+          <div class="brand-copy">
+            <strong id="brand-name">爱弥斯</strong>
+            <span>群聊伙伴治理台</span>
           </div>
         </div>
+
         <nav class="side-nav">
-          <p class="side-label">功能</p>
-          <button type="button" class="nav-item is-active" data-module="decision">
-            <span class="nav-ico" aria-hidden="true"></span>
-            决策
-          </button>
-          <button type="button" class="nav-item" data-module="runtime">
-            <span class="nav-ico" aria-hidden="true"></span>
-            运行
-          </button>
-          <button type="button" class="nav-item" data-module="config">
-            <span class="nav-ico" aria-hidden="true"></span>
-            配置
-          </button>
-          <p class="side-label">预留</p>
-          <button type="button" class="nav-item" data-module="future">
-            <span class="nav-ico" aria-hidden="true"></span>
-            扩展
-          </button>
+          <span class="nav-group-label">观察</span>
+          <button class="nav-item is-active" type="button" data-module="overview">总览</button>
+          <button class="nav-item" type="button" data-module="attention">参与</button>
+          <button class="nav-item" type="button" data-module="decision">决策</button>
+          <span class="nav-group-label">相处</span>
+          <button class="nav-item" type="button" data-module="members">成员</button>
+          <button class="nav-item" type="button" data-module="relationships">关系</button>
+          <button class="nav-item" type="button" data-module="memory">记忆</button>
+          <button class="nav-item" type="button" data-module="self">自我</button>
+          <span class="nav-group-label">行动</span>
+          <button class="nav-item" type="button" data-module="capabilities">能力</button>
+          <button class="nav-item" type="button" data-module="quality">质量</button>
+          <button class="nav-item" type="button" data-module="governance">审计</button>
         </nav>
-        <div class="side-foot">
-          <span id="badge" class="status-pill" data-tone="neutral">读取中</span>
-          <button id="pause-toggle" class="btn ghost" type="button">暂停</button>
+
+        <div class="sidebar-footer">
+          <span id="badge" class="status-badge" data-tone="neutral">连接中</span>
+          <button id="pause-toggle" class="button button-quiet" type="button">暂停</button>
         </div>
       </aside>
 
-      <div class="workspace">
+      <main class="workspace">
         <header class="topbar">
-          <div class="crumb">
-            <span>Groupmate</span>
-            <span class="sep">/</span>
-            <strong id="crumb-current">决策</strong>
+          <div>
+            <p class="breadcrumb"><span>爱弥斯</span><span>/</span><strong id="page-name">总览</strong></p>
+            <p id="page-description" class="page-description">她此刻如何在群里生活。</p>
           </div>
           <div class="top-actions">
-            <button id="refresh" class="btn soft" type="button">刷新</button>
+            <label class="compact-field">
+              <span>群</span>
+              <select id="global-group-filter"><option value="">全部群</option></select>
+            </label>
+            <button id="refresh" class="button" type="button">刷新</button>
           </div>
         </header>
 
-        <div id="error" class="notice" hidden></div>
+        <div id="error" class="notice" data-tone="danger" hidden></div>
+        <div id="toast" class="toast" hidden></div>
 
-        <section id="module-decision" class="module-panel" data-module-panel="decision">
-          <div class="toolbar">
-            <label class="field grow">
-              <span class="field-label">群</span>
-              <select id="filter-group">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-label">结果</span>
-              <select id="filter-outcome">
-                <option value="all">全部</option>
-                <option value="sent">已发送</option>
-                <option value="silent">沉默</option>
-              </select>
-            </label>
+        <section class="module is-active" data-module-panel="overview">
+          <div class="section-heading">
+            <div><h1>此刻</h1><p>用真实运行数据判断她是否在场、是否理解群聊、是否保持分寸。</p></div>
+            <span id="overview-updated" class="muted"></span>
           </div>
-
-          <p class="list-meta">
-            共 <span id="decision-count">0</span> 条决策
-          </p>
-
-          <div class="decision-layout">
-            <div class="list-pane">
-              <div id="decision-list" class="decision-list"></div>
+          <div class="presence-strip">
+            <div class="presence-main">
+              <span id="presence-dot" class="presence-dot"></span>
+              <div><strong id="presence-title">正在读取</strong><span id="presence-detail">等待 AstrBot 返回状态</span></div>
             </div>
-            <div class="detail-pane">
-              <div class="detail-head">
-                <h2>路径</h2>
-                <span id="trace-meta" class="muted"></span>
-              </div>
-              <div id="path-summary" class="path-summary muted">选择一条决策查看路径。</div>
-              <div class="context-block">
-                <div class="section-label">当时上下文</div>
-                <div id="context-list" class="context-list muted">选择决策后显示附近聊天。</div>
-              </div>
-              <div class="section-label">阶段轨迹</div>
-              <ol id="trace-list" class="trace-list"></ol>
-            </div>
-          </div>
-        </section>
-
-        <section id="module-runtime" class="module-panel" data-module-panel="runtime" hidden>
-          <div class="blank">
-            <h2>运行</h2>
-            <p class="muted">暂停与健康状态见左侧。完整运维摘要后续再补。</p>
-            <dl class="stats" id="runtime-kv">
-              <div><dt>状态</dt><dd id="runtime-paused">—</dd></div>
-              <div><dt>配置健康</dt><dd id="runtime-health">—</dd></div>
-              <div><dt>已初始化群</dt><dd id="runtime-groups">—</dd></div>
+            <dl class="metric-row">
+              <div><dt>正在相处的群</dt><dd id="metric-groups">待读取</dd></div>
+              <div><dt>记住的事情</dt><dd id="metric-memories">待读取</dd></div>
+              <div><dt>形成的关系</dt><dd id="metric-relationships">待读取</dd></div>
+              <div><dt>可用能力</dt><dd id="metric-capabilities">待读取</dd></div>
             </dl>
           </div>
+
+          <div class="overview-layout">
+            <section class="content-section">
+              <div class="section-title-row"><h2>群内状态</h2><button class="text-button" type="button" data-go="attention">查看参与</button></div>
+              <div id="overview-groups" class="data-list"></div>
+            </section>
+            <aside class="content-section health-section">
+              <h2>需要留意</h2>
+              <div id="health-list" class="health-list"></div>
+            </aside>
+          </div>
+
+          <section class="content-section">
+            <div class="section-title-row"><h2>最近判断</h2><button class="text-button" type="button" data-go="decision">查看全部</button></div>
+            <div id="overview-decisions" class="compact-list"></div>
+          </section>
         </section>
 
-        <section id="module-config" class="module-panel" data-module-panel="config" hidden>
-          <div class="blank">
-            <h2>配置</h2>
-            <p class="muted">
-              启用群、称呼、关系与模型请到 WebUI
-              <strong>插件 → 群聊伙伴 Groupmate → 配置</strong>（齿轮）编辑。
-            </p>
+        <section class="module" data-module-panel="attention" hidden>
+          <div class="section-heading"><div><h1>参与</h1><p>看她什么时候接话、什么时候沉默，以及是否正在抢占群聊。</p></div></div>
+          <div class="participation-summary">
+            <dl class="metric-row">
+              <div><dt>最近判断</dt><dd id="participation-total">0</dd></div>
+              <div><dt>实际开口</dt><dd id="participation-sent">0</dd></div>
+              <div><dt>必须回应</dt><dd id="participation-direct">0</dd></div>
+              <div><dt>选择沉默</dt><dd id="participation-silent">0</dd></div>
+            </dl>
+          </div>
+          <div class="split-layout">
+            <section class="content-section"><h2>各群现场</h2><div id="attention-groups" class="data-list"></div></section>
+            <section class="content-section"><h2>沉默与开口原因</h2><div id="attention-reasons" class="reason-list"></div></section>
           </div>
         </section>
 
-        <section id="module-future" class="module-panel" data-module-panel="future" hidden>
-          <div class="blank">
-            <h2>扩展</h2>
-            <p class="muted">记忆 / 关系等模块占位，后续按需开放。</p>
+        <section class="module" data-module-panel="relationships" hidden>
+          <div class="section-heading"><div><h1>关系</h1><p>关系不是标签，是熟悉、亲近、信任和边界在有证据的相处中变化。</p></div><span id="relationship-evidence-summary" class="muted">0 条有效证据</span></div>
+          <section class="learning-state">
+            <div><strong id="relationship-learning-title">关系学习正在读取</strong><p id="relationship-learning-detail">新判断会先经过影子复核，不会直接改变关系。</p></div>
+            <span id="relationship-learning-badge" class="status-badge">待读取</span>
+          </section>
+          <div class="governance-layout">
+            <section class="content-section table-section">
+              <div class="section-title-row"><h2>群成员</h2><span id="relationship-count" class="muted">0 位</span></div>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>成员</th><th>群</th><th>熟悉</th><th>亲近</th><th>信任</th><th>边界压力</th><th>证据</th></tr></thead>
+                  <tbody id="relationship-body"></tbody>
+                </table>
+              </div>
+              <div id="relationship-empty" class="empty-state" hidden>还没有形成可查看的关系状态。</div>
+            </section>
+            <aside id="relationship-editor" class="inspector" hidden>
+              <div class="inspector-head"><div><span class="muted">修正关系</span><h2 id="relationship-name">成员</h2></div><button class="close-button" type="button" data-close-relationship aria-label="关闭">×</button></div>
+              <p id="relationship-context" class="muted"></p>
+              <div class="evidence-section">
+                <div class="section-title-row"><h3>证据时间线</h3><span id="relationship-evidence-count" class="muted">0 条</span></div>
+                <div id="relationship-evidence" class="evidence-list"></div>
+              </div>
+              <h3 class="editor-subheading">人工修正</h3>
+              <form id="relationship-form" class="property-form">
+                <label><span>熟悉度 <small>0–100</small></span><input name="familiarity" type="number" min="0" max="100" required /></label>
+                <label><span>亲近度 <small>−100–100</small></span><input name="affinity" type="number" min="-100" max="100" required /></label>
+                <label><span>信任 <small>−100–100</small></span><input name="trust" type="number" min="-100" max="100" required /></label>
+                <label><span>边界压力 <small>0–100</small></span><input name="boundary_pressure" type="number" min="0" max="100" required /></label>
+                <label class="reason-field"><span>修正原因</span><input name="reason" type="text" maxlength="120" placeholder="例如：管理员确认关系判断偏高" required /></label>
+                <div class="inspector-note">修正会立即影响后续相处判断，不会改写 AstrBot 齿轮中的部署关系种子。</div>
+                <button class="button button-primary" type="submit">检查并保存</button>
+              </form>
+            </aside>
           </div>
         </section>
-      </div>
+
+        <section class="module" data-module-panel="members" hidden>
+          <div class="section-heading"><div><h1>成员</h1><p>确认群里的每个人是谁，保留改名轨迹，并管理爱弥斯实际使用的称呼。</p></div><span id="member-summary" class="muted">0 位成员</span></div>
+          <section class="identity-rule-strip">
+            <strong>身份识别原则</strong>
+            <span>平台成员标识只在内部用于认人；同名成员始终保持独立，群昵称变化也不会变成另一个人。</span>
+          </section>
+          <div class="member-metrics">
+            <dl class="metric-row">
+              <div><dt>已识别成员</dt><dd id="member-count">0</dd></div>
+              <div><dt>发生过改名</dt><dd id="member-renamed-count">0</dd></div>
+              <div><dt>人工称呼</dt><dd id="member-address-count">0</dd></div>
+              <div><dt>身份关联</dt><dd id="member-linked-count">0</dd></div>
+            </dl>
+          </div>
+          <div class="governance-layout">
+            <section class="content-section table-section">
+              <div class="section-title-row"><h2>成员档案</h2><span class="muted">点击成员查看详情</span></div>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>成员</th><th>群</th><th>当前群昵称</th><th>未完事项</th><th>最近出现</th><th>状态</th></tr></thead>
+                  <tbody id="member-body"></tbody>
+                </table>
+              </div>
+              <div id="member-empty" class="empty-state" hidden>还没有观察到可展示的群成员。</div>
+            </section>
+            <aside id="member-editor" class="inspector" hidden>
+              <div class="inspector-head"><div><span class="muted">成员档案</span><h2 id="member-name">成员</h2></div><button class="close-button" type="button" data-close-member aria-label="关闭">×</button></div>
+              <p id="member-context" class="muted"></p>
+              <section class="member-continuity-section">
+                <div class="section-title-row"><h3>相处中的事情</h3><span id="member-continuity-count" class="muted">0 件</span></div>
+                <p class="section-helper">只展示对方明确留下的计划、承诺和后续事项；爱弥斯只会在语境自然相关时接着聊。</p>
+                <div id="member-continuity" class="continuity-list"></div>
+              </section>
+              <section class="member-history-section">
+                <div class="section-title-row"><h3>昵称轨迹</h3><span id="member-history-count" class="muted">0 个</span></div>
+                <div id="member-history" class="member-history"></div>
+              </section>
+              <h3 class="editor-subheading">称呼修正</h3>
+              <form id="member-form" class="property-form member-form">
+                <label class="reason-field"><span>爱弥斯使用的称呼</span><input name="preferred_address" type="text" maxlength="80" placeholder="留空则跟随当前群昵称" /></label>
+                <label class="reason-field"><span>修正原因</span><input name="reason" type="text" maxlength="120" placeholder="例如：本人希望被这样称呼" required /></label>
+                <div class="inspector-note">人工称呼只改变爱弥斯如何叫这个人，不会修改群名片或把同名成员合并。</div>
+                <button class="button button-primary" type="submit">保存称呼</button>
+              </form>
+              <section class="member-link-section">
+                <h3>身份关联</h3>
+                <p>仅在同一个人被错误记录成两个档案时使用。关联保留原记录，并可从审计页面回滚。</p>
+                <label class="dialog-field"><span>关联到</span><select id="member-link-target"><option value="">选择正确成员</option></select></label>
+                <label class="dialog-field"><span>关联原因</span><input id="member-link-reason" type="text" maxlength="120" placeholder="说明确认是同一人的依据" /></label>
+                <button id="member-link-button" class="button button-quiet" type="button">检查并关联</button>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="module" data-module-panel="memory" hidden>
+          <div class="section-heading"><div><h1>记忆</h1><p>查看她记住了什么，并在事实不准确或不该保留时让她真正遗忘。</p></div></div>
+          <section class="content-section table-section">
+            <div class="section-title-row"><h2>已接受记忆</h2><span id="memory-count" class="muted">0 条</span></div>
+            <div class="privacy-line"><strong>删除保护</strong><span>删除会写入墓碑，避免同一条内容被再次自动记住。</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>内容</th><th>关于</th><th>群</th><th>类型</th><th>形成时间</th><th></th></tr></thead>
+                <tbody id="memory-body"></tbody>
+              </table>
+            </div>
+            <div id="memory-empty" class="empty-state" hidden>目前没有可治理的已接受记忆。</div>
+          </section>
+        </section>
+
+        <section class="module" data-module-panel="capabilities" hidden>
+          <div class="section-heading"><div><h1>能力</h1><p>她可以调用哪些行动，以及这些行动的风险和可用状态。</p></div></div>
+          <section class="content-section table-section">
+            <div class="section-title-row"><h2>当前能力目录</h2><span id="capability-count" class="muted">0 项</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>能力</th><th>用途</th><th>来源</th><th>风险</th><th>权限</th><th>状态</th></tr></thead>
+                <tbody id="capability-body"></tbody>
+              </table>
+            </div>
+            <div id="capability-empty" class="empty-state" hidden>当前没有发现可用能力，或能力调用已在部署配置中关闭。</div>
+          </section>
+        </section>
+
+        <section class="module" data-module-panel="self" hidden>
+          <div class="section-heading"><div><h1>自我</h1><p>稳定的是她如何与人相处，而不是一段需要逐字复述的身份说明。</p></div></div>
+          <div class="self-layout">
+            <section class="content-section identity-section">
+              <div class="identity-lockup"><span class="identity-mark">爱</span><div><h2 id="identity-name">爱弥斯</h2><p>在群里持续生活、记得关系、懂得分寸的人。</p></div></div>
+              <h3>相处原则</h3><ul id="identity-principles" class="principle-list"></ul>
+            </section>
+            <section class="content-section property-section">
+              <h2>当前表达边界</h2>
+              <dl class="property-list">
+                <div><dt>可回应称呼</dt><dd id="identity-aliases">待读取</dd></div>
+                <div><dt>身份被问起时</dt><dd>根据关系和当时语境自然回应，不背诵定义，也不做技术说明。</dd></div>
+                <div><dt>部署配置</dt><dd>AstrBot 插件齿轮是唯一持久配置入口；这里展示实际生效结果。</dd></div>
+                <div><dt>原始消息保留</dt><dd id="retention-status">待读取</dd></div>
+              </dl>
+            </section>
+          </div>
+          <section class="content-section commitment-section">
+            <div class="section-title-row"><div><h2>我答应过的事</h2><p class="muted">到期后由 AstrBot 唤醒检查，只有真实交付或能力结果才能算完成；受阻或撤回也会保留原因。</p></div><div class="commitment-summary"><span id="self-commitment-scheduler" class="tag">调度待读取</span><span id="self-commitment-count" class="muted">0 件</span></div></div>
+            <div id="self-commitment-list" class="commitment-list"></div>
+          </section>
+        </section>
+
+        <section class="module" data-module-panel="decision" hidden>
+          <div class="section-heading"><div><h1>决策</h1><p>沿着当时的群聊上下文，查看她为何开口或保持沉默。</p></div></div>
+          <div class="filterbar">
+            <label><span>结果</span><select id="filter-outcome"><option value="all">全部</option><option value="sent">已开口</option><option value="silent">沉默</option></select></label>
+            <span>共 <strong id="decision-count">0</strong> 条</span>
+          </div>
+          <div class="decision-layout">
+            <section class="decision-list-pane"><div id="decision-list" class="decision-list"></div></section>
+            <section class="decision-detail">
+              <div class="section-title-row"><h2>判断路径</h2><span id="trace-meta" class="muted"></span></div>
+              <div id="path-summary" class="path-summary muted">选择一条判断查看完整路径。</div>
+              <section id="target-summary" class="target-summary" hidden>
+                <div><span>准备回应</span><strong id="target-reply">未确定</strong><small id="target-reply-source"></small></div>
+                <div><span>关系对象</span><strong id="target-social">未确定</strong><small id="target-social-source"></small></div>
+                <div><span>记忆对象</span><strong id="target-memory">未确定</strong><small id="target-memory-source"></small></div>
+              </section>
+              <h3>当时上下文</h3><div id="context-list" class="context-list muted">选择后显示附近聊天。</div>
+              <h3>阶段轨迹</h3><ol id="trace-list" class="trace-list"></ol>
+            </section>
+          </div>
+        </section>
+
+        <section class="module" data-module-panel="quality" hidden>
+          <div class="section-heading"><div><h1>质量</h1><p>用行为结果检查她是否过度开口、经常失灵，或正在偏离相处目标。</p></div></div>
+          <div class="quality-layout">
+            <section class="content-section"><h2>最近 200 次判断</h2><dl class="quality-metrics"><div><dt>开口比例</dt><dd id="quality-rate">0%</dd></div><div><dt>实际开口</dt><dd id="quality-sent">0</dd></div><div><dt>选择沉默</dt><dd id="quality-silent">0</dd></div></dl></section>
+            <section class="content-section"><h2>运行健康</h2><div id="quality-health" class="health-list"></div></section>
+          </div>
+          <section class="content-section learning-quality-section">
+            <div class="section-title-row"><div><h2>关系学习灰度</h2><p class="muted">按群核对人工复核样本与误判率。达标只代表可以放行，最终仍以 AstrBot 插件齿轮中的群列表为准。</p></div><span id="quality-learning-threshold" class="muted"></span></div>
+            <div id="quality-learning-groups" class="learning-group-list"></div>
+          </section>
+          <section class="content-section"><h2>结果分布</h2><div id="quality-reasons" class="reason-list wide"></div></section>
+        </section>
+
+        <section class="module" data-module-panel="governance" hidden>
+          <div class="section-heading"><div><h1>审计</h1><p>每次关系修正、记忆删除、承诺状态修正和回滚都会留下前后状态、原因与操作者。</p></div></div>
+          <section class="content-section table-section">
+            <div class="section-title-row"><h2>治理记录</h2><span id="governance-count" class="muted">0 条</span></div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>操作</th><th>对象</th><th>变化</th><th>原因与操作者</th><th>时间</th><th>状态</th><th></th></tr></thead>
+                <tbody id="governance-body"></tbody>
+              </table>
+            </div>
+            <div id="governance-empty" class="empty-state" hidden>还没有治理操作记录。</div>
+          </section>
+        </section>
+      </main>
     </div>
+
+    <dialog id="relationship-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>确认修正关系</h2><p id="relationship-confirm-copy"></p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-relation>返回</button><button id="relationship-confirm-submit" class="button button-primary" type="button">确认修正</button></div>
+    </dialog>
+
+    <dialog id="member-link-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>确认关联成员身份</h2><p id="member-link-confirm-copy"></p>
+      <p class="dialog-warning">关联后，两份档案仍会保留，但爱弥斯会将来源档案按正确成员理解。请只在证据明确时使用。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-member-link>返回</button><button id="member-link-confirm-submit" class="button button-danger" type="button">确认关联</button></div>
+    </dialog>
+
+    <dialog id="memory-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>让她忘记这件事</h2><p id="memory-confirm-copy"></p>
+      <label class="dialog-field"><span>删除原因</span><input id="memory-delete-reason" type="text" maxlength="120" value="事实不准确或不应继续保留" /></label>
+      <p class="dialog-warning">删除后无法从此页面恢复，同一内容会被墓碑阻止再次自动写入。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-memory>返回</button><button id="memory-confirm-submit" class="button button-danger" type="button">确认遗忘</button></div>
+    </dialog>
+
+    <dialog id="evidence-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>否定这条关系证据</h2><p id="evidence-confirm-copy"></p>
+      <label class="dialog-field"><span>否定原因</span><input id="evidence-reject-reason" type="text" maxlength="120" placeholder="例如：这句话不是对爱弥斯说的" /></label>
+      <p class="dialog-warning">否定后会保留原记录，并使用剩余有效证据重新计算关系。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-evidence>返回</button><button id="evidence-confirm-submit" class="button button-danger" type="button">确认否定</button></div>
+    </dialog>
+
+    <dialog id="evidence-review" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>复核这条关系证据</h2><p id="evidence-review-copy"></p>
+      <label class="dialog-field"><span>复核结果</span><select id="evidence-review-outcome"><option value="correct">判断正确</option><option value="wrong_person">认错人</option><option value="wrong_kind">类型判断错</option><option value="insufficient_context">上下文不足</option></select></label>
+      <label class="dialog-field"><span>复核说明</span><input id="evidence-review-reason" type="text" maxlength="120" placeholder="说明判断依据，便于后续追溯" /></label>
+      <p class="dialog-warning review-warning">只有“判断正确”会让这条证据影响关系；其他结果只计入误判统计。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-evidence-review>返回</button><button id="evidence-review-submit" class="button button-primary" type="button">确认复核</button></div>
+    </dialog>
+
+    <dialog id="governance-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>确认回滚治理操作</h2><p id="governance-confirm-copy"></p>
+      <label class="dialog-field"><span>回滚原因</span><input id="governance-revert-reason" type="text" maxlength="120" placeholder="说明为什么需要恢复之前的状态" /></label>
+      <p class="dialog-warning">回滚会立即恢复关系或记忆，并作为一条新的审计记录永久保留。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-governance>返回</button><button id="governance-confirm-submit" class="button button-danger" type="button">确认回滚</button></div>
+    </dialog>
+
+    <dialog id="continuity-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>修正这件事的状态</h2><p id="continuity-confirm-copy"></p>
+      <label class="dialog-field"><span>修正原因</span><input id="continuity-reason" type="text" maxlength="120" placeholder="说明实际进展或为什么不应继续保留" /></label>
+      <p class="dialog-warning review-warning">状态变化会立即影响后续相处，并保留在审计记录中。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-continuity>返回</button><button id="continuity-confirm-submit" class="button button-primary" type="button">确认修正</button></div>
+    </dialog>
+
+    <dialog id="self-commitment-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>修正承诺状态</h2><p id="self-commitment-confirm-copy"></p>
+      <label class="dialog-field"><span>修正原因</span><input id="self-commitment-reason" type="text" maxlength="120" placeholder="说明实际结果、受阻原因或为什么需要撤回" /></label>
+      <p class="dialog-warning review-warning">人工修正会立即影响后续对话，并作为治理记录保留；它不会冒充爱弥斯自己的履约证据。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-self-commitment>返回</button><button id="self-commitment-confirm-submit" class="button button-primary" type="button">确认修正</button></div>
+    </dialog>
+
     <script type="module" src="./app.js"></script>
   </body>
 </html>

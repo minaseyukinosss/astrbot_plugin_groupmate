@@ -43,6 +43,9 @@ def compose_bot_delivery_text(
                     str(labels.get(item.target_user_id, "") or ""),
                 )
             )
+        elif item.kind is OutboundKind.MENTION and item.target_user_id:
+            label = str(labels.get(item.target_user_id, "") or "").strip()
+            parts.append("@{}".format(label or item.target_user_id))
     spoken = str(spoken_text or "").strip()
     if spoken:
         parts.append(spoken)
@@ -54,10 +57,39 @@ def _peer_display_names(messages: Sequence[ChatMessage]) -> dict:
     for message in tuple(messages or ()):
         user_id = str(message.sender_id or "").strip()
         name = str(message.sender_name or "").strip()
-        if not user_id or not name or name == user_id:
+        if user_id and name and name != user_id:
+            names[user_id] = name[:80]
+        mention_names = message.metadata.get("mention_names") or {}
+        if not isinstance(mention_names, dict):
             continue
-        names[user_id] = name[:80]
+        for mentioned_id, mentioned_name in mention_names.items():
+            mentioned_id = str(mentioned_id or "").strip()
+            mentioned_name = str(mentioned_name or "").strip().lstrip("@").strip()
+            if (
+                mentioned_id
+                and mentioned_name
+                and mentioned_name != mentioned_id
+                and mentioned_name != "某人"
+            ):
+                names[mentioned_id] = mentioned_name[:80]
     return names
+
+
+def _resolved_mention_text(message: ChatMessage, peer_names: dict) -> str:
+    text = str(message.text or "")
+    anonymous = list(message.metadata.get("anonymous_mention_ids") or ())
+    mention_names = message.metadata.get("mention_names") or {}
+    if not isinstance(mention_names, dict):
+        mention_names = {}
+    for user_id in anonymous:
+        name = str(
+            mention_names.get(str(user_id), "")
+            or peer_names.get(str(user_id), "")
+        ).strip().lstrip("@").strip()
+        if not name or name == str(user_id) or name == "某人":
+            continue
+        text = text.replace("@某人", "@" + name[:80], 1)
+    return text
 
 
 def _message_content(
@@ -98,7 +130,7 @@ def _message_content(
         )
         speaker = (message.sender_name or character_name or "角色").strip() or "角色"
         return "{} 戳了戳 {}".format(speaker, target_label)
-    content = message.text or "[图片]"
+    content = _resolved_mention_text(message, peers) or "[图片]"
     if message.image_urls and message.text:
         content += " [图片]"
     return content
@@ -214,6 +246,8 @@ def format_relationship_line(
         sender_id, sender_name, relationships
     )
     del speaker
+    if relationship_state is not None and relationship_state.configured_relationship:
+        relationship = str(relationship_state.configured_relationship)
     if not allow_intimate_address:
         suggested_address = ""
         relationship = relationship if relationship == "普通群友" else "普通群友"

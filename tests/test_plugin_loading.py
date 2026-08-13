@@ -55,6 +55,15 @@ def test_web_api_registers_decision_routes():
     assert "/astrbot_plugin_groupmate/runtime" in paths
     assert "/astrbot_plugin_groupmate/decisions" in paths
     assert "/astrbot_plugin_groupmate/decisions/<decision_id>" in paths
+    assert "/astrbot_plugin_groupmate/cognition" in paths
+    assert "/astrbot_plugin_groupmate/memories/<memory_id>/delete" in paths
+    assert "/astrbot_plugin_groupmate/relationships/correct" in paths
+    assert "/astrbot_plugin_groupmate/members/correct" in paths
+    assert "/astrbot_plugin_groupmate/members/link" in paths
+    assert "/astrbot_plugin_groupmate/continuity/<item_id>/status" in paths
+    assert "/astrbot_plugin_groupmate/commitments/<commitment_id>/status" in paths
+    assert "/astrbot_plugin_groupmate/commitments/<commitment_id>/run" in paths
+    assert "/astrbot_plugin_groupmate/governance/<action_id>/revert" in paths
 
 
 def test_main_loads_via_astrbot_module_path(tmp_path):
@@ -96,6 +105,7 @@ class Filter:
     event_message_type = staticmethod(identity_decorator)
     platform_adapter_type = staticmethod(identity_decorator)
     on_llm_request = staticmethod(identity_decorator)
+    on_astrbot_loaded = staticmethod(identity_decorator)
     permission_type = staticmethod(identity_decorator)
     command = staticmethod(identity_decorator)
 

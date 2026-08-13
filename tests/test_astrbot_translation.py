@@ -1,4 +1,6 @@
-from groupmate.host import OneBotTranslator
+import asyncio
+
+from groupmate.host import NapCatHistoryPort, OneBotTranslator
 
 
 def test_onebot_history_translation_preserves_reply_and_image():
@@ -58,6 +60,64 @@ def test_onebot_translation_keeps_at_id_when_display_name_missing():
     assert "@某人" in message.text
     assert "3229586160" not in message.text
     assert "禁言十分钟" in message.text
+    assert message.metadata["anonymous_mention_ids"] == ["3229586160"]
+
+
+def test_onebot_translation_keeps_at_id_and_human_display_name_together():
+    raw = {
+        "message_id": "6",
+        "group_id": "2",
+        "user_id": "3",
+        "time": 10,
+        "sender": {"nickname": "Alice"},
+        "message": [
+            {"type": "text", "data": {"text": "找"}},
+            {"type": "at", "data": {"qq": "42", "name": "小夏"}},
+        ],
+    }
+
+    message = OneBotTranslator.from_history(raw, bot_id="9")
+
+    assert message.text == "找@小夏"
+    assert message.mentioned_user_ids == ("42",)
+    assert message.metadata["mention_names"] == {"42": "小夏"}
+
+
+def test_history_port_resolves_anonymous_at_to_group_card():
+    class Bot:
+        def __init__(self):
+            self.calls = []
+
+        async def call_action(self, action, **kwargs):
+            self.calls.append((action, kwargs))
+            if action == "get_group_msg_history":
+                return {
+                    "messages": [
+                        {
+                            "message_id": "7",
+                            "group_id": "2",
+                            "user_id": "3",
+                            "time": 10,
+                            "sender": {"nickname": "Alice"},
+                            "message": [
+                                {"type": "at", "data": {"qq": "42"}}
+                            ],
+                        }
+                    ]
+                }
+            if action == "get_group_member_info":
+                assert kwargs["group_id"] == 2
+                assert kwargs["user_id"] == 42
+                return {"card": "小夏", "nickname": "Summer"}
+            raise AssertionError(action)
+
+    bot = Bot()
+    message = asyncio.run(NapCatHistoryPort(bot, "9").fetch_recent("2", 20))[0]
+
+    assert message.text == "@小夏"
+    assert message.mentioned_user_ids == ("42",)
+    assert message.metadata["mention_names"] == {"42": "小夏"}
+    assert message.metadata["anonymous_mention_ids"] == []
 
 
 def test_onebot_translation_coerces_missing_timestamp():

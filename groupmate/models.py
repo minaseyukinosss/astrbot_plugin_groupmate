@@ -49,6 +49,7 @@ class OutboxStatus(StringEnum):
 
 class OutboundKind(StringEnum):
     TEXT = "text"
+    MENTION = "mention"
     IMAGE = "image"
     POKE = "poke"
     FACE = "face"
@@ -75,6 +76,11 @@ class OutboundSegment:
                 raise ValueError("text outbound segment requires text")
             if media_id or media_ref or target_user_id:
                 raise ValueError("text outbound segment cannot contain media")
+        elif kind is OutboundKind.MENTION:
+            if not target_user_id:
+                raise ValueError("mention outbound segment requires target_user_id")
+            if text or media_id or media_ref:
+                raise ValueError("mention outbound segment cannot contain text or media")
         elif kind is OutboundKind.POKE:
             if not target_user_id:
                 raise ValueError("poke outbound segment requires target_user_id")
@@ -168,6 +174,34 @@ class SocialEventKind(StringEnum):
     NEUTRAL = "NEUTRAL"
 
 
+class SocialEventStatus(StringEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class ContinuityKind(StringEnum):
+    PLAN = "plan"
+    PROMISE = "promise"
+    FOLLOW_UP = "follow_up"
+
+
+class ContinuityStatus(StringEnum):
+    OPEN = "open"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    DELETED = "deleted"
+
+
+class SelfCommitmentStatus(StringEnum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    WITHDRAWN = "withdrawn"
+    DELETED = "deleted"
+
+
 class InteractionScene(StringEnum):
     DIRECT_ADDRESS = "direct_address"
     REPLY_TO_BOT = "reply_to_bot"
@@ -218,6 +252,140 @@ class SocialEvent:
     confidence: float
     occurred_at: int
     decision_id: Optional[str] = None
+    evidence_text: str = ""
+    reason_code: str = ""
+    extractor_version: str = "context-llm-v1"
+    status: SocialEventStatus = SocialEventStatus.ACCEPTED
+    reviewed_at: Optional[int] = None
+    review_code: str = ""
+    review_reason: str = ""
+
+    def __post_init__(self) -> None:
+        kind = self.kind
+        if not isinstance(kind, SocialEventKind):
+            try:
+                kind = SocialEventKind(str(kind))
+            except ValueError:
+                kind = SocialEventKind.NEUTRAL
+        status = self.status
+        if not isinstance(status, SocialEventStatus):
+            try:
+                status = SocialEventStatus(str(status))
+            except ValueError:
+                status = SocialEventStatus.ACCEPTED
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "evidence_text", str(self.evidence_text or "").strip()[:160])
+        object.__setattr__(self, "reason_code", str(self.reason_code or "").strip()[:80])
+        object.__setattr__(
+            self,
+            "extractor_version",
+            str(self.extractor_version or "context-llm-v1").strip()[:80],
+        )
+        object.__setattr__(self, "review_code", str(self.review_code or "").strip()[:40])
+        object.__setattr__(self, "review_reason", str(self.review_reason or "").strip()[:160])
+
+
+@dataclass(frozen=True)
+class ContinuityItem:
+    item_id: str
+    group_id: str
+    subject_id: str
+    kind: ContinuityKind
+    summary: str
+    source_message_id: str
+    source_quote: str
+    created_at: int
+    updated_at: int
+    status: ContinuityStatus = ContinuityStatus.OPEN
+    due_at: Optional[int] = None
+    confidence: float = 1.0
+    extractor_version: str = "context-llm-v1"
+    resolution_message_id: Optional[str] = None
+    resolution_quote: str = ""
+    resolved_at: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        kind = self.kind
+        if not isinstance(kind, ContinuityKind):
+            kind = ContinuityKind(str(kind))
+        status = self.status
+        if not isinstance(status, ContinuityStatus):
+            status = ContinuityStatus(str(status))
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "summary", str(self.summary or "").strip()[:240])
+        object.__setattr__(
+            self, "source_quote", str(self.source_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self, "resolution_quote", str(self.resolution_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self, "confidence", max(0.0, min(1.0, float(self.confidence)))
+        )
+
+
+@dataclass(frozen=True)
+class SelfCommitment:
+    commitment_id: str
+    group_id: str
+    beneficiary_subject_id: str
+    summary: str
+    source_decision_id: str
+    source_message_id: str
+    source_quote: str
+    created_at: int
+    updated_at: int
+    request_message_id: str = ""
+    status: SelfCommitmentStatus = SelfCommitmentStatus.PENDING
+    required_capability: str = ""
+    fulfillment_mode: str = "follow_up"
+    due_at: Optional[int] = None
+    confidence: float = 1.0
+    extractor_version: str = "context-llm-v1"
+    result_decision_id: Optional[str] = None
+    result_quote: str = ""
+    result_facts: Tuple[str, ...] = ()
+    failure_code: str = ""
+    resolved_at: Optional[int] = None
+    next_attempt_at: Optional[int] = None
+    attempt_count: int = 0
+    lease_owner: str = ""
+    lease_until: Optional[int] = None
+    last_attempt_at: Optional[int] = None
+    last_delivery_at: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        status = self.status
+        if not isinstance(status, SelfCommitmentStatus):
+            status = SelfCommitmentStatus(str(status))
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "summary", str(self.summary or "").strip()[:240])
+        object.__setattr__(
+            self, "source_quote", str(self.source_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self, "result_quote", str(self.result_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self,
+            "result_facts",
+            tuple(str(item).strip()[:240] for item in self.result_facts if str(item).strip())[:8],
+        )
+        object.__setattr__(
+            self, "required_capability", str(self.required_capability or "").strip()[:80]
+        )
+        mode = str(self.fulfillment_mode or "follow_up").strip().lower()
+        if mode not in {"reminder", "capability", "follow_up"}:
+            mode = "follow_up"
+        object.__setattr__(self, "fulfillment_mode", mode)
+        object.__setattr__(self, "failure_code", str(self.failure_code or "").strip()[:80])
+        object.__setattr__(
+            self, "confidence", max(0.0, min(1.0, float(self.confidence)))
+        )
+        object.__setattr__(self, "attempt_count", max(0, int(self.attempt_count)))
+        object.__setattr__(self, "lease_owner", str(self.lease_owner or "")[:120])
 
 
 @dataclass(frozen=True)

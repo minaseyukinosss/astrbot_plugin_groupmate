@@ -1,4 +1,4 @@
-"""Schema v11 persona-scope bootstrap and migration coverage."""
+"""Persona-scoped schema bootstrap and migration coverage."""
 
 from __future__ import annotations
 
@@ -8,12 +8,16 @@ import pytest
 
 import groupmate.memory.migrations as migrations
 from groupmate.memory.migrations import (
+    SCHEMA_VERSION,
     _bootstrap_v5,
     _v5_to_v6,
     _v6_to_v7,
     _v7_to_v8,
     _v8_to_v9,
     _v9_to_v10,
+    _bootstrap_v11,
+    _v11_to_v12,
+    _v12_to_v13,
     migrate_database,
 )
 
@@ -129,19 +133,20 @@ def _table_counts(path):
         db.close()
 
 
-def test_empty_database_bootstraps_directly_to_v11(tmp_path):
+def test_empty_database_bootstraps_directly_to_current_schema(tmp_path):
     path = tmp_path / "new.db"
     migrate_database(path)
     db = sqlite3.connect(str(path))
     try:
         assert db.execute(
             "SELECT value FROM schema_meta WHERE key='version'"
-        ).fetchone()[0] == "11"
+        ).fetchone()[0] == str(SCHEMA_VERSION)
         tables = {
             row[0]
             for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         assert "favorability" not in tables
+        assert "governance_actions" in tables
         for table in PERSONA_TABLES:
             column = _columns(db, table)["persona_id"]
             assert column[3] == 1
@@ -168,10 +173,10 @@ def test_v10_rows_are_backfilled_to_aemeath_and_backup_is_created(tmp_path):
         assert "favorability" not in tables
     finally:
         db.close()
-    assert list(tmp_path.glob("*.pre-migrate-v10-to-v11.*"))
+    assert list(tmp_path.glob(f"*.pre-migrate-v10-to-v{SCHEMA_VERSION}.*"))
 
 
-def test_v11_persona_columns_reject_missing_values(tmp_path):
+def test_persona_columns_reject_missing_values(tmp_path):
     path = tmp_path / "new.db"
     migrate_database(path)
     db = sqlite3.connect(str(path))
@@ -203,3 +208,87 @@ def test_failed_v11_verification_rolls_back_v10_database(tmp_path, monkeypatch):
         assert "persona_id" not in _columns(db, "relationship_state")
     finally:
         db.close()
+
+
+def test_v11_database_migrates_to_current_governance_audit(tmp_path):
+    path = tmp_path / "legacy-v11.db"
+    db = sqlite3.connect(str(path))
+    with db:
+        _bootstrap_v11(db)
+    db.close()
+
+    migrate_database(path)
+    db = sqlite3.connect(str(path))
+    try:
+        assert db.execute(
+            "SELECT value FROM schema_meta WHERE key='version'"
+        ).fetchone()[0] == str(SCHEMA_VERSION)
+        columns = _columns(db, "governance_actions")
+        assert {"before_json", "after_json", "reverted_at"}.issubset(columns)
+        assert columns["persona_id"][3] == 1
+    finally:
+        db.close()
+    assert list(tmp_path.glob(f"legacy-v11.db.pre-migrate-v11-to-v{SCHEMA_VERSION}.*"))
+
+
+def test_v12_database_migrates_relationship_evidence_review_fields(tmp_path):
+    path = tmp_path / "legacy-v12.db"
+    db = sqlite3.connect(str(path))
+    with db:
+        _bootstrap_v11(db)
+        _v11_to_v12(db)
+        db.execute("UPDATE schema_meta SET value='12' WHERE key='version'")
+        db.execute(
+            "INSERT INTO social_events(event_id,persona_id,group_id,user_id,kind,"
+            "source_message_id,confidence,occurred_at,decision_id) VALUES "
+            "('event','aemeath','g','u','THANKS','m1',0.9,10,'d1')"
+        )
+    db.close()
+
+    migrate_database(path)
+    db = sqlite3.connect(str(path))
+    try:
+        columns = _columns(db, "social_events")
+        assert {
+            "evidence_text",
+            "reason_code",
+            "extractor_version",
+            "status",
+            "reviewed_at",
+            "review_reason",
+        }.issubset(columns)
+        row = db.execute(
+            "SELECT status, extractor_version FROM social_events WHERE event_id='event'"
+        ).fetchone()
+        assert row == ("accepted", "legacy-verified")
+    finally:
+        db.close()
+    assert list(tmp_path.glob(f"legacy-v12.db.pre-migrate-v12-to-v{SCHEMA_VERSION}.*"))
+
+
+def test_v13_database_adds_categorized_relationship_review(tmp_path):
+    path = tmp_path / "legacy-v13.db"
+    db = sqlite3.connect(str(path))
+    with db:
+        _bootstrap_v11(db)
+        _v11_to_v12(db)
+        _v12_to_v13(db)
+        db.execute("UPDATE schema_meta SET value='13' WHERE key='version'")
+        db.execute(
+            "INSERT INTO social_events(event_id,persona_id,group_id,user_id,kind,"
+            "source_message_id,confidence,occurred_at,decision_id,status) VALUES "
+            "('event','aemeath','g','u','THANKS','m1',0.9,10,'d1','accepted')"
+        )
+    db.close()
+
+    migrate_database(path)
+    db = sqlite3.connect(str(path))
+    try:
+        columns = _columns(db, "social_events")
+        assert "review_code" in columns
+        assert db.execute(
+            "SELECT status, review_code FROM social_events WHERE event_id='event'"
+        ).fetchone() == ("accepted", "")
+    finally:
+        db.close()
+    assert list(tmp_path.glob(f"legacy-v13.db.pre-migrate-v13-to-v{SCHEMA_VERSION}.*"))

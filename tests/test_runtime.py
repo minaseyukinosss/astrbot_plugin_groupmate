@@ -265,6 +265,37 @@ def test_followup_after_direct_wake_uses_continuation(message_factory):
     assert actor.snapshot()["continuation_active"] is True
 
 
+def test_reminder_cancel_after_direct_wake_is_continuation(message_factory):
+    async def scenario():
+        workflow = RecordingWorkflow()
+        actor = actor_for(workflow, fast_policy(continuation_seconds=90))
+        await actor.start()
+        await actor.submit(
+            message_factory(
+                message_id="wake",
+                text="小爱，2分钟后提醒我交材料",
+                timestamp=100,
+            )
+        )
+        await actor.submit(
+            message_factory(
+                message_id="cancel",
+                text="算了，不用提醒我了",
+                timestamp=105,
+            )
+        )
+        await actor.drain()
+        await actor.close()
+        return workflow
+
+    workflow = asyncio.run(scenario())
+
+    assert [item[1].value for item in workflow.evaluations] == [
+        "alias_direct",
+        "continuation",
+    ]
+
+
 def test_followup_from_other_sender_stays_candidate(message_factory):
     async def scenario():
         workflow = RecordingWorkflow()

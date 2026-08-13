@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
 
@@ -30,15 +31,24 @@ class AstrBotGenerationModel:
         if not provider_id:
             return text
         codes = "、".join(str(item) for item in violations) or "style"
-        prompt = "\n".join(
+        lines = [
+            "把下面的群聊回复改短、改自然，去掉客服腔、旁白和系统词。",
+            "违规项：" + codes,
+        ]
+        if "premature_reminder_delivery" in {str(item) for item in violations}:
+            lines.append(
+                "对方是在约「以后再提醒」，不是现在就要提醒内容。"
+                "改成角色自己的口吻，答应并确认时限开始；"
+                "不要再说「交材料了/到时间了」，也不要套固定口头禅。"
+            )
+        lines.extend(
             [
-                "把下面的群聊回复改短、改自然，去掉客服腔、旁白和系统词。",
-                "违规项：" + codes,
                 "只输出修改后的最终回复，不要解释。",
                 "原文：",
                 (text or "").strip(),
             ]
         )
+        prompt = "\n".join(lines)
         response = await self.context.llm_generate(
             chat_provider_id=provider_id,
             prompt=prompt,
@@ -66,6 +76,203 @@ class AstrBotGenerationModel:
             system_prompt=plan.persona_prompt,
         )
         return getattr(response, "completion_text", "") or ""
+
+    async def extract_relationship_evidence(
+        self,
+        *,
+        topic,
+        targeting,
+        trigger,
+        response_act,
+        reply_text: str,
+    ):
+        """Propose one source-grounded social event; code performs final validation."""
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id or topic.latest is None:
+            return None
+        from ..engine.topics import select_active_messages
+
+        active = select_active_messages(
+            topic.messages,
+            topic_created_at=topic.created_at,
+            max_messages=6,
+        )
+        lines = []
+        for message in active:
+            role = "爱弥斯" if message.is_bot else (message.sender_name or "群成员")
+            lines.append("[{}] {}".format(role, (message.text or "[非文本]")[:240]))
+        prompt = "\n".join(
+            [
+                "只判断最新一位群成员对爱弥斯表现出的可观察关系事件。",
+                "必须结合完整片段，不得按单个关键词判断，不得推断内心。",
+                "普通聊天、普通称呼、观点不同、一次不明确玩笑都输出 NONE。",
+                "允许 kind：THANKS、PRAISE、HELP_REQUEST、HELPED、"
+                "FRIENDLY_TEASE、CORRECTION、BOUNDARY_PUSH、HARASSMENT、APOLOGY、NONE。",
+                "evidence_quote 必须逐字来自最新消息，且只截取能支持判断的最短片段。",
+                "只输出 JSON 对象："
+                '{"kind":"NONE","confidence":0.0,'
+                '"evidence_quote":"","reason_code":"no_clear_event"}',
+                "当前触发：{}；回应动作：{}；对象依据：{}。".format(
+                    getattr(trigger, "value", trigger),
+                    getattr(getattr(response_act, "act", None), "value", ""),
+                    ",".join(targeting.social_target.reason_codes),
+                ),
+                "群聊片段：",
+                *lines,
+                "爱弥斯本轮已发送：" + str(reply_text or "")[:240],
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=(
+                "你是关系证据提取器。输出可审计 JSON，不输出解释、评价或隐藏推理。"
+            ),
+        )
+        text = str(getattr(response, "completion_text", "") or "").strip()
+        return self._first_json_object(text)
+
+    async def extract_continuity_update(
+        self,
+        *,
+        topic,
+        targeting,
+        open_items,
+        reply_text: str,
+    ):
+        """Extract one auditable open-loop creation or resolution."""
+        del targeting
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id or topic.latest is None:
+            return None
+        from ..engine.topics import select_active_messages
+
+        active = select_active_messages(
+            topic.messages,
+            topic_created_at=topic.created_at,
+            max_messages=6,
+        )
+        lines = []
+        for message in active:
+            role = "爱弥斯" if message.is_bot else (message.sender_name or "群成员")
+            lines.append("[{}] {}".format(role, (message.text or "[非文本]")[:240]))
+        open_lines = [
+            "[{}] {}".format(item.item_id, item.summary[:200])
+            for item in tuple(open_items or ())[:12]
+        ] or ["无"]
+        prompt = "\n".join(
+            [
+                "判断最新群成员消息是否形成或结束一件以后还需要接着聊的事。",
+                "只有明确计划、承诺或需要后续追问的具体事项才能 OPEN。",
+                "闲聊、愿望、情绪、猜测、泛泛的‘以后再说’都输出 NONE。",
+                "COMPLETE 或 CANCEL 必须明确对应下方一个未完事项 item_id。",
+                "evidence_quote 必须逐字来自最新消息；summary 用第三人称简短概括，不补充原文没有的事实。",
+                "允许 action：OPEN、COMPLETE、CANCEL、NONE；kind：plan、promise、follow_up。",
+                "due_at 只有原文能明确换算成 Unix 秒时填写，否则为 null。",
+                "只输出 JSON 对象：",
+                '{"action":"NONE","item_id":"","kind":"plan",'
+                '"summary":"","evidence_quote":"","due_at":null,'
+                '"confidence":0.0,"reason_code":"no_clear_continuity"}',
+                "现有未完事项：",
+                *open_lines,
+                "群聊片段：",
+                *lines,
+                "爱弥斯本轮已发送：" + str(reply_text or "")[:240],
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=(
+                "你是连续相处状态提取器。只输出可审计 JSON，不输出解释或隐藏推理。"
+            ),
+        )
+        text = str(getattr(response, "completion_text", "") or "").strip()
+        return self._first_json_object(text)
+
+    async def extract_self_commitment(
+        self,
+        *,
+        topic,
+        targeting,
+        open_items,
+        reply_text: str,
+        capability_result,
+        now: int = 0,
+    ):
+        """Extract one explicit commitment from the delivered Aemeath reply."""
+        del targeting
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id or topic.latest is None:
+            return None
+        capability_name = str(
+            getattr(capability_result, "capability_name", "") or ""
+        )
+        capability_status = getattr(
+            getattr(capability_result, "status", None), "value", ""
+        )
+        capability_facts = tuple(getattr(capability_result, "facts", ()) or ())
+        open_lines = [
+            "[{}] {}".format(item.commitment_id, item.summary[:200])
+            for item in tuple(open_items or ())[:12]
+        ] or ["无"]
+        now_unix = int(now or 0)
+        prompt = "\n".join(
+            [
+                "判断爱弥斯本轮已经发出的回复中，是否形成或更新一项自己的承诺。",
+                "只有爱弥斯使用第一人称明确承担责任，且存在可判断的完成条件时才能 OPEN。",
+                "礼貌回应、安慰、愿望、态度、‘有事叫我’、‘我记着’但没有具体事项，都输出 NONE。",
+                "fulfillment_mode 只能是 reminder、capability、follow_up。"
+                "只有明确约定到点提醒才是 reminder；需要已登记能力执行的是 capability；"
+                "等待以后有事实再告知是 follow_up。",
+                "若成员说‘N分钟后/小时后提醒我…’，且爱弥斯回复接受"
+                "（如倒计时开始、到时候提醒、好嘞并重复时限），必须 OPEN，"
+                "fulfillment_mode=reminder，due_at=当前Unix秒+相对秒数。",
+                "当前Unix秒：{}。相对时间必须换算成绝对 due_at，禁止把 reminder 的 due_at 留空。"
+                .format(now_unix or "未知"),
+                "若承诺依赖查找、发送、修改或其他能力，required_capability 必须填写能力名；"
+                "不知道准确能力名时输出 NONE。",
+                "COMPLETE、BLOCK、WITHDRAW 必须明确对应下方一个 commitment_id。"
+                "完成依赖能力的承诺时，本轮能力必须成功且名称一致。",
+                "evidence_quote 必须逐字来自爱弥斯已发出的回复，summary 不得补充回复中没有的事实。",
+                "summary 直接写要履行的事情，不要以‘爱弥斯会’开头；提醒类可写成‘提醒交材料’这种短句。",
+                "允许 action：OPEN、COMPLETE、BLOCK、WITHDRAW、NONE。只输出 JSON 对象：",
+                '{"action":"NONE","commitment_id":"","summary":"","evidence_quote":"",'
+                '"required_capability":"","fulfillment_mode":"follow_up",'
+                '"due_at":null,"confidence":0.0,'
+                '"reason_code":"no_clear_commitment"}',
+                "本轮能力：{}；状态：{}；已验证事实：{}。".format(
+                    capability_name or "无",
+                    capability_status or "未执行",
+                    "；".join(str(item)[:160] for item in capability_facts) or "无",
+                ),
+                "现有未结束承诺：",
+                *open_lines,
+                "群成员最新消息：" + str(topic.latest.text or "")[:240],
+                "爱弥斯本轮已发送：" + str(reply_text or "")[:400],
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=(
+                "你是自我承诺审计提取器。只输出可审计 JSON，不输出解释或隐藏推理。"
+            ),
+        )
+        text = str(getattr(response, "completion_text", "") or "").strip()
+        return self._first_json_object(text)
+
+    @staticmethod
+    def _first_json_object(text: str):
+        source = str(text or "").strip()
+        start = source.find("{")
+        if start < 0:
+            return None
+        try:
+            value, _ = json.JSONDecoder().raw_decode(source[start:])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
 
 class AstrBotVisionPort:
@@ -107,6 +314,11 @@ class AstrBotPlatformPort:
         del decision_id
         from astrbot.api.event import MessageChain
         from astrbot.api.message_components import Image, Plain, Reply
+
+        try:
+            from astrbot.api.message_components import At
+        except ImportError:  # pragma: no cover - older AstrBot stubs
+            At = None
 
         try:
             from astrbot.api.message_components import Face as FaceComponent
@@ -153,6 +365,16 @@ class AstrBotPlatformPort:
                     return SendResult.failed("invalid_outbound_segment")
                 if segment.kind is OutboundKind.TEXT:
                     components.append(Plain(segment.text))
+                    continue
+                if segment.kind is OutboundKind.MENTION:
+                    if At is None:
+                        return SendResult.failed("mention_component_unavailable")
+                    target = (
+                        int(segment.target_user_id)
+                        if str(segment.target_user_id).isdigit()
+                        else segment.target_user_id
+                    )
+                    components.append(At(qq=target))
                     continue
                 if segment.kind is OutboundKind.FACE:
                     if FaceComponent is None:
@@ -262,23 +484,26 @@ class AstrBotPlatformPort:
 
     async def _send_chain(self, group_id: str, chain: Any) -> SendResult:
         umo = self.umo_getter(group_id)
-        sent = await self.context.send_message(umo, chain)
+        try:
+            sent = await self.context.send_message(umo, chain)
+        except Exception as exc:
+            return SendResult.failed(
+                "send_error", exc.__class__.__name__ + ":" + str(exc)
+            )
         if sent:
             return SendResult.confirmed()
 
         from astrbot.api.star import StarTools
 
+        send = getattr(StarTools, "send_message", None)
+        if not callable(send):
+            return SendResult.failed("platform_unavailable")
         try:
-            receipt = await StarTools.send_message_by_id(
-                "GroupMessage",
-                str(group_id),
-                chain,
-                platform="aiocqhttp",
-            )
+            receipt = await send(umo, chain)
         except Exception as exc:
             return SendResult.failed(
                 "fallback_error", exc.__class__.__name__ + ":" + str(exc)
             )
-        if receipt is True:
+        if receipt:
             return SendResult.confirmed()
-        return SendResult.unknown("fallback_without_receipt")
+        return SendResult.failed("platform_unavailable")

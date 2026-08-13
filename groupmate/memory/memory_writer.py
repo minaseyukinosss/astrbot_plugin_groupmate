@@ -26,11 +26,10 @@ logger = logging.getLogger(__name__)
 
 EXTRACTOR_VERSION = "rules-v1"
 
-# authority：显式记住 > 纠错场景由 arbiter 比较；偏好 / 计划 / Bot 承诺
+# authority：显式记住 > 纠错场景由 arbiter 比较；偏好 / 计划
 AUTHORITY_EXPLICIT = 8
 AUTHORITY_PREFERENCE = 6
 AUTHORITY_PLAN = 5
-AUTHORITY_BOT_PROMISE = 4
 
 
 class MemoryWriter:
@@ -234,26 +233,6 @@ class MemoryWriter:
                         draft.get("authority", AUTHORITY_PREFERENCE)
                     )
 
-        promise = self._rule_extract_bot_promise(reply_text)
-        if promise:
-            sensitivity, ok = self.privacy.gate(promise)
-            status = CandidateStatus.PENDING if ok else CandidateStatus.REJECTED
-            candidate = self._candidate(
-                group_id=topic.group_id,
-                scope=MemoryScope.SELF,
-                subject_id=self.bot_id or "self",
-                kind=MemoryKind.EPISODIC,
-                claim=promise,
-                source_ids=source_ids,
-                confidence=0.7,
-                sensitivity=sensitivity,
-                expires_at=None,
-                now=now,
-                status=status,
-                decision_reason="" if ok else "sensitivity:" + sensitivity.value,
-            )
-            candidates.append(candidate)
-            authorities[candidate.candidate_id] = AUTHORITY_BOT_PROMISE
         return candidates, authorities
 
     def _arbitrate(
@@ -433,16 +412,3 @@ class MemoryWriter:
                 }
             )
         return drafts
-
-    @staticmethod
-    def _rule_extract_bot_promise(reply_text: str) -> str:
-        cleaned = (reply_text or "").strip()
-        if not cleaned:
-            return ""
-        match = re.search(
-            r"(我会(?:帮你|记住|盯着|提醒).{0,40}|帮你记(?:住)?.{0,40})",
-            cleaned,
-        )
-        if not match:
-            return ""
-        return match.group(0).strip()[:200]

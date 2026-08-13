@@ -294,14 +294,24 @@ class DeliveryService:
             for item in outbound
             if item.kind is OutboundKind.POKE and item.target_user_id
         ]
-        poke_labels = {
+        label_targets = tuple(
+            dict.fromkeys(
+                poke_targets
+                + [
+                    item.target_user_id
+                    for item in outbound
+                    if item.kind is OutboundKind.MENTION and item.target_user_id
+                ]
+            )
+        )
+        target_labels = {
             target: self._poke_display_name(plan.group_id, target)
-            for target in poke_targets
+            for target in label_targets
         }
         display_text = compose_bot_delivery_text(
             outbound,
             spoken_text,
-            target_labels=poke_labels,
+            target_labels=target_labels,
         )
         segment_types = (
             tuple(item.kind.value for item in outbound)
@@ -324,9 +334,16 @@ class DeliveryService:
             "delivery_kind": kind,
             "media_ids": media_ids,
         }
+        mention_targets = [
+            item.target_user_id
+            for item in outbound
+            if item.kind is OutboundKind.MENTION and item.target_user_id
+        ]
+        if mention_targets:
+            metadata["mentioned_user_ids"] = mention_targets
         if poke_targets:
             metadata["poke_target_id"] = poke_targets[0]
-            label = poke_labels.get(poke_targets[0], "")
+            label = target_labels.get(poke_targets[0], "")
             if label and label != poke_targets[0]:
                 metadata["poke_target_name"] = label
         bot_message = ChatMessage(
@@ -343,6 +360,7 @@ class DeliveryService:
             decision_id=plan.decision_id,
             ingested_at=sent_at,
             metadata=metadata,
+            mentioned_user_ids=tuple(mention_targets),
         )
         finalized = await self._finalize(
             plan.decision_id, sent_at, bot_message, sent_reason

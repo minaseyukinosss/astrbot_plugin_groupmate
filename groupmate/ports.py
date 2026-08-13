@@ -12,12 +12,16 @@ except ImportError:  # pragma: no cover
 
 from .models import (
     ChatMessage,
+    ContinuityItem,
+    ContinuityStatus,
     MemoryItem,
     OutboundSegment,
     RelationshipState,
     ReplyMode,
     ReplyPlan,
     SendResult,
+    SelfCommitment,
+    SelfCommitmentStatus,
     SocialEvent,
     TargetingDecision,
     TopicSnapshot,
@@ -44,6 +48,7 @@ class OutputGuard(Protocol):
         reply_mode: Optional[ReplyMode] = None,
         response_act: Optional[ResponseAct] = None,
         capability_status=None,
+        source_text: str = "",
     ) -> GuardResult:
         ...
 
@@ -88,6 +93,52 @@ class MemoryRepository(Protocol):
     def recent_messages(
         self, persona_id: str, group_id: str, limit: int
     ) -> Sequence[ChatMessage]:
+        ...
+
+    def resolve_member_subject_id(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> str:
+        ...
+
+    def member_subject_ids(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> Tuple[str, ...]:
+        ...
+
+    def member_display_name(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> str:
+        ...
+
+    def member_name_index(
+        self, persona_id: str, group_id: str
+    ):
+        ...
+
+    def list_continuity_items(
+        self,
+        persona_id: str,
+        *,
+        group_id: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        subject_ids: Optional[Sequence[str]] = None,
+        statuses: Optional[Sequence[ContinuityStatus]] = None,
+        limit: int = 100,
+    ) -> Sequence[ContinuityItem]:
+        ...
+
+    def list_self_commitments(
+        self,
+        persona_id: str,
+        *,
+        group_id: Optional[str] = None,
+        beneficiary_subject_ids: Optional[Sequence[str]] = None,
+        statuses: Optional[Sequence[SelfCommitmentStatus]] = None,
+        limit: int = 100,
+    ) -> Sequence[SelfCommitment]:
+        ...
+
+    def next_self_commitment_attempt_at(self, persona_id: str) -> Optional[int]:
         ...
 
     def add_memory(self, persona_id: str, memory: MemoryItem) -> None:
@@ -173,6 +224,17 @@ class MemoryRepository(Protocol):
     ) -> Optional[RelationshipState]:
         ...
 
+    def get_member_relationship_state(
+        self,
+        persona_id: str,
+        group_id: str,
+        user_id: str,
+        *,
+        configured_relationship: Optional[str] = None,
+        now: int = 0,
+    ) -> Optional[RelationshipState]:
+        ...
+
     def upsert_relationship_state(
         self, persona_id: str, state: RelationshipState
     ) -> None:
@@ -219,6 +281,8 @@ class PersonaProvider(Protocol):
         response_act: Optional[ResponseActPlan] = None,
         capability_facts: Sequence[str] = (),
         capability_status: str = "",
+        continuity_items: Sequence[ContinuityItem] = (),
+        self_commitments: Sequence[SelfCommitment] = (),
     ) -> AssembledPrompt:
         ...
 

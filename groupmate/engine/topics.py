@@ -41,7 +41,19 @@ class TopicWindow:
             return False
 
         self._remember_identity(message.identity)
-        self._messages.append(message)
+        if self._messages and int(message.timestamp) < int(self._messages[-1].timestamp):
+            ordered = deque()
+            placed = False
+            for existing in self._messages:
+                if not placed and int(message.timestamp) < int(existing.timestamp):
+                    ordered.append(message)
+                    placed = True
+                ordered.append(existing)
+            if not placed:
+                ordered.append(message)
+            self._messages = ordered
+        else:
+            self._messages.append(message)
         while len(self._messages) > self.max_messages:
             self._messages.popleft()
 

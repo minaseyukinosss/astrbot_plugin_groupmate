@@ -18,12 +18,30 @@ class InMemoryRepository:
         self.transitions: List[tuple] = []
         self.outbox: Dict[str, Dict[str, Any]] = {}
         self.memories: List[Any] = []
+        self.continuity_items: List[Any] = []
+        self.self_commitments: List[Any] = []
         self.messages: List[Any] = []
         self.social_events: List[Any] = []
         self.relationship_state: Dict[tuple, Any] = {}
         self._message_personas: Dict[tuple, str] = {}
         self._memory_personas: Dict[int, str] = {}
         self._social_event_personas: Dict[int, str] = {}
+
+    def resolve_member_subject_id(self, persona_id, group_id, subject_id):
+        del persona_id, group_id
+        return str(subject_id)
+
+    def member_subject_ids(self, persona_id, group_id, subject_id):
+        del persona_id, group_id
+        return (str(subject_id),)
+
+    def member_display_name(self, persona_id, group_id, subject_id):
+        del persona_id, group_id, subject_id
+        return ""
+
+    def member_name_index(self, persona_id, group_id):
+        del persona_id, group_id
+        return {}
 
     def save_message(self, persona_id, message) -> bool:
         key = (str(persona_id), message.identity)
@@ -72,6 +90,67 @@ class InMemoryRepository:
     def add_memory(self, persona_id, memory) -> None:
         self._memory_personas[id(memory)] = str(persona_id)
         self.memories.append(memory)
+
+    def list_continuity_items(
+        self,
+        persona_id,
+        *,
+        group_id=None,
+        subject_id=None,
+        subject_ids=None,
+        statuses=None,
+        limit=100,
+    ):
+        del persona_id
+        subjects = {str(item) for item in (subject_ids or ())}
+        if subject_id is not None:
+            subjects.add(str(subject_id))
+        selected_statuses = {
+            item.value if hasattr(item, "value") else str(item)
+            for item in (statuses or ())
+        }
+        items = [
+            item
+            for item in self.continuity_items
+            if (group_id is None or item.group_id == str(group_id))
+            and (not subjects or item.subject_id in subjects)
+            and (not selected_statuses or item.status.value in selected_statuses)
+        ]
+        return items[: max(0, int(limit))]
+
+    def list_self_commitments(
+        self,
+        persona_id,
+        *,
+        group_id=None,
+        beneficiary_subject_ids=None,
+        statuses=None,
+        limit=100,
+    ):
+        del persona_id
+        subjects = {str(item) for item in (beneficiary_subject_ids or ())}
+        selected_statuses = {
+            item.value if hasattr(item, "value") else str(item)
+            for item in (statuses or ())
+        }
+        items = [
+            item
+            for item in self.self_commitments
+            if (group_id is None or item.group_id == str(group_id))
+            and (not subjects or item.beneficiary_subject_id in subjects)
+            and (not selected_statuses or item.status.value in selected_statuses)
+        ]
+        return items[: max(0, int(limit))]
+
+    def next_self_commitment_attempt_at(self, persona_id):
+        del persona_id
+        pending = [
+            int(item.next_attempt_at)
+            for item in self.self_commitments
+            if getattr(item, "next_attempt_at", None)
+            and str(getattr(item.status, "value", item.status)) == "pending"
+        ]
+        return min(pending) if pending else None
 
     def list_memories(
         self,
@@ -272,6 +351,29 @@ class InMemoryRepository:
     def get_relationship_state(self, persona_id, group_id, user_id):
         return self.relationship_state.get(
             (str(persona_id), str(group_id), str(user_id))
+        )
+
+    def get_member_relationship_state(
+        self,
+        persona_id,
+        group_id,
+        user_id,
+        *,
+        configured_relationship=None,
+        now=0,
+    ):
+        state = self.get_relationship_state(persona_id, group_id, user_id)
+        if state is not None or not configured_relationship:
+            return state
+        from groupmate.models import RelationshipState
+        from groupmate.social.affinity import initial_affinity_for_relationship
+
+        return RelationshipState(
+            group_id=str(group_id),
+            user_id=str(user_id),
+            affinity=initial_affinity_for_relationship(configured_relationship),
+            configured_relationship=configured_relationship,
+            updated_at=int(now),
         )
 
     def upsert_relationship_state(self, persona_id, state) -> None:

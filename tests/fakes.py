@@ -11,6 +11,8 @@ class FakeMemoryRepository:
         self.transitions = []
         self.outbox = {}
         self.memories = []
+        self.continuity_items = []
+        self.self_commitments = []
         self.messages = []
         self.social_events = []
         self.relationship_state = {}
@@ -18,6 +20,60 @@ class FakeMemoryRepository:
         self._social_event_personas = {}
         self._topic_epochs = {}
         self.continuation_grants = []
+        self.member_links = {}
+        self.member_names = {}
+        self.member_aliases = {}
+
+    def resolve_member_subject_id(self, persona_id, group_id, subject_id):
+        del persona_id
+        return self.member_links.get((str(group_id), str(subject_id)), str(subject_id))
+
+    def member_subject_ids(self, persona_id, group_id, subject_id):
+        del persona_id
+        canonical = self.resolve_member_subject_id("", group_id, subject_id)
+        aliases = [
+            source
+            for (linked_group, source), target in self.member_links.items()
+            if linked_group == str(group_id) and target == canonical
+        ]
+        return tuple(dict.fromkeys([canonical, *aliases]))
+
+    def member_display_name(self, persona_id, group_id, subject_id):
+        del persona_id
+        canonical = self.resolve_member_subject_id("", group_id, subject_id)
+        return self.member_names.get((str(group_id), canonical), "")
+
+    def member_name_index(self, persona_id, group_id):
+        del persona_id
+        return {
+            name: subject_id
+            for (linked_group, name), subject_id in self.member_aliases.items()
+            if linked_group == str(group_id)
+        }
+
+    def get_member_relationship_state(
+        self,
+        persona_id,
+        group_id,
+        user_id,
+        *,
+        configured_relationship=None,
+        now=0,
+    ):
+        del now
+        canonical = self.resolve_member_subject_id(persona_id, group_id, user_id)
+        state = self.get_relationship_state(persona_id, group_id, canonical)
+        if state is None and configured_relationship:
+            from groupmate.models import RelationshipState
+            from groupmate.social.affinity import initial_affinity_for_relationship
+
+            return RelationshipState(
+                group_id=str(group_id),
+                user_id=canonical,
+                affinity=initial_affinity_for_relationship(configured_relationship),
+                configured_relationship=configured_relationship,
+            )
+        return state
 
     def save_message(self, persona_id, message):
         key = (str(persona_id), message.identity)
@@ -50,6 +106,100 @@ class FakeMemoryRepository:
     def add_memory(self, persona_id, memory):
         del persona_id
         self.memories.append(memory)
+
+    def list_continuity_items(
+        self,
+        persona_id,
+        *,
+        group_id=None,
+        subject_id=None,
+        subject_ids=None,
+        statuses=None,
+        limit=100,
+    ):
+        del persona_id
+        selected_subjects = set(subject_ids or ())
+        if subject_id is not None:
+            selected_subjects.add(str(subject_id))
+        selected_statuses = {
+            item.value if hasattr(item, "value") else str(item)
+            for item in (statuses or ())
+        }
+        items = [
+            item
+            for item in self.continuity_items
+            if (group_id is None or item.group_id == str(group_id))
+            and (not selected_subjects or item.subject_id in selected_subjects)
+            and (not selected_statuses or item.status.value in selected_statuses)
+        ]
+        return items[:limit]
+
+    def list_self_commitments(
+        self,
+        persona_id,
+        *,
+        group_id=None,
+        beneficiary_subject_ids=None,
+        statuses=None,
+        limit=100,
+    ):
+        del persona_id
+        subjects = set(str(item) for item in (beneficiary_subject_ids or ()))
+        selected_statuses = {
+            item.value if hasattr(item, "value") else str(item)
+            for item in (statuses or ())
+        }
+        items = [
+            item
+            for item in self.self_commitments
+            if (group_id is None or item.group_id == str(group_id))
+            and (
+                not subjects or item.beneficiary_subject_id in subjects
+            )
+            and (not selected_statuses or item.status.value in selected_statuses)
+        ]
+        return items[:limit]
+
+    def next_self_commitment_attempt_at(self, persona_id):
+        del persona_id
+        pending = [
+            int(item.next_attempt_at)
+            for item in self.self_commitments
+            if getattr(item, "next_attempt_at", None)
+            and str(getattr(item.status, "value", item.status)) == "pending"
+        ]
+        return min(pending) if pending else None
+
+    def resolve_self_commitment(
+        self,
+        persona_id,
+        commitment_id,
+        *,
+        status,
+        result_decision_id="",
+        result_quote="",
+        result_facts=(),
+        failure_code="",
+        resolved_at=0,
+    ):
+        del persona_id, result_facts, failure_code
+        from dataclasses import replace
+
+        for index, item in enumerate(self.self_commitments):
+            if item.commitment_id != str(commitment_id):
+                continue
+            updated = replace(
+                item,
+                status=status,
+                result_decision_id=str(result_decision_id or "") or None,
+                result_quote=str(result_quote or ""),
+                resolved_at=int(resolved_at or 0) or None,
+                next_attempt_at=None,
+                updated_at=int(resolved_at or item.updated_at),
+            )
+            self.self_commitments[index] = updated
+            return updated
+        return None
 
     def list_memories(
         self,
@@ -273,6 +423,29 @@ class FakeMemoryRepository:
         ]
         return items[:limit]
 
+    def relationship_learning_quality(self, persona_id, group_id=None):
+        items = [
+            event
+            for event in self.social_events
+            if self._social_event_personas.get(id(event)) == str(persona_id)
+            and (group_id is None or event.group_id == str(group_id))
+        ]
+        reviewed = [event for event in items if event.review_code]
+        errors = [event for event in reviewed if event.status.value == "rejected"]
+        return {
+            "pending": sum(event.status.value == "pending" for event in items),
+            "accepted": sum(event.review_code == "correct" for event in reviewed),
+            "wrong_person": sum(event.review_code == "wrong_person" for event in reviewed),
+            "wrong_kind": sum(event.review_code == "wrong_kind" for event in reviewed),
+            "insufficient_context": sum(
+                event.review_code == "insufficient_context" for event in reviewed
+            ),
+            "other_error": 0,
+            "reviewed_count": len(reviewed),
+            "error_count": len(errors),
+            "error_rate": len(errors) / len(reviewed) if reviewed else 0.0,
+        }
+
     def get_relationship_state(self, persona_id, group_id, user_id):
         return self.relationship_state.get(
             (str(persona_id), str(group_id), str(user_id))
@@ -324,6 +497,8 @@ class FakeMemoryRepository:
         current = self.get_relationship_state(
             persona_id, event.group_id, event.user_id
         )
+        if event.status.value != "accepted":
+            return current
         if current is None:
             current = RelationshipState(
                 group_id=event.group_id,

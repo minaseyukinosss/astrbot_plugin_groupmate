@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..models import ChatMessage
 
 
 class OneBotTranslator:
+    @staticmethod
+    def _usable_mention_name(value: Any, user_id: str = "") -> str:
+        name = str(value or "").strip().lstrip("@").strip()
+        if not name or name in {"某人", "群成员", "unknown", "未知"}:
+            return ""
+        if user_id and name == str(user_id):
+            return ""
+        return name[:80]
+
     @staticmethod
     def _coerce_timestamp(value: Any) -> int:
         try:
@@ -32,6 +41,8 @@ class OneBotTranslator:
         reply_id: Optional[str] = None
         mentions_bot = False
         mentioned_user_ids: List[str] = []
+        mention_names: Dict[str, str] = {}
+        anonymous_mention_ids: List[str] = []
         for segment in segments:
             if not isinstance(segment, dict):
                 continue
@@ -48,12 +59,17 @@ class OneBotTranslator:
                     mentions_bot = True
                 elif qq and qq not in ("all", "0"):
                     mentioned_user_ids.append(qq)
-                name = data.get("name") or data.get("display_name")
+                name = cls._usable_mention_name(
+                    data.get("name") or data.get("display_name"), qq
+                )
                 if name:
+                    if qq and qq not in ("all", "0") and qq != str(bot_id):
+                        mention_names[qq] = name
                     text_parts.append("@" + str(name))
                 elif qq and qq not in ("all", "0") and qq != str(bot_id):
                     # Prefer a human-readable cue; never embed raw QQ in chat text.
                     text_parts.append("@某人")
+                    anonymous_mention_ids.append(qq)
             elif kind == "reply":
                 reply_id = str(data.get("id", data.get("message_id", ""))) or None
             elif kind == "image":
@@ -86,7 +102,11 @@ class OneBotTranslator:
             image_urls=tuple(dict.fromkeys(image_urls)),
             segment_types=tuple(segment_types),
             mentioned_user_ids=tuple(dict.fromkeys(mentioned_user_ids)),
-            metadata={"raw": raw},
+            metadata={
+                "raw": raw,
+                "mention_names": mention_names,
+                "anonymous_mention_ids": anonymous_mention_ids,
+            },
         )
 
     @classmethod
@@ -114,27 +134,127 @@ class OneBotTranslator:
         reply_id = message.reply_to_message_id
         reply_to_bot = message.reply_to_bot
         components = getattr(getattr(event, "message_obj", None), "message", ()) or ()
+        mentioned_user_ids = list(message.mentioned_user_ids)
+        mention_names = dict(message.metadata.get("mention_names") or {})
+        anonymous_mention_ids = list(
+            message.metadata.get("anonymous_mention_ids") or ()
+        )
+        native_direct = bool(getattr(event, "is_at_or_wake_command", False))
         for component in components:
             component_type = str(getattr(component, "type", "")).lower()
             class_name = component.__class__.__name__.lower()
-            if class_name != "reply" and not component_type.endswith("reply"):
+            if class_name == "reply" or component_type.endswith("reply"):
+                resolved_id = str(getattr(component, "id", "") or "")
+                if resolved_id:
+                    reply_id = resolved_id
+                sender_id = str(getattr(component, "sender_id", "") or "")
+                if sender_id and sender_id == str(bot_id):
+                    reply_to_bot = True
                 continue
-            resolved_id = str(getattr(component, "id", "") or "")
-            if resolved_id:
-                reply_id = resolved_id
-            sender_id = str(getattr(component, "sender_id", "") or "")
-            if sender_id and sender_id == str(bot_id):
-                reply_to_bot = True
-            break
-        native_direct = bool(getattr(event, "is_at_or_wake_command", False))
-        return replace(
+            if class_name not in {"at", "mention"} and not (
+                component_type.endswith("at") or component_type.endswith("mention")
+            ):
+                continue
+            target_id = str(
+                getattr(component, "qq", "")
+                or getattr(component, "user_id", "")
+                or getattr(component, "target", "")
+                or ""
+            )
+            if target_id == str(bot_id):
+                native_direct = True
+                continue
+            if not target_id or target_id in {"all", "0"}:
+                continue
+            mentioned_user_ids.append(target_id)
+            name = cls._usable_mention_name(
+                getattr(component, "name", "")
+                or getattr(component, "display_name", ""),
+                target_id,
+            )
+            if name:
+                mention_names[target_id] = name
+            elif target_id not in anonymous_mention_ids:
+                anonymous_mention_ids.append(target_id)
+        translated = replace(
             message,
             reply_to_message_id=reply_id,
             reply_to_bot=reply_to_bot,
             is_command=is_command,
             mentions_bot=message.mentions_bot or native_direct,
-            metadata=dict(message.metadata, native_direct=native_direct),
+            mentioned_user_ids=tuple(dict.fromkeys(mentioned_user_ids)),
+            metadata=dict(
+                message.metadata,
+                native_direct=native_direct,
+                mention_names=mention_names,
+                anonymous_mention_ids=anonymous_mention_ids,
+            ),
         )
+        return cls.enrich_mentions(translated, mention_names)
+
+    @classmethod
+    def enrich_mentions(
+        cls,
+        message: ChatMessage,
+        names: Mapping[str, str],
+    ) -> ChatMessage:
+        """Replace anonymous visual labels while retaining platform target ids."""
+        resolved = dict(message.metadata.get("mention_names") or {})
+        anonymous = list(message.metadata.get("anonymous_mention_ids") or ())
+        text = str(message.text or "")
+        for user_id in message.mentioned_user_ids:
+            name = cls._usable_mention_name(names.get(str(user_id), ""), str(user_id))
+            if not name:
+                continue
+            resolved[str(user_id)] = name
+            if str(user_id) in anonymous and "@某人" in text:
+                text = text.replace("@某人", "@" + name, 1)
+                anonymous.remove(str(user_id))
+        return replace(
+            message,
+            text=text,
+            metadata=dict(
+                message.metadata,
+                mention_names=resolved,
+                anonymous_mention_ids=anonymous,
+            ),
+        )
+
+
+async def resolve_member_name(bot: Any, group_id: str, user_id: str) -> str:
+    call = getattr(bot, "call_action", None)
+    if not callable(call):
+        return ""
+    group_value = int(group_id) if str(group_id).isdigit() else group_id
+    user_value = int(user_id) if str(user_id).isdigit() else user_id
+    for action, kwargs in (
+        (
+            "get_group_member_info",
+            {"group_id": group_value, "user_id": user_value, "no_cache": False},
+        ),
+        ("get_stranger_info", {"user_id": user_value, "no_cache": False}),
+    ):
+        try:
+            result = await call(action, **kwargs)
+        except Exception:
+            continue
+        if isinstance(result, dict) and isinstance(result.get("data"), dict):
+            result = result["data"]
+        if isinstance(result, dict):
+            name = OneBotTranslator._usable_mention_name(
+                result.get("card") or result.get("nickname") or result.get("name"),
+                user_id,
+            )
+        else:
+            name = OneBotTranslator._usable_mention_name(
+                getattr(result, "card", "")
+                or getattr(result, "nickname", "")
+                or getattr(result, "name", ""),
+                user_id,
+            )
+        if name:
+            return name
+    return ""
 
 
 class NapCatHistoryPort:
@@ -150,8 +270,21 @@ class NapCatHistoryPort:
             reverseOrder=True,
         )
         rows = response.get("messages", []) if isinstance(response, dict) else response
-        return [
+        messages = [
             OneBotTranslator.from_history(row, self.bot_id)
             for row in (rows or [])
             if isinstance(row, dict)
         ]
+        names: Dict[str, str] = {}
+        for message in messages:
+            names.update(message.metadata.get("mention_names") or {})
+        for user_id in dict.fromkeys(
+            user_id
+            for message in messages
+            for user_id in message.mentioned_user_ids
+        ):
+            if user_id not in names:
+                name = await resolve_member_name(self.bot, str(group_id), user_id)
+                if name:
+                    names[user_id] = name
+        return [OneBotTranslator.enrich_mentions(message, names) for message in messages]

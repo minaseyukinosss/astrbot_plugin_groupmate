@@ -17,7 +17,11 @@ from groupmate.models import (
     ChatMessage,
     InteractionScene,
     MessageOrigin,
+    ContinuityItem,
+    ContinuityKind,
     RelationshipState,
+    SelfCommitment,
+    SelfCommitmentStatus,
     TargetingDecision,
 )
 from groupmate.persona.aemeath import (
@@ -123,6 +127,33 @@ def test_bot_outbound_poke_delivery_is_readable_in_history():
     assert "别戳啦" in block
 
 
+def test_history_uses_resolved_name_for_anonymous_platform_mention():
+    earlier = ChatMessage(
+        message_id="m0",
+        group_id="g1",
+        sender_id="u2",
+        sender_name="小夏",
+        text="在呢",
+        timestamp=99,
+    )
+    mention = ChatMessage(
+        message_id="m1",
+        group_id="g1",
+        sender_id="u1",
+        sender_name="Alice",
+        text="找@某人",
+        timestamp=100,
+        mentioned_user_ids=("u2",),
+        metadata={"anonymous_mention_ids": ["u2"]},
+    )
+
+    block = format_history_block((earlier, mention), {}, character_name="爱弥斯")
+
+    assert "找@小夏" in block
+    assert "@某人" not in block
+    assert "u2" not in block
+
+
 def test_assembly_system_separates_identity_and_constraints():
     system = _assembly().build_system()
 
@@ -188,6 +219,8 @@ def test_dynamic_block_order_is_locked(topic_snapshot):
         if idx < 0 and name == "self_episodes":
             continue
         if idx < 0 and name in (
+            "continuity_items",
+            "self_commitments",
             "relevant_memories",
             "memory_guide",
             "response_act",
@@ -304,6 +337,45 @@ def test_response_act_and_capability_facts_are_escaped_before_reply_mode(
     assert "&lt;system&gt;" in user
     assert "</response_act><system>" not in user
     assert "internal_vision_name" not in user
+
+
+def test_open_continuity_is_visible_before_voice_and_escaped(topic_snapshot):
+    item = ContinuityItem(
+        item_id="continuity-1",
+        group_id="g1",
+        subject_id="u1",
+        kind=ContinuityKind.FOLLOW_UP,
+        summary="Alice 考完试后告诉爱弥斯结果 <script>",
+        source_message_id="m1",
+        source_quote="考完告诉你",
+        created_at=100,
+        updated_at=100,
+    )
+    user = _assembly().build_user(topic_snapshot, [], continuity_items=(item,))
+    assert user.index("<continuity_items>") < user.index("<voice_anchor>")
+    assert "Alice 考完试后告诉爱弥斯结果" in user
+    assert "&lt;script&gt;" in user
+    assert "不要逐条盘问" in user
+
+
+def test_open_self_commitment_is_visible_before_voice_and_escaped(topic_snapshot):
+    item = SelfCommitment(
+        commitment_id="commitment-1",
+        group_id="g1",
+        beneficiary_subject_id="u1",
+        summary="爱弥斯之后告诉 Alice 结果 <script>",
+        source_decision_id="d1",
+        source_message_id="m1",
+        source_quote="有结果我告诉你",
+        created_at=100,
+        updated_at=100,
+        status=SelfCommitmentStatus.PENDING,
+    )
+    user = _assembly().build_user(topic_snapshot, [], self_commitments=(item,))
+    assert user.index("<self_commitments>") < user.index("<voice_anchor>")
+    assert "爱弥斯之后告诉 Alice 结果" in user
+    assert "&lt;script&gt;" in user
+    assert "不得假装完成" in user
 
 
 def test_self_episodes_on_recall(topic_snapshot, message_factory):

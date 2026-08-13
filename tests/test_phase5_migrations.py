@@ -8,6 +8,7 @@ import pytest
 
 import groupmate.memory.migrations as migrations
 from groupmate.memory.migrations import (
+    SCHEMA_VERSION,
     SchemaTooNewError,
     _bootstrap_v5,
     _v5_to_v6,
@@ -36,7 +37,7 @@ def test_v8_database_migrates_to_v9_with_memory_backfill(tmp_path):
     db.close()
 
     store = SQLiteMemoryStore(path)
-    assert store.schema_version() == 11
+    assert store.schema_version() == SCHEMA_VERSION
     item = store.get_memory("aemeath", "m1")
     assert item is not None
     assert item.status.value == "accepted"
@@ -51,7 +52,7 @@ def test_v8_database_migrates_to_v9_with_memory_backfill(tmp_path):
     assert "memory_candidates" in tables
     assert "memory_tombstones" in tables
     store.close()
-    assert list(tmp_path.glob("legacy.db.pre-migrate-v8-to-v11.*"))
+    assert list(tmp_path.glob(f"legacy.db.pre-migrate-v8-to-v{SCHEMA_VERSION}.*"))
 
 
 def test_failed_v9_migration_rolls_back(tmp_path, monkeypatch):
@@ -86,7 +87,7 @@ def test_failed_v9_migration_rolls_back(tmp_path, monkeypatch):
     db.close()
     assert version == "8"
     assert "memory_tombstones" not in tables
-    assert list(tmp_path.glob("broken.db.pre-migrate-v8-to-v11.*"))
+    assert list(tmp_path.glob(f"broken.db.pre-migrate-v8-to-v{SCHEMA_VERSION}.*"))
 
 
 def test_newer_database_is_rejected(tmp_path):

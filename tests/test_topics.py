@@ -72,3 +72,31 @@ def test_select_active_messages_caps_count(message_factory):
 
 def test_select_active_messages_empty_input():
     assert select_active_messages((), topic_created_at=10) == ()
+
+
+def test_topic_window_inserts_earlier_bot_projection_before_later_user(
+    message_factory,
+):
+    window = TopicWindow(group_id="g1")
+    window.append(
+        message_factory(message_id="req", timestamp=100, text="小爱，2分钟后提醒我")
+    )
+    window.append(
+        message_factory(
+            message_id="cancel", timestamp=120, text="算了，不用提醒我了"
+        )
+    )
+    window.append(
+        message_factory(
+            message_id="bot",
+            timestamp=101,
+            sender_id="__bot__",
+            sender_name="爱弥斯",
+            text="两分钟倒计时开始啦",
+            is_bot=True,
+        )
+    )
+
+    ids = [item.message_id for item in window.snapshot().messages]
+    assert ids == ["req", "bot", "cancel"]
+    assert window.snapshot().latest.message_id == "cancel"

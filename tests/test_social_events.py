@@ -15,9 +15,13 @@ from groupmate.models import (
     ChatMessage,
     SocialEvent,
     SocialEventKind,
+    SocialEventStatus,
     TopicSnapshot,
     TriggerKind,
 )
+from groupmate.core.response_act import ResponseAct, ResponseActPlan
+from groupmate.models import InteractionScene
+from groupmate.social.evidence import RelationshipEvidenceWriter
 from groupmate.persona.aemeath import AemeathOutputFirewall
 from groupmate.policies import BehaviorPolicy, ReplyPolicy
 from groupmate.social.projector import SocialStateProjector
@@ -272,3 +276,231 @@ def test_multi_mention_silence_skips_personal_social_write():
     assert outcome.reason == "inhibit:ambiguous_target"
     assert memory.social_events == []
     assert memory.relationship_state == {}
+
+
+class EvidenceModel:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+
+    async def extract_relationship_evidence(self, **kwargs):
+        del kwargs
+        self.calls += 1
+        return self.payload
+
+
+class EvidenceGenerationModel(StaticGenerationModel):
+    def __init__(self, text, payload):
+        super().__init__(text)
+        self.payload = payload
+        self.evidence_calls = 0
+
+    async def extract_relationship_evidence(self, **kwargs):
+        del kwargs
+        self.evidence_calls += 1
+        return self.payload
+
+
+def _targeting(topic, trigger=TriggerKind.ALIAS_DIRECT):
+    return AddresseeResolver().resolve(
+        topic,
+        trigger,
+        aliases=("爱弥斯",),
+        bot_id="bot",
+    )
+
+
+def test_context_evidence_writer_accepts_grounded_single_owner_thanks():
+    memory = FakeMemoryRepository()
+    model = EvidenceModel(
+        {
+            "kind": "THANKS",
+            "confidence": 0.94,
+            "evidence_quote": "谢谢你刚才帮我",
+            "reason_code": "direct_thanks",
+        }
+    )
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯，谢谢你刚才帮我"),),
+        created_at=100,
+        updated_at=100,
+    )
+    event = asyncio.run(
+        RelationshipEvidenceWriter(
+            memory, model, persona_id="aemeath"
+        ).process(
+            topic,
+            _targeting(topic),
+            trigger=TriggerKind.ALIAS_DIRECT,
+            decision_id="d1",
+            now=110,
+            response_act=ResponseActPlan(
+                ResponseAct.RECIPROCATE,
+                InteractionScene.SOCIAL_RESPONSE,
+                ("social_reciprocity",),
+            ),
+            reply_text="不用客气。",
+        )
+    )
+
+    assert event is not None
+    assert event.kind is SocialEventKind.THANKS
+    assert event.status is SocialEventStatus.PENDING
+    assert event.user_id == "u1"
+    assert memory.get_relationship_state("aemeath", "g1", "u1") is None
+
+
+def test_context_evidence_writer_auto_applies_only_after_group_quality_gate():
+    memory = FakeMemoryRepository()
+    memory.relationship_learning_quality = lambda persona_id, group_id=None: {
+        "reviewed_count": 20,
+        "error_rate": 0.1,
+    }
+    model = EvidenceModel(
+        {
+            "kind": "THANKS",
+            "confidence": 0.94,
+            "evidence_quote": "谢谢你刚才帮我",
+            "reason_code": "direct_thanks",
+        }
+    )
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯，谢谢你刚才帮我"),),
+        created_at=100,
+        updated_at=100,
+    )
+
+    event = asyncio.run(
+        RelationshipEvidenceWriter(
+            memory,
+            model,
+            persona_id="aemeath",
+            active_groups=("g1",),
+        ).process(
+            topic,
+            _targeting(topic),
+            trigger=TriggerKind.ALIAS_DIRECT,
+            decision_id="d1",
+            now=110,
+            response_act=ResponseActPlan(
+                ResponseAct.RECIPROCATE,
+                InteractionScene.SOCIAL_RESPONSE,
+                ("social_reciprocity",),
+            ),
+            reply_text="不用客气。",
+        )
+    )
+
+    assert event.status is SocialEventStatus.ACCEPTED
+    assert memory.get_relationship_state("aemeath", "g1", "u1").affinity == 2
+
+
+def test_context_evidence_writer_rejects_quote_not_in_source():
+    memory = FakeMemoryRepository()
+    model = EvidenceModel(
+        {
+            "kind": "PRAISE",
+            "confidence": 0.99,
+            "evidence_quote": "你是全世界最厉害的",
+            "reason_code": "invented_quote",
+        }
+    )
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯，在吗"),),
+        created_at=100,
+        updated_at=100,
+    )
+    event = asyncio.run(
+        RelationshipEvidenceWriter(
+            memory, model, persona_id="aemeath"
+        ).process(
+            topic,
+            _targeting(topic),
+            trigger=TriggerKind.ALIAS_DIRECT,
+            decision_id="d1",
+            now=110,
+            response_act=ResponseActPlan(
+                ResponseAct.ANSWER,
+                InteractionScene.DIRECT_ADDRESS,
+                ("content_response",),
+            ),
+            reply_text="在。",
+        )
+    )
+
+    assert event is None
+    assert memory.social_events == []
+
+
+def test_negative_evidence_requires_real_boundary_context():
+    memory = FakeMemoryRepository()
+    model = EvidenceModel(
+        {
+            "kind": "BOUNDARY_PUSH",
+            "confidence": 0.99,
+            "evidence_quote": "老婆",
+            "reason_code": "single_address",
+        }
+    )
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯 老婆"),),
+        created_at=100,
+        updated_at=100,
+    )
+    writer = RelationshipEvidenceWriter(memory, model, persona_id="aemeath")
+    event = asyncio.run(
+        writer.process(
+            topic,
+            _targeting(topic),
+            trigger=TriggerKind.ALIAS_DIRECT,
+            decision_id="d1",
+            now=110,
+            response_act=ResponseActPlan(
+                ResponseAct.PLAYFUL_REPLY,
+                InteractionScene.DIRECT_ADDRESS,
+                ("playful_signal",),
+            ),
+            reply_text="少来。",
+        )
+    )
+
+    assert event is None
+    assert memory.relationship_state == {}
+
+
+def test_workflow_records_verified_relationship_evidence_after_send():
+    memory = FakeMemoryRepository()
+    model = EvidenceGenerationModel(
+        "不用客气。",
+        {
+            "kind": "THANKS",
+            "confidence": 0.95,
+            "evidence_quote": "谢谢你",
+            "reason_code": "direct_thanks",
+        },
+    )
+    workflow = _workflow(model, memory)
+    topic = TopicSnapshot(
+        topic_id="t1",
+        group_id="g1",
+        messages=(_msg(text="爱弥斯，谢谢你"),),
+        created_at=100,
+        updated_at=100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.ALIAS_DIRECT, _behavior())
+    )
+
+    assert outcome.sent is True
+    assert model.evidence_calls == 1
+    assert len(memory.social_events) == 1
+    assert memory.social_events[0].kind is SocialEventKind.THANKS

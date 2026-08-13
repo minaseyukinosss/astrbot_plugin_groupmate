@@ -27,6 +27,9 @@ def test_deployment_settings_expose_poke_advanced_fields():
     assert settings.enabled_groups == ()
     assert settings.aliases_for("aemeath") == ("爱弥斯", "小爱", "飞行雪绒")
     assert settings.relationships_for("aemeath") == ()
+    assert settings.relationship_learning_groups == ()
+    assert settings.relationship_learning_min_reviewed == 20
+    assert settings.relationship_learning_max_error_rate == 0.1
     assert settings.poke_enabled is False
     assert settings.poke_back_enabled is False
     assert settings.poke_exclusive is False
@@ -45,6 +48,22 @@ def test_poke_enabled_is_nested_and_explicit():
     assert settings.poke_enabled is True
     assert settings.poke_back_enabled is False
     assert settings.diagnostics.unknown_keys == ()
+
+
+def test_relationship_learning_gray_release_is_nested_and_bounded():
+    settings = AstrBotConfigParser().parse(
+        {
+            "relationship_learning_group": {
+                "active_groups": ["100", "200"],
+                "min_reviewed_samples": 2,
+                "max_error_rate": 0.9,
+            }
+        }
+    )
+
+    assert settings.relationship_learning_groups == ("100", "200")
+    assert settings.relationship_learning_min_reviewed == 5
+    assert settings.relationship_learning_max_error_rate == 0.5
 
 
 def test_natural_language_tools_are_nested_and_bounded():

@@ -10,9 +10,11 @@ from ...core.response_act import ResponseActPlan
 from ...core.relationships import RelationshipEntry
 from ...core.session import GroupSession
 from ...models import (
+    ContinuityItem,
     MemoryItem,
     RelationshipState,
     ReplyMode,
+    SelfCommitment,
     TargetingDecision,
     TopicSnapshot,
 )
@@ -63,6 +65,8 @@ class AemeathPersonaProvider:
         response_act: Optional[ResponseActPlan] = None,
         capability_facts: Sequence[str] = (),
         capability_status: str = "",
+        continuity_items: Sequence[ContinuityItem] = (),
+        self_commitments: Sequence[SelfCommitment] = (),
     ) -> str:
         return self._assembly.build_user(
             topic,
@@ -76,6 +80,8 @@ class AemeathPersonaProvider:
             response_act=response_act,
             capability_facts=capability_facts,
             capability_status=capability_status,
+            continuity_items=continuity_items,
+            self_commitments=self_commitments,
         )
 
     def assemble(
@@ -92,6 +98,8 @@ class AemeathPersonaProvider:
         response_act: Optional[ResponseActPlan] = None,
         capability_facts: Sequence[str] = (),
         capability_status: str = "",
+        continuity_items: Sequence[ContinuityItem] = (),
+        self_commitments: Sequence[SelfCommitment] = (),
     ) -> AssembledPrompt:
         return self._assembly.assemble(
             topic,
@@ -105,6 +113,8 @@ class AemeathPersonaProvider:
             response_act=response_act,
             capability_facts=capability_facts,
             capability_status=capability_status,
+            continuity_items=continuity_items,
+            self_commitments=self_commitments,
         )
 
     @property

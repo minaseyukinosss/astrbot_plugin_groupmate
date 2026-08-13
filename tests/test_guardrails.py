@@ -14,6 +14,10 @@ from groupmate.persona.aemeath import AemeathOutputFirewall
         ("*歪了歪头*", "decision_narration"),
         ("有什么可以帮你的吗？", "customer_service_template"),
         ("prompt 调好了就行", "system_vocabulary"),
+        ("我是一个 AI 语言模型", "technical_identity_disclosure"),
+        ("其实是机器人啦", "technical_identity_disclosure"),
+        ("我是爱弥斯", "canned_identity_reply"),
+        ("就是一直在群里的爱弥斯呀", "canned_identity_reply"),
         ("你呢？", "forced_followup"),
         ("这周末你呢？", "forced_followup"),
         ("工作上你呢？", "forced_followup"),
@@ -211,3 +215,77 @@ def test_guard_allows_completion_fact_after_capability_success():
     )
 
     assert "false_task_completion" not in result.codes
+
+
+def test_guard_rejects_future_capability_promise_without_verified_execution():
+    result = AemeathOutputFirewall().validate(
+        "我会帮你查好再发给你。",
+        (),
+        response_act=ResponseAct.ANSWER,
+        capability_status=None,
+    )
+
+    assert result.accepted is False
+    assert "unsupported_future_promise" in result.codes
+
+
+def test_guard_allows_future_capability_wording_after_success():
+    result = AemeathOutputFirewall().validate(
+        "我来帮你查，结果已经出来了。",
+        (),
+        response_act=ResponseAct.TASK_HANDOFF,
+        capability_status=CapabilityStatus.SUCCESS,
+    )
+
+    assert "unsupported_future_promise" not in result.codes
+
+
+def test_guard_allows_a_scheduled_reminder_promise():
+    result = AemeathOutputFirewall().validate(
+        "好，周五下午我提醒你交材料。",
+        (),
+        response_act=ResponseAct.ANSWER,
+        capability_status=None,
+    )
+
+    assert "unsupported_future_promise" not in result.codes
+
+
+def test_guard_rejects_premature_timed_reminder_delivery():
+    rejected = AemeathOutputFirewall().validate(
+        "交材料了",
+        [],
+        source_text="小爱，1分钟后提醒我交材料",
+    )
+    assert rejected.accepted is False
+    assert "premature_reminder_delivery" in rejected.codes
+    assert rejected.repairable is True
+
+    accepted = AemeathOutputFirewall().validate(
+        "好嘞，1分钟倒计时开始哦",
+        [],
+        source_text="小爱，1分钟后提醒我交材料",
+    )
+    assert accepted.accepted is True
+    assert "premature_reminder_delivery" not in accepted.codes
+
+
+def test_guard_premature_stays_repairable_even_if_duplicate():
+    result = AemeathOutputFirewall().validate(
+        "交材料了",
+        ["交材料了"],
+        source_text="小爱，1 分钟后提醒我交材料",
+    )
+    assert result.accepted is False
+    assert "premature_reminder_delivery" in result.codes
+    assert "duplicate_output" in result.codes
+    assert result.repairable is True
+
+
+def test_guard_does_not_treat_unrelated_due_phrase_as_premature():
+    result = AemeathOutputFirewall().validate(
+        "该吃饭了",
+        [],
+        source_text="小爱，1分钟后提醒我交材料",
+    )
+    assert "premature_reminder_delivery" not in result.codes

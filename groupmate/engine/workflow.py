@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import defaultdict, deque
 from dataclasses import replace
 from typing import Callable, DefaultDict, Deque, Optional, Sequence, Tuple
@@ -48,6 +49,7 @@ from .participation_types import (
 from ..models import (
     AddresseeKind,
     ChatMessage,
+    ContinuityStatus,
     Decision,
     DecisionAction,
     InteractionScene,
@@ -55,6 +57,7 @@ from ..models import (
     OutboundKind,
     ReplyMode,
     ReplyPlan,
+    SelfCommitmentStatus,
     TargetingDecision,
     TopicSnapshot,
     TriggerKind,
@@ -66,6 +69,7 @@ from ..policies import BehaviorPolicy
 from ..ports import (
     Clock,
     GenerationModelPort,
+    GuardResult,
     MemoryRepository,
     OutputGuard,
     PlatformPort,
@@ -74,6 +78,16 @@ from ..ports import (
 )
 from ..memory.memory_writer import MemoryWriter
 from ..social.affinity import snapshot_for_relationship
+from ..social.evidence import RelationshipEvidenceWriter
+from ..social.continuity import ContinuityWriter
+from ..social.commitments import SelfCommitmentWriter
+from ..social.reminder_infer import (
+    acceptance_fallback_for_request,
+    infer_timed_reminder_from_topic,
+    latest_user_text,
+    looks_like_reminder_cancel,
+    reminder_cancel_ack,
+)
 from .rate_limit import BudgetTracker, SlidingWindowRateLimiter
 from .topics import select_active_messages
 
@@ -114,11 +128,17 @@ class CognitiveWorkflow:
         direct_fallback: Optional[DirectFallbackComposer] = None,
         budgets: Optional[BudgetTracker] = None,
         memory_writer: Optional[MemoryWriter] = None,
+        relationship_evidence_writer: Optional[RelationshipEvidenceWriter] = None,
+        continuity_writer: Optional[ContinuityWriter] = None,
+        self_commitment_writer: Optional[SelfCommitmentWriter] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
         capabilities: Optional[CapabilityRegistry] = None,
         capability_governor: Optional[CapabilityGovernor] = None,
         composer: Optional[ResponseComposer] = None,
         poke_back_enabled: bool = False,
+        relationship_learning_groups: Sequence[str] = (),
+        relationship_learning_min_reviewed: int = 20,
+        relationship_learning_max_error_rate: float = 0.10,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -148,6 +168,30 @@ class CognitiveWorkflow:
         self.budgets = budgets or BudgetTracker(rate_limiter)
         self.memory_writer = memory_writer or MemoryWriter(
             memory, persona_id=persona_context.persona_id
+        )
+        self.relationship_evidence_writer = (
+            relationship_evidence_writer
+            or RelationshipEvidenceWriter(
+                memory,
+                generation_model,
+                persona_id=persona_context.persona_id,
+                active_groups=relationship_learning_groups,
+                min_reviewed_samples=relationship_learning_min_reviewed,
+                max_error_rate=relationship_learning_max_error_rate,
+            )
+        )
+        self.continuity_writer = continuity_writer or ContinuityWriter(
+            memory,
+            generation_model,
+            persona_id=persona_context.persona_id,
+        )
+        self.self_commitment_writer = (
+            self_commitment_writer
+            or SelfCommitmentWriter(
+                memory,
+                generation_model,
+                persona_id=persona_context.persona_id,
+            )
         )
         self.participation_engine = (
             participation_engine or ParticipationDecisionEngine()
@@ -202,6 +246,8 @@ class CognitiveWorkflow:
                 decision_id, topic, trigger_alias, now, still_valid
             )
 
+        topic = self._canonical_member_topic(topic)
+
         scene = classify_scene(trigger, topic.latest)
         self._record(decision_id, topic.group_id, "SCENE", scene.value, now)
 
@@ -210,17 +256,36 @@ class CognitiveWorkflow:
             decision_id,
             topic.group_id,
             "ADDRESSEE",
-            ",".join(
-                targeting.social_target.reason_codes
-                or (targeting.social_target.kind.value,)
-            ),
+            self._targeting_trace(topic, targeting),
             now,
         )
+        cancelled = self.self_commitment_writer.cancel_open_reminder_for_sender(
+            topic,
+            decision_id=decision_id,
+            now=now,
+        )
+        latest_text = latest_user_text(topic)
+        reminder_cancelled = cancelled is not None
+        # Continuation after「小爱，N分钟后提醒我」is a hard wake. The latest
+        # turn may still be a cancel even if the ledger row was missed.
+        cancel_turn = reminder_cancelled or looks_like_reminder_cancel(
+            latest_text,
+            has_open_reminder=reminder_cancelled,
+        )
+        if reminder_cancelled:
+            self._record(
+                decision_id,
+                topic.group_id,
+                "COMMITMENT",
+                "reminder_cancelled",
+                now,
+            )
 
         relationship_state = self._relationship_state_for_target(topic, targeting)
         affinity = snapshot_for_relationship(
             relationship_state,
             configured_relationship=self._configured_relationship_for(
+                topic.group_id,
                 self._social_user_id(targeting)
             ),
         )
@@ -251,6 +316,17 @@ class CognitiveWorkflow:
             task_resolution=task_resolution,
             interaction=behavior.interaction,
         )
+        if cancel_turn:
+            participation = replace(
+                participation,
+                action=ParticipationAction.SPEAK,
+                act=participation.act or ResponseAct.ACKNOWLEDGE,
+                obligation=ParticipationObligation.DIRECT_REQUIRED,
+                contribution=(
+                    "对方取消了提醒，用自己的口吻短答应；不要再喊提醒内容，"
+                    "不要重新答应倒计时"
+                ),
+            )
         self._record(
             decision_id,
             topic.group_id,
@@ -422,7 +498,40 @@ class CognitiveWorkflow:
                 include_user_in_group=include_user_in_group,
             )
         )
-        self._record(decision_id, topic.group_id, "RECALL", str(len(memories)), now)
+        continuity_items = []
+        self_commitments = []
+        if subject_ids:
+            continuity_items = list(
+                self.memory.list_continuity_items(
+                    self.persona_context.persona_id,
+                    group_id=topic.group_id,
+                    subject_ids=subject_ids,
+                    statuses=(ContinuityStatus.OPEN,),
+                    limit=5,
+                )
+            )
+            self_commitments = list(
+                self.memory.list_self_commitments(
+                    self.persona_context.persona_id,
+                    group_id=topic.group_id,
+                    beneficiary_subject_ids=subject_ids,
+                    statuses=(
+                        SelfCommitmentStatus.PENDING,
+                        SelfCommitmentStatus.IN_PROGRESS,
+                        SelfCommitmentStatus.BLOCKED,
+                    ),
+                    limit=5,
+                )
+            )
+        self._record(
+            decision_id,
+            topic.group_id,
+            "RECALL",
+            "memories={};continuity={};commitments={}".format(
+                len(memories), len(continuity_items), len(self_commitments)
+            ),
+            now,
+        )
 
         capability_result = None
         capability_name = self._capability_name(
@@ -459,13 +568,36 @@ class CognitiveWorkflow:
             )
         )
         session = self.session_for(topic.group_id)
+        timed_request = (
+            None
+            if cancel_turn
+            else infer_timed_reminder_from_topic(topic, now=int(now))
+        )
+        source_user_text = (
+            timed_request.source_text
+            if timed_request is not None
+            else (latest_text or (topic.latest.text if topic.latest is not None else ""))
+        )
+        effective_contribution = contribution or decision.contribution
+        if cancel_turn:
+            effective_contribution = (
+                "对方取消了尚未到期的提醒：短答应即可，不要再喊提醒内容，"
+                "不要重新答应倒计时"
+            )
+        elif timed_request is not None:
+            effective_contribution = (
+                "对方在约未来到点提醒：现在只答应并确认倒计时开始，"
+                "不要现在就喊提醒内容；到点再说"
+            )
         assemble_kwargs = {
-            "contribution": contribution or decision.contribution,
+            "contribution": effective_contribution,
             "soft_trigger": soft_trigger,
             "session": session,
             "relationship_state": relationship_state,
             "targeting": targeting,
             "reply_mode": reply_mode,
+            "continuity_items": continuity_items,
+            "self_commitments": self_commitments,
         }
         assemble_kwargs.update(
             response_act=response_act,
@@ -480,7 +612,7 @@ class CognitiveWorkflow:
             decision_id=decision_id,
             group_id=topic.group_id,
             trigger=trigger,
-            contribution=contribution or decision.contribution,
+            contribution=effective_contribution,
             target_message_id=target_message_id,
             urgency=urgency,
             persona_prompt=persona_prompt,
@@ -497,6 +629,7 @@ class CognitiveWorkflow:
             is ParticipationObligation.DIRECT_REQUIRED
         )
         fallback_used = False
+        timed_reminder_request = timed_request is not None
 
         def fallback_text(reason: str) -> str:
             self._record(decision_id, topic.group_id, "FALLBACK", reason, now)
@@ -506,26 +639,53 @@ class CognitiveWorkflow:
                 reason_codes=participation.reason_codes,
             )
 
-        if not self.budgets.allow_generation(now):
-            if not direct_required:
+        def reminder_ack_text(reason: str) -> str:
+            self._record(decision_id, topic.group_id, "FALLBACK", reason, now)
+            if cancel_turn:
+                return reminder_cancel_ack()
+            if timed_request is not None:
+                return timed_request.acceptance_text()
+            return acceptance_fallback_for_request(source_user_text)
+
+        if cancel_turn and direct_required:
+            text = reminder_ack_text("reminder_cancel_fallback")
+            fallback_used = True
+        elif not self.budgets.allow_generation(now):
+            if (timed_reminder_request or cancel_turn) and direct_required:
+                text = reminder_ack_text(
+                    "reminder_cancel_fallback"
+                    if cancel_turn
+                    else "timed_reminder_accept"
+                )
+                fallback_used = True
+            elif not direct_required:
                 return self._silent(
                     decision_id,
                     topic.group_id,
                     "generation_budget_exhausted",
                     now,
                 )
-            text = fallback_text("generation_budget_exhausted")
-            fallback_used = True
+            else:
+                text = fallback_text("generation_budget_exhausted")
+                fallback_used = True
         else:
             try:
                 text = await self.generation_model.generate(plan, topic, memories)
             except Exception:
-                if not direct_required:
+                if (timed_reminder_request or cancel_turn) and direct_required:
+                    text = reminder_ack_text(
+                        "reminder_cancel_fallback"
+                        if cancel_turn
+                        else "timed_reminder_accept"
+                    )
+                    fallback_used = True
+                elif not direct_required:
                     return self._silent(
                         decision_id, topic.group_id, "generation_error", now
                     )
-                text = fallback_text("generation_error")
-                fallback_used = True
+                else:
+                    text = fallback_text("generation_error")
+                    fallback_used = True
             else:
                 self.budgets.record_generation(now)
 
@@ -534,7 +694,14 @@ class CognitiveWorkflow:
             self._record(decision_id, topic.group_id, "SPEAK", speak.reason, now)
             if not direct_required:
                 return self._silent(decision_id, topic.group_id, speak.reason, now)
-            text = fallback_text(speak.reason)
+            if timed_reminder_request or cancel_turn:
+                text = reminder_ack_text(
+                    "reminder_cancel_fallback"
+                    if cancel_turn
+                    else "timed_reminder_accept"
+                )
+            else:
+                text = fallback_text(speak.reason)
             fallback_used = True
             speak = SpeakContract.resolve(text)
 
@@ -544,9 +711,26 @@ class CognitiveWorkflow:
             reply_mode,
             response_act,
             capability_status,
+            source_text=source_user_text,
             ignore_recent=fallback_used,
         )
-        if not guarded.accepted and guarded.repairable and not fallback_used:
+        if (
+            not guarded.accepted
+            and timed_reminder_request
+            and direct_required
+            and "premature_reminder_delivery" in guarded.codes
+        ):
+            fallback_used = True
+            guarded = self._validate_output(
+                reminder_ack_text("timed_reminder_accept"),
+                topic.group_id,
+                reply_mode,
+                response_act,
+                capability_status,
+                source_text=source_user_text,
+                ignore_recent=True,
+            )
+        elif not guarded.accepted and guarded.repairable and not fallback_used:
             try:
                 repaired = await self.generation_model.repair(speak.text, guarded.codes)
             except Exception:
@@ -555,33 +739,82 @@ class CognitiveWorkflow:
                         decision_id, topic.group_id, "repair_error", now
                     )
                 fallback_used = True
-                repaired = fallback_text("repair_error")
+                repaired = (
+                    reminder_ack_text(
+                        "reminder_cancel_fallback"
+                        if cancel_turn
+                        else "timed_reminder_accept"
+                    )
+                    if (timed_reminder_request or cancel_turn)
+                    else fallback_text("repair_error")
+                )
             if SpeakContract.resolve(repaired).should_send is False:
                 if not direct_required:
                     return self._silent(
                         decision_id, topic.group_id, "model_silence", now
                     )
                 fallback_used = True
-                repaired = fallback_text("repair_silence")
+                repaired = (
+                    reminder_ack_text(
+                        "reminder_cancel_fallback"
+                        if cancel_turn
+                        else "timed_reminder_accept"
+                    )
+                    if (timed_reminder_request or cancel_turn)
+                    else fallback_text("repair_silence")
+                )
             guarded = self._validate_output(
                 repaired,
                 topic.group_id,
                 reply_mode,
                 response_act,
                 capability_status,
+                source_text=source_user_text,
                 ignore_recent=fallback_used,
             )
         if not guarded.accepted and direct_required and not fallback_used:
             fallback_used = True
-            fallback = fallback_text("guard_rejected")
+            if cancel_turn:
+                fallback = reminder_ack_text("reminder_cancel_fallback")
+            elif timed_reminder_request or (
+                "premature_reminder_delivery" in guarded.codes
+            ):
+                fallback = reminder_ack_text("timed_reminder_accept")
+            else:
+                fallback = fallback_text("guard_rejected")
             guarded = self._validate_output(
                 fallback,
                 topic.group_id,
                 reply_mode,
                 response_act,
                 capability_status,
+                source_text=source_user_text,
                 ignore_recent=True,
             )
+        # 定时提醒兜底若仍被拦（极少见），强制接受确定性答应文案
+        if (
+            not guarded.accepted
+            and direct_required
+            and timed_reminder_request
+        ):
+            forced = reminder_ack_text("timed_reminder_force")
+            guarded = self.output_guard.validate(
+                forced,
+                recent_outputs=(),
+                reply_mode=reply_mode,
+                response_act=(
+                    response_act.act if response_act is not None else None
+                ),
+                capability_status=capability_status,
+                source_text=source_user_text,
+            )
+            if not guarded.accepted:
+                guarded = GuardResult(
+                    accepted=True,
+                    text=forced,
+                    codes=(),
+                    repairable=False,
+                )
         if not guarded.accepted:
             return self._silent(
                 decision_id,
@@ -685,6 +918,71 @@ class CognitiveWorkflow:
             self._record(
                 decision_id, topic.group_id, "MEMORY", "schedule_failed", send_now
             )
+        try:
+            self.continuity_writer.schedule_after_send(
+                topic,
+                targeting,
+                decision_id=decision_id,
+                now=send_now,
+                reply_text=outcome.text or "",
+            )
+        except Exception:  # noqa: BLE001 - continuity never breaks replies
+            self._record(
+                decision_id,
+                topic.group_id,
+                "CONTINUITY",
+                "schedule_failed",
+                send_now,
+            )
+        try:
+            self.self_commitment_writer.schedule_after_send(
+                topic,
+                targeting,
+                decision_id=decision_id,
+                now=send_now,
+                reply_text=outcome.text or "",
+                capability_result=capability_result,
+            )
+        except Exception:  # noqa: BLE001 - commitments never break replies
+            self._record(
+                decision_id,
+                topic.group_id,
+                "COMMITMENT",
+                "schedule_failed",
+                send_now,
+            )
+        try:
+            evidence = await self.relationship_evidence_writer.process(
+                topic,
+                targeting,
+                trigger=trigger,
+                decision_id=decision_id,
+                now=send_now,
+                response_act=response_act,
+                reply_text=outcome.text or "",
+                participation_reasons=participation.reason_codes,
+                configured_relationship=self._configured_relationship_for(
+                    topic.group_id,
+                    self._social_user_id(targeting)
+                ),
+            )
+        except Exception:  # noqa: BLE001 — relationship evidence never breaks replies
+            self._record(
+                decision_id,
+                topic.group_id,
+                "RELATIONSHIP",
+                "evidence_failed",
+                send_now,
+            )
+        else:
+            if evidence is not None:
+                self._record(
+                    decision_id,
+                    topic.group_id,
+                    "RELATIONSHIP",
+                    "accepted:" + evidence.kind.value,
+                    send_now,
+                )
         return outcome
 
     def _task_response_inputs(
@@ -868,6 +1166,7 @@ class CognitiveWorkflow:
         response_act: Optional[ResponseActPlan],
         capability_status: str,
         *,
+        source_text: str = "",
         ignore_recent: bool = False,
     ):
         recent = () if ignore_recent else tuple(self._recent_outputs[group_id])
@@ -877,6 +1176,7 @@ class CognitiveWorkflow:
             reply_mode=reply_mode,
             response_act=response_act.act if response_act is not None else None,
             capability_status=capability_status,
+            source_text=source_text,
         )
 
     def _resolve_targeting(
@@ -885,11 +1185,122 @@ class CognitiveWorkflow:
         trigger: TriggerKind,
     ) -> TargetingDecision:
         relationships = self.persona.assembly.relationships
+        name_index = self.memory.member_name_index(
+            self.persona_context.persona_id, topic.group_id
+        )
         return self.addressee_resolver.resolve(
             topic,
             trigger,
             aliases=self.persona_context.aliases,
             relationships=relationships,
+            name_index=name_index,
+        )
+
+    def _canonical_member_topic(self, topic: TopicSnapshot) -> TopicSnapshot:
+        persona_id = self.persona_context.persona_id
+        group_id = topic.group_id
+        changed = False
+        messages = []
+        for message in topic.messages:
+            if message.is_bot:
+                messages.append(message)
+                continue
+            sender_id = self.memory.resolve_member_subject_id(
+                persona_id, group_id, message.sender_id
+            )
+            sender_name = self.memory.member_display_name(
+                persona_id, group_id, sender_id
+            ) or message.sender_name
+            mention_names = dict(message.metadata.get("mention_names") or {})
+            anonymous_ids = []
+            raw_anonymous = {
+                str(item)
+                for item in (message.metadata.get("anonymous_mention_ids") or ())
+            }
+            mentioned = []
+            text = str(message.text or "")
+            for raw_id in message.mentioned_user_ids:
+                canonical_id = self.memory.resolve_member_subject_id(
+                    persona_id, group_id, raw_id
+                )
+                if canonical_id not in mentioned:
+                    mentioned.append(canonical_id)
+                canonical_name = self.memory.member_display_name(
+                    persona_id, group_id, canonical_id
+                )
+                old_name = str(mention_names.get(str(raw_id), "") or "").strip()
+                if canonical_name:
+                    mention_names[canonical_id] = canonical_name
+                    mention_names[str(raw_id)] = canonical_name
+                    if old_name and old_name != canonical_name:
+                        text = text.replace("@" + old_name, "@" + canonical_name)
+                if str(raw_id) in raw_anonymous and canonical_id not in anonymous_ids:
+                    anonymous_ids.append(canonical_id)
+            metadata = dict(
+                message.metadata,
+                mention_names=mention_names,
+                anonymous_mention_ids=anonymous_ids,
+                canonical_sender_id=sender_id,
+                canonical_sender_name=sender_name,
+            )
+            canonical = replace(
+                message,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                text=text,
+                mentioned_user_ids=tuple(mentioned),
+                metadata=metadata,
+            )
+            changed = changed or canonical != message
+            messages.append(canonical)
+        if not changed:
+            return topic
+        return replace(topic, messages=tuple(messages))
+
+    def _targeting_trace(
+        self, topic: TopicSnapshot, targeting: TargetingDecision
+    ) -> str:
+        names = {
+            message.sender_id: message.sender_name
+            for message in topic.messages
+            if message.sender_id and message.sender_name
+        }
+        for message in topic.messages:
+            mention_names = message.metadata.get("mention_names") or {}
+            if isinstance(mention_names, dict):
+                names.update(
+                    {
+                        str(user_id): str(name)
+                        for user_id, name in mention_names.items()
+                        if str(user_id) and str(name).strip()
+                    }
+                )
+
+        def payload(resolution):
+            user_id = (
+                resolution.target_user_ids[0]
+                if resolution.target_user_ids
+                else ""
+            )
+            return {
+                "kind": resolution.kind.value,
+                "name": names.get(user_id, ""),
+                "source": (
+                    resolution.reason_codes[0]
+                    if resolution.reason_codes
+                    else resolution.kind.value
+                ),
+                "confidence": round(float(resolution.confidence), 2),
+            }
+
+        return json.dumps(
+            {
+                "reply": payload(targeting.reply_audience),
+                "social": payload(targeting.social_target),
+                "memory": payload(targeting.memory_subject),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         )
 
     def _build_decision(
@@ -1095,18 +1506,29 @@ class CognitiveWorkflow:
         user_id = self._social_user_id(targeting)
         if not user_id:
             return None
-        return self.memory.get_relationship_state(
+        return self.memory.get_member_relationship_state(
             self.persona_context.persona_id,
             topic.group_id,
             user_id,
+            configured_relationship=self._configured_relationship_for(
+                topic.group_id, user_id
+            ),
+            now=self.clock.now(),
         )
 
-    def _configured_relationship_for(self, user_id: Optional[str]) -> str:
+    def _configured_relationship_for(
+        self, group_id: str, user_id: Optional[str]
+    ) -> str:
         target = str(user_id or "")
         if not target:
             return ""
+        member_ids = set(
+            self.memory.member_subject_ids(
+                self.persona_context.persona_id, group_id, target
+            )
+        )
         for entry in self.persona_context.relationship_seeds:
-            if str(entry.sender_id) == target:
+            if str(entry.sender_id) in member_ids:
                 return str(entry.relationship or "")
         return ""
 

@@ -24,6 +24,7 @@ _KNOWN_GROUPS = (
     "persona_group",
     "provider_group",
     "interaction_group",
+    "relationship_learning_group",
     "tools_group",
     "mail_group",
 )
@@ -67,6 +68,9 @@ class DeploymentSettings:
     enabled_groups: Tuple[str, ...]
     persona_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...]
     relationships: Tuple[Tuple[str, Tuple[RelationshipEntry, ...]], ...]
+    relationship_learning_groups: Tuple[str, ...]
+    relationship_learning_min_reviewed: int
+    relationship_learning_max_error_rate: float
     generation_provider: str
     vision_enabled: bool
     vision_provider: str
@@ -125,6 +129,7 @@ class AstrBotConfigParser:
         persona_group = _as_mapping(source.get("persona_group"))
         provider_group = _as_mapping(source.get("provider_group"))
         interaction_group = _as_mapping(source.get("interaction_group"))
+        learning_group = _as_mapping(source.get("relationship_learning_group"))
         tools_group = _as_mapping(source.get("tools_group"))
         mail_group = _as_mapping(source.get("mail_group"))
         defaults = InteractionPolicy()
@@ -145,6 +150,16 @@ class AstrBotConfigParser:
             enabled_groups=enabled_groups,
             persona_aliases=persona_aliases,
             relationships=relationships,
+            relationship_learning_groups=_parse_digit_tuple(
+                learning_group.get("active_groups", ()),
+                path="relationship_learning_group.active_groups",
+            ),
+            relationship_learning_min_reviewed=_int_clamped(
+                learning_group.get("min_reviewed_samples"), 20, 5, 200
+            ),
+            relationship_learning_max_error_rate=_float_clamped(
+                learning_group.get("max_error_rate"), 0.10, 0.0, 0.5
+            ),
             generation_provider=str(
                 provider_group.get("generation_provider", "") or ""
             ).strip(),

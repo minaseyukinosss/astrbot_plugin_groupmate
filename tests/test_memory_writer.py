@@ -191,6 +191,7 @@ def test_explicit_remember_is_accepted(tmp_path):
     )
     memories = store.list_memories("aemeath", "g1", now=100)
     assert any("草莓蛋糕" in item.text for item in memories)
+    assert all(item.scope is not MemoryScope.SELF for item in memories)
     store.close()
 
 

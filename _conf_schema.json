@@ -69,6 +69,31 @@
       }
     }
   },
+  "relationship_learning_group": {
+    "description": "关系学习灰度",
+    "type": "object",
+    "hint": "新关系证据默认只进入影子复核，不改变爱弥斯对人的长期判断。只有达到质量门槛且在此放行的群，后续证据才自动生效。",
+    "items": {
+      "active_groups": {
+        "description": "允许自动生效的群",
+        "type": "list",
+        "default": [],
+        "hint": "填写 QQ 群号。留空表示所有群都保持影子学习；页面复核仍可逐条生效。"
+      },
+      "min_reviewed_samples": {
+        "description": "最少复核样本",
+        "type": "int",
+        "default": 20,
+        "hint": "单群至少完成多少条人工复核后，才允许判断是否达到自动生效门槛。范围 5~200。"
+      },
+      "max_error_rate": {
+        "description": "最高误判率",
+        "type": "float",
+        "default": 0.1,
+        "hint": "认错人、类型判断错、上下文不足都计入误判。0.1 表示不高于 10%。"
+      }
+    }
+  },
   "provider_group": {
     "description": "模型配置",
     "type": "object",

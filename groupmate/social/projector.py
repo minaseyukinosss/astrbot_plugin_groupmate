@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from ..models import RelationshipState, SocialEvent, SocialEventKind
+from ..models import (
+    RelationshipState,
+    SocialEvent,
+    SocialEventKind,
+    SocialEventStatus,
+)
 from .affinity import AFFINITY_MAX, clamp_affinity
 
 # 事件必须由上游完整语境验证；普通互动只增加熟悉度。
@@ -50,6 +55,8 @@ class SocialStateProjector:
         for event in events:
             if str(event.group_id) != str(group_id) or str(event.user_id) != str(user_id):
                 continue
+            if event.status is not SocialEventStatus.ACCEPTED:
+                continue
             df, da, dt, db = _DELTAS.get(event.kind, (0, 0, 0, 0))
             familiarity = _clamp_non_negative(familiarity + df)
             affinity = clamp_affinity(affinity + da)
@@ -83,6 +90,8 @@ class SocialStateProjector:
             user_id=event.user_id,
             configured_relationship=configured_relationship,
         )
+        if event.status is not SocialEventStatus.ACCEPTED:
+            return base
         df, da, dt, db = _DELTAS.get(event.kind, (0, 0, 0, 0))
         return RelationshipState(
             group_id=base.group_id,
