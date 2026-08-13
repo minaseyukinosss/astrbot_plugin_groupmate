@@ -5,10 +5,12 @@ from groupmate.models import (
     ContinuityItem,
     ContinuityKind,
     ContinuityStatus,
+    SelfCommitment,
+    SelfCommitmentStatus,
     TopicSnapshot,
     TriggerKind,
 )
-from groupmate.social.continuity import ContinuityWriter
+from groupmate.social.continuity import ContinuityWriter, looks_like_open_loop
 from groupmate.memory.store import SQLiteMemoryStore
 
 
@@ -293,5 +295,124 @@ def test_deleted_continuity_is_excluded_from_normal_status_queries(tmp_path):
         assert store.get_continuity_item(
             "aemeath", "deleted-item"
         ).status is ContinuityStatus.DELETED
+    finally:
+        store.close()
+
+
+def test_looks_like_open_loop_accepts_exam_callback_and_rejects_idle_chat():
+    assert looks_like_open_loop("考完试告诉你结果") is True
+    assert looks_like_open_loop("我明天考完跟你说结果") is True
+    assert looks_like_open_loop("今天晚饭吃火锅") is False
+    assert looks_like_open_loop("小爱，1分钟后提醒我交材料") is False
+
+
+def test_continuity_writer_does_not_open_timed_reminder(tmp_path, message_factory):
+    store = SQLiteMemoryStore(tmp_path / "continuity-reminder.db")
+    try:
+        topic = TopicSnapshot(
+            "t1",
+            "g",
+            (
+                message_factory(
+                    message_id="m1",
+                    sender_id="u1",
+                    sender_name="小明",
+                    text="小爱，1分钟后提醒我交材料",
+                    timestamp=100,
+                    mentions_bot=True,
+                ),
+            ),
+            100,
+            100,
+        )
+        writer = ContinuityWriter(
+            store,
+            ContinuityModel(
+                {
+                    "action": "OPEN",
+                    "kind": "plan",
+                    "summary": "复读斥候要求小爱在1分钟后提醒自己交材料",
+                    "evidence_quote": "1分钟后提醒我交材料",
+                    "due_at": None,
+                    "confidence": 0.99,
+                }
+            ),
+            persona_id="aemeath",
+        )
+        opened = asyncio.run(
+            writer.process(
+                topic,
+                direct_targeting(topic),
+                decision_id="d1",
+                now=101,
+                reply_text="好嘞，1分钟倒计时开始哦",
+            )
+        )
+        assert opened is None
+        assert store.list_continuity_items("aemeath", group_id="g") == []
+    finally:
+        store.close()
+
+
+def test_store_reconciles_leftover_reminder_continuity_on_open(tmp_path):
+    path = tmp_path / "continuity-reconcile.db"
+    store = SQLiteMemoryStore(path)
+    try:
+        store.append_continuity_item(
+            "aemeath",
+            ContinuityItem(
+                item_id="leftover-reminder",
+                group_id="g",
+                subject_id="u1",
+                kind=ContinuityKind.PLAN,
+                summary="复读斥候要求小爱在1分钟后提醒自己交材料",
+                source_message_id="user-m1",
+                source_quote="小爱，1分钟后提醒我交材料",
+                created_at=100,
+                updated_at=100,
+            ),
+        )
+        store.append_continuity_item(
+            "aemeath",
+            ContinuityItem(
+                item_id="exam-followup",
+                group_id="g",
+                subject_id="u1",
+                kind=ContinuityKind.PROMISE,
+                summary="复读斥候表示考完试后告诉对方结果",
+                source_message_id="user-m2",
+                source_quote="考完试告诉你结果",
+                created_at=110,
+                updated_at=110,
+            ),
+        )
+        store.append_self_commitment(
+            "aemeath",
+            SelfCommitment(
+                commitment_id="c-reminder",
+                group_id="g",
+                beneficiary_subject_id="u1",
+                summary="提醒交材料",
+                source_decision_id="d1",
+                source_message_id="bot-d1",
+                source_quote="到时候提醒你交材料",
+                created_at=100,
+                updated_at=120,
+                request_message_id="user-m1",
+                status=SelfCommitmentStatus.COMPLETED,
+                fulfillment_mode="reminder",
+                resolved_at=120,
+            ),
+        )
+    finally:
+        store.close()
+
+    store = SQLiteMemoryStore(path)
+    try:
+        leftover = store.get_continuity_item("aemeath", "leftover-reminder")
+        exam = store.get_continuity_item("aemeath", "exam-followup")
+        assert leftover.status is ContinuityStatus.COMPLETED
+        assert leftover.resolution_quote == "synced_from_resolved_reminder"
+        assert exam.status is ContinuityStatus.OPEN
     finally:
         store.close()

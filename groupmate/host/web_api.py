@@ -87,6 +87,12 @@ class GroupmateWebAPI:
             "Correct an ongoing continuity item",
         )
         register(
+            f"/{PLUGIN_NAME}/continuity/followups/<event_id>/reject",
+            self.reject_continuity_followup,
+            ["POST"],
+            "Reject a mistaken continuity follow-up match",
+        )
+        register(
             f"/{PLUGIN_NAME}/commitments/<commitment_id>/status",
             self.correct_self_commitment,
             ["POST"],
@@ -340,6 +346,28 @@ class GroupmateWebAPI:
         if result is None:
             return error_response("self commitment not found", status_code=404)
         return json_response({"corrected": True, **result})
+
+    async def reject_continuity_followup(self, event_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return error_response("event_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 120:
+            return error_response("reason is too long", status_code=400)
+        try:
+            action = self.bridge.reject_continuity_followup(event_id, reason)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        if action is None:
+            return error_response("continuity follow-up not found", status_code=404)
+        return json_response({"rejected": True, "event_id": event_id, "action": action})
 
     async def run_self_commitment(self, commitment_id: str):
         from astrbot.api.web import error_response, json_response, request

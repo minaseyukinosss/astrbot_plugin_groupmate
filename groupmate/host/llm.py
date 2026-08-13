@@ -165,6 +165,7 @@ class AstrBotGenerationModel:
                 "判断最新群成员消息是否形成或结束一件以后还需要接着聊的事。",
                 "只有明确计划、承诺或需要后续追问的具体事项才能 OPEN。",
                 "闲聊、愿望、情绪、猜测、泛泛的‘以后再说’都输出 NONE。",
+                "成员请爱弥斯到点提醒（例如‘N分钟后提醒我交材料’）输出 NONE；那是提醒账本，不是相处跟进。",
                 "COMPLETE 或 CANCEL 必须明确对应下方一个未完事项 item_id。",
                 "evidence_quote 必须逐字来自最新消息；summary 用第三人称简短概括，不补充原文没有的事实。",
                 "允许 action：OPEN、COMPLETE、CANCEL、NONE；kind：plan、promise、follow_up。",
@@ -189,6 +190,49 @@ class AstrBotGenerationModel:
         )
         text = str(getattr(response, "completion_text", "") or "").strip()
         return self._first_json_object(text)
+
+    async def extract_continuity_followup(self, *, topic, open_items):
+        """Match the latest member message to one explicit open item."""
+        provider_id = self.provider_getter(topic.group_id)
+        if not provider_id or topic.latest is None or not open_items:
+            return None
+        item_lines = [
+            "[{}] {}；原话：{}".format(
+                item.item_id,
+                item.summary[:180],
+                item.source_quote[:120],
+            )
+            for item in tuple(open_items or ())[:12]
+        ]
+        prompt = "\n".join(
+            [
+                "判断最新消息是否明确报告了下列某一件未完事项的新进展、完成或取消。",
+                "必须是同一件具体事情；只共享考试、工作、照片等泛词不算相关。",
+                "没有唯一对应项就输出 NONE。不得猜测弦外之音或补充原文没有的事实。",
+                "只有对方主动明确报告重大进展、完成或取消，而且自然回应不会打断别人时，response_policy 才可为 speak；普通进度一律 observe。",
+                "evidence_quote 必须逐字来自最新消息，并使用支持判断的最短片段。",
+                "只输出 JSON 对象：",
+                '{"action":"NONE","item_id":"","outcome":"progress",'
+                '"response_policy":"observe","evidence_quote":"",'
+                '"confidence":0.0,"reason_code":"no_unique_match"}',
+                "允许 action：MATCH、NONE；outcome：progress、completed、cancelled。",
+                "未完事项：",
+                *item_lines,
+                "最新消息：" + str(topic.latest.text or "")[:400],
+            ]
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt=(
+                "你是群聊连续事项关联器。只输出可审计 JSON，不输出解释或隐藏推理。"
+            ),
+        )
+        text = str(getattr(response, "completion_text", "") or "").strip()
+        parsed = self._first_json_object(text)
+        if not isinstance(parsed, dict) or str(parsed.get("action") or "").upper() != "MATCH":
+            return None
+        return parsed
 
     async def extract_self_commitment(
         self,

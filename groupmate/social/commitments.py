@@ -22,6 +22,7 @@ from .reminder_infer import (
     looks_like_reminder_cancel,
     recover_due_at,
 )
+from .continuity import close_continuity_for_resolved_reminder
 
 logger = logging.getLogger(__name__)
 
@@ -239,15 +240,18 @@ class SelfCommitmentWriter:
                 status = SelfCommitmentStatus.BLOCKED
             else:
                 status = SelfCommitmentStatus.WITHDRAWN
-            return self.store.resolve_self_commitment(
-                self.persona_id,
-                selected.commitment_id,
-                status=status,
-                result_decision_id=decision_id,
-                result_quote=quote,
-                result_facts=facts,
-                failure_code=failure_code,
-                resolved_at=int(now),
+            return self._sync_resolved_reminder(
+                self.store.resolve_self_commitment(
+                    self.persona_id,
+                    selected.commitment_id,
+                    status=status,
+                    result_decision_id=decision_id,
+                    result_quote=quote,
+                    result_facts=facts,
+                    failure_code=failure_code,
+                    resolved_at=int(now),
+                ),
+                now=now,
             )
 
         if action != "OPEN" or len(summary) < 4:
@@ -427,13 +431,16 @@ class SelfCommitmentWriter:
             return None
         selected = reminders[0]
         quote = " ".join(str(latest.text or "").split())[:180] or "不用提醒了"
-        return self.store.resolve_self_commitment(
-            self.persona_id,
-            selected.commitment_id,
-            status=SelfCommitmentStatus.WITHDRAWN,
-            result_decision_id=decision_id,
-            result_quote=quote,
-            resolved_at=int(now),
+        return self._sync_resolved_reminder(
+            self.store.resolve_self_commitment(
+                self.persona_id,
+                selected.commitment_id,
+                status=SelfCommitmentStatus.WITHDRAWN,
+                result_decision_id=decision_id,
+                result_quote=quote,
+                resolved_at=int(now),
+            ),
+            now=now,
         )
 
     def _withdraw_if_cancelled(
@@ -462,11 +469,22 @@ class SelfCommitmentWriter:
             quote = " ".join(str(latest_text or "").split())[:180]
         if len(quote) < 2:
             quote = "不用提醒了"
-        return self.store.resolve_self_commitment(
-            self.persona_id,
-            selected.commitment_id,
-            status=SelfCommitmentStatus.WITHDRAWN,
-            result_decision_id=decision_id,
-            result_quote=quote,
-            resolved_at=int(now),
+        return self._sync_resolved_reminder(
+            self.store.resolve_self_commitment(
+                self.persona_id,
+                selected.commitment_id,
+                status=SelfCommitmentStatus.WITHDRAWN,
+                result_decision_id=decision_id,
+                result_quote=quote,
+                resolved_at=int(now),
+            ),
+            now=now,
         )
+
+    def _sync_resolved_reminder(self, commitment, *, now: int):
+        if commitment is None:
+            return None
+        close_continuity_for_resolved_reminder(
+            self.store, self.persona_id, commitment, now=int(now)
+        )
+        return commitment

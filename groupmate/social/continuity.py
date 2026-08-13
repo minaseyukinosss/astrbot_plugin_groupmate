@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Callable, Optional
 from uuid import NAMESPACE_URL, uuid5
 
@@ -12,8 +13,13 @@ from ..models import (
     ContinuityItem,
     ContinuityKind,
     ContinuityStatus,
+    SelfCommitmentStatus,
     TargetingDecision,
     TopicSnapshot,
+)
+from .reminder_infer import (
+    looks_like_timed_reminder_continuity,
+    looks_like_timed_reminder_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,6 +27,87 @@ logger = logging.getLogger(__name__)
 EXTRACTOR_VERSION = "context-llm-v1"
 MIN_OPEN_CONFIDENCE = 0.90
 MIN_RESOLUTION_CONFIDENCE = 0.88
+_OPEN_LOOP_HINT = re.compile(
+    r"(告诉你|跟你说|和你说|跟你讲|"
+    r"回头.{0,8}(告诉|说|聊|讲)|"
+    r"等我.{0,12}(完|好|回来|结束)|"
+    r"(考完|忙完|做完|写完|开完|下了).{0,16}(告诉|说|报|喊)|"
+    r"到时候(告诉|说|喊|报)|"
+    r"下次.{0,12}(给你看|带你|一起|告诉))"
+)
+
+
+def looks_like_open_loop(text: str) -> bool:
+    """Cheap gate: this turn may open a later follow-up, even if we stay silent."""
+    source = " ".join(str(text or "").split())
+    if looks_like_timed_reminder_request(source):
+        return False
+    return bool(_OPEN_LOOP_HINT.search(source))
+
+
+def close_continuity_for_resolved_reminder(
+    store,
+    persona_id: str,
+    commitment,
+    *,
+    now: int,
+) -> tuple:
+    """Close leftover continuity rows after a reminder is delivered or cancelled."""
+    mode = str(getattr(commitment, "fulfillment_mode", "") or "")
+    status = getattr(commitment, "status", None)
+    status_value = str(getattr(status, "value", status) or "")
+    resolver = getattr(store, "resolve_continuity_item", None)
+    lister = getattr(store, "list_continuity_items", None)
+    if (
+        mode != "reminder"
+        or status_value
+        not in {
+            SelfCommitmentStatus.COMPLETED.value,
+            SelfCommitmentStatus.WITHDRAWN.value,
+            SelfCommitmentStatus.BLOCKED.value,
+        }
+        or not callable(resolver)
+        or not callable(lister)
+    ):
+        return ()
+    next_status = (
+        ContinuityStatus.CANCELLED
+        if status_value == SelfCommitmentStatus.WITHDRAWN.value
+        else ContinuityStatus.COMPLETED
+    )
+    request_ids = {
+        str(getattr(commitment, "request_message_id", "") or ""),
+        str(getattr(commitment, "source_message_id", "") or ""),
+    } - {""}
+    if not request_ids:
+        return ()
+    quote = (
+        " ".join(str(getattr(commitment, "result_quote", "") or "").split())[:180]
+        or "synced_from_resolved_reminder"
+    )
+    closed = []
+    for item in tuple(
+        lister(
+            persona_id,
+            group_id=str(getattr(commitment, "group_id", "") or ""),
+            statuses=(ContinuityStatus.OPEN,),
+            limit=50,
+        )
+        or ()
+    ):
+        if str(getattr(item, "source_message_id", "") or "") not in request_ids:
+            continue
+        updated = resolver(
+            persona_id,
+            item.item_id,
+            status=next_status,
+            resolution_message_id=str(item.source_message_id),
+            resolution_quote=quote,
+            resolved_at=int(now),
+        )
+        if updated is not None:
+            closed.append(updated)
+    return tuple(closed)
 
 
 class ContinuityWriter:
@@ -155,6 +242,10 @@ class ContinuityWriter:
 
         if action == "OPEN":
             if confidence < MIN_OPEN_CONFIDENCE:
+                return None
+            if looks_like_timed_reminder_request(source) or looks_like_timed_reminder_continuity(
+                str(raw.get("summary") or ""), quote
+            ):
                 return None
             summary = " ".join(str(raw.get("summary") or "").split())[:240]
             if len(summary) < 4:

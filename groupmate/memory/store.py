@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -12,6 +13,9 @@ from uuid import uuid4
 from ..models import (
     CandidateStatus,
     ChatMessage,
+    ContinuityFollowupEvent,
+    ContinuityFollowupOutcome,
+    ContinuityFollowupStatus,
     ContinuityItem,
     ContinuityKind,
     ContinuityStatus,
@@ -60,12 +64,90 @@ class SQLiteMemoryStore:
                 "WHERE status='sending'"
             )
         )
+        self._write(self._reconcile_resolved_reminder_continuity)
 
     def _write(self, operation):
         return self._writer.execute(operation)
 
     async def _write_async(self, operation):
         return await self._writer.execute_async(operation)
+
+    @staticmethod
+    def _reconcile_resolved_reminder_continuity(db) -> None:
+        now = int(time.time())
+        db.execute(
+            """
+            UPDATE continuity_items
+            SET status = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM self_commitments c
+                    WHERE c.persona_id = continuity_items.persona_id
+                      AND c.group_id = continuity_items.group_id
+                      AND c.fulfillment_mode = 'reminder'
+                      AND (
+                        c.request_message_id = continuity_items.source_message_id
+                        OR c.source_message_id = continuity_items.source_message_id
+                      )
+                      AND c.status = 'withdrawn'
+                ) THEN 'cancelled'
+                ELSE 'completed'
+            END,
+            resolution_quote = CASE
+                WHEN resolution_quote = '' THEN 'synced_from_resolved_reminder'
+                ELSE resolution_quote
+            END,
+            resolved_at = COALESCE(resolved_at, ?),
+            updated_at = ?
+            WHERE status = 'open'
+              AND EXISTS (
+                SELECT 1 FROM self_commitments c
+                WHERE c.persona_id = continuity_items.persona_id
+                  AND c.group_id = continuity_items.group_id
+                  AND c.fulfillment_mode = 'reminder'
+                  AND (
+                    c.request_message_id = continuity_items.source_message_id
+                    OR c.source_message_id = continuity_items.source_message_id
+                  )
+                  AND c.status IN ('completed', 'withdrawn', 'blocked')
+              )
+            """,
+            (now, now),
+        )
+        db.execute(
+            """
+            UPDATE continuity_items
+            SET status = 'completed',
+                resolution_quote = CASE
+                    WHEN resolution_quote = '' THEN 'orphaned_timed_reminder'
+                    ELSE resolution_quote
+                END,
+                resolved_at = COALESCE(resolved_at, ?),
+                updated_at = ?
+            WHERE status = 'open'
+              AND (
+                source_quote LIKE '%分钟后提醒%'
+                OR source_quote LIKE '%分鐘後提醒%'
+                OR source_quote LIKE '%小时后提醒%'
+                OR source_quote LIKE '%小時後提醒%'
+                OR summary LIKE '%分钟后提醒%'
+                OR summary LIKE '%分鐘後提醒%'
+                OR summary LIKE '%小时后提醒%'
+                OR summary LIKE '%小時後提醒%'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM self_commitments c
+                WHERE c.persona_id = continuity_items.persona_id
+                  AND c.group_id = continuity_items.group_id
+                  AND c.fulfillment_mode = 'reminder'
+                  AND c.status IN ('pending', 'in_progress', 'blocked')
+                  AND (
+                    c.request_message_id = continuity_items.source_message_id
+                    OR c.source_message_id = continuity_items.source_message_id
+                  )
+              )
+            """,
+            (now, now),
+        )
 
     def schema_version(self) -> int:
         row = self._db.execute(
@@ -683,6 +765,274 @@ class SQLiteMemoryStore:
 
         row = self._write(operation)
         return self._row_to_continuity(row) if row is not None else None
+
+    @staticmethod
+    def _row_to_continuity_followup(row) -> ContinuityFollowupEvent:
+        return ContinuityFollowupEvent(
+            event_id=str(row["event_id"]),
+            item_id=str(row["item_id"]),
+            group_id=str(row["group_id"]),
+            subject_id=str(row["subject_id"]),
+            source_message_id=str(row["source_message_id"]),
+            evidence_quote=str(row["evidence_quote"]),
+            outcome=ContinuityFollowupOutcome(str(row["outcome"])),
+            response_policy=str(row["response_policy"]),
+            confidence=float(row["confidence"]),
+            occurred_at=int(row["occurred_at"]),
+            decision_id=str(row["decision_id"] or ""),
+            status=ContinuityFollowupStatus(str(row["status"])),
+            sent=bool(row["sent"]),
+            sent_at=row["sent_at"],
+            rejected_at=row["rejected_at"],
+            rejection_reason=str(row["rejection_reason"] or ""),
+            extractor_version=str(row["extractor_version"]),
+        )
+
+    def append_continuity_followup(
+        self, persona_id: str, event: ContinuityFollowupEvent
+    ) -> Optional[ContinuityFollowupEvent]:
+        persona_id = _require_persona_id(persona_id)
+
+        def operation(db):
+            item = db.execute(
+                "SELECT status FROM continuity_items WHERE persona_id=? AND item_id=?",
+                (persona_id, event.item_id),
+            ).fetchone()
+            if item is None or str(item["status"]) != "open":
+                return None
+            cursor = db.execute(
+                """
+                INSERT OR IGNORE INTO continuity_followup_events(
+                    event_id, persona_id, item_id, group_id, subject_id,
+                    source_message_id, evidence_quote, outcome, response_policy,
+                    confidence, occurred_at, decision_id, status, sent, sent_at,
+                    rejected_at, rejection_reason, extractor_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    persona_id,
+                    event.item_id,
+                    event.group_id,
+                    event.subject_id,
+                    event.source_message_id,
+                    event.evidence_quote,
+                    event.outcome.value,
+                    event.response_policy,
+                    event.confidence,
+                    event.occurred_at,
+                    event.decision_id,
+                    event.status.value,
+                    int(event.sent),
+                    event.sent_at,
+                    event.rejected_at,
+                    event.rejection_reason,
+                    event.extractor_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            if event.outcome in {
+                ContinuityFollowupOutcome.COMPLETED,
+                ContinuityFollowupOutcome.CANCELLED,
+            } and event.response_policy == "speak":
+                next_status = (
+                    ContinuityStatus.COMPLETED.value
+                    if event.outcome is ContinuityFollowupOutcome.COMPLETED
+                    else ContinuityStatus.CANCELLED.value
+                )
+                db.execute(
+                    "UPDATE continuity_items SET status=?, resolution_message_id=?, "
+                    "resolution_quote=?, resolved_at=?, updated_at=? "
+                    "WHERE persona_id=? AND item_id=? AND status='open'",
+                    (
+                        next_status,
+                        event.source_message_id,
+                        event.evidence_quote,
+                        event.occurred_at,
+                        event.occurred_at,
+                        persona_id,
+                        event.item_id,
+                    ),
+                )
+            else:
+                db.execute(
+                    "UPDATE continuity_items SET updated_at=? "
+                    "WHERE persona_id=? AND item_id=? AND status='open'",
+                    (event.occurred_at, persona_id, event.item_id),
+                )
+            return db.execute(
+                "SELECT * FROM continuity_followup_events WHERE persona_id=? AND event_id=?",
+                (persona_id, event.event_id),
+            ).fetchone()
+
+        row = self._write(operation)
+        return self._row_to_continuity_followup(row) if row is not None else None
+
+    def mark_continuity_followup_sent(
+        self, persona_id: str, event_id: str, *, sent_at: int
+    ) -> Optional[ContinuityFollowupEvent]:
+        persona_id = _require_persona_id(persona_id)
+
+        def operation(db):
+            cursor = db.execute(
+                "UPDATE continuity_followup_events SET sent=1, sent_at=? "
+                "WHERE persona_id=? AND event_id=? AND status='accepted' AND sent=0",
+                (int(sent_at), persona_id, str(event_id)),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return db.execute(
+                "SELECT * FROM continuity_followup_events WHERE persona_id=? AND event_id=?",
+                (persona_id, str(event_id)),
+            ).fetchone()
+
+        row = self._write(operation)
+        return self._row_to_continuity_followup(row) if row is not None else None
+
+    def reopen_continuity_item_after_unsent_followup(
+        self, persona_id: str, event_id: str, *, now: int
+    ) -> Optional[ContinuityItem]:
+        persona_id = _require_persona_id(persona_id)
+
+        def operation(db):
+            row = db.execute(
+                "SELECT * FROM continuity_followup_events WHERE persona_id=? AND event_id=?",
+                (persona_id, str(event_id)),
+            ).fetchone()
+            if row is None or int(row["sent"] or 0):
+                return None
+            outcome = str(row["outcome"] or "").strip().lower()
+            if outcome not in {"completed", "cancelled"}:
+                return None
+            cursor = db.execute(
+                "UPDATE continuity_items SET status='open', resolution_message_id=NULL, "
+                "resolution_quote='', resolved_at=NULL, updated_at=? "
+                "WHERE persona_id=? AND item_id=? AND status IN ('completed','cancelled')",
+                (int(now), persona_id, str(row["item_id"])),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return db.execute(
+                "SELECT * FROM continuity_items WHERE persona_id=? AND item_id=?",
+                (persona_id, str(row["item_id"])),
+            ).fetchone()
+
+        row = self._write(operation)
+        return self._row_to_continuity(row) if row is not None else None
+
+    def list_continuity_followups(
+        self,
+        persona_id: str,
+        *,
+        group_id: Optional[str] = None,
+        item_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[ContinuityFollowupEvent]:
+        persona_id = _require_persona_id(persona_id)
+        sql = "SELECT * FROM continuity_followup_events WHERE persona_id=?"
+        params: List[Any] = [persona_id]
+        if group_id is not None:
+            sql += " AND group_id=?"
+            params.append(str(group_id))
+        if item_id is not None:
+            sql += " AND item_id=?"
+            params.append(str(item_id))
+        sql += " ORDER BY occurred_at DESC LIMIT ?"
+        params.append(max(1, min(500, int(limit))))
+        rows = self._db.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_continuity_followup(row) for row in rows]
+
+    def reject_continuity_followup_with_audit(
+        self,
+        persona_id: str,
+        event_id: str,
+        *,
+        reason: str,
+        actor: str,
+        now: int,
+    ) -> Optional[Dict[str, Any]]:
+        persona_id = _require_persona_id(persona_id)
+        action_id = str(uuid4())
+
+        def operation(db):
+            row = db.execute(
+                "SELECT * FROM continuity_followup_events WHERE persona_id=? AND event_id=?",
+                (persona_id, str(event_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            event = self._row_to_continuity_followup(row)
+            if event.status is ContinuityFollowupStatus.REJECTED:
+                raise ValueError("continuity follow-up is already rejected")
+            item_row = db.execute(
+                "SELECT * FROM continuity_items WHERE persona_id=? AND item_id=?",
+                (persona_id, event.item_id),
+            ).fetchone()
+            item_before = self._continuity_payload(
+                self._row_to_continuity(item_row) if item_row is not None else None
+            )
+            before = {
+                "event": dict(row),
+                "continuity": item_before,
+            }
+            db.execute(
+                "UPDATE continuity_followup_events SET status='rejected', "
+                "rejected_at=?, rejection_reason=? WHERE persona_id=? AND event_id=?",
+                (int(now), str(reason)[:160], persona_id, event.event_id),
+            )
+            if (
+                item_row is not None
+                and event.outcome in {
+                    ContinuityFollowupOutcome.COMPLETED,
+                    ContinuityFollowupOutcome.CANCELLED,
+                }
+                and str(item_row["resolution_message_id"] or "")
+                == event.source_message_id
+            ):
+                db.execute(
+                    "UPDATE continuity_items SET status='open', updated_at=?, "
+                    "resolution_message_id=NULL, resolution_quote='', resolved_at=NULL "
+                    "WHERE persona_id=? AND item_id=?",
+                    (int(now), persona_id, event.item_id),
+                )
+            updated_event = db.execute(
+                "SELECT * FROM continuity_followup_events WHERE persona_id=? AND event_id=?",
+                (persona_id, event.event_id),
+            ).fetchone()
+            updated_item = db.execute(
+                "SELECT * FROM continuity_items WHERE persona_id=? AND item_id=?",
+                (persona_id, event.item_id),
+            ).fetchone()
+            after = {
+                "event": dict(updated_event),
+                "continuity": self._continuity_payload(
+                    self._row_to_continuity(updated_item)
+                    if updated_item is not None
+                    else None
+                ),
+            }
+            self._insert_governance_action(
+                db,
+                action_id=action_id,
+                persona_id=persona_id,
+                action_type="continuity_followup_rejected",
+                target_kind="continuity_followup",
+                target_id=event.event_id,
+                group_id=event.group_id,
+                subject_id=event.subject_id,
+                before=before,
+                after=after,
+                reason=reason,
+                actor=actor,
+                created_at=now,
+            )
+            return db.execute(
+                "SELECT * FROM governance_actions WHERE action_id=?", (action_id,)
+            ).fetchone()
+
+        row = self._write(operation)
+        return self._governance_payload(row) if row is not None else None
 
     @staticmethod
     def _continuity_payload(item: Optional[ContinuityItem]) -> Optional[Dict[str, Any]]:
@@ -3556,6 +3906,7 @@ class SQLiteMemoryStore:
                     "member_address_corrected",
                     "member_identity_linked",
                     "continuity_status_corrected",
+                    "continuity_followup_rejected",
                     "self_commitment_status_corrected",
                 }
             ),
@@ -4129,6 +4480,64 @@ class SQLiteMemoryStore:
                 )
                 restored = dict(before or {})
                 restored["updated_at"] = int(now)
+            elif target_kind == "continuity_followup":
+                event_row = db.execute(
+                    "SELECT * FROM continuity_followup_events "
+                    "WHERE persona_id=? AND event_id=?",
+                    (persona_id, original["target_id"]),
+                ).fetchone()
+                if event_row is None:
+                    raise ValueError("continuity follow-up no longer exists")
+                before_event = (before or {}).get("event") or {}
+                before_continuity = (before or {}).get("continuity") or {}
+                current = {
+                    "event": dict(event_row),
+                    "continuity": self._continuity_payload(
+                        self._row_to_continuity(
+                            db.execute(
+                                "SELECT * FROM continuity_items "
+                                "WHERE persona_id=? AND item_id=?",
+                                (persona_id, str(event_row["item_id"])),
+                            ).fetchone()
+                        )
+                    ),
+                }
+                db.execute(
+                    "UPDATE continuity_followup_events SET status=?, rejected_at=?, "
+                    "rejection_reason=? WHERE persona_id=? AND event_id=?",
+                    (
+                        str(before_event.get("status") or "accepted"),
+                        before_event.get("rejected_at"),
+                        str(before_event.get("rejection_reason") or ""),
+                        persona_id,
+                        original["target_id"],
+                    ),
+                )
+                if before_continuity:
+                    db.execute(
+                        "UPDATE continuity_items SET status=?, updated_at=?, "
+                        "resolution_message_id=?, resolution_quote=?, resolved_at=? "
+                        "WHERE persona_id=? AND item_id=?",
+                        (
+                            str(before_continuity.get("status") or "open"),
+                            int(now),
+                            before_continuity.get("resolution_message_id"),
+                            str(before_continuity.get("resolution_quote") or ""),
+                            before_continuity.get("resolved_at"),
+                            persona_id,
+                            str(event_row["item_id"]),
+                        ),
+                    )
+                restored = {
+                    "event": dict(
+                        db.execute(
+                            "SELECT * FROM continuity_followup_events "
+                            "WHERE persona_id=? AND event_id=?",
+                            (persona_id, original["target_id"]),
+                        ).fetchone()
+                    ),
+                    "continuity": before_continuity,
+                }
             elif target_kind == "self_commitment":
                 commitment_row = db.execute(
                     "SELECT * FROM self_commitments WHERE persona_id=? AND commitment_id=?",

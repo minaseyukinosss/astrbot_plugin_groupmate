@@ -302,6 +302,7 @@ def test_governance_api_requires_confirmation_and_applies_operations(monkeypatch
     run_self_commitments = []
     rejected_evidence = []
     reviewed_evidence = []
+    rejected_followups = []
     bridge = types.SimpleNamespace(
         cognition_snapshot=lambda: {"identity": {"display_name": "爱弥斯"}},
         delete_governed_memory=lambda memory_id, reason: deleted.append(
@@ -345,6 +346,10 @@ def test_governance_api_requires_confirmation_and_applies_operations(monkeypatch
             (event_id, reason)
         )
         or {"action_id": "a-evidence"},
+        reject_continuity_followup=lambda event_id, reason: rejected_followups.append(
+            (event_id, reason)
+        )
+        or {"action_id": "a-followup"},
         review_relationship_evidence=lambda event_id, outcome, reason: reviewed_evidence.append(
             (event_id, outcome, reason)
         )
@@ -415,6 +420,13 @@ def test_governance_api_requires_confirmation_and_applies_operations(monkeypatch
             "reason": "当前缺少执行所需权限",
         }
     ]
+
+    Request.payload = {"confirm": False, "reason": "对应的是另一件事"}
+    assert asyncio.run(api.reject_continuity_followup("f1"))["status_code"] == 400
+    Request.payload = {"confirm": True, "reason": "对应的是另一件事"}
+    result = asyncio.run(api.reject_continuity_followup("f1"))
+    assert result["rejected"] is True
+    assert rejected_followups == [("f1", "对应的是另一件事")]
 
     Request.payload = {"confirm": False}
     assert asyncio.run(api.run_self_commitment("sc1"))["status_code"] == 400

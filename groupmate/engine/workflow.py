@@ -79,8 +79,9 @@ from ..ports import (
 from ..memory.memory_writer import MemoryWriter
 from ..social.affinity import snapshot_for_relationship
 from ..social.evidence import RelationshipEvidenceWriter
-from ..social.continuity import ContinuityWriter
+from ..social.continuity import ContinuityWriter, looks_like_open_loop
 from ..social.commitments import SelfCommitmentWriter
+from ..social.followups import ContinuityFollowupMatcher
 from ..social.reminder_infer import (
     acceptance_fallback_for_request,
     infer_timed_reminder_from_topic,
@@ -131,6 +132,7 @@ class CognitiveWorkflow:
         relationship_evidence_writer: Optional[RelationshipEvidenceWriter] = None,
         continuity_writer: Optional[ContinuityWriter] = None,
         self_commitment_writer: Optional[SelfCommitmentWriter] = None,
+        continuity_followup_matcher: Optional[ContinuityFollowupMatcher] = None,
         task_response_resolver: Optional[TaskResponseResolver] = None,
         capabilities: Optional[CapabilityRegistry] = None,
         capability_governor: Optional[CapabilityGovernor] = None,
@@ -188,6 +190,14 @@ class CognitiveWorkflow:
         self.self_commitment_writer = (
             self_commitment_writer
             or SelfCommitmentWriter(
+                memory,
+                generation_model,
+                persona_id=persona_context.persona_id,
+            )
+        )
+        self.continuity_followup_matcher = (
+            continuity_followup_matcher
+            or ContinuityFollowupMatcher(
                 memory,
                 generation_model,
                 persona_id=persona_context.persona_id,
@@ -281,6 +291,35 @@ class CognitiveWorkflow:
                 now,
             )
 
+        followup_match = None
+        try:
+            followup_match = await self.continuity_followup_matcher.match(
+                topic,
+                trigger=trigger,
+                decision_id=decision_id,
+                now=now,
+            )
+        except Exception:  # noqa: BLE001 - matching must never break a turn
+            self._record(
+                decision_id,
+                topic.group_id,
+                "FOLLOWUP",
+                "match_failed",
+                now,
+            )
+        else:
+            if followup_match is not None:
+                self._record(
+                    decision_id,
+                    topic.group_id,
+                    "FOLLOWUP",
+                    "{}:{}".format(
+                        followup_match.event.outcome.value,
+                        followup_match.event.response_policy,
+                    ),
+                    now,
+                )
+
         relationship_state = self._relationship_state_for_target(topic, targeting)
         affinity = snapshot_for_relationship(
             relationship_state,
@@ -327,6 +366,29 @@ class CognitiveWorkflow:
                     "不要重新答应倒计时"
                 ),
             )
+        elif followup_match is not None and (
+            participation.obligation is ParticipationObligation.DIRECT_REQUIRED
+            or (
+                followup_match.should_speak
+                and participation.action is ParticipationAction.SILENCE
+                and "inhibit:owned_by_other_user" not in participation.reason_codes
+                and "inhibit:passing_alias_mention" not in participation.reason_codes
+            )
+        ):
+            participation = replace(
+                participation,
+                action=ParticipationAction.SPEAK,
+                act=participation.act or ResponseAct.ACKNOWLEDGE,
+                obligation=(
+                    participation.obligation
+                    if participation.action is ParticipationAction.SPEAK
+                    else ParticipationObligation.OPEN_OPTIONAL
+                ),
+                reason_codes=participation.reason_codes + (
+                    "motive:continuity_followup",
+                ),
+                contribution=followup_match.contribution,
+            )
         self._record(
             decision_id,
             topic.group_id,
@@ -340,6 +402,14 @@ class CognitiveWorkflow:
                 if participation.reason_codes
                 else "participation_silence"
             )
+            if followup_match is None:
+                await self._maybe_observe_continuity(
+                    topic,
+                    targeting,
+                    decision_id=decision_id,
+                    now=now,
+                    reason_codes=participation.reason_codes,
+                )
             return self._silent(decision_id, topic.group_id, reason, now)
 
         if (
@@ -837,7 +907,7 @@ class CognitiveWorkflow:
             group_id=topic.group_id,
             text=guarded.text,
             urgency=urgency,
-            now=now,
+            now=self.clock.now(),
             ttl_seconds=behavior.conversation.candidate_ttl_seconds,
             max_chars=mode_max,
             max_segments=behavior.reply.max_reply_segments,
@@ -893,6 +963,12 @@ class CognitiveWorkflow:
         )
         send_now = self.clock.now()
         if not outcome.sent:
+            if followup_match is not None:
+                self.memory.reopen_continuity_item_after_unsent_followup(
+                    self.persona_context.persona_id,
+                    followup_match.event.event_id,
+                    now=send_now,
+                )
             self._record(
                 decision_id, topic.group_id, "END", outcome.reason, send_now
             )
@@ -905,6 +981,12 @@ class CognitiveWorkflow:
         if participation.obligation is ParticipationObligation.OPEN_OPTIONAL:
             self.budgets.record_send(send_now)
         self._recent_outputs[topic.group_id].append(outcome.text)
+        if followup_match is not None:
+            self.memory.mark_continuity_followup_sent(
+                self.persona_context.persona_id,
+                followup_match.event.event_id,
+                sent_at=send_now,
+            )
         self._remember_session_turns(topic, outcome.text, send_now)
         try:
             self.memory_writer.schedule_after_send(
@@ -1388,7 +1470,7 @@ class CognitiveWorkflow:
             group_id=topic.group_id,
             text="",
             urgency=urgency,
-            now=now,
+            now=self.clock.now(),
             ttl_seconds=behavior.conversation.candidate_ttl_seconds,
             max_chars=1,
             max_segments=1,
@@ -1632,6 +1714,60 @@ class CognitiveWorkflow:
             target_message_id
             and recent[-1].message_id != str(target_message_id)
         )
+
+    _SKIP_OBSERVE_CONTINUITY = frozenset(
+        {
+            "inhibit:owned_by_other_user",
+            "inhibit:passing_alias_mention",
+            "inhibit:ambiguous_target",
+            "copied_at_bypassed",
+            "empty_topic",
+            "bypassed_trigger",
+        }
+    )
+
+    async def _maybe_observe_continuity(
+        self,
+        topic: TopicSnapshot,
+        targeting: TargetingDecision,
+        *,
+        decision_id: str,
+        now: int,
+        reason_codes: Sequence[str],
+    ) -> None:
+        latest = topic.latest
+        if (
+            latest is None
+            or latest.is_bot
+            or self._SKIP_OBSERVE_CONTINUITY.intersection(reason_codes)
+            or not looks_like_open_loop(latest.text)
+        ):
+            return
+        try:
+            item = await self.continuity_writer.process(
+                topic,
+                targeting,
+                decision_id=decision_id,
+                now=now,
+                reply_text="",
+            )
+        except Exception:  # noqa: BLE001 - observing must never break a turn
+            self._record(
+                decision_id,
+                topic.group_id,
+                "CONTINUITY",
+                "observe_failed",
+                now,
+            )
+            return
+        if item is not None:
+            self._record(
+                decision_id,
+                topic.group_id,
+                "CONTINUITY",
+                "open_on_observe:" + item.kind.value,
+                now,
+            )
 
     def _silent(
         self,

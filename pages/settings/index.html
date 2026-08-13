@@ -179,6 +179,11 @@
                 <p class="section-helper">只展示对方明确留下的计划、承诺和后续事项；爱弥斯只会在语境自然相关时接着聊。</p>
                 <div id="member-continuity" class="continuity-list"></div>
               </section>
+              <section class="member-continuity-section followup-section">
+                <div class="section-title-row"><h3>最近跟进</h3><span id="member-followup-count" class="muted">0 条</span></div>
+                <p class="section-helper">新消息与旧事项的关联依据；静默记住和自然接话都会保留。</p>
+                <div id="member-followups" class="followup-list"></div>
+              </section>
               <section class="member-history-section">
                 <div class="section-title-row"><h3>昵称轨迹</h3><span id="member-history-count" class="muted">0 个</span></div>
                 <div id="member-history" class="member-history"></div>
@@ -364,6 +369,14 @@
       <label class="dialog-field"><span>修正原因</span><input id="self-commitment-reason" type="text" maxlength="120" placeholder="说明实际结果、受阻原因或为什么需要撤回" /></label>
       <p class="dialog-warning review-warning">人工修正会立即影响后续对话，并作为治理记录保留；它不会冒充爱弥斯自己的履约证据。</p>
       <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-self-commitment>返回</button><button id="self-commitment-confirm-submit" class="button button-primary" type="button">确认修正</button></div>
+    </dialog>
+
+    <dialog id="followup-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>否定这次事项关联</h2><p id="followup-confirm-copy"></p>
+      <label class="dialog-field"><span>否定原因</span><input id="followup-reject-reason" type="text" maxlength="120" placeholder="例如：这句话说的是另一场考试" /></label>
+      <p class="dialog-warning">若这次关联曾让事项自动结束，否定后会恢复为进行中；已经发到群里的消息不会被撤回。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-followup>返回</button><button id="followup-confirm-submit" class="button button-danger" type="button">确认否定</button></div>
     </dialog>
 
     <script type="module" src="./app.js"></script>

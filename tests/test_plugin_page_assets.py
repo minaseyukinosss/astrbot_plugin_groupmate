@@ -39,6 +39,10 @@ def test_settings_plugin_page_assets_exist():
     assert "相处中的事情" in html
     assert "continuity/${encodeURIComponent" in script
     assert "continuity_status_corrected" in script
+    assert "最近跟进" in html
+    assert "member-followups" in html
+    assert "continuity/followups/${encodeURIComponent" in script
+    assert "continuity_followup_rejected" in script
     assert 'CONTINUITY: "后续"' in script
     assert 'item.status !== "deleted"' in script
     assert "我答应过的事" in html

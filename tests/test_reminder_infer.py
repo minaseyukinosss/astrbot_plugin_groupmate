@@ -13,6 +13,7 @@ from groupmate.social.reminder_infer import (
     looks_like_premature_reminder_delivery,
     looks_like_reminder_cancel,
     looks_like_timed_reminder_request,
+    looks_like_timed_reminder_continuity,
     parse_relative_offset_seconds,
     recover_due_at,
     reminder_task_from_summary,
@@ -195,6 +196,14 @@ def test_premature_delivery_detected_for_immediate_fulfillment():
         reply_text="该吃饭了",
     )
     assert not looks_like_timed_reminder_request("我们1分钟倒计时开始")
+    assert looks_like_timed_reminder_continuity(
+        "复读斥候要求小爱在1分钟后提醒自己交材料",
+        "小爱，1分钟后提醒我交材料",
+    )
+    assert not looks_like_timed_reminder_continuity(
+        "复读斥候表示考完试后告诉对方结果",
+        "考完试告诉你结果",
+    )
     assert reminder_task_from_summary("提醒交材料") == "交材料"
     assert looks_like_reminder_cancel("算了，不用提醒我了")
     assert looks_like_reminder_cancel("不用提醒我了")

@@ -213,11 +213,16 @@ class GroupActor:
 
         result = self._maybe_continue(message, classified)
         if not appended:
+            # History bootstrap already ingested this identity. Direct wakes
+            # and ordinary candidates must still evaluate; host interactions
+            # (poke) stay one-shot so QQ retries do not double-react.
             if result.kind not in (
                 TriggerKind.NATIVE_DIRECT,
                 TriggerKind.ALIAS_DIRECT,
                 TriggerKind.COPIED_AT,
                 TriggerKind.CONTINUATION,
+                TriggerKind.CANDIDATE,
+                TriggerKind.ALIAS_MENTION,
             ):
                 return
 

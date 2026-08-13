@@ -134,6 +134,48 @@ class FakeMemoryRepository:
         ]
         return items[:limit]
 
+    def resolve_continuity_item(
+        self,
+        persona_id,
+        item_id,
+        *,
+        status,
+        resolution_message_id="",
+        resolution_quote="",
+        resolved_at=0,
+    ):
+        del persona_id
+        from dataclasses import replace
+
+        from groupmate.models import ContinuityStatus
+
+        next_status = (
+            status
+            if isinstance(status, ContinuityStatus)
+            else ContinuityStatus(str(status))
+        )
+        for index, item in enumerate(self.continuity_items):
+            if item.item_id != str(item_id) or item.status is not ContinuityStatus.OPEN:
+                continue
+            updated = replace(
+                item,
+                status=next_status,
+                resolution_message_id=str(resolution_message_id or "") or None,
+                resolution_quote=str(resolution_quote or ""),
+                resolved_at=int(resolved_at or 0) or None,
+                updated_at=int(resolved_at or item.updated_at),
+            )
+            self.continuity_items[index] = updated
+            return updated
+        return None
+
+    def append_continuity_item(self, persona_id, item):
+        del persona_id
+        if any(existing.item_id == item.item_id for existing in self.continuity_items):
+            return None
+        self.continuity_items.append(item)
+        return item
+
     def list_self_commitments(
         self,
         persona_id,
@@ -159,6 +201,93 @@ class FakeMemoryRepository:
             and (not selected_statuses or item.status.value in selected_statuses)
         ]
         return items[:limit]
+
+    def append_continuity_followup(self, persona_id, event):
+        del persona_id
+        from dataclasses import replace
+
+        from groupmate.models import ContinuityFollowupOutcome, ContinuityStatus
+
+        if not hasattr(self, "continuity_followups"):
+            self.continuity_followups = []
+        if any(item.event_id == event.event_id for item in self.continuity_followups):
+            return None
+        self.continuity_followups.append(event)
+        if (
+            event.outcome
+            in (
+                ContinuityFollowupOutcome.COMPLETED,
+                ContinuityFollowupOutcome.CANCELLED,
+            )
+            and event.response_policy == "speak"
+        ):
+            next_status = (
+                ContinuityStatus.COMPLETED
+                if event.outcome is ContinuityFollowupOutcome.COMPLETED
+                else ContinuityStatus.CANCELLED
+            )
+            for index, item in enumerate(self.continuity_items):
+                if item.item_id == event.item_id:
+                    self.continuity_items[index] = replace(
+                        item,
+                        status=next_status,
+                        resolution_message_id=event.source_message_id,
+                        resolution_quote=event.evidence_quote,
+                        resolved_at=event.occurred_at,
+                        updated_at=event.occurred_at,
+                    )
+                    break
+        return event
+
+    def mark_continuity_followup_sent(self, persona_id, event_id, *, sent_at):
+        del persona_id
+        from dataclasses import replace
+
+        if not hasattr(self, "continuity_followups"):
+            return None
+        for index, item in enumerate(self.continuity_followups):
+            if item.event_id == event_id and not item.sent:
+                updated = replace(item, sent=True, sent_at=sent_at)
+                self.continuity_followups[index] = updated
+                return updated
+        return None
+
+    def reopen_continuity_item_after_unsent_followup(self, persona_id, event_id, *, now):
+        del persona_id
+        from dataclasses import replace
+
+        from groupmate.models import ContinuityFollowupOutcome, ContinuityStatus
+
+        if not hasattr(self, "continuity_followups"):
+            return None
+        event = next(
+            (item for item in self.continuity_followups if item.event_id == event_id),
+            None,
+        )
+        if (
+            event is None
+            or event.sent
+            or event.outcome
+            not in (
+                ContinuityFollowupOutcome.COMPLETED,
+                ContinuityFollowupOutcome.CANCELLED,
+            )
+        ):
+            return None
+        for index, item in enumerate(self.continuity_items):
+            if item.item_id != event.item_id:
+                continue
+            updated = replace(
+                item,
+                status=ContinuityStatus.OPEN,
+                resolution_message_id=None,
+                resolution_quote="",
+                resolved_at=None,
+                updated_at=int(now),
+            )
+            self.continuity_items[index] = updated
+            return updated
+        return None
 
     def next_self_commitment_attempt_at(self, persona_id):
         del persona_id

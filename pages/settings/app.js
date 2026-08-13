@@ -32,6 +32,7 @@ const STAGE_LABEL = {
   MEMORY: "记忆",
   RELATIONSHIP: "关系",
   CONTINUITY: "后续",
+  FOLLOWUP: "跟进",
   COMMITMENT: "承诺",
   END: "结束",
 };
@@ -93,6 +94,7 @@ const TERM = {
   "inhibit:empty_echo": "避免空复读",
   "inhibit:avoid_monopoly": "避免连续抢话",
   "motive:help_when_concrete": "出现具体求助",
+  "motive:continuity_followup": "旧事项出现明确进展",
   no_open_motive: "没有自然开口动机",
   no_personal_memory: "没有相关个人记忆",
   supported: "已支持",
@@ -123,10 +125,14 @@ const TERM = {
   member_address_corrected: "修正成员称呼",
   member_identity_linked: "关联成员身份",
   continuity_status_corrected: "修正未完事项",
+  continuity_followup_rejected: "否定事项关联",
   self_commitment_status_corrected: "修正自我承诺",
   plan: "计划",
   promise: "承诺",
   follow_up: "后续事项",
+  progress: "出现进展",
+  observe: "静默记住",
+  speak: "自然接话",
   open: "进行中",
   completed: "已完成",
   cancelled: "已取消",
@@ -194,7 +200,9 @@ const els = Object.fromEntries(
     "member-summary", "member-count", "member-renamed-count", "member-address-count",
     "member-linked-count", "member-body", "member-empty", "member-editor", "member-name",
     "member-context", "member-history-count", "member-history", "member-form",
-    "member-continuity-count", "member-continuity",
+    "member-continuity-count", "member-continuity", "member-followup-count",
+    "member-followups", "followup-confirm", "followup-confirm-copy",
+    "followup-reject-reason", "followup-confirm-submit",
     "member-link-target", "member-link-reason", "member-link-button", "member-link-confirm",
     "member-link-confirm-copy", "member-link-confirm-submit",
     "continuity-confirm", "continuity-confirm-copy", "continuity-reason", "continuity-confirm-submit",
@@ -228,6 +236,7 @@ const state = {
   pendingGovernance: null,
   pendingMemberLink: null,
   pendingContinuity: null,
+  pendingFollowup: null,
   pendingSelfCommitment: null,
   group: "",
   paused: false,
@@ -555,6 +564,7 @@ function renderMemberEditor(item) {
   els.member_context.textContent = `群 ${shortId(item.group_id, 14)} · 首次出现 ${formatTime(item.first_seen_at)} · 最近出现 ${formatTime(item.last_seen_at)}`;
   const history = [...(item.nickname_history || [])].sort((a, b) => Number(b.last_seen_at || 0) - Number(a.last_seen_at || 0));
   renderMemberContinuity(item);
+  renderMemberFollowups(item);
   els.member_history_count.textContent = `${history.length} 个`;
   els.member_history.innerHTML = history.length ? history.map((entry, index) => (
     `<div class="member-history-row"><div><strong>${escapeHtml(entry.name)}</strong><span>${index === 0 ? "当前或最近使用" : "历史昵称"}</span></div><time>${formatTime(entry.first_seen_at)} 至 ${formatTime(entry.last_seen_at)}</time></div>`
@@ -570,6 +580,55 @@ function renderMemberEditor(item) {
   els.member_link_reason.value = "";
   els.member_link_button.disabled = item.identity_status === "linked";
   els.member_link_button.textContent = item.identity_status === "linked" ? `已关联到 ${item.canonical_name || "正确成员"}` : "检查并关联";
+}
+
+function renderMemberFollowups(item) {
+  const items = (state.cognition?.continuity_followups || []).filter((entry) => (
+    entry.group_id === item.group_id && entry.subject_id === item.subject_id
+  )).slice(0, 12);
+  els.member_followup_count.textContent = `${items.length} 条`;
+  els.member_followups.innerHTML = items.length ? items.map((entry) => {
+    const rejected = entry.status === "rejected";
+    const result = entry.sent ? "已自然接话" : entry.response_policy === "speak" ? "计划接话但最终保持沉默" : "已静默记住";
+    return `<article class="followup-item" data-status="${escapeHtml(entry.status)}">
+      <div class="followup-head"><span class="tag" data-tone="${rejected ? "neutral" : entry.sent ? "ok" : "warning"}">${escapeHtml(rejected ? "已否定" : translateToken(entry.outcome))}</span><time>${formatTime(entry.occurred_at)}</time></div>
+      <strong>${escapeHtml(entry.item_summary)}</strong>
+      <q>${escapeHtml(entry.evidence_quote)}</q>
+      <div class="followup-meta"><span>${escapeHtml(result)}</span><span>可信度 ${Math.round(Number(entry.confidence || 0) * 100)}%</span></div>
+      ${rejected ? `<p class="followup-rejection">否定原因：${escapeHtml(entry.rejection_reason || "管理员已否定")}</p>` : `<button class="text-button danger-link" type="button" data-reject-followup="${escapeHtml(entry.event_id)}">否定关联</button>`}
+    </article>`;
+  }).join("") : '<div class="empty-state compact-empty">还没有新消息与旧事项形成明确关联。</div>';
+}
+
+function openFollowupConfirm(eventId) {
+  const item = (state.cognition?.continuity_followups || []).find((entry) => entry.event_id === eventId);
+  if (!item) return;
+  state.pendingFollowup = item;
+  els.followup_confirm_copy.textContent = `“${item.evidence_quote}”被关联到“${item.item_summary}”。`;
+  els.followup_reject_reason.value = "";
+  els.followup_confirm.showModal();
+}
+
+async function rejectFollowup() {
+  if (!state.pendingFollowup) return;
+  const reason = els.followup_reject_reason.value.trim();
+  if (!reason) {
+    showError("请填写否定原因。");
+    return;
+  }
+  setBusy(els.followup_confirm_submit, true, "处理中");
+  try {
+    await apiPost(`continuity/followups/${encodeURIComponent(state.pendingFollowup.event_id)}/reject`, { confirm: true, reason });
+    state.pendingFollowup = null;
+    els.followup_confirm.close();
+    await loadAll({ quiet: true });
+    if (state.selectedMember) renderMembers();
+    showToast("关联已否定，事项状态已重新核对");
+  } catch (error) {
+    showError(`否定事项关联失败：${apiError(error)}`);
+  } finally {
+    setBusy(els.followup_confirm_submit, false);
+  }
 }
 
 function renderMemberContinuity(item) {
@@ -1370,6 +1429,7 @@ document.querySelector("[data-cancel-evidence-review]").addEventListener("click"
 document.querySelector("[data-cancel-governance]").addEventListener("click", () => els.governance_confirm.close());
 document.querySelector("[data-cancel-member-link]").addEventListener("click", () => els.member_link_confirm.close());
 document.querySelector("[data-cancel-continuity]").addEventListener("click", () => els.continuity_confirm.close());
+document.querySelector("[data-cancel-followup]").addEventListener("click", () => els.followup_confirm.close());
 document.querySelector("[data-cancel-self-commitment]").addEventListener("click", () => els.self_commitment_confirm.close());
 
 els.refresh.addEventListener("click", () => loadAll());
@@ -1411,6 +1471,11 @@ els.member_continuity.addEventListener("click", (event) => {
   const button = event.target.closest("[data-continuity-id]");
   if (button) openContinuityConfirm(button.dataset.continuityId, button.dataset.continuityStatus);
 });
+els.member_followups.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-reject-followup]");
+  if (button) openFollowupConfirm(button.dataset.rejectFollowup);
+});
+els.followup_confirm_submit.addEventListener("click", rejectFollowup);
 els.continuity_confirm_submit.addEventListener("click", correctContinuity);
 els.self_commitment_list.addEventListener("click", (event) => {
   const runButton = event.target.closest("[data-run-self-commitment]");

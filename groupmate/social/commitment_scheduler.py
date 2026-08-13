@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import uuid4
@@ -19,6 +20,7 @@ from ..capabilities.contracts import (
 )
 from ..capabilities.governor import CapabilityGovernor
 from ..engine.delivery import DeliveryService, build_delivery_plan
+from .continuity import close_continuity_for_resolved_reminder
 from .reminder_infer import (
     is_short_commitment,
     looks_like_reminder_cancel,
@@ -268,7 +270,7 @@ class CommitmentScheduler:
             return
         if item.fulfillment_mode == "reminder":
             if self._reminder_cancelled_in_chat(item):
-                self.memory.resolve_self_commitment(
+                resolved = self.memory.resolve_self_commitment(
                     self.persona_id,
                     item.commitment_id,
                     status=SelfCommitmentStatus.WITHDRAWN,
@@ -276,6 +278,13 @@ class CommitmentScheduler:
                     result_quote="cancelled_before_due",
                     failure_code="cancelled_before_due",
                     resolved_at=now,
+                )
+                close_continuity_for_resolved_reminder(
+                    self.memory,
+                    self.persona_id,
+                    resolved
+                    or replace(item, status=SelfCommitmentStatus.WITHDRAWN),
+                    now=int(now),
                 )
                 self._record(
                     decision_id,
@@ -287,7 +296,7 @@ class CommitmentScheduler:
                 return
             text = self._reminder_text(item)
             outcome = await self._deliver(item, decision_id, text, now)
-            self._finish(
+            finished = self._finish(
                 item,
                 status=(
                     SelfCommitmentStatus.COMPLETED
@@ -301,6 +310,18 @@ class CommitmentScheduler:
                 next_attempt_at=None if outcome.sent else now + 45,
                 delivered=outcome.sent,
             )
+            if outcome.sent:
+                close_continuity_for_resolved_reminder(
+                    self.memory,
+                    self.persona_id,
+                    finished
+                    or replace(
+                        item,
+                        status=SelfCommitmentStatus.COMPLETED,
+                        result_quote=text,
+                    ),
+                    now=int(now),
+                )
             return
         self._finish(
             item,

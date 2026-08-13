@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Optional, Sequence
 
+from ..core.history_format import select_active_messages
 from ..core.intent import select_reply_mode
 from ..core.presence import project_presence
 from ..core.response_act import ResponseAct, TaskResolution, plan_response_act
@@ -399,7 +400,13 @@ class ParticipationDecisionEngine:
                 reason_codes=("inhibit:empty_echo",),
                 posture=affinity.response_posture,
             )
-        presence = project_presence(topic.messages, now=now)
+        presence = project_presence(
+            select_active_messages(
+                topic.messages,
+                topic_created_at=topic.created_at,
+            ),
+            now=now,
+        )
         if presence.bot_message_count >= 2:
             return ParticipationDecision.silence(
                 scene=scene,

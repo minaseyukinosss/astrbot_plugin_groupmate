@@ -61,6 +61,7 @@ def test_web_api_registers_decision_routes():
     assert "/astrbot_plugin_groupmate/members/correct" in paths
     assert "/astrbot_plugin_groupmate/members/link" in paths
     assert "/astrbot_plugin_groupmate/continuity/<item_id>/status" in paths
+    assert "/astrbot_plugin_groupmate/continuity/followups/<event_id>/reject" in paths
     assert "/astrbot_plugin_groupmate/commitments/<commitment_id>/status" in paths
     assert "/astrbot_plugin_groupmate/commitments/<commitment_id>/run" in paths
     assert "/astrbot_plugin_groupmate/governance/<action_id>/revert" in paths

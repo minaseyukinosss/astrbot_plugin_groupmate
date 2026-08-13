@@ -13,6 +13,7 @@ from .projector import SocialStateProjector
 from .evidence import RelationshipEvidenceWriter
 from .continuity import ContinuityWriter
 from .commitments import SelfCommitmentWriter
+from .followups import ContinuityFollowupMatcher, FollowupMatch
 
 __all__ = [
     "AffinityBand",
@@ -22,6 +23,8 @@ __all__ = [
     "RelationshipEvidenceWriter",
     "ContinuityWriter",
     "SelfCommitmentWriter",
+    "ContinuityFollowupMatcher",
+    "FollowupMatch",
     "band_for_affinity",
     "clamp_affinity",
     "initial_affinity_for_relationship",

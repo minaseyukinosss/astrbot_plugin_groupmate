@@ -343,6 +343,28 @@ def test_duplicate_direct_wake_still_evaluates_after_preload(message_factory):
     assert workflow.evaluations[0][1].value == "alias_direct"
 
 
+def test_candidate_still_evaluates_after_history_preload(message_factory):
+    async def scenario():
+        workflow = RecordingWorkflow()
+        actor = actor_for(workflow)
+        await actor.start()
+        message = message_factory(
+            message_id="exam-1",
+            text="考完试告诉你结果",
+            timestamp=100,
+        )
+        await actor.preload(message)
+        await actor.submit(message)
+        await actor.drain()
+        await actor.close()
+        return workflow
+
+    workflow = asyncio.run(scenario())
+
+    assert len(workflow.evaluations) == 1
+    assert workflow.evaluations[0][1].value == "candidate"
+
+
 def test_runtime_manager_keeps_groups_isolated(message_factory):
     async def scenario():
         workflows = {}

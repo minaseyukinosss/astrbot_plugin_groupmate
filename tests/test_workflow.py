@@ -18,6 +18,9 @@ from groupmate.core import response_act as response_act_module
 from groupmate.core.speak_contract import SpeakContract, is_silence
 from groupmate.models import (
     ChatMessage,
+    ContinuityItem,
+    ContinuityKind,
+    ContinuityStatus,
     MessageOrigin,
     RelationshipState,
     ReplyMode,
@@ -102,6 +105,352 @@ class RecordingGenerationModel(StaticGenerationModel):
     async def generate(self, plan, topic, memories):
         self.plans.append(plan)
         return await super().generate(plan, topic, memories)
+
+
+class FollowupGenerationModel(RecordingGenerationModel):
+    def __init__(self, payload, text="发挥还行就好，先歇会儿。"):
+        super().__init__(text)
+        self.followup_payload = payload
+        self.followup_calls = 0
+
+    async def extract_continuity_followup(self, **kwargs):
+        del kwargs
+        self.followup_calls += 1
+        return self.followup_payload
+
+
+def _fake_open_followup(memory):
+    memory.continuity_items.append(
+        ContinuityItem(
+            item_id="exam-followup",
+            group_id="g1",
+            subject_id="u1",
+            kind=ContinuityKind.FOLLOW_UP,
+            summary="小明考完试后会告诉爱弥斯结果",
+            source_message_id="old-message",
+            source_quote="考完告诉你结果",
+            created_at=10,
+            updated_at=10,
+        )
+    )
+
+
+def test_workflow_naturally_speaks_on_high_confidence_followup(message_factory):
+    memory = FakeMemoryRepository()
+    _fake_open_followup(memory)
+    generator = FollowupGenerationModel(
+        {
+            "item_id": "exam-followup",
+            "outcome": "completed",
+            "response_policy": "speak",
+            "evidence_quote": "考完了，发挥还行",
+            "confidence": 0.99,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "followup-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="new-result",
+                sender_id="u1",
+                sender_name="小明",
+                text="考完了，发挥还行",
+                timestamp=100,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is True
+    assert generator.followup_calls == 0
+    assert memory.continuity_followups[0].sent is True
+    assert any(
+        state == "FOLLOWUP" and reason == "completed:speak"
+        for _, _, state, reason, _ in memory.transitions
+    )
+
+
+def test_workflow_never_interrupts_followup_message_owned_by_someone_else(
+    message_factory,
+):
+    memory = FakeMemoryRepository()
+    _fake_open_followup(memory)
+    generator = FollowupGenerationModel(
+        {
+            "item_id": "exam-followup",
+            "outcome": "progress",
+            "response_policy": "speak",
+            "evidence_quote": "考试改到下周了",
+            "confidence": 0.99,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "owned-followup-topic",
+        "g1",
+        (
+            message_factory(
+                message_id="owned-progress",
+                sender_id="u1",
+                sender_name="小明",
+                text="考试改到下周了",
+                timestamp=100,
+                mentioned_user_ids=("u2",),
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is False
+    assert memory.continuity_followups[0].response_policy == "observe"
+    assert memory.continuity_followups[0].sent is False
+
+
+def test_workflow_followup_speaks_even_when_recent_bot_would_monopolize(
+    message_factory,
+):
+    memory = FakeMemoryRepository()
+    _fake_open_followup(memory)
+    generator = FollowupGenerationModel(
+        {
+            "item_id": "exam-followup",
+            "outcome": "completed",
+            "response_policy": "speak",
+            "evidence_quote": "考完了，发挥还行",
+            "confidence": 0.99,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "monopoly-followup",
+        "g1",
+        (
+            message_factory(
+                message_id="bot-1",
+                sender_id="__bot__",
+                sender_name="爱弥斯",
+                text="好，等你消息。",
+                timestamp=90,
+                is_bot=True,
+            ),
+            message_factory(
+                message_id="bot-2",
+                sender_id="__bot__",
+                sender_name="爱弥斯",
+                text="先忙你的。",
+                timestamp=91,
+                is_bot=True,
+            ),
+            message_factory(
+                message_id="new-result",
+                sender_id="u1",
+                sender_name="小明",
+                text="考完了，发挥还行",
+                timestamp=100,
+            ),
+        ),
+        90,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is True
+    assert any(
+        state == "FOLLOWUP" and reason == "completed:speak"
+        for _, _, state, reason, _ in memory.transitions
+    )
+    assert any(
+        "motive:continuity_followup" in reason
+        for _, _, state, reason, _ in memory.transitions
+        if state == "PARTICIPATION"
+    )
+
+
+def test_workflow_followup_ttl_starts_when_reply_is_ready(message_factory):
+    memory = FakeMemoryRepository()
+    _fake_open_followup(memory)
+    clock = FakeClock(100)
+
+    class SlowFollowup(FollowupGenerationModel):
+        async def generate(self, plan, topic, memories):
+            clock.value += 30
+            return await super().generate(plan, topic, memories)
+
+    generator = SlowFollowup(
+        {
+            "item_id": "exam-followup",
+            "outcome": "completed",
+            "response_policy": "speak",
+            "evidence_quote": "考完了，发挥还行",
+            "confidence": 0.99,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory, clock=clock)
+    topic = TopicSnapshot(
+        "slow-followup",
+        "g1",
+        (
+            message_factory(
+                message_id="new-result",
+                sender_id="u1",
+                sender_name="小明",
+                text="考完了，发挥还行",
+                timestamp=100,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is True
+    assert memory.continuity_items[0].status is ContinuityStatus.COMPLETED
+
+
+def test_workflow_reopens_item_when_followup_delivery_fails(message_factory):
+    memory = FakeMemoryRepository()
+    _fake_open_followup(memory)
+    generator = FollowupGenerationModel(
+        {
+            "item_id": "exam-followup",
+            "outcome": "completed",
+            "response_policy": "speak",
+            "evidence_quote": "考完了，发挥还行",
+            "confidence": 0.99,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "failed-followup",
+        "g1",
+        (
+            message_factory(
+                message_id="new-result",
+                sender_id="u1",
+                sender_name="小明",
+                text="考完了，发挥还行",
+                timestamp=100,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(
+            topic,
+            TriggerKind.CANDIDATE,
+            workflow.behavior,
+            still_valid=lambda: False,
+        )
+    )
+
+    assert outcome.sent is False
+    assert outcome.reason == "delivery_expired"
+    assert memory.continuity_items[0].status is ContinuityStatus.OPEN
+    assert memory.continuity_followups[0].sent is False
+
+
+class ContinuityOpenGenerationModel(StaticGenerationModel):
+    def __init__(self, payload, text="收到。"):
+        super().__init__(text)
+        self.payload = payload
+        self.update_calls = 0
+
+    async def extract_continuity_update(self, **kwargs):
+        del kwargs
+        self.update_calls += 1
+        return self.payload
+
+
+def test_workflow_opens_followup_item_on_silent_observe(message_factory):
+    memory = FakeMemoryRepository()
+    generator = ContinuityOpenGenerationModel(
+        {
+            "action": "OPEN",
+            "kind": "follow_up",
+            "summary": "小明考完试后会告诉爱弥斯结果",
+            "evidence_quote": "考完试告诉你结果",
+            "due_at": None,
+            "confidence": 0.96,
+        }
+    )
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "observe-open",
+        "g1",
+        (
+            message_factory(
+                message_id="promise",
+                sender_id="u1",
+                sender_name="小明",
+                text="考完试告诉你结果",
+                timestamp=100,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is False
+    assert generator.update_calls == 1
+    assert memory.continuity_items[0].kind.value == "follow_up"
+    assert memory.continuity_items[0].source_quote == "考完试告诉你结果"
+    assert any(
+        state == "CONTINUITY" and reason.startswith("open_on_observe")
+        for _, _, state, reason, _ in memory.transitions
+    )
+
+
+def test_workflow_does_not_extract_continuity_on_idle_chat(message_factory):
+    memory = FakeMemoryRepository()
+    generator = ContinuityOpenGenerationModel({"action": "NONE"})
+    workflow = build_workflow(generator=generator, memory=memory)
+    topic = TopicSnapshot(
+        "idle-chat",
+        "g1",
+        (
+            message_factory(
+                message_id="idle",
+                sender_id="u1",
+                sender_name="小明",
+                text="今天晚饭吃火锅",
+                timestamp=100,
+            ),
+        ),
+        100,
+        100,
+    )
+
+    outcome = asyncio.run(
+        workflow.evaluate(topic, TriggerKind.CANDIDATE, workflow.behavior)
+    )
+
+    assert outcome.sent is False
+    assert generator.update_calls == 0
+    assert memory.continuity_items == []
 
 
 def test_workflow_uses_canonical_member_for_history_text_name_and_trace(message_factory):

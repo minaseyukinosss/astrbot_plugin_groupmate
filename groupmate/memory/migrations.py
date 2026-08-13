@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class SchemaMigrationError(RuntimeError):
@@ -1203,6 +1203,73 @@ def _verify_v18(db: sqlite3.Connection) -> None:
         raise SchemaMigrationError("schema v18 integrity check failed")
 
 
+def _v18_to_v19(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS continuity_followup_events (
+            event_id TEXT PRIMARY KEY,
+            persona_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            source_message_id TEXT NOT NULL,
+            evidence_quote TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            response_policy TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            occurred_at INTEGER NOT NULL,
+            decision_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'accepted',
+            sent INTEGER NOT NULL DEFAULT 0,
+            sent_at INTEGER,
+            rejected_at INTEGER,
+            rejection_reason TEXT NOT NULL DEFAULT '',
+            extractor_version TEXT NOT NULL DEFAULT 'context-llm-v1',
+            UNIQUE(persona_id, group_id, source_message_id, item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_continuity_followup_persona_time
+            ON continuity_followup_events(persona_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_continuity_followup_item
+            ON continuity_followup_events(persona_id, item_id, occurred_at DESC);
+        """
+    )
+
+
+def _verify_v19(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(continuity_followup_events)")
+    }
+    required = {
+        "event_id",
+        "persona_id",
+        "item_id",
+        "group_id",
+        "subject_id",
+        "source_message_id",
+        "evidence_quote",
+        "outcome",
+        "response_policy",
+        "confidence",
+        "occurred_at",
+        "status",
+        "sent",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v19 follow-up verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM continuity_followup_events WHERE "
+        "outcome NOT IN ('progress','completed','cancelled') OR "
+        "response_policy NOT IN ('observe','speak') OR "
+        "status NOT IN ('accepted','rejected') OR sent NOT IN (0,1)"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v19 contains invalid follow-up events")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v19 integrity check failed")
+
+
 def _set_version(db: sqlite3.Connection, version: int) -> None:
     db.execute(
         "UPDATE schema_meta SET value=? WHERE key='version'",
@@ -1226,7 +1293,7 @@ def migrate_database(path: Path) -> Optional[Path]:
                 current, SCHEMA_VERSION
             )
         )
-    if current not in (0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, SCHEMA_VERSION):
+    if current not in (0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, SCHEMA_VERSION):
         db.close()
         raise UnsupportedSchemaError(
             "no safe migration path from schema {}".format(current)
@@ -1261,6 +1328,8 @@ def migrate_database(path: Path) -> Optional[Path]:
                 _verify_v17(db)
                 _v17_to_v18(db)
                 _verify_v18(db)
+                _v18_to_v19(db)
+                _verify_v19(db)
                 _set_version(db, SCHEMA_VERSION)
             current = SCHEMA_VERSION
         if current == 5:
@@ -1487,6 +1556,17 @@ def migrate_database(path: Path) -> Optional[Path]:
             try:
                 _v17_to_v18(db)
                 _verify_v18(db)
+                _set_version(db, 18)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = 18
+        if current == 18:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v18_to_v19(db)
+                _verify_v19(db)
                 _set_version(db, SCHEMA_VERSION)
                 db.commit()
             except BaseException:

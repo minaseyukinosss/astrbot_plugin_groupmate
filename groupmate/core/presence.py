@@ -24,8 +24,17 @@ def project_presence(
     window: int = 8,
 ) -> PresenceProjection:
     recent = tuple(messages)[-max(1, int(window)) :]
-    bot_count = sum(1 for item in recent if item.is_bot)
-    human_count = len(recent) - bot_count
+    bot_count = 0
+    last_bot_text = None
+    for item in recent:
+        if not item.is_bot:
+            last_bot_text = None
+            continue
+        text = str(item.text or "").strip()
+        if text != last_bot_text:
+            bot_count += 1
+        last_bot_text = text
+    human_count = sum(1 for item in recent if not item.is_bot)
     density = float(bot_count) / float(len(recent)) if recent else 0.0
     last_bot_at = 0
     for item in reversed(recent):

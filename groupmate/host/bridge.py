@@ -826,6 +826,37 @@ class AstrBotBridge:
                 }
             )
 
+        continuity_followups = []
+        continuity_by_id = {entry["item_id"]: entry for entry in continuity}
+        for event in self.memory.list_continuity_followups(persona_id, limit=500):
+            continuity_item = continuity_by_id.get(event.item_id) or {}
+            canonical_subject_id = self.memory.resolve_member_subject_id(
+                persona_id, event.group_id, event.subject_id
+            )
+            continuity_followups.append(
+                {
+                    "event_id": event.event_id,
+                    "item_id": event.item_id,
+                    "item_summary": continuity_item.get("summary")
+                    or "原事项已不可见",
+                    "group_id": event.group_id,
+                    "subject_id": canonical_subject_id,
+                    "subject_name": display_name(event.group_id, canonical_subject_id),
+                    "source_message_id": event.source_message_id,
+                    "evidence_quote": event.evidence_quote,
+                    "outcome": event.outcome.value,
+                    "response_policy": event.response_policy,
+                    "confidence": event.confidence,
+                    "occurred_at": event.occurred_at,
+                    "decision_id": event.decision_id,
+                    "status": event.status.value,
+                    "sent": event.sent,
+                    "sent_at": event.sent_at,
+                    "rejected_at": event.rejected_at,
+                    "rejection_reason": event.rejection_reason,
+                }
+            )
+
         self_commitments = []
         for item in self.memory.list_self_commitments(
             persona_id,
@@ -997,6 +1028,7 @@ class AstrBotBridge:
             },
             "memories": memories,
             "continuity": continuity,
+            "continuity_followups": continuity_followups,
             "self_commitments": self_commitments,
             "capabilities": capabilities,
             "governance": governance,
@@ -1145,6 +1177,17 @@ class AstrBotBridge:
             },
             "action": action,
         }
+
+    def reject_continuity_followup(
+        self, event_id: str, reason: str
+    ) -> Optional[Dict[str, Any]]:
+        return self.memory.reject_continuity_followup_with_audit(
+            self.persona_context.persona_id,
+            str(event_id),
+            reason=str(reason or "管理员否定误关联"),
+            actor="AstrBot 插件管理员",
+            now=int(time.time()),
+        )
 
     def correct_self_commitment_status(
         self,

@@ -7,6 +7,9 @@ from zoneinfo import ZoneInfo
 
 from groupmate.memory.store import SQLiteMemoryStore
 from groupmate.models import (
+    ContinuityItem,
+    ContinuityKind,
+    ContinuityStatus,
     OutboundKind,
     SelfCommitment,
     SelfCommitmentStatus,
@@ -331,5 +334,40 @@ def test_next_wake_delay_sleeps_until_due(tmp_path):
             _item(now, due_at=now + 3, next_attempt_at=now + 3),
         )
         assert scheduler._next_wake_delay(now) == 3.0
+    finally:
+        store.close()
+
+
+def test_delivered_reminder_closes_matching_continuity_item(tmp_path):
+    store = SQLiteMemoryStore(tmp_path / "scheduler-continuity.db")
+    platform = CapturePlatform()
+    scheduler = _scheduler(store, platform)
+    now = int(time.time())
+    try:
+        store.append_self_commitment(
+            "aemeath",
+            _item(now, request_message_id="user-m1"),
+        )
+        store.append_continuity_item(
+            "aemeath",
+            ContinuityItem(
+                item_id="cont-1",
+                group_id="g1",
+                subject_id="10001",
+                kind=ContinuityKind.PLAN,
+                summary="复读斥候要求小爱在1分钟后提醒自己交材料",
+                source_message_id="user-m1",
+                source_quote="小爱，1分钟后提醒我交材料",
+                created_at=now - 100,
+                updated_at=now - 100,
+            ),
+        )
+        asyncio.run(scheduler.run_due(commitment_id="c1", force=True))
+        assert store.get_self_commitment(
+            "aemeath", "c1"
+        ).status is SelfCommitmentStatus.COMPLETED
+        assert store.get_continuity_item(
+            "aemeath", "cont-1"
+        ).status is ContinuityStatus.COMPLETED
     finally:
         store.close()

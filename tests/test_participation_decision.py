@@ -500,3 +500,55 @@ def test_recent_bot_density_suppresses_open_participation():
 
     assert decision.action is ParticipationAction.SILENCE
     assert decision.reason_codes == ("inhibit:avoid_monopoly",)
+
+
+def test_stale_bot_turns_outside_idle_gap_do_not_monopolize():
+    messages = (
+        message(
+            "先看配置。",
+            timestamp=100,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "再重载。",
+            timestamp=101,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "考完了，发挥还行",
+            timestamp=400,
+        ),
+    )
+
+    decision = decide_topic(engine(), messages)
+
+    assert decision.action is ParticipationAction.SILENCE
+    assert decision.reason_codes == ("no_open_motive",)
+
+
+def test_duplicate_bot_echo_counts_as_one_turn_for_monopoly():
+    messages = (
+        message(
+            "好，等你消息。",
+            timestamp=100,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "好，等你消息。",
+            timestamp=101,
+            sender_id="bot",
+            is_bot=True,
+        ),
+        message(
+            "有没有人知道这个插件怎么重载？",
+            timestamp=102,
+        ),
+    )
+
+    decision = decide_topic(engine(), messages)
+
+    assert decision.action is ParticipationAction.SPEAK
+    assert decision.reason_codes == ("motive:help_when_concrete",)

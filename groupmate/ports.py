@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover
 
 from .models import (
     ChatMessage,
+    ContinuityFollowupEvent,
     ContinuityItem,
     ContinuityStatus,
     MemoryItem,
@@ -138,6 +139,20 @@ class MemoryRepository(Protocol):
     ) -> Sequence[SelfCommitment]:
         ...
 
+    def append_continuity_followup(
+        self, persona_id: str, event: ContinuityFollowupEvent
+    ) -> Optional[ContinuityFollowupEvent]:
+        ...
+
+    def mark_continuity_followup_sent(
+        self, persona_id: str, event_id: str, *, sent_at: int
+    ) -> Optional[ContinuityFollowupEvent]:
+        ...
+
+    def reopen_continuity_item_after_unsent_followup(
+        self, persona_id: str, event_id: str, *, now: int
+    ) -> Optional[ContinuityItem]:
+        ...
     def next_self_commitment_attempt_at(self, persona_id: str) -> Optional[int]:
         ...
 

@@ -373,6 +373,18 @@ tbody tr[data-selectable]:hover, tbody tr.is-selected { background: var(--accent
 .evidence-review-button { width: 100%; margin-top: 10px; background: var(--surface); }
 .editor-subheading { margin-top: 24px; }
 .compact-empty { padding-block: 24px; font-size: 12px; }
+.followup-list { border-top: 1px solid var(--line); }
+.followup-item { padding: 13px 0; border-bottom: 1px solid var(--line); }
+.followup-item[data-status="rejected"] { color: var(--muted); }
+.followup-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.followup-head time { color: var(--muted); font-size: 11px; }
+.followup-item > strong, .followup-item > q { display: block; }
+.followup-item > strong { margin-top: 9px; color: var(--ink); line-height: 1.5; }
+.followup-item > q { margin-top: 5px; color: var(--ink-soft); font-size: 12px; line-height: 1.55; }
+.followup-item[data-status="rejected"] > q { text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.followup-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.followup-item > button { margin-top: 9px; }
+.followup-rejection { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .identity-lockup { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
 .identity-mark { width: 44px; height: 44px; background: var(--accent-strong); font-size: 17px; }

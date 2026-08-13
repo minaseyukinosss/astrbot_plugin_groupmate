@@ -193,6 +193,17 @@ class ContinuityStatus(StringEnum):
     DELETED = "deleted"
 
 
+class ContinuityFollowupOutcome(StringEnum):
+    PROGRESS = "progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class ContinuityFollowupStatus(StringEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
 class SelfCommitmentStatus(StringEnum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -320,6 +331,50 @@ class ContinuityItem:
         )
         object.__setattr__(
             self, "resolution_quote", str(self.resolution_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self, "confidence", max(0.0, min(1.0, float(self.confidence)))
+        )
+
+
+@dataclass(frozen=True)
+class ContinuityFollowupEvent:
+    event_id: str
+    item_id: str
+    group_id: str
+    subject_id: str
+    source_message_id: str
+    evidence_quote: str
+    outcome: ContinuityFollowupOutcome
+    response_policy: str
+    confidence: float
+    occurred_at: int
+    decision_id: str = ""
+    status: ContinuityFollowupStatus = ContinuityFollowupStatus.ACCEPTED
+    sent: bool = False
+    sent_at: Optional[int] = None
+    rejected_at: Optional[int] = None
+    rejection_reason: str = ""
+    extractor_version: str = "context-llm-v1"
+
+    def __post_init__(self) -> None:
+        outcome = self.outcome
+        if not isinstance(outcome, ContinuityFollowupOutcome):
+            outcome = ContinuityFollowupOutcome(str(outcome))
+        status = self.status
+        if not isinstance(status, ContinuityFollowupStatus):
+            status = ContinuityFollowupStatus(str(status))
+        policy = str(self.response_policy or "observe").strip().lower()
+        if policy not in {"observe", "speak"}:
+            raise ValueError("response_policy must be observe or speak")
+        object.__setattr__(self, "outcome", outcome)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "response_policy", policy)
+        object.__setattr__(
+            self, "evidence_quote", str(self.evidence_quote or "").strip()[:180]
+        )
+        object.__setattr__(
+            self, "rejection_reason", str(self.rejection_reason or "").strip()[:160]
         )
         object.__setattr__(
             self, "confidence", max(0.0, min(1.0, float(self.confidence)))

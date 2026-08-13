@@ -335,6 +335,13 @@ def infer_timed_reminder_from_topic(
     )
 
 
+_CONTINUITY_REMINDER_HINT = re.compile(
+    r"(分钟|分鐘|小时|小時|钟头|鐘頭).{0,12}提醒|"
+    r"提醒.{0,24}(分钟|分鐘|小时|小時|钟头|鐘頭)|"
+    r"到点提醒|到點提醒"
+)
+
+
 def looks_like_timed_reminder_request(text: str) -> bool:
     source = str(text or "")
     if not source.strip() or not _REQUEST_HINT.search(source):
@@ -342,6 +349,21 @@ def looks_like_timed_reminder_request(text: str) -> bool:
     if _bound_offset_seconds(source) is not None:
         return True
     return _ABSOLUTE_TIME.search(source) is not None
+
+
+def looks_like_timed_reminder_continuity(
+    summary: str = "", source_quote: str = ""
+) -> bool:
+    """True when a continuity row is just a timed-reminder ledger duplicate."""
+    for text in (source_quote, summary):
+        source = str(text or "")
+        if not source.strip():
+            continue
+        if looks_like_timed_reminder_request(source):
+            return True
+        if _CONTINUITY_REMINDER_HINT.search(source):
+            return True
+    return False
 
 
 def looks_like_reminder_acceptance(text: str) -> bool:
