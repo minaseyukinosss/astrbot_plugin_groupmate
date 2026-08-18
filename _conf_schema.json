@@ -22,8 +22,18 @@
     "_special": "select_provider",
     "default": ""
   },
-  "database_path": {
-    "description": "V2 数据库文件名",
+  "persona_id": {
+    "description": "人格标识",
+    "type": "string",
+    "default": "aemeath"
+  },
+  "bot_qq": {
+    "description": "机器人 QQ（用于识别自身消息和 @）",
+    "type": "string",
+    "default": "323537051"
+  },
+  "database_name": {
+    "description": "V2 独立数据库文件名（固定，不读取旧数据库）",
     "type": "string",
     "default": "groupmate-social-runtime-v2.db"
   }

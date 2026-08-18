@@ -267,6 +267,11 @@ class SQLiteSocialEventStore:
             for row in rows
         )
 
+    def event_ids(self) -> tuple[str, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute("SELECT event_id FROM inbox ORDER BY sequence").fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def save_snapshot(self, actor_key: str, version: int, payload: dict) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         with connect_database(self.path) as db:

@@ -13,6 +13,8 @@ class SocialRuntimeSettings:
     generation_provider: str
     vision_provider: str
     database_name: str
+    persona_id: str
+    bot_qq: str
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -27,4 +29,6 @@ class SocialRuntimeSettings:
             generation_provider=str(source.get("generation_provider", "") or "").strip(),
             vision_provider=str(source.get("vision_provider", "") or "").strip(),
             database_name="groupmate-social-runtime-v2.db",
+            persona_id=str(source.get("persona_id", "aemeath") or "aemeath").strip(),
+            bot_qq=str(source.get("bot_qq", "323537051") or "323537051").strip(),
         )

@@ -406,7 +406,7 @@ git commit -m "feat: add recoverable group scene actors"
 - Consumes: AstrBot 原始事件和 Phase A 核心。
 - Produces: `AstrBotEventTranslator.translate`, `SocialRuntimeManager.ingest`, `AstrBotSocialRuntimeBridge.handle_event`。
 
-- [ ] **Step 1: 写翻译与 Shadow 测试**
+- [x] **Step 1: 写翻译与 Shadow 测试**
 
 ```python
 async def test_shadow_persists_without_sending(harness):
@@ -416,15 +416,15 @@ async def test_shadow_persists_without_sending(harness):
     assert harness.execution.calls == ()
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/contracts/test_astrbot_events.py tests/shared/test_shadow_side_effects.py -q`
 
-- [ ] **Step 3: 实现纯事实 Translator**
+- [x] **Step 3: 实现纯事实 Translator**
 
 保留 reply、mentions、media、sender、group、timestamp 和平台 ID；不分类场景、不判断回复、不写记忆。缺失稳定 ID 时使用平台/群/发送者/时间/规范化 segment 的 SHA-256 指纹。
 
-- [ ] **Step 4: 实现 Manager 与 Bridge**
+- [x] **Step 4: 实现 Manager 与 Bridge**
 
 ```python
 class SocialRuntimeManager:
@@ -443,7 +443,7 @@ class SocialRuntimeManager:
 
 `OFF` 直接返回；`SHADOW` 注入 `NoSideEffectExecutionPort`。`main.py` 只构造新 Bridge。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pytest tests/contracts/test_astrbot_events.py tests/social_runtime/test_event_fabric.py tests/shared/test_shadow_side_effects.py -q && python -m tests.architecture_guard`
 ```bash
