@@ -263,3 +263,31 @@ def test_explicit_discard_persists_auditable_reason(tmp_path):
         "kind": "explicit_discard",
         "reason_code": "operator_cleanup",
     }
+
+
+def test_new_scene_supersede_persists_auditable_reason(tmp_path):
+    async def scenario():
+        store = SQLiteSocialEventStore(
+            tmp_path / "groupmate-social-runtime-v2.db"
+        )
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            store,
+            _persona_snapshot,
+        )
+        await actor.start()
+        old_request = await actor.submit(_event("old"))
+        new_request = await actor.submit(_event("new"))
+        stored = store.scene_work_request(actor.actor_key, old_request.request_id)
+        await actor.close()
+        return new_request, stored
+
+    new_request, stored = asyncio.run(scenario())
+
+    assert stored.status == "stale"
+    assert stored.resolution == {
+        "kind": "scene_superseded",
+        "reason_code": "newer_scene_committed",
+        "superseding_request_id": new_request.request_id,
+    }

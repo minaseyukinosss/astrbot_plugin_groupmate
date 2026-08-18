@@ -279,10 +279,20 @@ class SQLiteSocialEventStore:
                             f"work request id belongs to different content: {request_id}"
                         )
                     continue
+                supersede_resolution = json.dumps(
+                    {
+                        "kind": "scene_superseded",
+                        "reason_code": "newer_scene_committed",
+                        "superseding_request_id": request_id,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
                 db.execute(
-                    "UPDATE scene_work_requests SET status='stale', updated_at=? "
+                    "UPDATE scene_work_requests SET status='stale', "
+                    "resolution_json=?, updated_at=? "
                     "WHERE actor_key=? AND status='pending' AND scene_version<?",
-                    (now, actor_key, scene_version),
+                    (supersede_resolution, now, actor_key, scene_version),
                 )
                 db.execute(
                     "INSERT INTO scene_work_requests("
