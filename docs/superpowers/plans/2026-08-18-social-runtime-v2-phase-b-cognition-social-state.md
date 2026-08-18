@@ -96,11 +96,11 @@ assert result.selected_intention_ids == ()
 
 **Interfaces:** Produces immutable `ConstitutionVersion`, `GlobalSelfState`, `PersonaModeState`; Supervisor is the only caller that commits `StateEffect`.
 
-- [ ] 写失败测试：模型不能发布 Constitution；单一表情不能形成长期状态；无回复不降低关系/心境；focused task + drowsy 合法，boundary + playful 非法。
-- [ ] 实现管理员签名的 Constitution publish，字段包含 identity/values/boundaries/preferences/expression/safety/autonomy；hash 相同的版本幂等。
-- [ ] 实现代码所有的 effect clamp、cooldown、decay、causal dedupe；Mode 只由 event/time/load/admin command 转换。
-- [ ] 验证重启后状态和 mode 原因链一致。
-- [ ] Run: `pytest tests/social_runtime/test_constitution.py tests/social_runtime/test_self_state.py tests/social_runtime/test_modes.py -q`; commit `feat: add versioned persona kernel`。
+- [x] 写失败测试：模型不能发布 Constitution；单一表情不能形成长期状态；无回复不降低关系/心境；focused task + drowsy 合法，boundary + playful 非法。
+- [x] 实现管理员签名的 Constitution publish，字段包含 identity/values/boundaries/preferences/expression/safety/autonomy；hash 相同的版本幂等。
+- [x] 实现代码所有的 effect clamp、cooldown、decay、causal dedupe；Mode 只由 event/time/load/admin command 转换。
+- [x] 验证重启后状态和 mode 原因链一致。
+- [x] Run: `pytest tests/social_runtime/test_constitution.py tests/social_runtime/test_self_state.py tests/social_runtime/test_modes.py -q`; commit `feat: add versioned persona kernel`。
 
 ---
 
