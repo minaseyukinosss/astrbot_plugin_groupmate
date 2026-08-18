@@ -122,6 +122,209 @@ AstrBot event
 
 No later stage may bypass an earlier ownership, privacy, or authorization decision.
 
+#### 6.1.1 Main core line and controlled side channels
+
+The architecture has one authoritative write line and three controlled side channels:
+
+```mermaid
+flowchart LR
+    A["AstrBot inbound event"] --> B["Ingress and normalization"]
+    B --> C["Deployment snapshot resolver"]
+    C --> D["Persona + group actor mailbox"]
+    D --> E["Perception and ownership"]
+    E --> F["Motive and participation governor"]
+    F -->|"silence"| G["Commit decision and state effects"]
+    F -->|"social reply"| H["Context and response planning"]
+    F -->|"capability task"| I["Task authorization and dispatch"]
+    H --> J["Generation and two-layer guards"]
+    J --> K["Delivery and outbox"]
+    K --> G
+    I --> L["External or built-in capability"]
+    L --> M["Correlated capability event"]
+    M --> D
+    G --> N["Ledger and read projections"]
+    N --> O["Plugin Page snapshot and SSE"]
+    P["Admin draft / publish command"] --> Q["Config service and immutable version"]
+    Q --> C
+```
+
+Only the actor line from ingress through commit may create a participation decision or authorize a group-visible send. The side channels operate as follows:
+
+1. **Capability side channel:** performs authorized asynchronous work and returns a correlated event to the actor mailbox. It cannot send a final group message directly.
+2. **Administration command channel:** validates drafts, publishes immutable configuration versions, and performs audited corrections. A published version is observed by the next actor turn; it does not mutate an in-flight turn.
+3. **Projection query channel:** builds read models and SSE events from committed records. The Plugin Page never writes domain tables directly.
+
+#### 6.1.2 Turn envelope and frozen deployment snapshot
+
+Every admitted inbound event creates a `TurnEnvelope`:
+
+```python
+@dataclass(frozen=True)
+class TurnEnvelope:
+    event_id: str
+    decision_id: str
+    actor_key: tuple[str, str]
+    persona_id: str
+    group_id: str
+    deployment_version_id: str
+    source_message_id: str
+    received_at: int
+```
+
+The deployment version is resolved before the event enters the actor and remains frozen for the entire turn. Context assembly, participation, generation, tool authorization, output guards, delivery, and state effects all record the same `decision_id` and `deployment_version_id`.
+
+This prevents a configuration publish from changing half of an in-progress decision and makes exact replay possible.
+
+#### 6.1.3 Authoritative actor turn
+
+The actor processes one hard turn at a time for each `(persona_id, group_id)`. Soft candidates may be coalesced before processing, but once admitted the turn follows these stages:
+
+1. **Observe**
+   - normalize message, reply, mention, poke, media, command-bridge, timer, and capability-result events;
+   - deduplicate by platform event and message identity;
+   - append the inbound observation to the conversation ledger.
+
+2. **Resolve deployment and topic**
+   - load the frozen per-group persona/behavior configuration;
+   - select active topic messages and current bot presence;
+   - resolve reply audience, social target, task owner, and ambiguity.
+
+3. **Perceive**
+   - classify trigger, scene, pressure, task request, continuity match, and candidate social events;
+   - compute deterministic ownership and safety blockers;
+   - create a bounded `PerceptionSnapshot` without mutating relationships or memories.
+
+4. **Assess motive**
+   - evaluate deterministic motive signals;
+   - invoke the compact motive classifier only for unresolved eligible candidates;
+   - return typed motives, evidence IDs, social target, confidence, and reason codes.
+
+5. **Govern participation**
+   - combine direct obligation, motive, relationship posture, runtime presence, energy, irritation, per-user cooldown, group budgets, topic ownership, and monopoly limits;
+   - emit exactly one immutable outcome: `SPEAK`, `SILENCE`, or `START_TASK`;
+   - reserve required resource budget atomically when the outcome will generate or act.
+
+6. **Assemble authorized context**
+   - recall only data allowed for the resolved audience and response act;
+   - combine persona identity, behavior profile, topic context, member profile, relationship posture, accepted impressions, relevant memories, continuity, commitments, runtime state, and available capabilities;
+   - apply per-block count and token budgets before prompt construction.
+
+7. **Plan response or action**
+   - select response act, reply mode, contribution, quote policy, media policy, and capability plan;
+   - for a social reply, proceed to generation;
+   - for a capability request, create and dispatch a `TaskRun` and finish the current actor turn after any justified acknowledgement;
+   - for silence, skip generation and proceed to commit.
+
+8. **Generate and guard**
+   - generate from the typed context and explicit response act;
+   - run the generic safety guard followed by the selected persona style guard;
+   - allow one bounded repair attempt when repairable;
+   - use a deterministic persona fallback for direct obligations when generation remains unavailable;
+   - never turn a failed optional generation into a compulsory message.
+
+9. **Deliver**
+   - build one delivery plan containing quote, text segments, mentions, media, and expiry;
+   - write the outbox record before platform send;
+   - enforce idempotency by `decision_id` and delivery-part identity;
+   - record each actual platform outcome.
+
+10. **Commit effects**
+    - commit the immutable decision trace regardless of speech or silence;
+    - project runtime-state consumption and recovery events;
+    - accept relationship, memory, impression, and continuity evidence only according to their separate authority rules;
+    - record delivered bot messages in the ledger only after confirmed delivery;
+    - publish projection events for the Plugin Page.
+
+The commit stage is the only place where a turn's derived social state becomes durable. A model-generated claim is never itself evidence.
+
+#### 6.1.4 Asynchronous capability return loop
+
+A capability branch never resumes an old Python call stack. It returns a new typed event to the same actor:
+
+```text
+TaskRun created
+  -> provider accepts
+  -> zero or more progress events
+  -> success / failure / cancellation event
+  -> actor reloads current topic and deployment
+  -> checks task ownership, expiry, and delivery relevance
+  -> generates persona-owned progress or final response
+  -> guards, delivers, and commits through the normal line
+```
+
+The task retains the originating `decision_id`, while every progress or result turn receives its own `decision_id`. This preserves causality without treating a stale tool result as if it were still the current conversation.
+
+Progress is coalesced and rate-limited. A final result supersedes queued progress. If the requester leaves, the topic changes materially, or the result expires, the actor may record completion without sending it to the group.
+
+#### 6.1.5 Configuration command line
+
+The Plugin Page does not edit runtime objects. Configuration writes pass through a domain service:
+
+```text
+page command
+  -> request validation and administrator identity
+  -> draft schema validation
+  -> policy ceiling validation
+  -> dry-run preview
+  -> expected-base-version check
+  -> immutable version write
+  -> atomic deployment-pointer update
+  -> governance action and SSE notification
+```
+
+Actor turns already in progress keep their frozen version. New turns resolve the new published version. Rollback republishes an older snapshot as a new version; history is never rewritten.
+
+#### 6.1.6 Read projection line
+
+The page reads purpose-built projections rather than assembling operational truth in JavaScript. Projection builders consume committed decisions, deliveries, state transitions, task events, evidence, and configuration publications to produce:
+
+- runtime-center summary;
+- live activity feed;
+- persona draft/published diff;
+- member workspace;
+- decision and task inspector;
+- quality and target-alignment metrics;
+- governance history.
+
+Snapshot endpoints and SSE use the same projection schemas. An SSE event contains a projection cursor; reconnect requests events after that cursor or reloads the affected snapshot when the cursor has expired.
+
+#### 6.1.7 Core invariants
+
+The implementation must preserve these invariants:
+
+1. One actor is the single writer for conversational decisions within a persona/group.
+2. Every group-visible send belongs to a committed `decision_id`; task output also carries a `task_id`.
+3. A turn uses exactly one immutable deployment version.
+4. LLM output cannot mutate state, authorize tools, or send messages directly.
+5. External capability providers cannot own the final group response.
+6. No memory, impression, or relationship change is accepted solely because generated text stated it.
+7. Outbox intent precedes platform send, and confirmed delivery precedes bot-message ledger projection.
+8. Silence, task start, tool failure, expired result, and delivery failure are first-class outcomes.
+9. Plugin Page mutations use domain commands, optimistic concurrency, and governance records.
+10. Projection or SSE failure cannot affect the conversational write line.
+
+#### 6.1.8 Mapping to current code
+
+The main line reuses and narrows current modules rather than placing more responsibility in `workflow.py` or `bridge.py`:
+
+| Core responsibility | Existing base | Target boundary |
+| --- | --- | --- |
+| AstrBot admission | `host/event_gate.py`, `host/ingress.py` | Normalize only; no social decision |
+| Deployment resolution | `persona/registry.py`, `host/bridge.py` | New per-group resolver returns frozen version |
+| Actor serialization | `engine/runtime.py` | Sole conversational writer and async-result re-entry |
+| Perception/ownership | targeting, scene, pressure modules | Produce typed immutable perception |
+| Participation | `engine/participation.py` | Eligibility, motive assessment, and state governor as separate units |
+| Context | `core/context_assembly.py` | Consume authorized typed blocks only |
+| Response orchestration | `engine/workflow.py` | Thin coordinator; domain stages move to focused services |
+| Capabilities | `tools/`, `capabilities/` | Persistent task lifecycle and correlated event return |
+| Guarding | persona output firewall | Shared safety guard plus persona style guard |
+| Delivery | `engine/delivery.py`, outbox | All text and media through one idempotent owner |
+| Durable social state | `memory/store.py`, social modules | Event-backed projections and bounded repositories |
+| Admin APIs | `host/web_api.py` | Validate and call domain command/query services only |
+| Plugin Page | `pages/settings/` | Consume projections and commands; no domain reconstruction |
+
+`engine/workflow.py`, `host/bridge.py`, and `memory/store.py` are already large. The refactor must extract new focused services while keeping compatibility facades during migration.
+
 ### 6.2 Persona definition and behavior profile
 
 `PersonaDefinition` becomes a composition root rather than an Aemeath-only prompt factory. It contains:
@@ -676,4 +879,3 @@ Tune behavior profiles from shadow and production audit evidence, freeze migrati
 - A decorative consciousness or emotion dashboard.
 - Replacing AstrBot's provider, secret, or deployment configuration UI.
 - A new frontend framework or build pipeline unless later evidence shows native modules are insufficient.
-
