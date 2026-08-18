@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 
 from groupmate.social_runtime.contracts import PersonaSnapshot, SocialEventEnvelope
 from groupmate.social_runtime.persistence.event_store import SQLiteSocialEventStore
@@ -125,6 +126,11 @@ def test_post_commit_snapshot_failure_never_marks_committed_event_failed(tmp_pat
             status = db.execute(
                 "SELECT status FROM inbox WHERE event_id='qq:m1'"
             ).fetchone()[0]
+        assert first.snapshot_failure_count == 1
+        first_task = first._actor_task
+        first_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await first_task
 
         recovered = GroupSceneActor(
             "aemeath",
@@ -135,7 +141,6 @@ def test_post_commit_snapshot_failure_never_marks_committed_event_failed(tmp_pat
         await recovered.start()
         state = await recovered.snapshot()
         await recovered.close()
-        await first.close()
         return request, status, state
 
     request, status, state = asyncio.run(scenario())

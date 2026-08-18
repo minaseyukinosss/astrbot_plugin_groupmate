@@ -102,12 +102,20 @@ class GroupSceneActor:
                     self.actor_key, self._state.scene_version
                 )
             ]
-            self._pending_request_ids.update(
+            self._pending_request_ids = {
                 request.request_id for request in self._recovered_requests
-            )
+            }
             self._actor_task = asyncio.create_task(
                 self._run(), name=f"group-scene:{self.persona_id}:{self.group_id}"
             )
+
+    @property
+    def pending_request_count(self) -> int:
+        return len(self._pending_request_ids)
+
+    @property
+    def snapshot_failure_count(self) -> int:
+        return self._snapshot_failure_count
 
     async def submit(
         self, event: SocialEventEnvelope
@@ -285,7 +293,9 @@ class GroupSceneActor:
             ),
         )
         self._state = state
-        self._pending_request_ids.add(request_id)
+        # The transaction has already marked older scene requests stale.
+        # Mirror that authoritative state so the actor's cache stays bounded.
+        self._pending_request_ids = {request_id}
         if state.scene_version % self.SNAPSHOT_INTERVAL == 0:
             try:
                 self._save_snapshot()

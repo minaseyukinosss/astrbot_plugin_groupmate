@@ -113,3 +113,20 @@ def test_actor_drain_only_claims_its_own_group_events(tmp_path):
     assert [request.trigger_event_id for request in requests] == ["qq:m1"]
     assert state.scene_version == 1
     assert cursor.last_sequence == 2
+
+
+def test_pending_request_tracking_stays_bounded_without_worker_results(tmp_path):
+    async def scenario():
+        store = SQLiteSocialEventStore(tmp_path / "groupmate-social-runtime-v2.db")
+        actor = GroupSceneActor(
+            "aemeath", "885617919", store, _persona_snapshot
+        )
+        await actor.start()
+        for index in range(30):
+            store.append(_event(f"m{index}"))
+        await actor.drain()
+        pending_count = actor.pending_request_count
+        await actor.close()
+        return pending_count
+
+    assert asyncio.run(scenario()) == 1
