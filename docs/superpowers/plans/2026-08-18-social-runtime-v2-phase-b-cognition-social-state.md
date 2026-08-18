@@ -138,8 +138,8 @@ assert result.selected_intention_ids == ()
 
 **Interfaces:** Event → World → Attention → Cognition → Intention → GovernorResult → Shadow record.
 
-- [ ] 写端到端场景：直接互动、说完再答、多话题、公开求助、接梗、关心、边界、正确沉默；固定 Worker outputs 以保证重放确定性。
-- [ ] Actor 为每周期冻结 `scene_version/config_version/persona_state_version`；结果返回后任一版本不兼容则丢弃或重新排队，不得直接 ACT。
-- [ ] 每个 GovernorResult 写 Journal 和 Shadow evaluation projection，包含 reason codes 与 rejected candidates，不保存 Chain-of-Thought。
-- [ ] Run: `pytest tests/social_runtime tests/scenarios tests/contracts tests/shared -q && python -m tests.architecture_guard && git diff --check`。
+- [x] 写端到端场景：直接互动、说完再答、多话题、公开求助、接梗、关心、边界、正确沉默；固定 Worker outputs 以保证重放确定性。
+- [x] Actor 为每周期冻结 `scene_version/config_version/persona_state_version`；结果返回后任一版本不兼容则丢弃或重新排队，不得直接 ACT。
+- [x] 每个 GovernorResult 写 Journal 和 Shadow evaluation projection，包含 reason codes 与 rejected candidates，不保存 Chain-of-Thought。
+- [x] Run: `pytest tests/social_runtime tests/scenarios tests/contracts tests/shared -q && python -m tests.architecture_guard && git diff --check`。
 - [ ] Commit `feat: complete social cognition shadow runtime`，使用 `superpowers:requesting-code-review`；通过后进入 Phase C。

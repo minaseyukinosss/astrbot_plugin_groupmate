@@ -201,3 +201,41 @@ def test_pending_scene_work_is_reissued_after_restart_until_resolved(tmp_path):
     assert second_drain == ()
     assert accepted is True
     assert after_resolution == ()
+
+
+def test_recovered_direct_attention_frame_preserves_immutable_contract(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        first = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            SQLiteSocialEventStore(path),
+            _persona_snapshot,
+        )
+        await first.start()
+        direct = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:direct",
+                source_message_id="direct",
+                correlation_id="corr:direct",
+                payload={"text": "在吗", "direct_address": True},
+            )
+        )
+        original = await first.submit(direct)
+        await first.close()
+
+        recovered = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            SQLiteSocialEventStore(path),
+            _persona_snapshot,
+        )
+        await recovered.start()
+        replayed = (await recovered.drain())[0]
+        await recovered.close()
+        return original, replayed
+
+    original, replayed = asyncio.run(scenario())
+
+    assert replayed == original
+    assert isinstance(replayed.attention_frames[0].focus_event_ids, tuple)

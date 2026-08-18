@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Awaitable, Callable, Union
 
+from .attention import AttentionFrame, AttentionScheduler
 from .contracts import PersonaSnapshot, SocialEventEnvelope
 from .persistence.event_store import ClaimedEvent, SQLiteSocialEventStore
 from .world import GroupWorldProjector, GroupWorldState
@@ -25,6 +26,7 @@ class SceneWorkRequest:
     event: SocialEventEnvelope
     world_snapshot: GroupWorldState
     persona_snapshot: PersonaSnapshot
+    attention_frames: tuple[AttentionFrame, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,10 @@ class SceneWorkResult:
     group_id: str
     scene_version: int
     observations: tuple[dict[str, object], ...]
+    config_version: int | None = None
+    persona_state_version: int | None = None
+    frame_id: str | None = None
+    governor_result: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -50,7 +56,14 @@ class _SnapshotCommand:
 @dataclass(frozen=True)
 class _AcceptCommand:
     result: SceneWorkResult
+    current_persona: PersonaSnapshot
     future: asyncio.Future[bool]
+
+
+@dataclass(frozen=True)
+class _FlushAttentionCommand:
+    now: int
+    future: asyncio.Future[tuple[SceneWorkRequest, ...]]
 
 
 @dataclass(frozen=True)
@@ -58,7 +71,13 @@ class _StopCommand:
     future: asyncio.Future[None]
 
 
-_Command = Union[_ProcessCommand, _SnapshotCommand, _AcceptCommand, _StopCommand]
+_Command = Union[
+    _ProcessCommand,
+    _SnapshotCommand,
+    _AcceptCommand,
+    _FlushAttentionCommand,
+    _StopCommand,
+]
 _SnapshotProvider = Callable[[], Awaitable[PersonaSnapshot]]
 
 
@@ -82,12 +101,13 @@ class GroupSceneActor:
         self._store = event_store
         self._snapshot_provider = snapshot_provider
         self._projector = GroupWorldProjector()
+        self._attention = AttentionScheduler()
         self._state: GroupWorldState | None = None
         self._mailbox: asyncio.Queue[_Command] = asyncio.Queue()
         self._actor_task: asyncio.Task[None] | None = None
         self._lifecycle_lock = asyncio.Lock()
         self._drain_lock = asyncio.Lock()
-        self._pending_request_ids: set[str] = set()
+        self._pending_requests: dict[str, SceneWorkRequest] = {}
         self._recovered_requests: list[SceneWorkRequest] = []
         self._snapshot_failure_count = 0
 
@@ -102,8 +122,8 @@ class GroupSceneActor:
                     self.actor_key, self._state.scene_version
                 )
             ]
-            self._pending_request_ids = {
-                request.request_id for request in self._recovered_requests
+            self._pending_requests = {
+                request.request_id: request for request in self._recovered_requests
             }
             self._actor_task = asyncio.create_task(
                 self._run(), name=f"group-scene:{self.persona_id}:{self.group_id}"
@@ -111,7 +131,7 @@ class GroupSceneActor:
 
     @property
     def pending_request_count(self) -> int:
-        return len(self._pending_request_ids)
+        return len(self._pending_requests)
 
     @property
     def snapshot_failure_count(self) -> int:
@@ -163,8 +183,15 @@ class GroupSceneActor:
 
     async def accept_result(self, result: SceneWorkResult) -> bool:
         self._ensure_running()
+        current_persona = await self._snapshot_provider()
         future = asyncio.get_running_loop().create_future()
-        await self._mailbox.put(_AcceptCommand(result, future))
+        await self._mailbox.put(_AcceptCommand(result, current_persona, future))
+        return await future
+
+    async def flush_attention(self, now: int) -> tuple[SceneWorkRequest, ...]:
+        self._ensure_running()
+        future = asyncio.get_running_loop().create_future()
+        await self._mailbox.put(_FlushAttentionCommand(int(now), future))
         return await future
 
     async def snapshot(self) -> GroupWorldState:
@@ -220,19 +247,38 @@ class GroupSceneActor:
                 if isinstance(command, _SnapshotCommand):
                     command.future.set_result(self._require_state())
                     continue
+                if isinstance(command, _FlushAttentionCommand):
+                    command.future.set_result(self._flush_attention(command.now))
+                    continue
                 if isinstance(command, _AcceptCommand):
                     state = self._require_state()
-                    accepted = (
-                        command.result.group_id == self.group_id
-                        and command.result.scene_version == state.scene_version
-                        and command.result.request_id in self._pending_request_ids
+                    request = self._pending_requests.get(
+                        command.result.request_id
                     )
-                    persisted = self._store.resolve_scene_work(
+                    accepted = bool(
+                        request is not None
+                        and command.result.group_id == self.group_id
+                        and command.result.scene_version == state.scene_version
+                        and self._compatible_result(
+                            command.result,
+                            request,
+                            command.current_persona,
+                        )
+                    )
+                    evaluation = (
+                        self._evaluation_payload(command.result, request)
+                        if accepted
+                        and request is not None
+                        and command.result.governor_result is not None
+                        else None
+                    )
+                    persisted = self._store.resolve_scene_evaluation(
                         self.actor_key,
                         command.result.request_id,
                         "accepted" if accepted else "stale",
+                        evaluation=evaluation,
                     )
-                    self._pending_request_ids.discard(command.result.request_id)
+                    self._pending_requests.pop(command.result.request_id, None)
                     command.future.set_result(accepted and persisted)
                     continue
                 command.future.set_result(self._process(command))
@@ -269,6 +315,12 @@ class GroupSceneActor:
             event=command.claimed.event,
             world_snapshot=state,
             persona_snapshot=command.persona_snapshot,
+            attention_frames=self._attention.on_event(
+                command.claimed.event,
+                state,
+                command.persona_snapshot,
+                command.claimed.event.received_at,
+            ),
         )
         self._store.commit(
             self.actor_key,
@@ -295,7 +347,7 @@ class GroupSceneActor:
         self._state = state
         # The transaction has already marked older scene requests stale.
         # Mirror that authoritative state so the actor's cache stays bounded.
-        self._pending_request_ids = {request_id}
+        self._pending_requests = {request_id: request}
         if state.scene_version % self.SNAPSHOT_INTERVAL == 0:
             try:
                 self._save_snapshot()
@@ -305,6 +357,75 @@ class GroupSceneActor:
                 # committed events and must never downgrade Inbox status.
                 self._snapshot_failure_count += 1
         return request
+
+    def _flush_attention(self, now: int) -> tuple[SceneWorkRequest, ...]:
+        frames = self._attention.flush_due(now)
+        if not frames or not self._pending_requests:
+            return ()
+        request = next(reversed(self._pending_requests.values()))
+        cycle_request = replace(
+            request,
+            world_snapshot=self._require_state(),
+            attention_frames=frames,
+        )
+        self._pending_requests[request.request_id] = cycle_request
+        return (cycle_request,)
+
+    @staticmethod
+    def _compatible_result(
+        result: SceneWorkResult,
+        request: SceneWorkRequest,
+        current_persona: PersonaSnapshot,
+    ) -> bool:
+        if result.governor_result is None:
+            return True
+        if not result.frame_id or result.config_version is None:
+            return False
+        if result.persona_state_version is None:
+            return False
+        frame_ids = {frame.frame_id for frame in request.attention_frames}
+        return bool(
+            result.frame_id in frame_ids
+            and result.config_version == request.persona_snapshot.config_version
+            and result.config_version == current_persona.config_version
+            and result.persona_state_version
+            == request.persona_snapshot.state_version
+            and result.persona_state_version == current_persona.state_version
+        )
+
+    @staticmethod
+    def _evaluation_payload(
+        result: SceneWorkResult, request: SceneWorkRequest
+    ) -> dict[str, object]:
+        governor = result.governor_result or {}
+        safe_governor = {
+            key: governor[key]
+            for key in (
+                "outcome",
+                "selected_intention_ids",
+                "rejected",
+                "reason_codes",
+                "reconsider_at",
+                "constraints",
+            )
+            if key in governor
+        }
+        result_id = f"governor:{result.frame_id}"
+        return {
+            "effect_id": f"shadow:{result.frame_id}",
+            "kind": "shadow.governor_evaluated",
+            "result_id": result_id,
+            "frame_id": result.frame_id,
+            "source_event_id": request.trigger_event_id,
+            "correlation_id": request.event.correlation_id,
+            "causation_id": request.event.causation_id,
+            "persona_id": request.persona_id,
+            "group_id": request.group_id,
+            "scene_version": result.scene_version,
+            "config_version": result.config_version,
+            "persona_state_version": result.persona_state_version,
+            "governor_result": safe_governor,
+        }
 
     def _request_to_dict(self, request: SceneWorkRequest) -> dict[str, object]:
         return {
@@ -316,6 +437,9 @@ class GroupSceneActor:
             "event": request.event.to_dict(),
             "world_snapshot": self._projector.to_dict(request.world_snapshot),
             "persona_snapshot": asdict(request.persona_snapshot),
+            "attention_frames": [
+                asdict(frame) for frame in request.attention_frames
+            ],
         }
 
     def _request_from_dict(self, payload: dict[str, object]) -> SceneWorkRequest:
@@ -330,7 +454,23 @@ class GroupSceneActor:
             event=SocialEventEnvelope.from_dict(payload["event"]),
             world_snapshot=self._projector.from_dict(payload["world_snapshot"]),
             persona_snapshot=PersonaSnapshot(**persona_values),
+            attention_frames=tuple(
+                self._attention_from_dict(frame)
+                for frame in payload.get("attention_frames", ())
+            ),
         )
+
+    @staticmethod
+    def _attention_from_dict(payload: dict[str, object]) -> AttentionFrame:
+        values = dict(payload)
+        for key in (
+            "focus_topic_ids",
+            "focus_event_ids",
+            "candidate_audiences",
+            "requested_workers",
+        ):
+            values[key] = tuple(values.get(key, ()))
+        return AttentionFrame(**values)
 
     def _save_snapshot(self) -> None:
         state = self._require_state()

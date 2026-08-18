@@ -34,6 +34,12 @@ class SocialEventFabric:
         batches = await asyncio.gather(*(actor.drain() for actor in self.actors))
         return tuple(item for batch in batches for item in batch)
 
+    async def flush_attention(self, now: int) -> tuple[SceneWorkRequest, ...]:
+        batches = await asyncio.gather(
+            *(actor.flush_attention(now) for actor in self.actors)
+        )
+        return tuple(item for batch in batches for item in batch)
+
     async def close(self) -> None:
         await asyncio.gather(*(actor.close() for actor in self.actors))
         self._actors.clear()

@@ -376,15 +376,126 @@ class SQLiteSocialEventStore:
     def resolve_scene_work(
         self, actor_key: str, request_id: str, status: str
     ) -> bool:
+        return self.resolve_scene_evaluation(
+            actor_key, request_id, status, evaluation=None
+        )
+
+    def resolve_scene_evaluation(
+        self,
+        actor_key: str,
+        request_id: str,
+        status: str,
+        *,
+        evaluation: dict[str, object] | None,
+    ) -> bool:
         if status not in {"accepted", "stale"}:
             raise ValueError("scene work status must be accepted or stale")
-        with connect_database(self.path) as db:
+        if status == "stale" and evaluation is not None:
+            raise ValueError("stale scene work cannot persist an evaluation")
+        db = connect_database(self.path)
+        try:
+            db.execute("BEGIN IMMEDIATE")
             cursor = db.execute(
                 "UPDATE scene_work_requests SET status=?, updated_at=? "
                 "WHERE actor_key=? AND request_id=? AND status='pending'",
                 (status, int(time.time()), actor_key, request_id),
             )
-            return cursor.rowcount == 1
+            if cursor.rowcount != 1:
+                db.rollback()
+                return False
+            if evaluation is not None:
+                self._insert_shadow_evaluation(db, actor_key, evaluation)
+            db.commit()
+            return True
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @staticmethod
+    def _insert_shadow_evaluation(
+        db: sqlite3.Connection,
+        actor_key: str,
+        evaluation: dict[str, object],
+    ) -> None:
+        required = (
+            "effect_id",
+            "kind",
+            "result_id",
+            "frame_id",
+            "source_event_id",
+            "correlation_id",
+            "persona_id",
+            "group_id",
+            "scene_version",
+            "governor_result",
+        )
+        if any(evaluation.get(key) in (None, "") for key in required):
+            raise ValueError("shadow evaluation identity is incomplete")
+        now = int(time.time())
+        encoded = json.dumps(evaluation, ensure_ascii=False, sort_keys=True)
+        db.execute(
+            "INSERT INTO journal("
+            "effect_id, source_event_id, correlation_id, causation_id, "
+            "actor_key, effect_type, effect_json, committed_at"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(evaluation["effect_id"]),
+                str(evaluation["source_event_id"]),
+                str(evaluation["correlation_id"]),
+                evaluation.get("causation_id"),
+                actor_key,
+                str(evaluation["kind"]),
+                encoded,
+                now,
+            ),
+        )
+        db.execute(
+            "INSERT INTO governor_results("
+            "result_id, frame_id, persona_id, group_id, scene_version, "
+            "result_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(evaluation["result_id"]),
+                str(evaluation["frame_id"]),
+                str(evaluation["persona_id"]),
+                str(evaluation["group_id"]),
+                int(evaluation["scene_version"]),
+                encoded,
+                now,
+            ),
+        )
+
+    def event_envelopes(
+        self, event_ids: tuple[str, ...]
+    ) -> tuple[SocialEventEnvelope, ...]:
+        if not event_ids:
+            return ()
+        placeholders = ",".join("?" for _ in event_ids)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                f"SELECT event_id, envelope_json FROM inbox "
+                f"WHERE event_id IN ({placeholders})",
+                event_ids,
+            ).fetchall()
+        by_id = {
+            str(row["event_id"]): SocialEventEnvelope.from_dict(
+                json.loads(row["envelope_json"])
+            )
+            for row in rows
+        }
+        return tuple(by_id[event_id] for event_id in event_ids if event_id in by_id)
+
+    def shadow_evaluations(self, group_id: str) -> tuple[dict[str, object], ...]:
+        if not group_id.strip():
+            raise ValueError("group_id is required")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT result_json FROM governor_results "
+                "WHERE group_id=? ORDER BY created_at, result_id",
+                (group_id,),
+            ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
 
     def save_snapshot(self, actor_key: str, version: int, payload: dict) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
