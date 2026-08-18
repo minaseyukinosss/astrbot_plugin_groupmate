@@ -104,7 +104,8 @@ CREATE TABLE inbox (
     received_at INTEGER NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('pending','processing','committed','failed')),
     attempt INTEGER NOT NULL DEFAULT 0,
-    failure_code TEXT
+    failure_code TEXT,
+    claimed_by TEXT
 );
 CREATE INDEX idx_inbox_status_sequence ON inbox(status, sequence);
 CREATE TABLE journal (

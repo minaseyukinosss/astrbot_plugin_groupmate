@@ -257,7 +257,7 @@ git commit -m "feat: bootstrap clean social runtime database"
 - Consumes: `SocialEventEnvelope`, Schema v1。
 - Produces: `SQLiteSocialEventStore.append/claim/commit/fail/journal/save_snapshot/load_snapshot`。
 
-- [ ] **Step 1: 写幂等和原子性测试**
+- [x] **Step 1: 写幂等和原子性测试**
 
 ```python
 def test_duplicate_event_has_one_sequence(event_store, event_factory):
@@ -276,19 +276,19 @@ def test_effect_and_cursor_commit_together(event_store, event_factory):
     assert len(event_store.journal("corr-1")) == 1
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/social_runtime/test_event_store.py tests/recovery/test_event_atomicity.py -q`
 
-- [ ] **Step 3: 实现公开 API**
+- [x] **Step 3: 实现公开 API**
 
 实现 `SQLiteSocialEventStore` 的精确公开方法：`append(event) -> AppendResult`、`claim(actor_key, after_sequence, limit) -> tuple[ClaimedEvent, ...]`、`commit(actor_key, claimed, effects) -> ActorCursor`、`fail(actor_key, sequence, code) -> None`、`cursor(actor_key) -> ActorCursor`、`journal(correlation_id) -> tuple[JournalEffect, ...]`、`save_snapshot(actor_key, version, payload) -> None`、`load_snapshot(actor_key) -> StoredSnapshot | None`。
 
-- [ ] **Step 4: 注入崩溃**
+- [x] **Step 4: 注入崩溃**
 
 在 Journal insert 后抛异常；断言 Cursor 未前进、Journal 无 effect、Inbox 可再次 claim。重复 `commit()` 不重复 effect。
 
-- [ ] **Step 5: 运行并提交**
+- [x] **Step 5: 运行并提交**
 
 Run: `pytest tests/social_runtime/test_event_store.py tests/recovery/test_event_atomicity.py -q`
 ```bash
