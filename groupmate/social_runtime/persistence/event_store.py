@@ -86,6 +86,9 @@ class SQLiteSocialEventStore:
         actor_key: str,
         after_sequence: int,
         limit: int,
+        *,
+        persona_id: str | None = None,
+        group_id: str | None = None,
     ) -> tuple[ClaimedEvent, ...]:
         if limit < 1:
             raise ValueError("limit must be positive")
@@ -96,8 +99,18 @@ class SQLiteSocialEventStore:
                 "SELECT sequence, envelope_json, attempt FROM inbox "
                 "WHERE sequence>? AND (status IN ('pending','failed') "
                 "OR (status='processing' AND claimed_by=?)) "
+                "AND (? IS NULL OR persona_id=?) "
+                "AND (? IS NULL OR group_id=?) "
                 "ORDER BY sequence LIMIT ?",
-                (after_sequence, actor_key, limit),
+                (
+                    after_sequence,
+                    actor_key,
+                    persona_id,
+                    persona_id,
+                    group_id,
+                    group_id,
+                    limit,
+                ),
             ).fetchall()
             claimed = []
             for row in rows:
@@ -121,6 +134,34 @@ class SQLiteSocialEventStore:
             raise
         finally:
             db.close()
+
+    def read_events(
+        self,
+        after_sequence: int,
+        through_sequence: int,
+        *,
+        persona_id: str,
+        group_id: str,
+    ) -> tuple[ClaimedEvent, ...]:
+        """Read an actor's committed history for deterministic snapshot replay."""
+
+        if through_sequence < after_sequence:
+            raise ValueError("through_sequence must not precede after_sequence")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT sequence, envelope_json, attempt FROM inbox "
+                "WHERE sequence>? AND sequence<=? AND persona_id=? AND group_id=? "
+                "AND status='committed' ORDER BY sequence",
+                (after_sequence, through_sequence, persona_id, group_id),
+            ).fetchall()
+        return tuple(
+            ClaimedEvent(
+                sequence=int(row[0]),
+                event=SocialEventEnvelope.from_dict(json.loads(row[1])),
+                attempt=int(row[2]),
+            )
+            for row in rows
+        )
 
     def commit(
         self,

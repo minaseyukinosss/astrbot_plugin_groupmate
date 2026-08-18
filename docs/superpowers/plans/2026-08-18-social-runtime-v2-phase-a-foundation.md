@@ -355,7 +355,7 @@ git commit -m "feat: add persona supervisor single writer"
 - Consumes: Event、Persona Snapshot、Event Store。
 - Produces: `GroupWorldState`, `SceneWorkRequest`, `GroupSceneActor.submit/accept_result`。
 
-- [ ] **Step 1: 写多话题和过期测试**
+- [x] **Step 1: 写多话题和过期测试**
 
 ```python
 def test_reply_chain_keeps_parallel_topics(world_projector, event_factory):
@@ -370,19 +370,19 @@ def test_reply_chain_keeps_parallel_topics(world_projector, event_factory):
     assert state.topic_for_message("m3").root_event_id == "m1"
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/social_runtime/test_group_world.py tests/social_runtime/test_scene_actor.py -q`
 
-- [ ] **Step 3: 实现不可变世界与 Actor**
+- [x] **Step 3: 实现不可变世界与 Actor**
 
 `GroupWorldState` 字段固定为 spec 第 8 节；`GroupSceneActor` 提供 `submit()`, `drain()`, `accept_result()`, `snapshot()`。明确 reply/@ 事实优先于模型话题建议；外部工作不阻塞 mailbox。
 
-- [ ] **Step 4: 实现 Snapshot 恢复**
+- [x] **Step 4: 实现 Snapshot 恢复**
 
 每 100 个事件或关闭时保存 Snapshot，从 Cursor 下一 sequence 回放；过期 scene_version 的外部结果返回 `False` 且不改变版本。
 
-- [ ] **Step 5: 运行并提交**
+- [x] **Step 5: 运行并提交**
 
 Run: `pytest tests/social_runtime/test_group_world.py tests/social_runtime/test_scene_actor.py tests/recovery/test_scene_actor_recovery.py -q`
 ```bash
