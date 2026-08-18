@@ -125,10 +125,10 @@ assert result.selected_intention_ids == ()
 **Interfaces:** Produces `MemoryDecision(ACCEPT/REVIEW/REJECT)`, `MemoryContextBlock`, `ConsolidationReport`; consumes only real evidence events and scoped query.
 
 - [ ] 写失败测试：bot 自己生成的回复不能证明用户事实；敏感候选默认 REVIEW；冲突事实并存且标记；删除后等价文本被 tombstone 阻断；召回不跨群。
-- [ ] 实现写入流水线：entity → scope/privacy → conflict → persistence/importance → authority → decision；摘要必须保存 evidence IDs。
-- [ ] 实现召回排序 `relevance + recency + confidence + diversity`，再做 sensitivity、conflict 和 token budget 裁剪；返回结构化块而非原始行。
-- [ ] Consolidation 合并重复 episode、衰减 impression/culture、关闭完成 loop，只产生 calibration candidate，不直接改安全/隐私/Constitution。
-- [ ] Run all memory tests; commit `feat: add governed social memory`。
+- [x] 实现写入流水线：entity → scope/privacy → conflict → persistence/importance → authority → decision；摘要必须保存 evidence IDs。
+- [x] 实现召回排序 `relevance + recency + confidence + diversity`，再做 sensitivity、conflict 和 token budget 裁剪；返回结构化块而非原始行。
+- [x] Consolidation 合并重复 episode、衰减 impression/culture、关闭完成 loop，只产生 calibration candidate，不直接改安全/隐私/Constitution。
+- [x] Run all memory tests; commit `feat: add governed social memory`。
 
 ---
 
