@@ -292,6 +292,10 @@ class GroupSceneActor:
                         command.request_id,
                         "stale",
                         evaluation=None,
+                        resolution={
+                            "kind": "explicit_discard",
+                            "reason_code": command.reason_code,
+                        },
                     )
                     self._pending_requests.pop(command.request_id, None)
                     command.future.set_result(discarded)
@@ -347,7 +351,10 @@ class GroupSceneActor:
                     )
                     keep_pending = bool(
                         updated_request is not None
-                        and updated_request.attention_window is not None
+                        and (
+                            updated_request.attention_window is not None
+                            or self._has_unevaluated_frames(updated_request)
+                        )
                     )
                     persisted = self._store.resolve_scene_evaluation(
                         self.actor_key,
@@ -358,6 +365,14 @@ class GroupSceneActor:
                             self._request_to_dict(updated_request)
                             if keep_pending and updated_request is not None
                             else None
+                        ),
+                        resolution=(
+                            None
+                            if accepted
+                            else {
+                                "kind": "stale_result",
+                                "reason_code": "version_or_scope_mismatch",
+                            }
                         ),
                     )
                     if persisted and keep_pending and updated_request is not None:
@@ -454,22 +469,26 @@ class GroupSceneActor:
         if not frames or not self._pending_requests:
             return ()
         request = next(reversed(self._pending_requests.values()))
-        cycle_request = replace(
+        durable_request = replace(
             request,
             world_snapshot=self._require_state(),
-            attention_frames=frames,
+            attention_frames=self._append_frames(
+                request.attention_frames,
+                frames,
+            ),
             attention_window=None,
         )
         if not self._store.refresh_pending_scene_work(
             self.actor_key,
             request.request_id,
-            self._request_to_dict(cycle_request),
+            self._request_to_dict(durable_request),
         ):
             if previous_window is not None:
                 self._attention.restore_window(previous_window)
             return ()
-        self._pending_requests[request.request_id] = cycle_request
-        return (cycle_request,)
+        self._pending_requests[request.request_id] = durable_request
+        dispatch_request = replace(durable_request, attention_frames=frames)
+        return (dispatch_request,)
 
     @staticmethod
     def _compatible_result(
@@ -598,6 +617,21 @@ class GroupSceneActor:
     @staticmethod
     def _append_unique(values: tuple[str, ...], value: str) -> tuple[str, ...]:
         return values if value in values else values + (value,)
+
+    @staticmethod
+    def _append_frames(
+        existing: tuple[AttentionFrame, ...],
+        added: tuple[AttentionFrame, ...],
+    ) -> tuple[AttentionFrame, ...]:
+        known = {frame.frame_id for frame in existing}
+        return existing + tuple(frame for frame in added if frame.frame_id not in known)
+
+    @staticmethod
+    def _has_unevaluated_frames(request: SceneWorkRequest) -> bool:
+        evaluated = set(request.evaluated_frame_ids)
+        return any(
+            frame.frame_id not in evaluated for frame in request.attention_frames
+        )
 
     def _save_snapshot(self) -> None:
         state = self._require_state()

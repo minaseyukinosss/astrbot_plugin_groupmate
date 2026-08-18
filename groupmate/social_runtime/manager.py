@@ -101,18 +101,23 @@ class SocialRuntimeManager:
         self._startup_requests = ()
 
     async def start(self) -> None:
-        async with self._lifecycle_lock:
-            if self._started:
-                return
-            await self.fabric.open()
-            await self.supervisor.start()
-            for group_id in self.event_store.pending_groups(self.persona_id):
-                if group_id in self.enabled_groups:
-                    await self.fabric.notify(self.persona_id, group_id)
-            self._started = True
-            self._closing = False
-            self._closed.set()
-            self._startup_requests = await self.fabric.drain()
+        while True:
+            async with self._lifecycle_lock:
+                if self._closing:
+                    closed = self._closed
+                else:
+                    if self._started:
+                        return
+                    await self.fabric.open()
+                    await self.supervisor.start()
+                    for group_id in self.event_store.pending_groups(self.persona_id):
+                        if group_id in self.enabled_groups:
+                            await self.fabric.notify(self.persona_id, group_id)
+                    self._started = True
+                    self._closed.set()
+                    self._startup_requests = await self.fabric.drain()
+                    return
+            await closed.wait()
 
     async def ingest(self, envelope: SocialEventEnvelope) -> AppendResult | None:
         async with self._lifecycle_lock:

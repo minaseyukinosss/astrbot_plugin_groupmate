@@ -59,19 +59,31 @@ class StoredSceneWorkRequest:
     actor_key: str
     status: str
     payload: dict[str, object]
+    resolution: dict[str, object] | None
 
 
 class SQLiteSocialEventStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         initialize_database(self.path)
-        self._ensure_claim_owner_column()
+        self._ensure_runtime_columns()
 
-    def _ensure_claim_owner_column(self) -> None:
+    def _ensure_runtime_columns(self) -> None:
         with connect_database(self.path) as db:
-            columns = {row[1] for row in db.execute("PRAGMA table_info(inbox)")}
-            if "claimed_by" not in columns:
+            inbox_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(inbox)")
+            }
+            if "claimed_by" not in inbox_columns:
                 db.execute("ALTER TABLE inbox ADD COLUMN claimed_by TEXT")
+            work_columns = {
+                row[1]
+                for row in db.execute("PRAGMA table_info(scene_work_requests)")
+            }
+            if "resolution_json" not in work_columns:
+                db.execute(
+                    "ALTER TABLE scene_work_requests "
+                    "ADD COLUMN resolution_json TEXT"
+                )
 
     def append(self, event: SocialEventEnvelope) -> AppendResult:
         encoded = json.dumps(event.to_dict(), ensure_ascii=False, sort_keys=True)
@@ -393,7 +405,8 @@ class SQLiteSocialEventStore:
     ) -> StoredSceneWorkRequest | None:
         with connect_database(self.path) as db:
             row = db.execute(
-                "SELECT status, request_json FROM scene_work_requests "
+                "SELECT status, request_json, resolution_json "
+                "FROM scene_work_requests "
                 "WHERE actor_key=? AND request_id=?",
                 (actor_key, request_id),
             ).fetchone()
@@ -404,6 +417,7 @@ class SQLiteSocialEventStore:
             actor_key=actor_key,
             status=str(row[0]),
             payload=json.loads(row[1]),
+            resolution=json.loads(row[2]) if row[2] is not None else None,
         )
 
     def refresh_pending_scene_work(
@@ -429,6 +443,7 @@ class SQLiteSocialEventStore:
         *,
         evaluation: dict[str, object] | None,
         keep_pending_request: dict[str, object] | None = None,
+        resolution: dict[str, object] | None = None,
     ) -> bool:
         if status not in {"accepted", "stale"}:
             raise ValueError("scene work status must be accepted or stale")
@@ -438,14 +453,28 @@ class SQLiteSocialEventStore:
             status != "accepted" or evaluation is None
         ):
             raise ValueError("pending continuation requires an accepted evaluation")
+        if keep_pending_request is not None and resolution is not None:
+            raise ValueError("pending continuation cannot be resolved")
         db = connect_database(self.path)
         try:
             db.execute("BEGIN IMMEDIATE")
             if keep_pending_request is None:
+                resolution_json = (
+                    json.dumps(resolution, ensure_ascii=False, sort_keys=True)
+                    if resolution is not None
+                    else None
+                )
                 cursor = db.execute(
-                    "UPDATE scene_work_requests SET status=?, updated_at=? "
+                    "UPDATE scene_work_requests SET status=?, resolution_json=?, "
+                    "updated_at=? "
                     "WHERE actor_key=? AND request_id=? AND status='pending'",
-                    (status, int(time.time()), actor_key, request_id),
+                    (
+                        status,
+                        resolution_json,
+                        int(time.time()),
+                        actor_key,
+                        request_id,
+                    ),
                 )
             else:
                 encoded_request = json.dumps(

@@ -232,3 +232,34 @@ def test_changed_governor_result_retry_is_identity_conflict(tmp_path):
         await actor.close()
 
     asyncio.run(scenario())
+
+
+def test_explicit_discard_persists_auditable_reason(tmp_path):
+    async def scenario():
+        store = SQLiteSocialEventStore(
+            tmp_path / "groupmate-social-runtime-v2.db"
+        )
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            store,
+            _persona_snapshot,
+        )
+        await actor.start()
+        request = await actor.submit(_event("discard"))
+        discarded = await actor.discard_work(
+            request.request_id,
+            "operator_cleanup",
+        )
+        stored = store.scene_work_request(actor.actor_key, request.request_id)
+        await actor.close()
+        return discarded, stored
+
+    discarded, stored = asyncio.run(scenario())
+
+    assert discarded is True
+    assert stored.status == "stale"
+    assert stored.resolution == {
+        "kind": "explicit_discard",
+        "reason_code": "operator_cleanup",
+    }

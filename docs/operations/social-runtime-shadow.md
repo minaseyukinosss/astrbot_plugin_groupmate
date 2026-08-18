@@ -93,6 +93,8 @@ git diff --check
 - 进程在结果前退出：pending SceneWorkRequest 可在重启后重发；已提交事件通过 Cursor/Snapshot 重放。
 - Shadow evaluation 事务失败：工作项不会被部分接受，Journal 与投影不会出现半写状态。
 - 相同结果重试：按持久化 identity 返回原成功；同 ID 不同内容硬失败。
+- 多帧周期：耐久请求保留全部合法 Frame，每次 flush 只派发新到期 Frame；窗口与未评估 Frame 均为空后才能终结工作项。
+- 显式丢弃或 stale：`scene_work_requests.resolution_json` 保存类别与 reason code，不能无理由消失。
 - 关闭：Manager 先停止接收新工作，等待在途 Cognition（受 Worker timeout 限制），再关闭 Fabric 与 Supervisor。
 - 投影和事件上下文查询：必须同时提供 `persona_id + group_id`，禁止跨人格或跨群读取。
 

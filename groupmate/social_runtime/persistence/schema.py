@@ -161,6 +161,7 @@ CREATE TABLE scene_work_requests (
     scene_version INTEGER NOT NULL,
     request_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('pending','accepted','stale')),
+    resolution_json TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

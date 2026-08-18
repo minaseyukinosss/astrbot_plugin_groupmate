@@ -334,3 +334,36 @@ def test_flushed_ambient_frame_survives_crash_before_cognition(tmp_path):
     assert len(evaluations) == 1
     assert evaluations[0].frame.trigger_kind == "AMBIENT"
     assert evaluations[0].accepted is True
+
+
+def test_start_during_close_waits_then_restarts_manager(tmp_path):
+    async def scenario():
+        worker = BlockingWorker()
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await manager.start()
+        await manager.ingest(_direct_event())
+        draining = asyncio.create_task(manager.drain())
+        await worker.entered.wait()
+        closing = asyncio.create_task(manager.close())
+        await asyncio.sleep(0)
+        restarting = asyncio.create_task(manager.start())
+        await asyncio.sleep(0)
+        restart_waited = not restarting.done()
+        worker.release.set()
+        await draining
+        await closing
+        await restarting
+        restarted = manager._started
+        await manager.close()
+        return restart_waited, restarted
+
+    restart_waited, restarted = asyncio.run(scenario())
+
+    assert restart_waited is True
+    assert restarted is True

@@ -44,6 +44,18 @@ class FixedWorker:
         )
 
 
+class BlockingFixedWorker(FixedWorker):
+    def __init__(self, name, observation_kind, entered, release):
+        super().__init__(name, observation_kind)
+        self.entered = entered
+        self.release = release
+
+    async def observe(self, frame, context):
+        self.entered.set()
+        await self.release.wait()
+        return await super().observe(frame, context)
+
+
 def _event(
     message_id: str,
     *,
@@ -275,4 +287,79 @@ def test_fast_evaluation_does_not_consume_pending_ambient_window(tmp_path):
     assert [item.frame.trigger_kind for item in fast] == ["FAST"]
     assert [item.frame.trigger_kind for item in ambient] == ["AMBIENT"]
     assert all(item.accepted for item in fast + ambient)
+    assert len(projection) == 2
+
+
+def test_single_drain_accepts_fast_and_due_ambient_frames(tmp_path):
+    async def scenario():
+        ambient_worker = FixedWorker("scene_interpreter", "help_request")
+        direct_worker = FixedWorker("direct_interaction", "care_signal")
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={
+                ambient_worker.name: ambient_worker,
+                direct_worker.name: direct_worker,
+            },
+        )
+        await manager.start()
+        await manager.ingest(_event("ambient", direct=False, occurred_at=100))
+        await manager.ingest(_event("direct", direct=True, occurred_at=101))
+        evaluations = await manager.drain(now=102)
+        projection = manager.event_store.shadow_evaluations(
+            "aemeath", "885617919"
+        )
+        await manager.close()
+        return evaluations, projection
+
+    evaluations, projection = asyncio.run(scenario())
+
+    assert [item.frame.trigger_kind for item in evaluations] == ["FAST", "AMBIENT"]
+    assert all(item.accepted for item in evaluations)
+    assert len(projection) == 2
+
+
+def test_concurrent_flush_does_not_invalidate_running_fast_frame(tmp_path):
+    async def scenario():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        ambient_worker = FixedWorker("scene_interpreter", "help_request")
+        direct_worker = BlockingFixedWorker(
+            "direct_interaction",
+            "care_signal",
+            entered,
+            release,
+        )
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={
+                ambient_worker.name: ambient_worker,
+                direct_worker.name: direct_worker,
+            },
+        )
+        await manager.start()
+        await manager.ingest(_event("ambient", direct=False, occurred_at=100))
+        await manager.ingest(_event("direct", direct=True, occurred_at=101))
+        fast_task = asyncio.create_task(manager.drain())
+        await entered.wait()
+        ambient = await manager.drain(now=102)
+        release.set()
+        fast = await fast_task
+        projection = manager.event_store.shadow_evaluations(
+            "aemeath", "885617919"
+        )
+        await manager.close()
+        return fast, ambient, projection
+
+    fast, ambient, projection = asyncio.run(scenario())
+
+    assert [item.frame.trigger_kind for item in fast] == ["FAST"]
+    assert [item.frame.trigger_kind for item in ambient] == ["AMBIENT"]
+    assert fast[0].accepted is True
+    assert ambient[0].accepted is True
     assert len(projection) == 2
