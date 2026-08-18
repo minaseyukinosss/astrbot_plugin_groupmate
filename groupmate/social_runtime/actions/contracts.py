@@ -19,7 +19,7 @@ class ActionNode:
     owner_id: str
     retry_limit: int
     deadline_at: Optional[int]
-    permission: Optional[str] = None
+    permission: str
     visible: bool = False
     autonomous_followup: bool = False
 

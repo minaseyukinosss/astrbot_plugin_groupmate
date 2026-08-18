@@ -116,10 +116,9 @@ class ActionPlanValidator:
                 ActionPlanValidator._append_once(errors, "node_deadline_expired")
             elif node.deadline_at > plan.expires_at:
                 ActionPlanValidator._append_once(errors, "node_deadline_exceeded")
-            if (
-                node.permission
-                and node.permission not in context.requester_permissions
-            ):
+            if not isinstance(node.permission, str) or not node.permission.strip():
+                ActionPlanValidator._append_once(errors, "node_permission_missing")
+            elif node.permission not in context.requester_permissions:
                 ActionPlanValidator._append_once(errors, "missing_permission")
             if node.autonomous_followup:
                 followups += 1

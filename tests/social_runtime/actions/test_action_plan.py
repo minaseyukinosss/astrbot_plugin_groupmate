@@ -45,8 +45,23 @@ def _plan(**overrides):
 def test_plan_exposes_node_kinds_in_declared_order():
     plan = _plan(
         nodes=(
-            ActionNode("generate", "GENERATE_TEXT", "generator", 0, 115),
-            ActionNode("send", "SEND_BUNDLE", "delivery", 0, 119, visible=True),
+            ActionNode(
+                "generate",
+                "GENERATE_TEXT",
+                "generator",
+                0,
+                115,
+                permission="generate_text",
+            ),
+            ActionNode(
+                "send",
+                "SEND_BUNDLE",
+                "delivery",
+                0,
+                119,
+                permission="send_message",
+                visible=True,
+            ),
         )
     )
 

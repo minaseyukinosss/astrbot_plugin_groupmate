@@ -69,7 +69,14 @@ def _plan(**overrides):
         "topic_id": "topic-1",
         "origin": "governor",
         "nodes": (
-            ActionNode("generate", "GENERATE_TEXT", "generator", 0, 115),
+            ActionNode(
+                "generate",
+                "GENERATE_TEXT",
+                "generator",
+                0,
+                115,
+                permission="generate_text",
+            ),
             ActionNode(
                 "send",
                 "SEND_BUNDLE",
@@ -111,7 +118,14 @@ def _plan(**overrides):
         (
             _plan(
                 nodes=tuple(
-                    ActionNode(f"node-{index}", "GENERATE_TEXT", "generator", 0, 115)
+                    ActionNode(
+                        f"node-{index}",
+                        "GENERATE_TEXT",
+                        "generator",
+                        0,
+                        115,
+                        permission="generate_text",
+                    )
                     for index in range(25)
                 ),
                 edges=(),
@@ -121,8 +135,24 @@ def _plan(**overrides):
         (
             _plan(
                 nodes=(
-                    ActionNode("first", "SEND_BUNDLE", "delivery-a", 0, 119, visible=True),
-                    ActionNode("second", "SEND_BUNDLE", "delivery-b", 0, 119, visible=True),
+                    ActionNode(
+                        "first",
+                        "SEND_BUNDLE",
+                        "delivery-a",
+                        0,
+                        119,
+                        permission="send_message",
+                        visible=True,
+                    ),
+                    ActionNode(
+                        "second",
+                        "SEND_BUNDLE",
+                        "delivery-b",
+                        0,
+                        119,
+                        permission="send_message",
+                        visible=True,
+                    ),
                 ),
                 edges=(),
             ),
@@ -133,7 +163,14 @@ def _plan(**overrides):
             _plan(
                 expires_at=100,
                 nodes=(
-                    ActionNode("generate", "GENERATE_TEXT", "generator", 0, 99),
+                    ActionNode(
+                        "generate",
+                        "GENERATE_TEXT",
+                        "generator",
+                        0,
+                        99,
+                        permission="generate_text",
+                    ),
                     ActionNode(
                         "send",
                         "SEND_BUNDLE",
@@ -184,7 +221,19 @@ def test_validator_rejects_edges_with_unknown_node_references():
 
 def test_validator_rejects_unbounded_node_deadlines_and_retries():
     validation = ActionPlanValidator().validate(
-        _plan(nodes=(ActionNode("generate", "GENERATE_TEXT", "generator", 3, None),), edges=()),
+        _plan(
+            nodes=(
+                ActionNode(
+                    "generate",
+                    "GENERATE_TEXT",
+                    "generator",
+                    3,
+                    None,
+                    permission="generate_text",
+                ),
+            ),
+            edges=(),
+        ),
         _context(),
     )
 
@@ -256,7 +305,14 @@ def test_planner_rejects_governor_results_that_do_not_authorize_the_intention(
         (
             _plan(
                 nodes=tuple(
-                    ActionNode("node-{0}".format(index), "GENERATE_TEXT", "generator", 0, 115)
+                    ActionNode(
+                        "node-{0}".format(index),
+                        "GENERATE_TEXT",
+                        "generator",
+                        0,
+                        115,
+                        permission="generate_text",
+                    )
                     for index in range(25)
                 ),
                 edges=(),
@@ -266,15 +322,43 @@ def test_planner_rejects_governor_results_that_do_not_authorize_the_intention(
         ),
         (_plan(expires_at=100 + 86401), _context(max_plan_duration=100000), "plan_duration_exceeded"),
         (
-            _plan(nodes=(ActionNode("generate", "GENERATE_TEXT", "generator", 3, 115),), edges=()),
+            _plan(
+                nodes=(
+                    ActionNode(
+                        "generate",
+                        "GENERATE_TEXT",
+                        "generator",
+                        3,
+                        115,
+                        permission="generate_text",
+                    ),
+                ),
+                edges=(),
+            ),
             _context(max_retries=10),
             "retry_limit_exceeded",
         ),
         (
             _plan(
                 nodes=(
-                    ActionNode("first", "GENERATE_TEXT", "generator", 0, 115, autonomous_followup=True),
-                    ActionNode("second", "GENERATE_TEXT", "generator", 0, 115, autonomous_followup=True),
+                    ActionNode(
+                        "first",
+                        "GENERATE_TEXT",
+                        "generator",
+                        0,
+                        115,
+                        permission="generate_text",
+                        autonomous_followup=True,
+                    ),
+                    ActionNode(
+                        "second",
+                        "GENERATE_TEXT",
+                        "generator",
+                        0,
+                        115,
+                        permission="generate_text",
+                        autonomous_followup=True,
+                    ),
                 ),
                 edges=(),
             ),
@@ -340,8 +424,75 @@ def test_validator_deterministically_enforces_frozen_safety_decisions(
 
 
 def test_validator_rejects_expired_deadlines_and_unknown_owners():
-    expired = _plan(nodes=(ActionNode("generate", "GENERATE_TEXT", "generator", 0, 100),), edges=())
-    unknown_owner = _plan(nodes=(ActionNode("generate", "GENERATE_TEXT", "other", 0, 115),), edges=())
+    expired = _plan(
+        nodes=(
+            ActionNode(
+                "generate",
+                "GENERATE_TEXT",
+                "generator",
+                0,
+                100,
+                permission="generate_text",
+            ),
+        ),
+        edges=(),
+    )
+    unknown_owner = _plan(
+        nodes=(
+            ActionNode(
+                "generate",
+                "GENERATE_TEXT",
+                "other",
+                0,
+                115,
+                permission="generate_text",
+            ),
+        ),
+        edges=(),
+    )
 
     assert ActionPlanValidator().validate(expired, _context()).errors == ("node_deadline_expired",)
     assert ActionPlanValidator().validate(unknown_owner, _context()).errors == ("owner_not_allowed",)
+
+
+@pytest.mark.parametrize("permission", (None, ""))
+def test_validator_rejects_send_bundle_without_an_explicit_permission(permission):
+    plan = _plan(
+        nodes=(
+            ActionNode(
+                "send",
+                "SEND_BUNDLE",
+                "delivery",
+                0,
+                115,
+                permission=permission,
+                visible=True,
+            ),
+        ),
+        edges=(),
+    )
+
+    assert ActionPlanValidator().validate(plan, _context()).errors == (
+        "node_permission_missing",
+    )
+
+
+def test_validator_rejects_send_bundle_when_requester_is_not_authorized():
+    plan = _plan(
+        nodes=(
+            ActionNode(
+                "send",
+                "SEND_BUNDLE",
+                "delivery",
+                0,
+                115,
+                permission="send_message",
+                visible=True,
+            ),
+        ),
+        edges=(),
+    )
+
+    assert ActionPlanValidator().validate(
+        plan, _context(requester_permissions=())
+    ).errors == ("missing_permission",)
