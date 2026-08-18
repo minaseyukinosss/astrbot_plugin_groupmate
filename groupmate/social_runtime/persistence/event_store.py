@@ -272,6 +272,16 @@ class SQLiteSocialEventStore:
             rows = db.execute("SELECT event_id FROM inbox ORDER BY sequence").fetchall()
         return tuple(str(row[0]) for row in rows)
 
+    def pending_groups(self, persona_id: str) -> tuple[str, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT DISTINCT group_id FROM inbox WHERE persona_id=? "
+                "AND group_id IS NOT NULL "
+                "AND status IN ('pending','processing','failed') ORDER BY group_id",
+                (persona_id,),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def save_snapshot(self, actor_key: str, version: int, payload: dict) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         with connect_database(self.path) as db:

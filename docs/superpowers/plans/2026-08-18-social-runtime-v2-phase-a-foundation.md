@@ -464,23 +464,23 @@ git commit -m "feat: connect astrbot to social runtime shadow"
 - Consumes: Phase A 全部接口。
 - Produces: 崩溃恢复证据和新数据库手册。
 
-- [ ] **Step 1: 注入 30 个事件，在第 17 个 effect 提交前崩溃**
+- [x] **Step 1: 注入 30 个事件，在第 17 个 effect 提交前崩溃**
 
 重建 Manager 后断言 Journal、Supervisor version、GroupWorldState 和 Cursor 与无崩溃运行一致，Execution 调用始终为零。
 
-- [ ] **Step 2: 运行恢复测试**
+- [x] **Step 2: 运行恢复测试**
 
 Run: `pytest tests/recovery/test_phase_a_replay.py -q`
 
-- [ ] **Step 3: 写恢复手册**
+- [x] **Step 3: 写恢复手册**
 
 包含停止事件、备份新 DB、检查 Inbox、dry replay、比较 Snapshot hash、恢复消费、验证 Outbox 为空；不涉及旧数据库。
 
-- [ ] **Step 4: 执行 Gate A**
+- [x] **Step 4: 执行 Gate A**
 
 Run: `pytest -m 'shared or social_runtime or recovery or contracts' -q && python -m tests.architecture_guard && git diff --check`
 
-- [ ] **Step 5: 提交并评审**
+- [x] **Step 5: 提交并评审**
 
 ```bash
 git add tests/recovery/test_phase_a_replay.py docs/operations/social-runtime-v2-recovery.md README.md

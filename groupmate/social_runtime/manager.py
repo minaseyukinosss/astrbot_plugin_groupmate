@@ -37,12 +37,13 @@ class SocialRuntimeManager:
         mode: RuntimeMode,
         enabled_groups: tuple[str, ...],
         config_version: int = 1,
+        event_store: SQLiteSocialEventStore | None = None,
     ) -> None:
         self.persona_id = persona_id
         self.mode = RuntimeMode(mode)
         self.enabled_groups = frozenset(map(str, enabled_groups))
         self.config_version = config_version
-        self.event_store = SQLiteSocialEventStore(database_path)
+        self.event_store = event_store or SQLiteSocialEventStore(database_path)
         self.supervisor = PersonaSupervisor(
             persona_id, SQLitePersonaStateRepository(database_path)
         )
@@ -53,7 +54,11 @@ class SocialRuntimeManager:
     async def start(self) -> None:
         if not self._started:
             await self.supervisor.start()
+            for group_id in self.event_store.pending_groups(self.persona_id):
+                if group_id in self.enabled_groups:
+                    await self.fabric.notify(self.persona_id, group_id)
             self._started = True
+            await self.fabric.drain()
 
     async def ingest(self, envelope: SocialEventEnvelope) -> AppendResult | None:
         if self.mode is RuntimeMode.OFF:
