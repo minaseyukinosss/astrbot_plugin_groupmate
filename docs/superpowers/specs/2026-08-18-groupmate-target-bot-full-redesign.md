@@ -1,4 +1,6 @@
-# Groupmate Target-Bot Full Redesign
+# Groupmate Target-Bot Full Redesign — Superseded
+
+> **Do not implement this specification.** Its turn-centered runtime was superseded by the scene-centered Social Runtime v2 design after architectural review. The authoritative specification is [`2026-08-18-groupmate-social-runtime-v2-design.md`](./2026-08-18-groupmate-social-runtime-v2-design.md).
 
 **Status:** Confirmed in chat on 2026-08-18  
 **Scope:** Behavior runtime, persona deployment, social state, capability continuity, AstrBot Plugin Page, migration, observability, and validation  
