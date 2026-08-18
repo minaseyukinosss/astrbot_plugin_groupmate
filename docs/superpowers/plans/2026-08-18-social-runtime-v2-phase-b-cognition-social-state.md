@@ -75,11 +75,11 @@ class CognitiveObservation:
 
 **Interfaces:** Consumes Blackboard, frozen Scene/Persona/Config; produces `CandidateIntention` and `GovernorResult` exactly matching spec sections 11–12.
 
-- [ ] 写失败测试：privacy/boundary/expired/wrong-target 硬阻断必须压倒 `999` 效用；兼容 `CARE + HELP` 可组合；不同对象不合并；低价值开放参与返回 `SILENCE`。
-- [ ] Run: `pytest tests/social_runtime/test_intentions.py tests/social_runtime/test_governor.py -q`。
-- [ ] 实现固定目标目录与显式特征计算。效用公式只排序通过硬门控的候选，不读取随机数。
-- [ ] 将每个拒绝项写入 `RejectedIntention(intention_id, reason_codes)`；`DEFER` 必须有 `reconsider_at`，`ACT` 必须有 selected ID，`SILENCE` 不得带 selected ID。
-- [ ] Run focused + scenario tests; commit `feat: govern social intentions deterministically`。
+- [x] 写失败测试：privacy/boundary/expired/wrong-target 硬阻断必须压倒 `999` 效用；兼容 `CARE + HELP` 可组合；不同对象不合并；低价值开放参与返回 `SILENCE`。
+- [x] Run: `pytest tests/social_runtime/test_intentions.py tests/social_runtime/test_governor.py -q`。
+- [x] 实现固定目标目录与显式特征计算。效用公式只排序通过硬门控的候选，不读取随机数。
+- [x] 将每个拒绝项写入 `RejectedIntention(intention_id, reason_codes)`；`DEFER` 必须有 `reconsider_at`，`ACT` 必须有 selected ID，`SILENCE` 不得带 selected ID。
+- [x] Run focused + scenario tests; commit `feat: govern social intentions deterministically`。
 
 ```python
 result = governor.decide(candidates, context)
