@@ -183,7 +183,7 @@ git commit -m "feat: define social runtime contracts"
 - Consumes: 新数据库路径。
 - Produces: `SCHEMA_VERSION = 1`, `initialize_database(path)`, `verify_schema(db)`。
 
-- [ ] **Step 1: 写空白数据库测试**
+- [x] **Step 1: 写空白数据库测试**
 
 ```python
 REQUIRED = {
@@ -205,11 +205,11 @@ def test_bootstrap_complete_schema(tmp_path):
         assert REQUIRED <= names
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/social_runtime/test_schema.py -q`
 
-- [ ] **Step 3: 实现表和约束**
+- [x] **Step 3: 实现表和约束**
 
 ```sql
 CREATE TABLE inbox (
@@ -233,11 +233,11 @@ CREATE TABLE outbox (
 
 其余 REQUIRED 表也在首次初始化一次创建；群级唯一键必须包含 `persona_id, group_id`。开启 WAL、foreign_keys、5000ms busy timeout。
 
-- [ ] **Step 4: 拒绝旧数据库**
+- [x] **Step 4: 拒绝旧数据库**
 
 basename 为 `groupmate.db` 或已有库缺少 `social_runtime_schema` 元数据时抛 `ForeignDatabaseError`，不升级、不读取。
 
-- [ ] **Step 5: 运行并提交**
+- [x] **Step 5: 运行并提交**
 
 Run: `pytest tests/social_runtime/test_schema.py -q`
 ```bash
