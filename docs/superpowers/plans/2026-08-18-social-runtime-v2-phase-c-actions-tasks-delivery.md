@@ -26,11 +26,11 @@
 
 **Interfaces:** Consumes GovernorResult/frozen context; produces validated `ActionPlan` from spec 15.1 and `PlanValidation(accepted, errors, reduced_plan)`.
 
-- [ ] 写失败测试：cycle、25 nodes、two visible owners、stale scene、expired plan、missing permission 均拒绝；纯文本 ACT 生成 `GENERATE_TEXT → SEND_BUNDLE`。
-- [ ] 实现 Kahn topological validation、node/edge reference validation、有限 retry/deadline、唯一 visible owner。
-- [ ] 无效计划只允许 `REDUCE/REPLAN/DEFER/CLARIFY/ABANDON`，模型不能传 `validated=True`。
-- [ ] Run: `pytest tests/social_runtime/actions/test_action_plan.py tests/social_runtime/actions/test_plan_validator.py -q`。
-- [ ] Commit `feat: validate finite social action plans`。
+- [x] 写失败测试：cycle、25 nodes、two visible owners、stale scene、expired plan、missing permission 均拒绝；纯文本 ACT 生成 `GENERATE_TEXT → SEND_BUNDLE`。
+- [x] 实现 Kahn topological validation、node/edge reference validation、有限 retry/deadline、唯一 visible owner。
+- [x] 无效计划只允许 `REDUCE/REPLAN/DEFER/CLARIFY/ABANDON`，模型不能传 `validated=True`。
+- [x] Run: `pytest tests/social_runtime/actions/test_action_plan.py tests/social_runtime/actions/test_plan_validator.py -q`。
+- [x] Commit `feat: validate finite social action plans`。
 
 ```python
 assert validator.validate(cyclic_plan, context).errors == ("plan_cycle",)
