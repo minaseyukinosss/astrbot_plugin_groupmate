@@ -1,2 +1,1 @@
-"""Offline tests for the Groupmate domain."""
-
+"""Tests for Groupmate Social Runtime v2."""

@@ -28,13 +28,13 @@
 - Delete: 除本规格和本组计划外的旧 `docs/superpowers/specs/*.md`、`docs/superpowers/plans/*.md`
 - Replace: `main.py`, `_conf_schema.json`
 - Create: `pytest.ini`, `groupmate/__init__.py`, `groupmate/social_runtime/__init__.py`
-- Create: `tests/__init__.py`, `tests/architecture_guard.py`, `tests/shared/test_clean_slate.py`
+- Create: `tests/__init__.py`, `tests/shared/test_architecture_boundaries.py`, `tests/shared/test_plugin_skeleton.py`
 
 **Interfaces:**
 - Consumes: 当前 Git 历史与权威 V2 规格。
 - Produces: 无旧领域实现的最小插件树、架构守卫、全新测试目录。
 
-- [ ] **Step 1: 创建 Worktree 并记录删除范围**
+- [x] **Step 1: 创建 Worktree 并记录删除范围**
 
 Run:
 ```bash
@@ -44,42 +44,29 @@ git -C .worktrees/social-runtime-v2 ls-files groupmate tests eval pages/settings
 ```
 Expected: 工作区干净；Git 历史保留全部旧内容。
 
-- [ ] **Step 2: 写架构守卫**
+- [x] **Step 2: 写架构边界测试并验证 RED**
 
 ```python
-# tests/architecture_guard.py
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-FORBIDDEN_PATHS = (
-    "groupmate/engine", "groupmate/core", "groupmate/social",
-    "groupmate/memory", "groupmate/fun", "groupmate/mail",
-    "groupmate/tools", "groupmate/capabilities", "groupmate/persona",
-)
-FORBIDDEN_SYMBOLS = (
-    "CognitiveWorkflow", "GroupRuntimeManager", "SQLiteMemoryStore",
-    "ParticipationDecisionEngine", "PersonaContext", "TurnOwner",
-)
-
-def assert_clean_architecture():
-    for relative in FORBIDDEN_PATHS:
-        assert not (ROOT / relative).exists(), relative
-    production = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (ROOT / "groupmate").rglob("*.py")
-    )
-    for symbol in FORBIDDEN_SYMBOLS:
-        assert symbol not in production, symbol
-
-if __name__ == "__main__":
-    assert_clean_architecture()
+# tests/shared/test_architecture_boundaries.py
+def test_composition_root_only_depends_on_v2_boundaries():
+    imports = _internal_imports(ROOT / "main.py")
+    assert imports
+    assert all(
+        module == "groupmate.settings"
+        or module.startswith((
+            "groupmate.adapters", "groupmate.settings", "groupmate.social_runtime"
+        ))
+        for module in imports
+    ), imports
 ```
 
-- [ ] **Step 3: 使用 `apply_patch` 删除旧实现并建最小入口**
+该测试通过 AST 解析真实 Import Boundary，不扫描旧类名，也不把文件布局本身当成行为。RED 结果明确列出 `groupmate.host*` 四个旧依赖。
+
+- [x] **Step 3: 使用 `apply_patch` 删除旧实现并建最小入口**
 
 保留 `metadata.yaml`、`requirements.txt`、根 `__init__.py`、权威规格和本组计划。`main.py` 暂时只提供可导入的 `GroupmatePlugin`，初始化时明确报告 `Social Runtime v2 foundation incomplete`。`_conf_schema.json` 只保留 `enabled_groups`、`runtime_mode`、`generation_provider`、`vision_provider`、`database_path`。
 
-- [ ] **Step 4: 配置 Marker 并验证清理**
+- [x] **Step 4: 配置 Marker 并验证清理**
 
 ```ini
 [pytest]
@@ -93,9 +80,11 @@ markers =
     page: AstrBot 插件页面
 ```
 
-Run: `python -m tests.architecture_guard && pytest tests/shared/test_clean_slate.py -q`
+Run: `pytest tests/shared -q -p no:cacheprovider`
 
-- [ ] **Step 5: 提交**
+Expected: `3 passed`，Composition Root 只导入 V2 Boundary，默认模式为 `OFF`，基础 Bridge 在完整运行时装配前 fail closed。
+
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A
