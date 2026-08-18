@@ -1,10 +1,10 @@
-# Groupmate Target-Bot Full Redesign — Superseded
+# Groupmate 目标 Bot 全面重构设计 — 已废弃
 
-> **Do not implement this specification.** Its turn-centered runtime was superseded by the scene-centered Social Runtime v2 design after architectural review. The authoritative specification is [`2026-08-18-groupmate-social-runtime-v2-design.md`](./2026-08-18-groupmate-social-runtime-v2-design.md).
+> **请勿实施本规格。** 架构评审后，其中以 Turn 为中心的运行时已经被以群场景为中心的 Social Runtime v2 取代。当前唯一权威规格为 [`2026-08-18-groupmate-social-runtime-v2-design.md`](./2026-08-18-groupmate-social-runtime-v2-design.md)。下方英文内容仅作为早期设计决策记录保留。
 
-**Status:** Confirmed in chat on 2026-08-18  
-**Scope:** Behavior runtime, persona deployment, social state, capability continuity, AstrBot Plugin Page, migration, observability, and validation  
-**Product:** `astrbot_plugin_groupmate`
+**状态：** 2026-08-18 已废弃
+**替代文档：** Groupmate Social Runtime v2 中文设计规格
+**产品：** `astrbot_plugin_groupmate`
 
 ## 1. Purpose
 

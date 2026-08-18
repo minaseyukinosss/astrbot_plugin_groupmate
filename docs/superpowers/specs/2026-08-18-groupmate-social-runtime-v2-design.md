@@ -1,111 +1,111 @@
-# Groupmate Social Runtime v2 Design
+# Groupmate Social Runtime v2 中文设计规格
 
-**Status:** Confirmed in staged review on 2026-08-18  
-**Authority:** This specification supersedes the turn-centered design in `2026-08-18-groupmate-target-bot-full-redesign.md`  
-**Scope:** Runtime architecture, social cognition, persona continuity, memory and learning, actions and capabilities, delivery, control plane, Plugin Page, migration, tests, and rollout
+**状态：** 2026-08-18 分段评审确认
+**权威性：** 本文档取代 `2026-08-18-groupmate-target-bot-full-redesign.md` 中以 Turn 为中心的设计
+**范围：** 运行时架构、社会认知、人格连续性、记忆与学习、行动与能力、交付、控制面、插件页面、迁移、测试和上线
 
-## 1. Goal
+## 1. 目标
 
-Rebuild Groupmate around a persistent social-agent runtime that can reproduce the behavioral effect of the analyzed target QQ group companion and exceed it in contextual judgment, continuity, tool reliability, privacy, and operational control.
+围绕一个持续存在的社会智能体运行时重建 Groupmate，使其能够实现已分析目标 QQ 群聊伙伴的行为效果，并在上下文判断、长期连续性、工具可靠性、隐私和运维控制方面超过目标 bot。
 
-The desired effect comes from the interaction of:
+目标效果来自以下机制共同作用，而不是来自口癖模仿：
 
-- continuous awareness of a group conversation rather than isolated request/response turns;
-- contextually justified participation in open conversation;
-- a stable but stateful identity;
-- persistent relationships, shared experiences, and group culture;
-- bounded autonomous initiation;
-- natural short-form language and media use;
-- coherent, persona-owned tool progress and results;
-- causal, inspectable state and learning;
-- deterministic authority over privacy, tools, state mutation, and sending.
+- 持续理解群聊，而不是逐条处理孤立的请求/响应 Turn；
+- 在开放群聊中进行有依据、符合时机的参与；
+- 稳定但具有因果状态的人格身份；
+- 持久的成员关系、共同经历和群文化；
+- 有边界的自主发起能力；
+- 自然的短文本节奏和媒体使用；
+- 由同一人格拥有的工具进度与最终结果；
+- 可解释、可审计、可纠正的状态和学习；
+- 由确定性代码掌握隐私、工具、状态修改和发送权限。
 
-The architecture must support a more intelligent companion without turning unconstrained model output into authority.
+新架构必须允许模型提供更强智能，但不能让不受约束的模型输出成为系统权威。
 
-## 2. Confirmed Product Boundaries
+## 2. 已确认的产品边界
 
-### 2.1 Bounded autonomy
+### 2.1 有边界的自主性
 
-The companion may initiate without a new inbound message when there is a concrete source such as an open loop, member event, group ritual, scheduled state transition, delayed opportunity, or self commitment.
+即使没有新消息，机器人也可以根据具体来源主动发起，例如未完事项、成员事件、群内仪式、计划状态变化、延迟机会或自身承诺。
 
-Every autonomous opportunity requires:
+每个自主机会必须具备：
 
-- evidence or a persisted goal;
-- an intended group and audience;
-- an earliest execution time and expiry;
-- a maximum attempt count;
-- revalidation against the latest group scene;
-- quiet-hour, boundary, privacy, and budget checks.
+- 证据或持久目标；
+- 明确的群和预期对象；
+- 最早执行时间和过期时间；
+- 最大尝试次数；
+- 执行前根据最新群场景重新验证；
+- 安静时段、边界、隐私和预算检查。
 
-Autonomy may not invent facts, farm engagement, recursively create follow-ups without evidence, or execute high-risk side effects without required confirmation.
+自主性不得用于编造事实、刷存在感、无依据递归创建跟进，或在缺少确认时执行高风险外部操作。
 
-### 2.2 Shared self, isolated relationships
+### 2.2 共享自我，隔离关系
 
-Shared across groups:
+跨群共享：
 
-- Persona Constitution;
-- Self Model;
-- global sleep, energy, mood, and workload;
-- capability availability and global resource budgets;
-- self commitments and administrator-published preferences.
+- Persona Constitution（人格宪法）；
+- Self Model（自我模型）；
+- 全局睡眠、能量、心境和工作负载；
+- 能力可用性与全局资源预算；
+- 自身承诺和管理员发布的长期偏好。
 
-Isolated by group by default:
+默认按群隔离：
 
-- member identity and relationship state;
-- member facts and impressions;
-- shared experiences;
-- group culture and inside jokes;
-- raw messages;
-- proactive-care evidence.
+- 成员身份和关系状态；
+- 成员事实与社交印象；
+- 共同经历；
+- 群文化与内部梗；
+- 原始消息；
+- 主动关心依据。
 
-Cross-group member continuity requires an administrator-created identity link plus an allowlist of transferable data kinds. Sensitive experiences and group-specific relationships never transfer automatically.
+跨群成员连续性必须先由管理员建立身份关联，并明确允许传递的数据类型。敏感经历和群内关系永远不会自动跨群传播。
 
-### 2.3 Layered plasticity
+### 2.3 分层可塑性
 
-- Constitution, values, stable boundaries, privacy policy, and safety policy cannot self-modify.
-- Relationships, addresses, memories, impressions, culture, and open loops may learn from governed evidence.
-- Attention timing, reply-length tendency, media preference, and participation weights may calibrate within administrator-defined limits after sufficient reviewed evidence.
-- Models cannot rewrite prompts, code, policies, tool permissions, or safety ceilings.
+- 人格身份、价值观、稳定边界、隐私和安全策略不能自动修改；
+- 关系、称呼、记忆、社交印象、群文化和未完事项可以根据受治理证据学习；
+- 注意窗口、回复长度倾向、媒体偏好和参与权重可以在管理员设定范围内、经过足够复核样本后校准；
+- 模型不能重写提示词、代码、策略、工具权限或安全上限。
 
-## 3. Rejected Architectures
+## 3. 被否决的架构
 
-### 3.1 Prompt-only imitation
+### 3.1 仅通过提示词模仿
 
-Rejected because prompt style cannot create scene awareness, autonomous timing, persistent state, task continuity, media reliability, or governance.
+提示词风格无法产生场景意识、自主时机、持久状态、任务连续性、媒体可靠性和治理能力，因此不采用。
 
-### 3.2 Enhanced turn workflow
+### 3.2 增强旧 Turn Workflow
 
-Rejected as the core because one message producing one `SPEAK/SILENCE/TASK` result remains a request/response bot even after adding mood and more motives. Group meaning often emerges across several messages and multiple concurrent topics.
+即使增加心情和更多参与动机，“一条消息产生一个 `SPEAK/SILENCE/TASK` 结果”仍然是请求/响应机器人。群聊意义经常由连续消息和多个并行话题共同形成，因此不能继续作为核心。
 
-### 3.3 Full multi-agent society
+### 3.3 全多智能体社会
 
-Rejected as the default because persistent independent agents create latency, cost, state competition, and personality fragmentation. Specialized cognitive workers are allowed, but they are stateless proposal producers under one authoritative social runtime.
+长期独立运行的多个 Agent 会造成延迟、成本、状态竞争和人格分裂，因此不作为默认核心。允许使用专业认知 Worker，但它们必须无状态，只能提出建议，并受单一 Social Runtime 管理。
 
-## 4. Architectural Principles
+## 4. 架构原则
 
-1. The group conversation is a persistent event stream, not a queue of chat requests.
-2. One `PersonaSupervisor` owns shared self state for each persona.
-3. One `GroupSceneActor` owns the social world of each persona/group.
-4. Models observe, interpret, propose, summarize, and draft; they do not authorize or commit.
-5. Social value, disruption, uncertainty, ownership, relationship, state, and risk jointly determine participation.
-6. Silence, observation, deferral, rest, task start, failure, and expiry are first-class outcomes.
-7. An action may contain text, media, tools, progress, and follow-up, but has one final-response owner.
-8. Long work is asynchronous and re-enters the actor as events.
-9. Every visible action has a causal event chain and an idempotent delivery record.
-10. Group-facing behavior is immersive; administration is literal, transparent, and reversible.
-11. Page and projection failures cannot degrade the authoritative conversational write line.
-12. Existing Groupmate code is an adapter and migration source, not a constraint on the new social model.
+1. 群聊是持续事件流，不是聊天请求队列。
+2. 每个人格只有一个 `PersonaSupervisor` 管理共享自我。
+3. 每个人格/群只有一个 `GroupSceneActor` 管理该群的社会世界。
+4. 模型可以观察、解释、提议、总结和起草，但不能授权或提交。
+5. 参与判断同时考虑社会价值、打断成本、不确定性、对象归属、关系、状态和风险。
+6. 沉默、观察、延迟、休息、任务开始、失败和过期都是正式结果。
+7. 一次行动可以包含文本、媒体、工具、进度和跟进，但只有一个最终回复所有者。
+8. 长任务异步执行，并以事件重新进入 Actor。
+9. 每个可见动作都有因果事件链和幂等发送记录。
+10. 群内保持人格沉浸，管理页面保持真实、透明和可回滚。
+11. 页面和 Projection 故障不能影响权威群聊写线路。
+12. 旧 Groupmate 代码只是适配和迁移来源，不能约束新的社会模型。
 
-## 5. System Topology
+## 5. 系统总体拓扑
 
 ```mermaid
 flowchart TB
-    subgraph Sources
-        Platform["AstrBot / QQ events"]
-        Clock["Clock and scheduled opportunities"]
-        Capability["Capability progress and results"]
-        Admin["Admin commands and publications"]
-        Delivery["Platform delivery outcomes"]
+    subgraph Sources["事件来源"]
+        Platform["AstrBot / QQ 事件"]
+        Clock["时间与计划机会"]
+        Capability["能力进度与结果"]
+        Admin["管理员命令与配置发布"]
+        Delivery["平台发送结果"]
     end
 
     Sources --> Fabric["Durable Event Fabric"]
@@ -115,44 +115,44 @@ flowchart TB
 
     GroupA --> Attention["Attention Scheduler"]
     Attention --> Blackboard["Cognition Blackboard"]
-    Blackboard <--> Workers["Stateless Cognitive Workers"]
+    Blackboard <--> Workers["无状态 Cognitive Workers"]
     Blackboard --> Intentions["Intention Engine"]
     Intentions --> Governor["Social Governor"]
     Governor --> Planner["Action Planner"]
     Planner --> Executor["Execution Coordinator"]
-    Executor <--> Tasks["Task Runtime and Providers"]
+    Executor <--> Tasks["Task Runtime 与 Providers"]
     Executor --> Outbox["Transactional Outbox"]
-    Outbox --> PlatformAdapter["AstrBot / OneBot delivery"]
+    Outbox --> PlatformAdapter["AstrBot / OneBot 发送"]
     PlatformAdapter --> Fabric
-    Executor --> Reflection["Outcome and Reflection"]
+    Executor --> Reflection["Outcome 与 Reflection"]
     Reflection --> Fabric
 
-    Fabric --> Journal["Event Journal and Snapshots"]
+    Fabric --> Journal["Event Journal 与 Snapshots"]
     Journal --> Projections["Read Projection Bus"]
-    Projections --> Page["Plugin Page queries and SSE"]
+    Projections --> Page["插件页面 Query 与 SSE"]
     Page --> Commands["Domain Command API"]
     Commands --> Fabric
 ```
 
-The only path that may authorize a group-visible action is:
+唯一可以授权群内可见动作的线路是：
 
 ```text
-durable event
--> group scene
--> attention
--> cognition
--> candidate intentions
--> Social Governor
--> validated ActionPlan
--> committed outbox
--> platform delivery
+持久事件
+→ 群场景
+→ 注意力
+→ 认知
+→ 候选意图
+→ Social Governor
+→ 已验证 ActionPlan
+→ 已提交 Outbox
+→ 平台发送
 ```
 
 ## 6. Durable Event Fabric
 
-### 6.1 Event envelope
+### 6.1 事件信封
 
-All stimuli use one envelope:
+所有刺激统一使用：
 
 ```python
 @dataclass(frozen=True)
@@ -170,90 +170,90 @@ class SocialEventEnvelope:
     payload: Mapping[str, object]
 ```
 
-Event families:
+事件家族包括：
 
-- platform messages, replies, mentions, pokes, reactions, and media;
-- timer, wake, sleep, recovery, commitment, follow-up, and delayed-opportunity events;
-- capability accepted, progress, success, failure, cancellation, and expiry events;
-- configuration publication, correction, pause, reset, review, and rollback events;
-- delivery sent, failed, unknown, expired, and suppressed events;
-- consolidation and calibration events.
+- 平台消息、回复、@、戳一戳、反应和媒体；
+- 定时、唤醒、睡眠、恢复、承诺、跟进和延迟机会；
+- 能力接受、进度、成功、失败、取消和过期；
+- 配置发布、纠正、暂停、重置、复核和回滚；
+- 发送成功、失败、未知、过期和抑制；
+- 记忆整合与行为校准。
 
-### 6.2 Durability and idempotency
+### 6.2 持久性和幂等
 
-- Events enter a durable inbox before actor processing.
-- Platform deduplication uses stable source identity where available and a bounded fingerprint fallback otherwise.
-- Every handler is idempotent by `event_id`.
-- `correlation_id` connects one social interaction or task.
-- `causation_id` makes the causal chain replayable.
-- Actor acknowledgements advance an inbox cursor only after effects are committed.
-- Raw-content retention is separate from structural event retention.
+- 事件进入 Actor 前先写入 Durable Inbox；
+- 优先使用平台稳定 ID 去重，缺失时使用有界指纹；
+- 每个处理器以 `event_id` 保证幂等；
+- `correlation_id` 连接一次完整社交交互或任务；
+- `causation_id` 保存可回放的因果链；
+- Actor 只有在影响提交后才推进 Inbox Cursor；
+- 原文保留策略与结构化事件保留策略相互独立。
 
-### 6.3 Replaying events
+### 6.3 事件回放
 
-Replay supports:
+回放用于：
 
-- actor recovery;
-- deterministic tests with fixed worker outputs;
-- shadow comparison;
-- rebuilding projections;
-- investigating relationship, state, memory, task, and delivery changes.
+- Actor 恢复；
+- 使用固定 Worker 输出进行确定性测试；
+- Shadow 对比；
+- 重建 Projection；
+- 调查关系、状态、记忆、任务和发送变化。
 
-Replay is never allowed to resend historical outbox items unless an explicit recovery state proves the original platform call was not committed.
+除非恢复状态能够证明原平台调用未提交，否则回放禁止重新发送历史 Outbox 内容。
 
-## 7. Actor Hierarchy
+## 7. Actor 层级
 
 ### 7.1 Persona Supervisor
 
-One supervisor exists per persona and exclusively writes:
+每个人格只有一个 Supervisor，并独占写入：
 
-- active Constitution and Self Model versions;
-- global presence, energy, mood, irritation, and cognitive load;
-- mode state shared across groups;
-- global capability and generation budgets;
-- self commitments;
-- the registry and lifecycle of group actors.
+- 当前 Constitution 与 Self Model 版本；
+- 全局在场、能量、心境、烦躁和认知负载；
+- 跨群共享的模式状态；
+- 全局能力和生成预算；
+- 自身承诺；
+- 群 Actor 注册表和生命周期。
 
-Group actors process concurrently. They request immutable `PersonaSnapshot` values and submit bounded `GlobalStateEffect` events. The supervisor validates, clamps, deduplicates, applies, versions, and publishes accepted global changes.
+不同群可以并发运行。群 Actor 请求不可变 `PersonaSnapshot`，并提交有边界的 `GlobalStateEffect`。Supervisor 负责证据验证、限幅、去重、应用、版本化和发布。
 
 ### 7.2 Group Scene Actor
 
-One actor exists for each `(persona_id, group_id)` and exclusively writes:
+每个 `(persona_id, group_id)` 只有一个 Actor，并独占写入：
 
-- active topics and topic transitions;
-- participant and interaction graph;
-- bot role in each topic;
-- group activity and atmosphere;
-- pending social opportunities;
-- group-local presence rhythm;
-- running task references;
-- group relationships, impressions, culture, memories, and open loops through governed domain services.
+- 活跃话题和话题转换；
+- 参与者和互动关系图；
+- 机器人在不同话题中的角色；
+- 群活跃度和社交氛围；
+- 待评估社交机会；
+- 群内在场节奏；
+- 正在运行的任务引用；
+- 通过领域服务管理的群关系、印象、文化、记忆和未完事项。
 
-The actor processes one state mutation at a time but does not block on models, capabilities, page queries, or platform delivery. External work is dispatched and returns as a new versioned event.
+Actor 每次只执行一个状态修改，但不会阻塞等待模型、能力、页面查询或平台发送。外部工作异步派发，结果作为带版本事件返回。
 
-### 7.3 Current-code boundary
+### 7.3 与当前代码的边界
 
-Reusable adapters:
+可以复用：
 
-- AstrBot and OneBot ingress;
-- normalized platform primitives;
-- storage utilities and migrations;
-- capability provider integrations;
-- privacy and authorization policies;
-- outbox/platform delivery concepts;
-- governance and replay data.
+- AstrBot 和 OneBot 接入；
+- 平台事件基础标准化；
+- 存储工具和迁移基础设施；
+- Capability Provider 集成；
+- 隐私和授权策略；
+- Outbox/平台发送概念；
+- 治理和回放数据。
 
-Not reused as V2 authority:
+不能作为 V2 权威：
 
-- the current per-message participation pipeline;
-- the monolithic workflow coordinator;
-- a global persona context;
-- Aemeath-specific output rules as global policy;
-- Plugin Page JavaScript that reconstructs domain meaning from one large snapshot.
+- 当前逐消息 Participation 主线；
+- 单体 Workflow 协调器；
+- 全局 Persona Context；
+- 将爱弥斯输出规则作为全局策略；
+- 在前端根据单个大型 Snapshot 重建领域含义。
 
-New core code lives under `groupmate/social_runtime/`. Compatibility facades isolate old runtime types during migration.
+新核心代码放在 `groupmate/social_runtime/`，迁移期间通过兼容 Facade 隔离旧类型。
 
-## 8. Group World Model
+## 8. 群世界模型
 
 ```python
 @dataclass(frozen=True)
@@ -273,53 +273,53 @@ class GroupWorldState:
     culture_version: int
 ```
 
-The world model may contain several concurrent topics. Message recency alone never determines the target or topic.
+群世界可以同时存在多个话题。消息是否最新不能单独决定其对象和话题。
 
-World projectors use platform facts first, deterministic relationship/continuity rules second, and model observations only as confidence-bearing hypotheses. Model hypotheses cannot override explicit reply chains or mentions.
+World Projector 按以下优先级工作：平台事实、确定性关系/连续性规则、带置信度的模型观察。模型假设不能覆盖明确的回复链和 @。
 
-## 9. Attention System
+## 9. 注意力系统
 
-### 9.1 Fast attention
+### 9.1 快速注意 Fast Attention
 
-Immediately creates a frame for:
+以下事件立即创建 Attention Frame：
 
-- direct mention, reply, or address;
-- poke or explicit interaction;
-- task request or confirmation;
-- boundary or safety event;
-- capability result;
-- administrator emergency action.
+- 直接 @、回复或称呼；
+- 戳一戳或明确互动；
+- 任务请求或确认；
+- 边界和安全事件；
+- 能力结果；
+- 管理员紧急操作。
 
-Fast attention minimizes cognition for simple cases but still uses the latest scene and authority policies.
+简单场景使用最小认知成本，但仍必须读取最新场景和权威策略。
 
-### 9.2 Ambient attention
+### 9.2 环境注意 Ambient Attention
 
-Collects a dynamic message window so the companion can wait for people to finish, understand parallel topics, and avoid replying to an intermediate fragment.
+环境注意收集动态消息窗口，使机器人能够等待成员说完、理解并行话题并避免回复中间句。
 
-Window length depends on:
+窗口长度取决于：
 
-- group message rate;
-- punctuation and continuation signals;
-- reply ownership;
-- topic completeness;
-- bot recent presence;
-- new higher-priority events.
+- 群消息速度；
+- 标点和续写信号；
+- 回复所有权；
+- 话题是否完整；
+- 机器人近期在场情况；
+- 是否出现更高优先级事件。
 
-The default profile may use roughly 1–2 seconds in a quiet group, 2–4 seconds at normal speed, and 3–6 seconds in a fast group. These are bounded policy values, not simulated thinking delays.
+默认档位可在安静群使用约 1–2 秒、普通群 2–4 秒、高速群 3–6 秒。它是有边界的场景等待，不是模拟思考。
 
-### 9.3 Temporal attention
+### 9.3 时间注意 Temporal Attention
 
-Creates frames for:
+时间注意处理：
 
-- commitments and accepted tasks;
-- evidence-backed follow-up opportunities;
-- delayed ambient opportunities;
-- sleep, wake, recovery, and daily transitions;
-- group rituals and self-authored open loops.
+- 承诺和已接受任务；
+- 有证据的自然跟进；
+- 延迟环境机会；
+- 睡眠、醒来、恢复和换日；
+- 群内仪式和机器人自己留下的开放事项。
 
-A temporal event proposes attention; it never authorizes a send.
+时间事件只能提出注意机会，不能授权发送。
 
-### 9.4 Attention frame
+### 9.4 Attention Frame
 
 ```python
 @dataclass(frozen=True)
@@ -336,32 +336,32 @@ class AttentionFrame:
     requested_workers: tuple[str, ...]
 ```
 
-Worker results referencing obsolete scenes are rejected, revalidated, or re-requested according to trigger type. An obsolete ambient interpretation can never directly produce delivery.
+引用过期场景的 Worker 结果必须按触发类型丢弃、重新验证或重新请求。过期的环境解释不能直接产生发送。
 
-## 10. Cognitive Workers and Blackboard
+## 10. Cognitive Workers 与 Cognition Blackboard
 
-### 10.1 Cost levels
+### 10.1 认知成本等级
 
-- Level 0: deterministic rules for deduplication, hard ownership, hard safety, and resource blockers.
-- Level 1: one model pass for ordinary direct conversation and clear tasks.
-- Level 2: multiple specialized workers for multi-topic, play, care, continuity, and ambiguous participation.
-- Level 3: counterfactual review for sensitive, high-risk, high-value, or strongly conflicting opportunities.
+- Level 0：规则处理去重、硬对象归属、硬安全和资源阻断；
+- Level 1：单模型处理普通直接聊天和明确任务；
+- Level 2：多 Worker 处理多话题、玩笑、关心、连续性和模糊参与；
+- Level 3：对敏感、高风险、高价值或强冲突机会进行反事实审议。
 
-### 10.2 Worker roles
+### 10.2 Worker 角色
 
-- scene interpreter;
-- addressee resolver;
-- social-cue interpreter;
-- task interpreter;
-- continuity matcher;
-- culture interpreter;
-- opportunity critic;
-- risk assessor;
-- counterfactual critic;
-- response drafter;
-- memory and reflection candidate extractor.
+- 场景解释；
+- 对话对象解析；
+- 社交信号解释；
+- 任务理解；
+- 连续性匹配；
+- 群文化解释；
+- 参与机会批评；
+- 风险评估；
+- 反事实批评；
+- 回应草案；
+- 记忆与反思候选提取。
 
-Workers return only:
+Worker 只能返回：
 
 ```python
 @dataclass(frozen=True)
@@ -376,42 +376,42 @@ class CognitiveObservation:
     uncertainty: tuple[str, ...]
 ```
 
-Workers cannot mutate state, send, execute tools, write memory, modify policies, or publish configurations.
+Worker 无权修改状态、发送、执行工具、写入记忆、修改策略或发布配置。
 
 ### 10.3 Cognition Blackboard
 
-The blackboard is scoped to one cognitive cycle and supports:
+黑板只存在于一次认知周期，支持：
 
-- conflicting hypotheses;
-- evidence aggregation;
-- fact-versus-interpretation priority;
-- observation expiry;
-- scene-version checking;
-- uncertainty propagation;
-- bounded context for intention generation.
+- 多个相互冲突的假设；
+- 证据聚合；
+- 事实高于解释；
+- 观察过期；
+- 场景版本检查；
+- 不确定性传播；
+- 向意图生成提供有边界上下文。
 
-It is not persistent memory and is discarded after the cycle is committed.
+黑板不是长期记忆，周期提交后即销毁。
 
-## 11. Persona Goals and Candidate Intentions
+## 11. 人格目标与候选意图
 
-Stable goals include:
+稳定目标包括：
 
-- remain consistent with identity and values;
-- build reciprocal, bounded relationships;
-- help when useful;
-- complete accepted tasks and commitments;
-- express authentic preferences;
-- participate in group culture without taking over;
-- protect boundaries and privacy;
-- conserve energy and rest;
-- observe when uncertain.
+- 保持身份和价值观一致；
+- 建立双向、有边界的关系；
+- 在有价值时提供帮助；
+- 完成已接受任务和承诺；
+- 表达真实偏好；
+- 参与群文化但不垄断；
+- 保护边界和隐私；
+- 保存精力并休息；
+- 不确定时观察。
 
-The Intention Engine may propose:
+Intention Engine 可以提出：
 
-- acknowledge, answer, help, care, play, connect, express preference;
-- continue topic, follow up, welcome, react to media;
-- maintain boundary, accept task, report progress, deliver result;
-- initiate topic, observe, or rest.
+- 应声、回答、帮助、关心、玩笑、连接语境、表达偏好；
+- 延续话题、跟进、欢迎、媒体反应；
+- 维护边界、接受任务、报告进度、交付结果；
+- 主动发起、观察或休息。
 
 ```python
 @dataclass(frozen=True)
@@ -441,58 +441,58 @@ class CandidateIntention:
 
 ## 12. Social Governor
 
-The governor is deterministic and code-owned.
+Social Governor 是确定性、代码所有的决策核心。
 
-### 12.1 Hard constraints
+### 12.1 硬约束
 
-- audience and topic ownership;
-- privacy and sensitivity;
-- explicit boundaries and refusal;
-- group/persona pause;
-- event, scene, and opportunity expiry;
-- capability permission and confirmation;
-- idempotency and existing task ownership;
-- platform availability.
+- 对象和话题所有权；
+- 隐私和敏感性；
+- 明确边界和拒绝；
+- 群/人格暂停；
+- 事件、场景和机会过期；
+- 能力权限和确认；
+- 幂等和已有任务所有权；
+- 平台可用性。
 
-Hard constraints cannot be overridden by model confidence or utility.
+硬约束不能被模型置信度或效用分数覆盖。
 
-### 12.2 Obligations
+### 12.2 义务
 
-The governor recognizes direct reply, accepted-task reporting, commitment, boundary, and administrator-notification obligations. Required outcomes may use deterministic fallbacks; they do not guarantee unrestricted generation or tool execution.
+Governor 识别直接回应、已接受任务报告、承诺、边界和管理员通知义务。必要结果可以使用确定性 Fallback，但义务不意味着可以无限生成或执行工具。
 
-### 12.3 Social utility
+### 12.3 社会效用
 
-Eligible candidates are ranked by a versioned behavior profile:
+通过硬门控的候选按版本化行为档案排序：
 
 ```text
-utility =
-  obligation
-  + relevance
-  + relational value
-  + continuity value
-  + novelty
-  + persona fit
-  + state fit
-  + information gain
-  - disruption cost
-  - uncertainty cost
-  - repetition cost
-  - resource cost
-  - risk cost
+社会效用 =
+  义务
+  + 相关度
+  + 关系价值
+  + 连续性价值
+  + 新颖性
+  + 人格契合
+  + 状态契合
+  + 信息价值
+  - 打断成本
+  - 不确定成本
+  - 重复成本
+  - 资源成本
+  - 风险成本
 ```
 
-Utility selects and ranks; it is not converted into a random reply probability.
+效用只用于选择和排序，不转换成随机回复概率。
 
-### 12.4 Conflict, composition, and rhythm
+### 12.4 冲突、组合和节奏
 
-- compatible care and help may combine;
-- light media may combine with one short social act;
-- boundary suppresses intimacy and play;
-- task result supersedes unsent progress;
-- different targets normally require separate opportunities;
-- recent bot contributions, intervening human turns, topic changes, group speed, target concentration, media density, and repetition influence disruption cost.
+- 兼容的关心与帮助可以组合；
+- 轻媒体可以与一条短社交动作组合；
+- 边界意图抑制亲密和玩笑；
+- 任务结果取代尚未发送的进度；
+- 不同对象通常需要不同机会；
+- 机器人近期发言、人类轮次、话题转换、群速度、对象集中、媒体密度和重复情况共同影响打断成本。
 
-### 12.5 Governor result
+### 12.5 Governor Result
 
 ```python
 @dataclass(frozen=True)
@@ -509,26 +509,26 @@ class GovernorResult:
 
 ### 13.1 Constitution
 
-Immutable except through administrator publication:
+只有管理员发布才可修改：
 
-- identity and values;
-- stable boundaries;
-- stable preferences;
-- speech invariants;
-- safety invariants;
-- allowed modes and autonomy principles.
+- 身份和价值观；
+- 稳定边界；
+- 稳定偏好；
+- 表达不变量；
+- 安全不变量；
+- 允许的模式和自主原则。
 
 ### 13.2 Self Model
 
-Event-backed and updateable:
+由真实事件支持并可更新：
 
-- commitments and task history;
-- capability availability and reliability;
-- stable non-sensitive preferences;
-- recurring roles across groups;
-- reviewed recurring failure patterns.
+- 承诺和任务历史；
+- 能力可用性和可靠性；
+- 稳定且非敏感的偏好；
+- 跨群重复承担的角色；
+- 经复核的重复失败模式。
 
-### 13.3 Global self state
+### 13.3 全局自身状态
 
 ```python
 @dataclass(frozen=True)
@@ -545,11 +545,11 @@ class GlobalSelfState:
     version: int
 ```
 
-Raw numeric state is never exposed in group replies. State influences attention, intention salience, length, modality, autonomy, concurrency, and boundaries.
+原始数值不会出现在群回复中。状态影响注意力、意图显著性、长度、模态、自主性、并发和边界。
 
 ### 13.4 Mode Director
 
-Mode is composed from one primary mode and bounded modifiers:
+模式由一个主模式和有限修饰状态组合：
 
 ```python
 @dataclass(frozen=True)
@@ -560,82 +560,82 @@ class PersonaModeState:
     expires_at: int | None
 ```
 
-Transitions require events, schedules, workload, or administrator commands. Random per-turn mode changes are forbidden.
+模式转换必须来自事件、时间、工作负载或管理员命令，禁止每轮随机切换。
 
-### 13.5 State effects
+### 13.5 状态影响
 
-Models may propose state effects with evidence. A code-owned transition policy validates evidence, clamps changes, applies cooldown and decay, deduplicates causation, and emits versioned accepted effects.
+模型可以提出带证据的状态影响。代码所有的转换策略负责验证、限幅、冷却、衰减、因果去重和版本化。
 
-Silence from a member is not negative evidence. One emoji does not create a long-term mood or relationship change.
+成员没有回复不是负面证据，单个表情不能形成长期心情或关系变化。
 
-## 14. Relationships, Impressions, Culture, and Memory
+## 14. 关系、印象、群文化与记忆
 
-### 14.1 Relationship state
+### 14.1 关系状态
 
-Relationship is a projection over evidence events with dimensions for familiarity, warmth, trust, reciprocity, playfulness, reliability, care permission, and boundary pressure.
+关系是证据事件的多维 Projection，包含熟悉、温度、信任、互惠、玩闹接受度、可靠性、关心许可和边界压力。
 
-Relationship never grants platform or capability permissions.
+关系永远不能授予平台或工具权限。
 
-### 14.2 Social impressions
+### 14.2 社交印象
 
-Impressions are confidence-bearing, group-scoped understandings such as preferred address, interests, interaction style, teasing tolerance, routine, sensitivity, group role, and recurring relationship pattern.
+印象是带置信度、按群隔离的理解，例如称呼偏好、兴趣、互动方式、玩笑接受度、作息、敏感话题、群内角色和固定相处模式。
 
-Each impression carries evidence, status, expiry, and independent permissions to influence address, tone, participation, care, or suggestions.
+每条印象保存证据、状态、过期时间，并分别控制能否影响称呼、语气、参与、关心或建议。
 
-### 14.3 Group culture
+### 14.3 群文化
 
-Culture artifacts include recurring jokes, local abbreviations, rituals, role relationships, common topics, humor limits, group rhythm, and expectations of the companion.
+群文化包括重复出现的梗、局部简称、仪式、角色关系、常见话题、玩笑边界、群节奏和群成员对机器人的期待。
 
-One occurrence normally remains episodic. Recurrence or administrator confirmation is required for accepted group culture. Artifacts decay and never cross groups by default.
+单次出现通常只属于情景记忆。成为正式群文化需要重复出现或管理员确认。群文化会衰减，且默认不能跨群。
 
-### 14.4 Memory layers
+### 14.4 记忆分层
 
-- working memory: one cognition cycle and active scene;
-- episodic memory: timestamped interactions and shared events;
-- semantic memory: stable facts with provenance and validity;
-- relational memory: evidence events and projections;
-- procedural social memory: group-level interaction preferences;
-- self memory: tasks, commitments, successes, failures, and reviewed preferences.
+- 工作记忆：一次认知周期和活跃场景；
+- 情景记忆：带时间的互动和共同事件；
+- 语义记忆：带来源和有效期的稳定事实；
+- 关系记忆：证据事件与关系 Projection；
+- 程序性社交记忆：群级互动偏好；
+- 自身记忆：任务、承诺、成功、失败和经复核偏好。
 
-### 14.5 Write pipeline
-
-```text
-real event
--> candidate extraction
--> entity resolution
--> privacy and scope
--> contradiction check
--> importance and durability
--> authority decision
--> accept, stage for review, or reject
-```
-
-Generated replies cannot prove user facts. Summaries retain evidence references. Contradictions are versioned or staged, not blindly overwritten. Sensitive facts are not stored automatically by default. Deletion creates a tombstone that prevents automatic relearning of equivalent content.
-
-### 14.6 Retrieval
-
-Retrieval is intention- and audience-driven:
+### 14.5 写入流水线
 
 ```text
-intent and target
--> permitted scopes
--> memory types
--> relevance, recency, confidence, and diversity
--> sensitivity filtering
--> conflict marking
--> token budget
--> typed context block
+真实事件
+→ 候选提取
+→ 实体解析
+→ 隐私与作用域
+→ 冲突检查
+→ 重要性与持久性
+→ 权威判定
+→ 接受、进入待复核或拒绝
 ```
 
-The generator never receives an unrestricted dump of stored records.
+生成回复不能证明用户事实。摘要必须保留证据引用。冲突信息需要版本化或待确认，不能盲目覆盖。敏感事实默认不自动保存。删除会创建墓碑，阻止等价内容自动重新学习。
 
-### 14.7 Learning and consolidation
+### 14.6 召回
 
-Online learning updates event-backed short state and candidates. Periodic consolidation merges duplicate episodes, detects contradiction, decays impressions, promotes recurring culture, closes completed loops, and stages anomalies for review.
+召回由意图和对象驱动：
 
-Behavior calibration may adjust only allowlisted group parameters inside published limits, after minimum sample counts and shadow comparison. Every change is versioned, audited, and reversible. Safety, privacy, permission, and Constitution weights cannot calibrate automatically.
+```text
+意图与对象
+→ 允许的作用域
+→ 记忆类型
+→ 相关度、时效、置信度和多样性
+→ 敏感过滤
+→ 冲突标记
+→ Token 预算
+→ 结构化 Context Block
+```
 
-## 15. Action Planning and Style
+生成器不能获得不受限制的数据库记录集合。
+
+### 14.7 学习与整合
+
+在线学习更新事件支持的短期状态和候选内容。周期性 Consolidation 负责合并重复情景、检测冲突、衰减印象、提升重复群文化、关闭已完成事项并将异常送入复核。
+
+行为校准只能调整管理员允许的群级参数，必须满足最小样本量并经过 Shadow 对比。每次变化都要版本化、审计和可回滚。安全、隐私、权限和 Constitution 权重不能自动校准。
+
+## 15. Action Planning 与 StyleDirector
 
 ### 15.1 ActionPlan DAG
 
@@ -657,294 +657,293 @@ class ActionPlan:
     expires_at: int
 ```
 
-Node kinds include compose text, select reaction, select media, invoke capability, request confirmation, wait for task event, render progress, render result, deliver bundle, record observation, and schedule follow-up.
+节点包括生成文本、选择反应、选择媒体、调用能力、请求确认、等待任务事件、渲染进度、渲染结果、发送 Bundle、记录观察和安排跟进。
 
-Plans are finite DAGs with maximum nodes, duration, retries, and autonomous follow-ups.
+计划必须是有限 DAG，并限制节点数、持续时间、重试和自主跟进次数。
 
-### 15.2 Plan validation
+### 15.2 Plan Validator
 
-Validation checks current scene relevance, audience, Constitution, relationship and state, permissions, risk, media references, budgets, concurrency, node ownership, finite termination, and visible-output ownership.
+验证内容包括当前场景、对象、Constitution、关系和状态、权限、风险、媒体引用、预算、并发、节点所有权、有限终止和可见输出所有权。
 
-Invalid plans may be reduced, replanned, deferred, clarified, or abandoned. Model output cannot waive validation.
+无效计划只能被缩减、重新规划、延迟、澄清或放弃。模型不能绕过验证。
 
-### 15.3 Style Director
+### 15.3 StyleDirector
 
-Before text generation, the director emits a structured style directive containing mode, response act, relationship posture, address, length, sentence and segment limits, warmth, playfulness, directness, particle and punctuation budgets, media pairing, and forbidden recent patterns.
+文本生成前，StyleDirector 输出结构化风格指令，包括模式、回应行为、关系姿态、称呼、长度、句子/段数、温度、玩闹程度、直接程度、语气词和标点预算、媒体搭配和近期禁用模式。
 
-Generation is followed by:
+生成后依次经过：
 
-1. generic safety guard;
-2. factual/capability-result consistency guard;
-3. persona style guard;
-4. recent-output repetition guard;
-5. at most one targeted repair.
+1. 通用安全护栏；
+2. 事实/能力结果一致性护栏；
+3. 人格风格护栏；
+4. 近期输出重复护栏；
+5. 最多一次有明确目标的修复。
 
-Internal IDs, chain-of-thought, prompts, unsupported success, private memory, and invalid media references are always blocked.
+内部 ID、Chain-of-Thought、提示词、无依据成功、私密记忆和无效媒体引用始终被阻止。
 
-## 16. Media, Capabilities, Tasks, and Delivery
+## 16. 媒体、能力、任务和交付
 
-### 16.1 Delivery bundle
+### 16.1 DeliveryBundle
 
-One logical social action may contain ordered text, mention, face, image, audio, video, file, forward, or poke parts. Every part has a unique idempotency key, expiry, ordering rule, and platform outcome.
+一次逻辑社交动作可以包含有序的文本、@、表情、图片、音频、视频、文件、合并转发或戳一戳。每个 Part 具有独立幂等键、有效期、顺序和平台结果。
 
-Decorative pending parts may be cancelled when a newer high-priority scene makes them stale. Already sent parts are never resent.
+当高优先级新场景使装饰性 Part 过时时，可以取消尚未发送的 Part；已发送内容不能重发。
 
-### 16.2 Persona media library
+### 16.2 人格媒体库
 
-Persona assets carry source, license status, semantic/emotion/act tags, relationship limits, intensity, checksum, enabled status, and duplicate-cooldown metadata.
+每个素材保存来源、许可状态、语义/情绪/行为标签、关系限制、强度、校验和、启用状态和重复冷却。
 
-Media selection is an intentional social act and is governed by scene, mode, relationship, group culture, recent usage, and whether text is already sufficient.
+媒体选择是正式社会动作，必须考虑场景、模式、关系、群文化、近期使用和文本是否已经足够。
 
-Generated image, audio, video, and file outputs are capability results and follow the full task, validation, registration, and delivery path.
+生成式图片、音频、视频和文件都属于 Capability 结果，必须走完整任务、验证、注册和交付流程。
 
-### 16.3 Capability contract
+### 16.3 Capability Contract
 
-Capabilities declare typed input/output schemas, risk, scopes, idempotency, cancellation, progress support, expected latency, media output, and confirmation policy.
+能力声明类型化输入/输出、风险、作用域、幂等性、可取消性、进度支持、预计耗时、媒体输出和确认策略。
 
-Risk levels are read-only, low impact, external side effect, sensitive, and destructive. Relationship never substitutes for permission. External plugins integrate through a provider/event contract; Groupmate never scrapes another bot message to infer task state.
+风险等级为只读、低影响、外部副作用、敏感和破坏性。关系不能替代权限。外部插件通过 Provider/Event Contract 集成；Groupmate 禁止解析其他 bot 文本来猜测任务状态。
 
 ### 16.4 Task Runtime
 
-Task states are proposed, awaiting confirmation, queued, running, succeeded, failed, cancelled, and expired.
+任务状态：提出、等待确认、排队、运行、成功、失败、取消和过期。
 
-Tasks persist requester, group, topic, input, authorization, provider, idempotency, progress, result, errors, and delivery relevance. Providers emit events. The originating group actor rechecks the latest scene before progress or final delivery.
+TaskRun 保存请求者、群、话题、输入、授权、Provider、幂等信息、进度、结果、错误和交付相关性。Provider 产生事件，原群 Actor 根据最新场景重新判断进度和结果是否适合发送。
 
-Progress is sent only when actual or expected latency and new information justify it. Fixed repeated “processing” messages and fake thinking delays are forbidden.
+只有真实或预计耗时及新增信息值得时才发送进度。禁止固定重复“处理中”和伪造思考延迟。
 
 ### 16.5 Transactional Outbox
 
-Outbox states are planned, ready, sending, sent, failed, unknown, expired, and suppressed.
+Outbox 状态：计划、就绪、发送中、已发送、失败、未知、过期和抑制。
 
-Intent is persisted before platform send. Confirmed platform delivery precedes bot-message ledger projection. Only safely retryable failures retry automatically. Unknown delivery is investigated or surfaced rather than blindly resent. Restart recovery revalidates social expiry before sending.
+平台调用前必须持久化发送意图；确认发送后才能写入机器人消息账本。只有可安全重试的错误才自动重试。未知状态必须调查或暴露，不能盲目重发。重启恢复前需要重新验证社交时效。
 
-### 16.6 Failure behavior
+### 16.6 失败行为
 
-- required social replies use deterministic persona fallbacks when generation fails;
-- optional replies become silence when generation fails;
-- structured task results may render without free-form generation;
-- only idempotent policy-approved tool failures retry;
-- partial delivery records exact successful parts;
-- page, projection, and SSE failures do not cancel tasks or actor processing;
-- stale results may complete silently rather than interrupt an unrelated current scene.
+- 必须回应但生成失败时使用确定性人格 Fallback；
+- 可选参与生成失败时保持沉默；
+- 结构化任务结果可以不依赖自由生成直接渲染；
+- 只有幂等且策略允许的工具失败才重试；
+- 部分发送记录准确的成功 Part；
+- 页面、Projection 和 SSE 故障不取消任务或 Actor；
+- 过期工具结果可以静默完成，不打断无关新场景。
 
-## 17. Control Plane and Configuration
+## 17. 控制面与配置
 
-### 17.1 Configuration precedence
+### 17.1 配置优先级
 
 ```text
-code safety ceilings
--> AstrBot deployment configuration
--> Persona Constitution version
--> group behavior version
--> current state and scene
+代码安全上限
+→ AstrBot 部署配置
+→ Persona Constitution 版本
+→ 群行为版本
+→ 当前状态与场景
 ```
 
-AstrBot `_conf_schema.json` retains providers, secrets, storage paths, enabled groups, hard ceilings, and provider availability. Secrets never enter Plugin Page projections.
+AstrBot `_conf_schema.json` 保留 Provider、密钥、存储路径、启用群、硬上限和 Provider 可用性。秘密永远不会进入 Plugin Page Projection。
 
-### 17.2 Draft and publication
+### 17.2 草稿与发布
 
-Behavior configuration uses draft, schema validation, policy validation, historical dry-run, semantic diff, expected-version publication, immutable published version, and audited restore-by-republication.
+行为配置流程：草稿、Schema 校验、策略校验、历史 Dry-run、语义差异、带 Expected Version 发布、不可变正式版本和通过重新发布实现的审计回滚。
 
-An in-flight cognition cycle keeps its frozen version. New cycles use the newly published version. Failed publication preserves the draft. Version conflicts return HTTP 409.
+运行中的认知周期继续使用冻结版本，新周期才使用新版本。发布失败保留草稿；版本冲突返回 HTTP 409。
 
-### 17.3 Command-query separation
+### 17.3 Command/Query 分离
 
-Queries read versioned projections. Mutations submit commands that validate administrator identity, scope, input, expected version, confirmation, and reason before calling domain services and emitting events.
+查询只读取版本化 Projection。修改提交 Command，由服务端验证管理员身份、作用域、输入、期望版本、确认和原因，再调用领域服务并产生事件。
 
-The Plugin Page never writes domain tables or reconstructs authoritative decisions in JavaScript.
+插件页面不能写领域表，也不能在 JavaScript 中重建权威决策。
 
-## 18. AstrBot Plugin Page
+## 18. AstrBot 插件页面
 
-### 18.1 Visual and interaction model
+### 18.1 视觉和交互
 
-Use a restrained ChatGPT-like product shell:
+采用克制的 ChatGPT 式产品外壳：
 
-- compact stable left navigation;
-- contextual top bar for group, persona, version, live status, and pause;
-- spacious text-first main pane;
-- optional right-side inspector;
-- botanical green only for primary, selection, and healthy states;
-- no fictional consciousness dashboard, glassmorphism, hero metrics, or card farm;
-- complete AstrBot light/dark theme support, i18n, reduced motion, 200% zoom, and responsive behavior.
+- 紧凑稳定的左侧导航；
+- 顶部提供群、人格、版本、实时连接和暂停；
+- 主工作区以文本和任务为中心，保留足够留白；
+- 按需出现右侧检查器；
+- 植物绿仅用于主要操作、选中和健康状态；
+- 禁止虚构意识面板、玻璃拟态、英雄指标和卡片农场；
+- 完整支持 AstrBot 明暗主题、国际化、Reduced Motion、200% 缩放和响应式。
 
-### 18.2 Workspaces
+### 18.2 五个工作区
 
-1. Runtime Center: narrative state summary, live activity, tasks, health, and emergency controls.
-2. Persona Studio: Constitution, state and modes, attention, autonomy, Governor, style, media, tools, drafts, diffs, and dry-run comparison.
-3. People & Memory: identity, relationship, impressions, experiences, facts, open loops, commitments, culture, and governance history.
-4. Activity & Tasks: filtered causal timeline, decision inspector, ActionPlan, task events, delivery parts, and failures.
-5. Governance & Evaluation: pending reviews, correction, forgetting, identity links, configuration history, calibration, export, retention, and target alignment.
+1. **运行中心：** 状态叙述、实时活动、任务、健康和紧急控制。
+2. **人格工作室：** Constitution、状态与模式、注意力、自主性、Governor、风格、媒体、工具、草稿、差异和 Dry-run。
+3. **人与记忆：** 身份、关系、印象、经历、事实、未完事项、承诺、群文化和治理历史。
+4. **活动与任务：** 可筛选因果时间线、决策检查器、ActionPlan、任务事件、Delivery Part 和故障。
+5. **治理与评估：** 待复核、纠正、遗忘、身份关联、配置历史、校准、导出、保留策略和目标效果评估。
 
-### 18.3 Frontend architecture
+### 18.3 前端架构
 
-Keep a no-build native ES-module frontend unless implementation evidence proves insufficient. Split the current page into bridge, router, store, i18n, components, workspace modules, and theme/responsive styles. Use hash routes in the restricted AstrBot iframe.
+默认保留无构建的原生 ES Module 前端，只有实施证据证明不够时才引入框架。将当前页面拆成 Bridge、Router、Store、i18n、Components、Workspace Modules 和主题/响应式样式。在 AstrBot 受限 iframe 内使用 Hash Route。
 
-### 18.4 Query and command APIs
+### 18.4 Query 与 Command API
 
-Queries include bootstrap, runtime, activity/detail, scenes, people/detail, culture, tasks/detail, persona config/versions, governance, evaluation, and health.
+Query 包括 Bootstrap、Runtime、Activity/Detail、Scenes、People/Detail、Culture、Tasks/Detail、Persona Config/Versions、Governance、Evaluation 和 Health。
 
-Commands include pause, group enable, state reset, config draft/validate/preview/publish/restore, evidence review, memory forget, impression/culture/relationship correction, identity link, task cancel, and calibration approval.
+Command 包括暂停、启用群、状态重置、配置草稿/校验/预览/发布/恢复、证据复核、记忆遗忘、印象/文化/关系纠正、身份关联、任务取消和校准批准。
 
-### 18.5 SSE projections
+### 18.5 SSE Projection
 
-The page subscribes to privacy-trimmed projection events with cursor, kind, scope, entity, projection version, and summary. Reconnect continues after the last cursor or reloads affected snapshots when the cursor expires. Failure degrades to bounded polling and displays actual impact.
+页面订阅经过隐私裁剪的 Projection Event，其中包含 Cursor、Kind、Scope、Entity、Projection Version 和摘要。重连后从最后 Cursor 继续；Cursor 过期时重新加载对应 Snapshot。失败时降级为有界轮询并显示真实影响。
 
-No chain-of-thought is displayed. Inspectors show evidence, structured observations, candidate intentions, utility contributions, hard constraints, plans, versions, and outcomes.
+页面不展示 Chain-of-Thought。检查器只展示证据、结构化观察、候选意图、效用贡献、硬约束、计划、版本和结果。
 
-## 19. Storage and Projection Model
+## 19. 存储与 Projection
 
-V2 uses independent tables during shadow operation:
+Shadow 阶段 V2 使用独立表：
 
-- social event inbox and journal;
-- persona supervisor state;
-- group world snapshots;
-- attention frames and cognitive observations;
-- candidate intentions and Governor results;
-- ActionPlans, tasks, capability events, delivery bundles, and outbox;
-- relationship events and projections;
-- impressions, culture artifacts, episodic and semantic memories;
-- config versions, governance actions, projection cursors, and evaluation labels.
+- Social Event Inbox 与 Journal；
+- Persona Supervisor State；
+- Group World Snapshot；
+- Attention Frame 与 Cognitive Observation；
+- Candidate Intention 与 Governor Result；
+- ActionPlan、Task、Capability Event、DeliveryBundle 和 Outbox；
+- Relationship Event 与 Projection；
+- Social Impression、Culture Artifact、Episodic/Semantic Memory；
+- Config Version、Governance Action、Projection Cursor 和 Evaluation Label。
 
-Snapshots accelerate recovery; events remain the causal source. Projection consumers use independent cursors and cannot block actor writes.
+Snapshot 用于加速恢复，Event 仍是因果来源。Projection Consumer 使用独立 Cursor，不能阻塞 Actor 写入。
 
-## 20. Security and Privacy
+## 20. 安全与隐私
 
-- Backend validation is authoritative for every command.
-- IDs are validated against persona, group, actor, and administrator scope.
-- User-generated content is escaped before HTML insertion.
-- Uploads are constrained by size, MIME, filename, and plugin data directory.
-- Sensitive memory is disabled by default or requires explicit policy.
-- Cross-group data access uses explicit link and data-kind allowlists.
-- SSE exposes projections, not raw privileged events.
-- Administrator identity is recorded when AstrBot provides it.
-- Destructive and high-impact actions require confirmation, reason, and expected version.
-- Raw mood, affinity, prompts, model identity, internal IDs, and chain-of-thought never appear in group output.
+- 每个 Command 都以服务端验证为准；
+- ID 必须校验 Persona、群、Actor 和管理员作用域；
+- 用户内容插入 HTML 前必须转义；
+- 上传限制大小、MIME、文件名和插件数据目录；
+- 敏感记忆默认关闭或需要明确策略；
+- 跨群访问必须经过身份关联和数据类型白名单；
+- SSE 输出 Projection，而不是原始高权限 Event；
+- AstrBot 提供管理员用户名时必须记录；
+- 破坏性和高影响命令必须包含确认、原因和 Expected Version；
+- 原始心情、好感、提示词、模型身份、内部 ID 和 Chain-of-Thought 不得出现在群输出中。
 
-## 21. Branch and Migration Strategy
+## 21. 分支与迁移策略
 
-### 21.1 Development isolation
+### 21.1 隔离开发
 
-- Stabilize or explicitly preserve the current dirty worktree.
-- Tag a known V1 baseline.
-- Create `refactor/social-runtime-v2` in an independent worktree.
-- Use short subsystem branches merged into the V2 integration branch.
-- Keep V1 operational for fixes and rollback.
+- 先稳定或明确保留当前脏工作区；
+- 为已知 V1 稳定状态打标签；
+- 在独立 Worktree 创建 `refactor/social-runtime-v2`；
+- 子系统使用短分支并合入 V2 集成分支；
+- V1 保持可运行，以接收修复和支持回退。
 
-### 21.2 Runtime modes
+### 21.2 运行模式
 
-Each group selects exactly one mode:
+每个群只能选择一种：
 
-- `LEGACY`: V1 decides and sends.
-- `SHADOW`: V2 consumes and evaluates but cannot send, execute external side effects, or write formal social state.
-- `SOCIAL_RUNTIME`: V2 owns decisions, actions, and state; V1 is read-only for that group.
+- `LEGACY`：V1 决策并发送；
+- `SHADOW`：V2 完整认知和评估，但不能发送、执行外部副作用或写正式社会状态；
+- `SOCIAL_RUNTIME`：V2 拥有决策、行动和状态，V1 对该群只读。
 
-### 21.3 Data migration
+### 21.3 数据迁移
 
-Shadow data remains separate. A group cutover freezes a migration point, exports accepted V1 state, converts it into provenance-bearing V2 seed events/snapshots, validates identity and open work, runs replay, and atomically changes runtime ownership.
+Shadow 数据保持独立。切换群时冻结迁移点，导出 V1 已接受状态，将其转换成带来源的 V2 初始事件/Snapshot，验证身份和未完任务，执行回放后原子切换运行所有权。
 
-Rollback stops V2 sending, restores V1 ownership, preserves the V2 journal, and resolves in-flight task ownership without duplicate delivery. Unreviewed V2 learning never writes back to V1.
+回退时停止 V2 发送、恢复 V1 所有权、保留 V2 Journal，并解决进行中任务所有权以避免重复交付。未经复核的 V2 学习结果不能写回 V1。
 
-## 22. Test Strategy
+## 22. 测试策略
 
-### 22.1 Test classification
+### 22.1 测试分类
 
-- shared tests: platform, storage, privacy, outbox, capabilities, governance, migration primitives;
-- legacy tests: V1 behavior while V1 exists;
-- Social Runtime tests: all V2 domains;
-- scenario tests: multi-message social timelines;
-- contract tests: workers, capabilities, projections, commands;
-- recovery tests: crash, duplicate, stale, partial, and unknown outcomes;
-- evaluation tests: target alignment and safety;
-- page tests: Plugin Page workflows and iframe behavior.
+- `shared`：平台、存储、隐私、Outbox、能力、治理和迁移基础；
+- `legacy`：V1 存在期间的旧行为；
+- `social_runtime`：全部 V2 领域；
+- `scenarios`：多消息社会场景；
+- `contracts`：Worker、Capability、Projection 和 Command；
+- `recovery`：崩溃、重复、过期、部分成功和未知结果；
+- `evaluation`：目标效果和安全；
+- `page`：插件页面工作流和 iframe 行为。
 
-Old architecture assumptions are retired; safety, privacy, idempotency, recovery, and governance invariants are preserved. Legacy tests are deleted only with the corresponding V1 code after replacement coverage exists.
+废弃旧测试中的架构假设，保留安全、隐私、幂等、恢复和治理不变量。Legacy 测试只能在对应 V1 代码删除且替代覆盖存在时删除。
 
-### 22.2 Required invariant tests
+### 22.2 必须验证的不变量
 
-- models cannot authorize state, tools, or sends;
-- one persona supervisor writes global self;
-- one group actor writes a group world;
-- duplicate events do not duplicate effects;
-- a hard constraint cannot be outweighed by social utility;
-- one cognitive cycle uses one frozen config version;
-- ActionPlans are finite and terminating;
-- every visible part has decision, plan, bundle, and idempotency identity;
-- group-private data cannot cross groups without explicit authorization;
-- page/projection failure cannot change conversational behavior;
-- replay cannot resend confirmed historical output.
+- 模型不能授权状态、工具或发送；
+- 全局自我只有一个 Persona Supervisor 写入；
+- 群世界只有一个 Group Scene Actor 写入；
+- 重复事件不会产生重复影响；
+- 社会效用不能覆盖硬约束；
+- 一次认知周期只使用一个冻结配置版本；
+- ActionPlan 有限且必定终止；
+- 每个可见 Part 都有 Decision、Plan、Bundle 和幂等身份；
+- 群私密数据不能未经授权跨群；
+- 页面/Projection 故障不能改变群聊行为；
+- 回放不能重发已确认历史消息。
 
-### 22.3 Scenario coverage
+### 22.3 场景覆盖
 
-Direct interaction, multi-message completion, parallel topics, public help, play, care, shared experience, media reaction, task progress, boundary, sleep/wake, autonomous initiation, expired opportunities, topic change during a task, ambiguous target, and correct silence.
+直接互动、连续消息说完、多话题并行、公开求助、接梗、关心、共同经历、媒体反应、任务进度、边界、睡眠/唤醒、自主发起、机会过期、任务期间话题变化、对象模糊和正确沉默。
 
-## 23. Target Alignment Evaluation
+## 23. 目标效果评估
 
-The bot-only export is valid for style, segmentation, persona modes, media, and capability distribution. Participation timing requires full group history with human messages.
+Bot-only 导出可用于风格、分段、人格模式、媒体和能力分布。参与时机必须使用包含群成员消息的完整群聊历史。
 
-Create held-out labels for notice, action, target, acceptable intentions, unacceptable intentions, modalities, sensitivity, and expiry.
+建立独立留出标签：是否应注意、是否应行动、目标对象、可接受/不可接受意图、可接受模态、敏感性和有效期。
 
-Metrics cover:
+指标覆盖：
 
-- event notice and target accuracy;
-- open-participation precision and missed-opportunity rate;
-- interruption, monopoly, repetition, and target-concentration rates;
-- autonomous-action value and expiry correctness;
-- identity, relationship posture, mode, address, and culture accuracy;
-- memory, impression, privacy, forgetting, and calibration quality;
-- tool selection, authorization, completion, progress, delivery, duplication, and recovery;
-- reply length, segmentation, particles, address density, media relevance, and mode separability;
-- zero internal-ID, chain-of-thought, private cross-group, and unauthorized-action incidents.
+- 事件发现和对象准确率；
+- 开放参与精确率和错过机会率；
+- 不当打断、垄断、重复和对象过度集中；
+- 自主行动价值和过期正确性；
+- 身份、关系姿态、模式、称呼和群文化准确性；
+- 记忆、印象、隐私、遗忘和校准质量；
+- 工具选择、授权、完成、进度、交付、重复和恢复；
+- 回复长度、分段、语气词、称呼密度、媒体相关性和模式区分度；
+- 内部 ID、Chain-of-Thought、跨群私密信息和未授权动作事件为零。
 
-## 24. Delivery Milestones
+## 24. 交付里程碑
 
-1. M0 baseline, worktree, test classification, V1 benchmark, and architecture guards.
-2. M1 durable event fabric, inbox, journal, replay, and projection cursors.
-3. M2 supervisor, group actors, world state, snapshots, and runtime modes.
-4. M3 three-lane attention, blackboard, workers, version/expiry handling.
-5. M4 Persona Goals, intentions, Social Governor, and shadow participation.
-6. M5 Persona Kernel, state, relationships, impressions, culture, memory, consolidation, and bounded calibration.
-7. M6 ActionPlan, StyleDirector, media, capabilities, tasks, outbox, and recovery.
-8. M7 command/query control plane, config versions, SSE, and redesigned Plugin Page.
-9. M8 full-history shadow evaluation, human review, fault injection, cost, latency, and backpressure.
-10. M9 allowlisted per-group cutover with immediate rollback.
-11. M10 V1 retirement after compatibility and acceptance gates.
+1. **M0：** 基线、Worktree、测试分类、V1 Benchmark 和架构约束。
+2. **M1：** Durable Event Fabric、Inbox、Journal、Replay 和 Projection Cursor。
+3. **M2：** Supervisor、Group Actor、World State、Snapshot 和运行模式。
+4. **M3：** 三路注意力、Blackboard、Worker、版本/过期处理。
+5. **M4：** Persona Goals、Intentions、Social Governor 和 Shadow Participation。
+6. **M5：** Persona Kernel、状态、关系、印象、群文化、记忆、整合和有界校准。
+7. **M6：** ActionPlan、StyleDirector、媒体、能力、任务、Outbox 和恢复。
+8. **M7：** Command/Query 控制面、Config Version、SSE 和新版插件页面。
+9. **M8：** 完整历史 Shadow 评估、人工复核、故障注入、成本、延迟和背压。
+10. **M9：** Allowlist 群逐群接管并支持即时回退。
+11. **M10：** 满足兼容和验收门槛后退役 V1。
 
-Each milestone must produce independently testable working software. Migrations and compatibility belong to the milestone that introduces the persisted or public interface.
+每个里程碑必须交付可独立测试的可运行软件。迁移和兼容工作属于引入持久化或公开接口的同一里程碑，不能推迟补做。
 
-## 25. Production Gates
+## 25. 生产接管门槛
 
-V2 cannot own a production group until:
+V2 在满足以下条件前不得接管正式群：
 
-- internal ID, chain-of-thought, cross-group private leak, and unauthorized tool counts are zero in required suites;
-- duplicate event and crash recovery do not duplicate effects or sends;
-- ActionPlan termination and config snapshot consistency are proven;
-- shadow target selection and interruption metrics meet reviewed thresholds;
-- every autonomous action has source, audience, expiry, and reason;
-- page pause, inspection, publication, correction, and rollback work in AstrBot's iframe;
-- one group can return to V1 without dual reply;
-- in-flight tasks have an explicit ownership transition plan;
-- actor backlog, Worker cost, and projection lag remain within published operational budgets.
+- 必要测试中内部 ID、Chain-of-Thought、跨群隐私泄漏和未授权工具均为零；
+- 重复事件和崩溃恢复不会重复影响或发送；
+- ActionPlan 终止性和配置 Snapshot 一致性得到验证；
+- Shadow 对象判断和打断指标达到人工批准门槛；
+- 每个自主行动都具有来源、对象、有效期和原因；
+- 页面中的暂停、检查、发布、纠正和回滚在 AstrBot iframe 内可用；
+- 单群可以回退 V1 且不产生双回复；
+- 进行中任务有明确所有权迁移策略；
+- Actor 积压、Worker 成本和 Projection 延迟满足公开运维预算。
 
-## 26. V1 Retirement Conditions
+## 26. V1 退役条件
 
-V1 code and its behavior-specific tests may be removed only when:
+只有满足以下条件才可删除 V1 代码和对应行为测试：
 
-- every enabled group has migrated or is explicitly pinned to a supported legacy release;
-- V2 passes target, safety, recovery, and governance gates;
-- no capability or page workflow is V1-only;
-- V2 restore drills pass;
-- shared fixtures and invariants have replacement coverage;
-- a compatibility release has elapsed;
-- data export and rollback instructions are documented.
+- 所有启用群完成迁移，或明确固定在受支持 Legacy 版本；
+- V2 通过目标、安全、恢复和治理门槛；
+- 不存在 V1 独占能力或页面工作流；
+- V2 恢复演练通过；
+- Shared Fixture 和不变量已经有替代覆盖；
+- 已经过至少一个兼容版本周期；
+- 数据导出和回退说明完整。
 
-## 27. Non-Goals
+## 27. 非目标
 
-- Exact copying of the target bot's identity, private lore, or training text.
-- Random reply probability as the primary social decision.
-- Full multi-agent autonomy or multiple final-response owners.
-- Online self-modification of code, Constitution, privacy, permissions, or safety.
-- Automatic cross-group sharing of member data.
-- Fake thought delays, fake tool progress, or theatrical consciousness metrics.
-- A simultaneous all-group cutover.
-- Deleting V1 tests before the corresponding V1 implementation and replacement coverage are removed together.
-
+- 精确复制目标 bot 的身份、私密设定或训练文本；
+- 以随机回复概率作为主要社会判断；
+- 全多智能体自治或多个最终回复所有者；
+- 在线自动修改代码、Constitution、隐私、权限或安全；
+- 自动跨群共享成员数据；
+- 假思考延迟、假工具进度或戏剧化意识指标；
+- 一次性切换所有群；
+- 在删除对应 V1 实现和建立替代覆盖前先删除旧测试。
