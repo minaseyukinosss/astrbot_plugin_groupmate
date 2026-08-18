@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from contextlib import closing
@@ -10,6 +11,9 @@ from pathlib import Path
 
 from ..contracts import GlobalSelfState, GlobalStateEffect
 from .schema import connect_database, initialize_database
+from ..society.relationships import RelationshipProjector, RelationshipProjection
+from ..society.impressions import Impression
+from ..society.culture import CultureArtifact
 
 
 class StateVersionConflict(RuntimeError):
@@ -22,6 +26,10 @@ class EffectIdentityConflict(RuntimeError):
 
 class InvalidGlobalStateEffect(ValueError):
     """Raised when an effect cannot be applied to authoritative self state."""
+
+
+class ScopeRequiredError(ValueError):
+    """Raised before SQL when a group-private query lacks its full scope."""
 
 
 _RANGES = {
@@ -165,9 +173,148 @@ class SQLitePersonaStateRepository:
                 raise
 
 
+class SQLiteSocietyRepository:
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        initialize_database(self.path)
+        self._projector = RelationshipProjector()
+
+    def save_relationship(self, state: RelationshipProjection) -> None:
+        self._require_scope(state.persona_id, state.group_id, state.subject_id)
+        encoded = _canonical_json(self._projector.to_dict(state))
+        with closing(connect_database(self.path)) as db:
+            db.execute(
+                "INSERT INTO relationship_projection("
+                "persona_id, group_id, subject_id, version, projection_json, updated_at"
+                ") VALUES(?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(persona_id, group_id, subject_id) DO UPDATE SET "
+                "version=excluded.version, projection_json=excluded.projection_json, "
+                "updated_at=excluded.updated_at",
+                (
+                    state.persona_id,
+                    state.group_id,
+                    state.subject_id,
+                    state.version,
+                    encoded,
+                    int(time.time()),
+                ),
+            )
+            db.commit()
+
+    def load_relationship(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> RelationshipProjection:
+        self._require_scope(persona_id, group_id, subject_id)
+        with closing(connect_database(self.path)) as db:
+            row = db.execute(
+                "SELECT projection_json FROM relationship_projection "
+                "WHERE persona_id=? AND group_id=? AND subject_id=?",
+                (persona_id, group_id, subject_id),
+            ).fetchone()
+        if row is None:
+            return self._projector.empty(persona_id, group_id, subject_id)
+        return self._projector.from_dict(json.loads(row[0]))
+
+    def save_impression(self, impression: Impression) -> None:
+        self._require_scope(
+            impression.persona_id, impression.group_id, impression.subject_id
+        )
+        encoded = _canonical_json(asdict(impression))
+        with closing(connect_database(self.path)) as db:
+            db.execute(
+                "INSERT INTO impressions("
+                "impression_id, persona_id, group_id, subject_id, status, "
+                "impression_json, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(impression_id) DO UPDATE SET "
+                "status=excluded.status, impression_json=excluded.impression_json, "
+                "expires_at=excluded.expires_at",
+                (
+                    impression.impression_id,
+                    impression.persona_id,
+                    impression.group_id,
+                    impression.subject_id,
+                    impression.status,
+                    encoded,
+                    impression.expires_at,
+                ),
+            )
+            db.commit()
+
+    def list_impressions(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> tuple[Impression, ...]:
+        self._require_scope(persona_id, group_id, subject_id)
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT impression_json FROM impressions "
+                "WHERE persona_id=? AND group_id=? AND subject_id=? "
+                "ORDER BY impression_id",
+                (persona_id, group_id, subject_id),
+            ).fetchall()
+        result = []
+        for row in rows:
+            values = json.loads(row[0])
+            values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
+            values["use_scope"] = tuple(values["use_scope"])
+            result.append(Impression(**values))
+        return tuple(result)
+
+    def save_culture(self, artifact: CultureArtifact) -> None:
+        self._require_group_scope(artifact.persona_id, artifact.group_id)
+        storage_id = hashlib.sha256(
+            f"{artifact.persona_id}\0{artifact.group_id}\0{artifact.artifact_id}".encode()
+        ).hexdigest()
+        encoded = _canonical_json(asdict(artifact))
+        with closing(connect_database(self.path)) as db:
+            db.execute(
+                "INSERT INTO culture(artifact_id, persona_id, group_id, status, "
+                "artifact_json, updated_at) VALUES(?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(artifact_id) DO UPDATE SET status=excluded.status, "
+                "artifact_json=excluded.artifact_json, updated_at=excluded.updated_at",
+                (
+                    storage_id,
+                    artifact.persona_id,
+                    artifact.group_id,
+                    artifact.status,
+                    encoded,
+                    int(time.time()),
+                ),
+            )
+            db.commit()
+
+    def list_culture(
+        self, persona_id: str, group_id: str
+    ) -> tuple[CultureArtifact, ...]:
+        self._require_group_scope(persona_id, group_id)
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT artifact_json FROM culture WHERE persona_id=? AND group_id=? "
+                "ORDER BY artifact_id",
+                (persona_id, group_id),
+            ).fetchall()
+        result = []
+        for row in rows:
+            values = json.loads(row[0])
+            values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
+            result.append(CultureArtifact(**values))
+        return tuple(result)
+
+    @staticmethod
+    def _require_scope(persona_id: str, group_id: str, subject_id: str) -> None:
+        if not persona_id.strip() or not group_id.strip() or not subject_id.strip():
+            raise ScopeRequiredError("persona_id, group_id, and subject_id are required")
+
+    @staticmethod
+    def _require_group_scope(persona_id: str, group_id: str) -> None:
+        if not persona_id.strip() or not group_id.strip():
+            raise ScopeRequiredError("persona_id and group_id are required")
+
+
 __all__ = (
     "EffectIdentityConflict",
     "InvalidGlobalStateEffect",
+    "SQLiteSocietyRepository",
     "SQLitePersonaStateRepository",
+    "ScopeRequiredError",
     "StateVersionConflict",
 )

@@ -110,11 +110,11 @@ assert result.selected_intention_ids == ()
 
 **Interfaces:** Consumes evidence events; produces versioned relationship projection, scoped impressions and culture artifacts.
 
-- [ ] 写失败测试：同一成员在 g1/g2 状态隔离；关系不授予 capability permission；单次梗不晋升文化；墓碑 impression 不自动重建。
-- [ ] 实现关系维度 `familiarity/warmth/trust/reciprocity/play_acceptance/reliability/care_permission/boundary_pressure`，每维 `-100..100`，只应用白名单 evidence kind。
-- [ ] 实现 Impression 的 evidence/status/expiry/use_scope；Culture 需要三次独立事件或管理员确认才从 candidate 晋升 active，并按 30 天无证据衰减。
-- [ ] Repository 查询必须要求 persona_id 和 group_id，缺一抛 `ScopeRequiredError`。
-- [ ] Run focused + privacy tests; commit `feat: model scoped social relationships and culture`。
+- [x] 写失败测试：同一成员在 g1/g2 状态隔离；关系不授予 capability permission；单次梗不晋升文化；墓碑 impression 不自动重建。
+- [x] 实现关系维度 `familiarity/warmth/trust/reciprocity/play_acceptance/reliability/care_permission/boundary_pressure`，每维 `-100..100`，只应用白名单 evidence kind。
+- [x] 实现 Impression 的 evidence/status/expiry/use_scope；Culture 需要三次独立事件或管理员确认才从 candidate 晋升 active，并按 30 天无证据衰减。
+- [x] Repository 查询必须要求 persona_id 和 group_id，缺一抛 `ScopeRequiredError`。
+- [x] Run focused + privacy tests; commit `feat: model scoped social relationships and culture`。
 
 ---
 
