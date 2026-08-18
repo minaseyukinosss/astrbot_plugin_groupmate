@@ -103,7 +103,7 @@ git commit -m "refactor: remove legacy groupmate architecture"
 - Consumes: 标准化平台事实。
 - Produces: `RuntimeMode`, `SocialEventEnvelope`, `ActorCursor`, `PersonaSnapshot`, `GlobalStateEffect`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_event_freezes_payload():
@@ -121,12 +121,12 @@ def test_event_freezes_payload():
     )
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/social_runtime/test_contracts.py -q`
 Expected: FAIL with `ModuleNotFoundError`。
 
-- [ ] **Step 3: 实现不可变契约**
+- [x] **Step 3: 实现不可变契约**
 
 ```python
 class RuntimeMode(str, Enum):
@@ -159,11 +159,11 @@ class SocialEventEnvelope:
 
 同文件定义上述其余三个 dataclass；`GlobalStateEffect` 字段固定为 `effect_id/source_event_id/expected_version/kind/amount/evidence_event_ids`。
 
-- [ ] **Step 4: 验证校验和 JSON 往返**
+- [x] **Step 4: 验证校验和 JSON 往返**
 
 补充空 ID、负时间戳、未知模式和不可 JSON payload 测试；实现 `to_dict()`/`from_dict()`，保留 correlation/causation。
 
-- [ ] **Step 5: 运行并提交**
+- [x] **Step 5: 运行并提交**
 
 Run: `pytest tests/social_runtime/test_contracts.py -q`
 ```bash
