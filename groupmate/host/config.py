@@ -27,6 +27,7 @@ _KNOWN_GROUPS = (
     "relationship_learning_group",
     "tools_group",
     "mail_group",
+    "fun_group",
 )
 _LEGACY_TOP_LEVEL_KEYS = (
     "aliases",
@@ -62,6 +63,22 @@ class ConfigDiagnostics:
 
 
 @dataclass(frozen=True)
+class DynamicCardSettings:
+    enabled: bool = False
+    base_name: str = "爱弥斯"
+    separator: str = "丨"
+    min_interval_minutes: int = 90
+    max_interval_minutes: int = 180
+
+
+@dataclass(frozen=True)
+class FunSettings:
+    enabled: bool = False
+    enabled_groups: Tuple[str, ...] = ()
+    dynamic_card: DynamicCardSettings = DynamicCardSettings()
+
+
+@dataclass(frozen=True)
 class DeploymentSettings:
     """Immutable deployment settings parsed from AstrBot config."""
 
@@ -88,6 +105,7 @@ class DeploymentSettings:
     command_bridge_enabled: bool
     tool_candidate_limit: int
     mail: MailSettings
+    fun: FunSettings
     diagnostics: ConfigDiagnostics
 
     def aliases_for(self, persona_id: str) -> Tuple[str, ...]:
@@ -132,6 +150,7 @@ class AstrBotConfigParser:
         learning_group = _as_mapping(source.get("relationship_learning_group"))
         tools_group = _as_mapping(source.get("tools_group"))
         mail_group = _as_mapping(source.get("mail_group"))
+        fun_group = _as_mapping(source.get("fun_group"))
         defaults = InteractionPolicy()
 
         enabled_groups = _parse_digit_tuple(
@@ -232,6 +251,7 @@ class AstrBotConfigParser:
                 20,
             ),
             mail=_parse_mail_settings(mail_group),
+            fun=_parse_fun_settings(fun_group),
             diagnostics=ConfigDiagnostics(
                 ignored_legacy_keys=diagnostics.ignored_legacy_keys,
                 unknown_keys=diagnostics.unknown_keys,
@@ -345,6 +365,38 @@ def _parse_mail_settings(raw: Mapping[str, Any]) -> MailSettings:
             3600,
         ),
         dry_run=_strict_boolean(raw.get("dry_run", False), False),
+    )
+
+
+def _parse_fun_settings(raw: Mapping[str, Any]) -> FunSettings:
+    dynamic_raw = _as_mapping(raw.get("dynamic_card"))
+    min_interval = _int_clamped(
+        dynamic_raw.get("min_interval_minutes"),
+        90,
+        30,
+        1440,
+    )
+    max_interval = _int_clamped(
+        dynamic_raw.get("max_interval_minutes"),
+        180,
+        min_interval,
+        1440,
+    )
+    base_name = str(dynamic_raw.get("base_name") or "爱弥斯").strip() or "爱弥斯"
+    separator = str(dynamic_raw.get("separator") or "丨").strip() or "丨"
+    return FunSettings(
+        enabled=_strict_boolean(raw.get("enabled", False), False),
+        enabled_groups=_parse_digit_tuple(
+            raw.get("enabled_groups", ()),
+            path="fun_group.enabled_groups",
+        ),
+        dynamic_card=DynamicCardSettings(
+            enabled=_strict_boolean(dynamic_raw.get("enabled", False), False),
+            base_name=base_name[:12],
+            separator=separator[:2],
+            min_interval_minutes=min_interval,
+            max_interval_minutes=max_interval,
+        ),
     )
 
 

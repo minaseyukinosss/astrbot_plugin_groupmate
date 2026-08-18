@@ -283,6 +283,34 @@ input:focus, select:focus { border-color: var(--accent); outline: 2px solid rgb(
 .metric-row dt { margin-bottom: 5px; color: var(--muted); font-size: 12px; }
 .metric-row dd { margin: 0; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .participation-summary .metric-row > div { padding-block: 18px; }
+.care-summary { margin-bottom: 30px; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+.care-layout { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(290px, .75fr); gap: 30px; align-items: start; }
+.care-reasons-section { position: sticky; top: 94px; }
+.care-list { border-top: 1px solid var(--line); }
+.care-item { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.care-item[data-status="corrected"] { opacity: .74; }
+.care-item-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.care-item-head strong, .care-item-head span { display: block; }
+.care-item-head strong { font-size: 15px; }
+.care-item-head div > span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.care-event { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 4px 12px; margin-top: 15px; }
+.care-event > span, .care-message > span { color: var(--muted); font-size: 11px; }
+.care-event > strong { line-height: 1.5; }
+.care-event > q { grid-column: 2; color: var(--ink-soft); font-size: 12px; line-height: 1.55; }
+.care-factors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0 0; background: var(--surface-subtle); }
+.care-factors > div { padding: 10px 12px; }
+.care-factors > div + div { border-left: 1px solid var(--line); }
+.care-factors dt { color: var(--muted); font-size: 11px; }
+.care-factors dd { margin: 4px 0 0; color: var(--ink-soft); font-size: 12px; line-height: 1.45; }
+.care-why { display: flex; align-items: baseline; gap: 10px; margin-top: 13px; }
+.care-why > span { flex: 0 0 auto; color: var(--accent-strong); font-size: 12px; font-weight: 650; }
+.care-why p { margin: 0; color: var(--ink-soft); line-height: 1.55; }
+.care-message { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.care-message q { color: var(--ink); line-height: 1.55; }
+.care-item > .text-button { margin-top: 12px; }
+.care-correction { margin: 12px 0 0; color: var(--danger); font-size: 12px; }
+.care-empty strong, .care-empty span { display: block; }
+.care-empty span { margin-top: 6px; font-size: 12px; }
 
 .overview-layout, .split-layout, .quality-layout, .self-layout {
   display: grid;
@@ -494,6 +522,7 @@ tbody tr[data-selectable]:hover, tbody tr.is-selected { background: var(--accent
   .overview-layout, .split-layout, .quality-layout, .self-layout { grid-template-columns: 1fr; gap: 26px; }
   .governance-layout { grid-template-columns: minmax(0, 1fr) 340px; }
   .decision-layout { grid-template-columns: minmax(260px, .7fr) minmax(380px, 1.3fr); }
+  .care-layout { grid-template-columns: minmax(0, 1fr) 280px; }
 }
 
 @media (max-width: 760px) {
@@ -540,6 +569,8 @@ tbody tr[data-selectable]:hover, tbody tr.is-selected { background: var(--accent
   .privacy-line { display: block; }
   .privacy-line strong { display: block; margin-bottom: 4px; }
   .toast { right: 16px; bottom: 16px; }
+  .care-layout { display: block; }
+  .care-reasons-section { position: static; margin-top: 24px; }
   .identity-rule-strip { display: block; }
   .identity-rule-strip strong { display: block; margin-bottom: 5px; }
 }
@@ -563,6 +594,12 @@ tbody tr[data-selectable]:hover, tbody tr.is-selected { background: var(--accent
   .learning-errors { margin: 10px 0; }
   .member-history-row { display: block; }
   .member-history-row time { display: block; margin-top: 6px; text-align: left; }
+  .care-factors { grid-template-columns: 1fr; }
+  .care-factors > div + div { border-top: 1px solid var(--line); border-left: 0; }
+  .care-event, .care-message { grid-template-columns: 1fr; }
+  .care-event > q { grid-column: 1; }
+  .care-why { display: block; }
+  .care-why p { margin-top: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

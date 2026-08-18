@@ -23,6 +23,8 @@ from ..engine.rate_limit import SlidingWindowRateLimiter
 from ..engine.runtime import GroupRuntimeManager
 from ..engine.triggers import TriggerRouter
 from ..engine.workflow import CognitiveWorkflow
+from ..fun import FunRuntime
+from ..fun.features import DynamicCardFeature
 from ..mail import MailService, build_send_qq_mail_descriptor
 from ..memory import SQLiteMemoryStore
 from ..memory.migrations import SCHEMA_VERSION
@@ -42,6 +44,7 @@ from ..persona.aemeath import (
 )
 from ..policies import BehaviorPolicy
 from ..social.commitment_scheduler import CommitmentScheduler
+from ..social.proactive_care import ProactiveCareScheduler
 from ..tools import (
     AstrBotToolPersonaRenderer,
     AstrBotToolPlanner,
@@ -50,6 +53,7 @@ from ..tools import (
     ToolPolicyEngine,
     UniversalToolCatalog,
 )
+from .appearance import HostAppearancePort
 from .config import DeploymentSettings
 from .llm import (
     AstrBotGenerationModel,
@@ -84,6 +88,7 @@ class AstrBotBridge:
         self._umo_path = self.data_dir / "group_umo.json"
         self._umo_by_group: Dict[str, str] = self._load_group_umos()
         self._provider_by_group: Dict[str, str] = {}
+        self._bot_id_by_group: Dict[str, str] = {}
         self._mention_name_cache: Dict[tuple[str, str], str] = {}
         self._capability_runtimes = {}
         self._capability_governors = {}
@@ -149,10 +154,33 @@ class AstrBotBridge:
             group_enabled=self._group_enabled,
             provider_getter=tool_provider_getter,
             timezone_name=self._host_timezone(),
+            proactive_care_scheduler=ProactiveCareScheduler(
+                memory=self.memory,
+                platform_factory=self._platform_for_group,
+                persona_id=self.persona_context.persona_id,
+                character_name=CHARACTER_NAME,
+                group_enabled=self._group_enabled,
+                paused_getter=lambda: self.paused,
+                timezone_name=self._host_timezone(),
+            ),
+        )
+        self.fun_runtime = FunRuntime(
+            persona_id=self.persona_context.persona_id,
+            memory=self.memory,
+            actions=HostAppearancePort(
+                context,
+                lambda group_id: self._bot_id_by_group.get(str(group_id), ""),
+            ),
+            settings=settings.fun,
+            group_ids_getter=self._fun_group_ids,
+            recent_messages_getter=self._fun_recent_messages,
+            paused_getter=lambda: self.paused,
+            features=(DynamicCardFeature(settings.fun.dynamic_card),),
         )
 
     async def start(self) -> None:
         await self.commitment_scheduler.start()
+        await self.fun_runtime.start()
 
     async def handle_event(self, event: Any) -> None:
         actor = await self._prepare_actor(event)
@@ -316,6 +344,7 @@ class AstrBotBridge:
         group_id = str(event.get_group_id())
         if not self._group_enabled(group_id):
             return None
+        self._bot_id_by_group[group_id] = str(event.get_self_id())
         umo = str(event.unified_msg_origin)
         self._remember_group_umo(group_id, umo)
         if self.settings.generation_provider:
@@ -532,6 +561,7 @@ class AstrBotBridge:
 
     async def close(self) -> None:
         self.paused = True
+        await self.fun_runtime.close()
         await self.commitment_scheduler.close()
         await self.runtime.close()
         for provider_runtime in tuple(self._capability_runtimes.values()):
@@ -638,6 +668,7 @@ class AstrBotBridge:
             "tool_counts": tool_counts,
             "database_schema": SCHEMA_VERSION,
             "commitment_scheduler": self.commitment_scheduler.mode,
+            "fun": self.fun_runtime.status(),
             "config_health": (
                 "warning"
                 if (
@@ -659,6 +690,12 @@ class AstrBotBridge:
                 if persona_id == self.persona_context.persona_id
             ),
         }
+
+    def fun_status(self) -> Dict[str, Any]:
+        return self.fun_runtime.status()
+
+    async def refresh_dynamic_card(self, group_id: str):
+        return await self.fun_runtime.refresh_dynamic_card(str(group_id), force=True)
 
     def cognition_snapshot(self) -> Dict[str, Any]:
         """Build the human-facing governance snapshot for the plugin page."""
@@ -857,6 +894,40 @@ class AstrBotBridge:
                 }
             )
 
+        proactive_care = []
+        for item in self.memory.list_proactive_care(persona_id, limit=500):
+            canonical_subject_id = self.memory.resolve_member_subject_id(
+                persona_id, item.group_id, item.subject_id
+            )
+            proactive_care.append(
+                {
+                    "care_id": item.care_id,
+                    "item_id": item.item_id,
+                    "group_id": item.group_id,
+                    "subject_id": canonical_subject_id,
+                    "subject_name": display_name(item.group_id, canonical_subject_id),
+                    "item_summary": item.item_summary,
+                    "trigger_basis": item.trigger_basis,
+                    "relationship_band": item.relationship_band,
+                    "familiarity": item.familiarity,
+                    "affinity": item.affinity,
+                    "trust": item.trust,
+                    "boundary_pressure": item.boundary_pressure,
+                    "sensitive": item.sensitive,
+                    "group_busy": item.group_busy,
+                    "outcome": item.outcome.value,
+                    "reason_code": item.reason_code,
+                    "reason_text": item.reason_text,
+                    "decided_at": item.decided_at,
+                    "next_review_at": item.next_review_at,
+                    "message_text": item.message_text,
+                    "sent_at": item.sent_at,
+                    "status": item.status.value,
+                    "correction_reason": item.correction_reason,
+                    "corrected_at": item.corrected_at,
+                }
+            )
+
         self_commitments = []
         for item in self.memory.list_self_commitments(
             persona_id,
@@ -1029,6 +1100,7 @@ class AstrBotBridge:
             "memories": memories,
             "continuity": continuity,
             "continuity_followups": continuity_followups,
+            "proactive_care": proactive_care,
             "self_commitments": self_commitments,
             "capabilities": capabilities,
             "governance": governance,
@@ -1066,6 +1138,14 @@ class AstrBotBridge:
             str(memory_id),
             reason=str(reason or "plugin_page_deletion"),
             actor="AstrBot 插件管理员",
+            now=int(time.time()),
+        )
+
+    def correct_proactive_care(self, care_id: str, reason: str):
+        return self.memory.correct_proactive_care(
+            self.persona_context.persona_id,
+            str(care_id),
+            reason=str(reason),
             now=int(time.time()),
         )
 
@@ -1444,7 +1524,36 @@ class AstrBotBridge:
             task_response_resolver=resolve_task,
             capabilities=capabilities,
             capability_governor=governor,
+            fun_context_provider=self.fun_runtime.active_context_for_message,
         )
+
+    def _fun_group_ids(self):
+        configured = tuple(str(item) for item in self.settings.fun.enabled_groups)
+        if configured:
+            return tuple(
+                group_id for group_id in configured if self._group_enabled(group_id)
+            )
+        known = set(self._umo_by_group.keys())
+        known.update(self._bot_id_by_group.keys())
+        for snapshot in self.runtime.snapshots(self.persona_context.persona_id).values():
+            if not isinstance(snapshot, dict):
+                continue
+            group_id = str(snapshot.get("group_id", "") or "")
+            if group_id:
+                known.add(group_id)
+        return tuple(
+            sorted(group_id for group_id in known if self._group_enabled(group_id))
+        )
+
+    def _fun_recent_messages(self, group_id: str):
+        try:
+            return self.memory.recent_messages(
+                self.persona_context.persona_id,
+                str(group_id),
+                24,
+            )
+        except Exception:
+            return ()
 
     def _umo_for_group(self, group_id: str) -> str:
         group_id = str(group_id)

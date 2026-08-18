@@ -57,6 +57,18 @@ class GroupmateWebAPI:
             "Groupmate cognition governance snapshot",
         )
         register(
+            f"/{PLUGIN_NAME}/fun/status",
+            self.fun_status,
+            ["GET"],
+            "Groupmate optional fun feature status",
+        )
+        register(
+            f"/{PLUGIN_NAME}/fun/dynamic-card/refresh",
+            self.refresh_dynamic_card,
+            ["POST"],
+            "Refresh dynamic group card now",
+        )
+        register(
             f"/{PLUGIN_NAME}/memories/<memory_id>/delete",
             self.delete_memory,
             ["POST"],
@@ -91,6 +103,12 @@ class GroupmateWebAPI:
             self.reject_continuity_followup,
             ["POST"],
             "Reject a mistaken continuity follow-up match",
+        )
+        register(
+            f"/{PLUGIN_NAME}/care/<care_id>/correct",
+            self.correct_proactive_care,
+            ["POST"],
+            "Correct a proactive care target or event match",
         )
         register(
             f"/{PLUGIN_NAME}/commitments/<commitment_id>/status",
@@ -173,6 +191,34 @@ class GroupmateWebAPI:
 
         return json_response(self.bridge.cognition_snapshot())
 
+    async def fun_status(self):
+        from astrbot.api.web import json_response
+
+        return json_response(self.bridge.fun_status())
+
+    async def refresh_dynamic_card(self):
+        from astrbot.api.web import error_response, json_response, request
+
+        payload = await request.json(default={})
+        group_id = str(payload.get("group_id") or "").strip()
+        if not group_id:
+            return error_response("group_id is required", status_code=400)
+        event = await self.bridge.refresh_dynamic_card(group_id)
+        if event is None:
+            return error_response("dynamic card unavailable", status_code=409)
+        return json_response(
+            {
+                "event_id": event.event_id,
+                "feature_id": event.feature_id,
+                "group_id": event.group_id,
+                "public_value": event.public_value,
+                "status": event.status,
+                "error_code": event.error_code,
+                "created_at": event.created_at,
+                "expires_at": event.expires_at,
+            }
+        )
+
     async def delete_memory(self, memory_id: str):
         from astrbot.api.web import error_response, json_response, request
 
@@ -252,6 +298,25 @@ class GroupmateWebAPI:
         except KeyError:
             return error_response("member profile not found", status_code=404)
         return json_response({"corrected": True, **result})
+
+    async def correct_proactive_care(self, care_id: str):
+        from astrbot.api.web import error_response, json_response, request
+
+        care_id = str(care_id or "").strip()
+        if not care_id:
+            return error_response("care_id is required", status_code=400)
+        payload = await request.json(default={})
+        if payload.get("confirm") is not True:
+            return error_response("explicit confirmation is required", status_code=400)
+        reason = str(payload.get("reason") or "").strip()
+        if not reason:
+            return error_response("reason is required", status_code=400)
+        if len(reason) > 160:
+            return error_response("reason is too long", status_code=400)
+        result = self.bridge.correct_proactive_care(care_id, reason)
+        if result is None:
+            return error_response("care decision not found or already corrected", status_code=404)
+        return json_response({"corrected": True, "care_id": care_id})
 
     async def link_member(self):
         from astrbot.api.web import error_response, json_response, request

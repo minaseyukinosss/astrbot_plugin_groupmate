@@ -4,6 +4,7 @@ const MODULE = {
   members: ["成员", "确认每个人是谁，并管理昵称轨迹与实际称呼。"],
   relationships: ["关系", "查看和修正相处形成的关系。"],
   memory: ["记忆", "治理她实际保留的事实与共同经历。"],
+  care: ["关心", "根据关系、经历与当时现场判断是否主动问一句。"],
   capabilities: ["能力", "查看她能采取的行动及其边界。"],
   self: ["自我", "维护稳定的相处方式和身份表达边界。"],
   decision: ["决策", "追溯一次开口或沉默是怎样发生的。"],
@@ -126,6 +127,17 @@ const TERM = {
   member_identity_linked: "关联成员身份",
   continuity_status_corrected: "修正未完事项",
   continuity_followup_rejected: "否定事项关联",
+  relationship_and_elapsed_time: "关系与时机合适",
+  relationship_not_close: "关系还不够近",
+  sensitive_event: "事项较敏感",
+  group_busy: "群聊正忙",
+  quiet_hours: "安静时段",
+  group_disabled: "所在群未启用",
+  delivery_failed: "发送失败",
+  spoke: "已开口",
+  silent: "选择沉默",
+  suppressed: "克制不触碰",
+  corrected: "已纠正",
   self_commitment_status_corrected: "修正自我承诺",
   plan: "计划",
   promise: "承诺",
@@ -208,6 +220,9 @@ const els = Object.fromEntries(
     "continuity-confirm", "continuity-confirm-copy", "continuity-reason", "continuity-confirm-submit",
     "memory-count", "memory-body", "memory-empty",
     "memory-confirm", "memory-confirm-copy", "memory-delete-reason", "memory-confirm-submit",
+    "care-updated", "care-total", "care-spoke", "care-silent",
+    "care-suppressed", "care-count", "care-list", "care-reasons",
+    "care-confirm", "care-confirm-copy", "care-correct-reason", "care-confirm-submit",
     "capability-count", "capability-body", "capability-empty", "identity-name",
     "identity-aliases", "identity-principles", "retention-status", "filter-outcome",
     "self-commitment-count", "self-commitment-list", "self-commitment-confirm",
@@ -238,6 +253,7 @@ const state = {
   pendingContinuity: null,
   pendingFollowup: null,
   pendingSelfCommitment: null,
+  pendingCare: null,
   group: "",
   paused: false,
   toastTimer: null,
@@ -381,6 +397,10 @@ function currentRelationshipEvidence() {
 
 function currentMemories() {
   return (state.cognition?.memories || []).filter((item) => !state.group || item.group_id === state.group);
+}
+
+function currentCare() {
+  return (state.cognition?.proactive_care || []).filter((item) => !state.group || item.group_id === state.group);
 }
 
 function currentSelfCommitments() {
@@ -857,6 +877,70 @@ function renderMemories() {
   )).join("");
 }
 
+function careTone(item) {
+  if (item.status === "corrected") return "neutral";
+  if (item.outcome === "spoke") return "ok";
+  if (item.outcome === "suppressed") return "warning";
+  return "neutral";
+}
+
+function renderCare() {
+  const items = currentCare();
+  const active = items.filter((item) => item.status !== "corrected");
+  els.care_updated.textContent = items.length ? `最近判断 ${formatTime(items[0].decided_at)}` : "等待形成第一条判断";
+  els.care_total.textContent = String(items.length);
+  els.care_spoke.textContent = String(active.filter((item) => item.outcome === "spoke").length);
+  els.care_silent.textContent = String(active.filter((item) => item.outcome === "silent").length);
+  els.care_suppressed.textContent = String(active.filter((item) => item.outcome === "suppressed").length);
+  els.care_count.textContent = `${items.length} 条`;
+  const reasons = {};
+  active.forEach((item) => { reasons[item.reason_code] = (reasons[item.reason_code] || 0) + 1; });
+  renderReasonList(els.care_reasons, reasons);
+  els.care_list.innerHTML = items.length ? items.map((item) => {
+    const corrected = item.status === "corrected";
+    const result = corrected ? "已纠正" : translateToken(item.outcome);
+    const relation = `${translateToken(item.relationship_band)} · 熟悉 ${Number(item.familiarity || 0)} · 亲近 ${Number(item.affinity || 0)} · 信任 ${Number(item.trust || 0)}`;
+    return `<article class="care-item" data-outcome="${escapeHtml(item.outcome)}" data-status="${escapeHtml(item.status)}">
+      <div class="care-item-head"><div><strong>${escapeHtml(item.subject_name || "成员")}</strong><span>群 ${escapeHtml(shortId(item.group_id, 10))} · ${formatTime(item.decided_at)}</span></div><span class="tag" data-tone="${careTone(item)}">${escapeHtml(result)}</span></div>
+      <div class="care-event"><span>惦记的事</span><strong>${escapeHtml(item.item_summary)}</strong><q>${escapeHtml(item.trigger_basis || "没有保留可展示原话")}</q></div>
+      <dl class="care-factors"><div><dt>关系依据</dt><dd>${escapeHtml(relation)}</dd></div><div><dt>现场</dt><dd>${item.group_busy ? "群聊正忙" : "群聊节奏允许"}${item.sensitive ? " · 敏感事项" : ""}</dd></div></dl>
+      <div class="care-why"><span>${escapeHtml(translateToken(item.reason_code))}</span><p>${escapeHtml(item.reason_text)}</p></div>
+      ${item.message_text && item.outcome === "spoke" ? `<div class="care-message"><span>发出的话</span><q>${escapeHtml(item.message_text)}</q></div>` : ""}
+      ${corrected ? `<p class="care-correction">修正原因：${escapeHtml(item.correction_reason || "管理员已纠正")}</p>` : `<button class="text-button danger-link" type="button" data-correct-care="${escapeHtml(item.care_id)}">纠正对象或事项</button>`}
+    </article>`;
+  }).join("") : '<div class="empty-state care-empty"><strong>还没有需要主动关心的事项</strong><span>当重要经历沉淀一段时间后，这里会展示她为什么选择问候或保持沉默。</span></div>';
+}
+
+function openCareConfirm(careId) {
+  const item = (state.cognition?.proactive_care || []).find((entry) => entry.care_id === careId);
+  if (!item) return;
+  state.pendingCare = item;
+  els.care_confirm_copy.textContent = `将“${item.subject_name} · ${item.item_summary}”标记为不准确或不适合继续主动关心。`;
+  els.care_correct_reason.value = "";
+  els.care_confirm.showModal();
+}
+
+async function correctCare() {
+  if (!state.pendingCare) return;
+  const reason = els.care_correct_reason.value.trim();
+  if (!reason) {
+    showError("请填写修正原因。");
+    return;
+  }
+  setBusy(els.care_confirm_submit, true, "修正中");
+  try {
+    await apiPost(`care/${encodeURIComponent(state.pendingCare.care_id)}/correct`, { confirm: true, reason });
+    state.pendingCare = null;
+    els.care_confirm.close();
+    await loadAll({ quiet: true });
+    showToast("已停止对该事项的后续主动关心");
+  } catch (error) {
+    showError(`修正关心判断失败：${apiError(error)}`);
+  } finally {
+    setBusy(els.care_confirm_submit, false);
+  }
+}
+
 function renderCapabilities() {
   const items = state.cognition?.capabilities || [];
   els.capability_count.textContent = `${items.length} 项`;
@@ -1162,6 +1246,7 @@ function applyFilters() {
   renderRelationships();
   renderMembers();
   renderMemories();
+  renderCare();
   renderSelf();
   renderDecisionList();
 }
@@ -1177,6 +1262,7 @@ function renderAll() {
   renderRelationships();
   renderMembers();
   renderMemories();
+  renderCare();
   renderCapabilities();
   renderSelf();
   renderDecisionList();
@@ -1431,6 +1517,7 @@ document.querySelector("[data-cancel-member-link]").addEventListener("click", ()
 document.querySelector("[data-cancel-continuity]").addEventListener("click", () => els.continuity_confirm.close());
 document.querySelector("[data-cancel-followup]").addEventListener("click", () => els.followup_confirm.close());
 document.querySelector("[data-cancel-self-commitment]").addEventListener("click", () => els.self_commitment_confirm.close());
+document.querySelector("[data-cancel-care]").addEventListener("click", () => els.care_confirm.close());
 
 els.refresh.addEventListener("click", () => loadAll());
 els.pause_toggle.addEventListener("click", togglePause);
@@ -1501,6 +1588,11 @@ els.memory_body.addEventListener("click", (event) => {
   if (button) openMemoryConfirm(button.dataset.deleteMemory);
 });
 els.memory_confirm_submit.addEventListener("click", deleteMemory);
+els.care_list.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-correct-care]");
+  if (button) openCareConfirm(button.dataset.correctCare);
+});
+els.care_confirm_submit.addEventListener("click", correctCare);
 els.governance_confirm_submit.addEventListener("click", revertGovernance);
 els.governance_body.addEventListener("click", (event) => {
   const button = event.target.closest("[data-revert-action]");

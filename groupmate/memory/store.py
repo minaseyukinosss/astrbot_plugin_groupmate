@@ -19,6 +19,9 @@ from ..models import (
     ContinuityItem,
     ContinuityKind,
     ContinuityStatus,
+    ProactiveCareDecision,
+    ProactiveCareOutcome,
+    ProactiveCareStatus,
     MemoryCandidate,
     MemoryItem,
     MemoryKind,
@@ -33,6 +36,11 @@ from ..models import (
     SocialEvent,
     SocialEventKind,
     SocialEventStatus,
+)
+from ..fun.contracts import (
+    FunFeatureEvent,
+    participants_from_json,
+    participants_to_json,
 )
 from .migrations import SCHEMA_VERSION, migrate_database
 from .privacy import claim_hash
@@ -68,6 +76,107 @@ class SQLiteMemoryStore:
 
     def _write(self, operation):
         return self._writer.execute(operation)
+
+    @staticmethod
+    def _row_to_proactive_care(row) -> ProactiveCareDecision:
+        return ProactiveCareDecision(
+            care_id=str(row["care_id"]),
+            item_id=str(row["item_id"]),
+            group_id=str(row["group_id"]),
+            subject_id=str(row["subject_id"]),
+            subject_name=str(row["subject_name"]),
+            item_summary=str(row["item_summary"]),
+            trigger_basis=str(row["trigger_basis"]),
+            relationship_band=str(row["relationship_band"]),
+            familiarity=int(row["familiarity"] or 0),
+            affinity=int(row["affinity"] or 0),
+            trust=int(row["trust"] or 0),
+            boundary_pressure=int(row["boundary_pressure"] or 0),
+            sensitive=bool(row["sensitive"]),
+            group_busy=bool(row["group_busy"]),
+            outcome=ProactiveCareOutcome(str(row["outcome"])),
+            reason_code=str(row["reason_code"]),
+            reason_text=str(row["reason_text"]),
+            decided_at=int(row["decided_at"]),
+            next_review_at=row["next_review_at"],
+            message_text=str(row["message_text"] or ""),
+            sent_at=row["sent_at"],
+            status=ProactiveCareStatus(str(row["status"])),
+            correction_reason=str(row["correction_reason"] or ""),
+            corrected_at=row["corrected_at"],
+        )
+
+    def append_proactive_care(self, persona_id: str, item: ProactiveCareDecision) -> Optional[ProactiveCareDecision]:
+        persona_id = _require_persona_id(persona_id)
+        def operation(db):
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO proactive_care_decisions(
+                    care_id, persona_id, item_id, group_id, subject_id, subject_name, item_summary,
+                    trigger_basis, relationship_band, familiarity, affinity, trust, boundary_pressure,
+                    sensitive, group_busy, outcome, reason_code, reason_text, decided_at, next_review_at,
+                    message_text, sent_at, status, correction_reason, corrected_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (item.care_id, persona_id, item.item_id, item.group_id, item.subject_id, item.subject_name,
+                 item.item_summary, item.trigger_basis, item.relationship_band, item.familiarity, item.affinity,
+                 item.trust, item.boundary_pressure, int(item.sensitive), int(item.group_busy), item.outcome.value,
+                 item.reason_code, item.reason_text, item.decided_at, item.next_review_at, item.message_text,
+                 item.sent_at, item.status.value, item.correction_reason, item.corrected_at),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return db.execute("SELECT * FROM proactive_care_decisions WHERE care_id=?", (item.care_id,)).fetchone()
+        row = self._write(operation)
+        return self._row_to_proactive_care(row) if row is not None else None
+
+    def list_proactive_care(self, persona_id: str, *, group_id: Optional[str] = None, item_id: Optional[str] = None, limit: int = 200) -> List[ProactiveCareDecision]:
+        persona_id = _require_persona_id(persona_id)
+        sql = "SELECT * FROM proactive_care_decisions WHERE persona_id=?"
+        params: List[Any] = [persona_id]
+        if group_id:
+            sql += " AND group_id=?"
+            params.append(str(group_id))
+        if item_id:
+            sql += " AND item_id=?"
+            params.append(str(item_id))
+        sql += " ORDER BY decided_at DESC LIMIT ?"
+        params.append(max(1, min(500, int(limit))))
+        return [self._row_to_proactive_care(row) for row in self._db.execute(sql, tuple(params)).fetchall()]
+
+    def correct_proactive_care(self, persona_id: str, care_id: str, *, reason: str, now: int) -> Optional[ProactiveCareDecision]:
+        persona_id = _require_persona_id(persona_id)
+        reason = str(reason or "").strip()[:160]
+        if not reason:
+            raise ValueError("reason is required")
+        def operation(db):
+            cursor = db.execute(
+                "UPDATE proactive_care_decisions SET status='corrected', correction_reason=?, corrected_at=? WHERE persona_id=? AND care_id=? AND status='active'",
+                (reason, int(now), persona_id, str(care_id)),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return db.execute("SELECT * FROM proactive_care_decisions WHERE persona_id=? AND care_id=?", (persona_id, str(care_id))).fetchone()
+        row = self._write(operation)
+        return self._row_to_proactive_care(row) if row is not None else None
+
+    def finish_proactive_care_delivery(self, persona_id: str, care_id: str, *, sent: bool, reason: str, now: int) -> Optional[ProactiveCareDecision]:
+        persona_id = _require_persona_id(persona_id)
+        def operation(db):
+            if sent:
+                db.execute(
+                    "UPDATE proactive_care_decisions SET sent_at=? WHERE persona_id=? AND care_id=?",
+                    (int(now), persona_id, str(care_id)),
+                )
+            else:
+                db.execute(
+                    "UPDATE proactive_care_decisions SET outcome='silent', reason_code='delivery_failed', reason_text=?, message_text='' WHERE persona_id=? AND care_id=?",
+                    (str(reason or "发送失败，未实际开口")[:240], persona_id, str(care_id)),
+                )
+            return db.execute(
+                "SELECT * FROM proactive_care_decisions WHERE persona_id=? AND care_id=?",
+                (persona_id, str(care_id)),
+            ).fetchone()
+        row = self._write(operation)
+        return self._row_to_proactive_care(row) if row is not None else None
 
     async def _write_async(self, operation):
         return await self._writer.execute_async(operation)
@@ -154,6 +263,149 @@ class SQLiteMemoryStore:
             "SELECT value FROM schema_meta WHERE key = 'version'"
         ).fetchone()
         return int(row["value"]) if row else 0
+
+    @staticmethod
+    def _row_to_fun_feature_event(row) -> FunFeatureEvent:
+        private_context = {}
+        try:
+            parsed = json.loads(row["private_context_json"] or "{}")
+            if isinstance(parsed, dict):
+                private_context = parsed
+        except (TypeError, ValueError):
+            private_context = {}
+        participants_raw = []
+        try:
+            parsed_participants = json.loads(row["participants_json"] or "[]")
+            if isinstance(parsed_participants, list):
+                participants_raw = parsed_participants
+        except (TypeError, ValueError):
+            participants_raw = []
+        return FunFeatureEvent(
+            event_id=str(row["event_id"]),
+            feature_id=str(row["feature_id"]),
+            persona_id=str(row["persona_id"]),
+            group_id=str(row["group_id"]),
+            action_kind=str(row["action_kind"]),
+            public_value=str(row["public_value"]),
+            private_context=private_context,
+            participants=participants_from_json(participants_raw),
+            created_at=int(row["created_at"] or 0),
+            expires_at=int(row["expires_at"] or 0),
+            status=str(row["status"] or "active"),
+            error_code=str(row["error_code"] or ""),
+        )
+
+    def append_fun_feature_event(
+        self,
+        event: FunFeatureEvent,
+    ) -> FunFeatureEvent:
+        if not isinstance(event, FunFeatureEvent):
+            raise TypeError("event must be a FunFeatureEvent")
+        persona_id = _require_persona_id(event.persona_id)
+
+        def operation(db):
+            db.execute(
+                """INSERT INTO fun_feature_events(
+                    event_id, feature_id, persona_id, group_id, action_kind,
+                    public_value, private_context_json, participants_json,
+                    created_at, expires_at, status, error_code
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    event.event_id,
+                    event.feature_id,
+                    persona_id,
+                    event.group_id,
+                    event.action_kind,
+                    event.public_value,
+                    json.dumps(event.private_context, ensure_ascii=False),
+                    json.dumps(
+                        participants_to_json(event.participants),
+                        ensure_ascii=False,
+                    ),
+                    int(event.created_at),
+                    int(event.expires_at),
+                    event.status,
+                    event.error_code,
+                ),
+            )
+            db.execute(
+                """INSERT INTO fun_feature_state(
+                    feature_id, persona_id, group_id, current_value,
+                    last_applied_at, next_due_at, cooldown_until, failure_count,
+                    updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(feature_id, persona_id, group_id) DO UPDATE SET
+                    current_value=excluded.current_value,
+                    last_applied_at=excluded.last_applied_at,
+                    next_due_at=excluded.next_due_at,
+                    cooldown_until=excluded.cooldown_until,
+                    failure_count=CASE
+                        WHEN excluded.current_value = '' THEN fun_feature_state.failure_count + 1
+                        ELSE 0
+                    END,
+                    updated_at=excluded.updated_at""",
+                (
+                    event.feature_id,
+                    persona_id,
+                    event.group_id,
+                    event.public_value if event.status == "active" else "",
+                    int(event.created_at) if event.status == "active" else 0,
+                    0,
+                    int(event.created_at) + 900 if event.status == "failed" else 0,
+                    1 if event.status == "failed" else 0,
+                    int(event.created_at),
+                ),
+            )
+            return db.execute(
+                "SELECT * FROM fun_feature_events WHERE event_id=?",
+                (event.event_id,),
+            ).fetchone()
+
+        row = self._write(operation)
+        return self._row_to_fun_feature_event(row)
+
+    def latest_fun_feature_event(
+        self,
+        persona_id: str,
+        group_id: str,
+        feature_id: str,
+        *,
+        now: int,
+    ) -> Optional[FunFeatureEvent]:
+        persona_id = _require_persona_id(persona_id)
+        row = self._db.execute(
+            """SELECT * FROM fun_feature_events
+            WHERE persona_id=? AND group_id=? AND feature_id=? AND status='active'
+              AND (expires_at=0 OR expires_at>?)
+            ORDER BY created_at DESC
+            LIMIT 1""",
+            (persona_id, str(group_id), str(feature_id), int(now or 0)),
+        ).fetchone()
+        return self._row_to_fun_feature_event(row) if row is not None else None
+
+    def list_fun_feature_events(
+        self,
+        persona_id: str,
+        *,
+        group_id: Optional[str] = None,
+        feature_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[FunFeatureEvent]:
+        persona_id = _require_persona_id(persona_id)
+        sql = "SELECT * FROM fun_feature_events WHERE persona_id=?"
+        params: List[Any] = [persona_id]
+        if group_id:
+            sql += " AND group_id=?"
+            params.append(str(group_id))
+        if feature_id:
+            sql += " AND feature_id=?"
+            params.append(str(feature_id))
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(1, min(200, int(limit))))
+        return [
+            self._row_to_fun_feature_event(row)
+            for row in self._db.execute(sql, tuple(params)).fetchall()
+        ]
 
     @staticmethod
     def _message_params(persona_id: str, message: ChatMessage):

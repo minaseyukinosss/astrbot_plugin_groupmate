@@ -218,6 +218,57 @@
       }
     }
   },
+  "fun_group": {
+    "description": "趣味小功能",
+    "type": "object",
+    "hint": "可选、低频的小功能；默认关闭，不参与核心回复、关系或长期记忆。",
+    "items": {
+      "enabled": {
+        "description": "启用趣味小功能",
+        "type": "bool",
+        "default": false
+      },
+      "enabled_groups": {
+        "description": "启用群列表",
+        "type": "list",
+        "default": [],
+        "hint": "填写 QQ 群号；留空表示跟随 Groupmate 已观察到的启用群。"
+      },
+      "dynamic_card": {
+        "description": "动态群名片",
+        "type": "object",
+        "hint": "把 Bot 自己的群名片做成爱弥斯在星炬学院的低频生活状态牌，并保留短期来源供后续追问。",
+        "items": {
+          "enabled": {
+            "description": "启用动态群名片",
+            "type": "bool",
+            "default": false
+          },
+          "base_name": {
+            "description": "基础名称",
+            "type": "string",
+            "default": "爱弥斯"
+          },
+          "separator": {
+            "description": "分隔符",
+            "type": "string",
+            "default": "丨"
+          },
+          "min_interval_minutes": {
+            "description": "最短刷新间隔（分钟）",
+            "type": "int",
+            "default": 90,
+            "hint": "范围 30~1440。动态名片是低频状态牌，不建议过短。"
+          },
+          "max_interval_minutes": {
+            "description": "最长刷新间隔（分钟）",
+            "type": "int",
+            "default": 180
+          }
+        }
+      }
+    }
+  },
   "interaction_group": {
     "description": "宿主互动",
     "type": "object",

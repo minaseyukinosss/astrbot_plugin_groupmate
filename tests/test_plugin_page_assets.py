@@ -17,6 +17,7 @@ def test_settings_plugin_page_assets_exist():
     assert 'data-module="relationships"' in html
     assert 'data-module="members"' in html
     assert 'data-module="memory"' in html
+    assert 'data-module="care"' in html
     assert 'data-module="capabilities"' in html
     assert 'data-module="self"' in html
     assert 'data-module="decision"' in html
@@ -53,6 +54,10 @@ def test_settings_plugin_page_assets_exist():
     assert "data-run-self-commitment" in script
     assert "commitments/${encodeURIComponent(commitmentId)}/run" in script
     assert "renderSelf();" in script
+    assert "renderCare();" in script
+    assert "care/${encodeURIComponent" in script
+    assert "为什么开口或沉默" in html
+    assert "纠正对象或事项" in script
     assert "否定原因" in html
     assert "复核这条关系证据" in html
     assert "wrong_person" in html

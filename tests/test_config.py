@@ -30,6 +30,9 @@ def test_deployment_settings_expose_poke_advanced_fields():
     assert settings.relationship_learning_groups == ()
     assert settings.relationship_learning_min_reviewed == 20
     assert settings.relationship_learning_max_error_rate == 0.1
+    assert settings.fun.enabled is False
+    assert settings.fun.dynamic_card.enabled is False
+    assert settings.fun.dynamic_card.base_name == "爱弥斯"
     assert settings.poke_enabled is False
     assert settings.poke_back_enabled is False
     assert settings.poke_exclusive is False
@@ -120,6 +123,36 @@ def test_mail_group_is_nested_and_parsed():
     assert settings.mail.from_display_name == "小爱"
     assert settings.mail.use_ssl is False
     assert settings.mail.smtp_port == 587
+    assert settings.diagnostics.unknown_keys == ()
+
+
+def test_fun_group_dynamic_card_is_nested_and_bounded():
+    settings = AstrBotConfigParser().parse(
+        {
+            "fun_group": {
+                "enabled": True,
+                "enabled_groups": ["100", "200"],
+                "dynamic_card": {
+                    "enabled": True,
+                    "base_name": "爱弥斯爱弥斯爱弥斯爱弥斯",
+                    "separator": "丨丨丨",
+                    "min_interval_minutes": 1,
+                    "max_interval_minutes": 9999,
+                },
+            }
+        }
+    )
+
+    assert settings.fun.enabled is True
+    assert settings.fun.enabled_groups == ("100", "200")
+    assert settings.fun.dynamic_card.enabled is True
+    assert settings.fun.dynamic_card.base_name == "爱弥斯爱弥斯爱弥斯爱弥斯"
+    assert settings.fun.dynamic_card.separator == "丨丨"
+    assert settings.fun.dynamic_card.min_interval_minutes == 30
+    assert settings.fun.dynamic_card.max_interval_minutes == 1440
+    assert not hasattr(settings.fun.dynamic_card, "playfulness")
+    assert not hasattr(settings.fun.dynamic_card, "question_awareness_enabled")
+    assert not hasattr(settings.fun.dynamic_card, "restore_on_disable")
     assert settings.diagnostics.unknown_keys == ()
 
 

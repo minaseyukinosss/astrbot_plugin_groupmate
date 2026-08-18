@@ -105,6 +105,7 @@ TaskResponseResolver = Callable[
     [InteractionScene, ChatMessage],
     object,
 ]
+FunContextProvider = Callable[[ChatMessage], str]
 
 
 class CognitiveWorkflow:
@@ -141,6 +142,7 @@ class CognitiveWorkflow:
         relationship_learning_groups: Sequence[str] = (),
         relationship_learning_min_reviewed: int = 20,
         relationship_learning_max_error_rate: float = 0.10,
+        fun_context_provider: Optional[FunContextProvider] = None,
     ) -> None:
         self.generation_model = generation_model
         self.vision = vision
@@ -219,6 +221,7 @@ class CognitiveWorkflow:
             )
         )
         self.composer = composer or ResponseComposer()
+        self.fun_context_provider = fun_context_provider
         self._recent_outputs: DefaultDict[str, Deque[str]] = defaultdict(
             lambda: deque(maxlen=20)
         )
@@ -668,6 +671,11 @@ class CognitiveWorkflow:
             "reply_mode": reply_mode,
             "continuity_items": continuity_items,
             "self_commitments": self_commitments,
+            "fun_context": (
+                self.fun_context_provider(topic.latest)
+                if self.fun_context_provider is not None and topic.latest is not None
+                else ""
+            ),
         }
         assemble_kwargs.update(
             response_act=response_act,

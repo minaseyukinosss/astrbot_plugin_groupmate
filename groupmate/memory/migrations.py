@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import uuid4
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 21
 
 
 class SchemaMigrationError(RuntimeError):
@@ -1270,6 +1270,143 @@ def _verify_v19(db: sqlite3.Connection) -> None:
         raise SchemaMigrationError("schema v19 integrity check failed")
 
 
+def _v19_to_v20(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS proactive_care_decisions (
+            care_id TEXT PRIMARY KEY,
+            persona_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            subject_name TEXT NOT NULL,
+            item_summary TEXT NOT NULL,
+            trigger_basis TEXT NOT NULL,
+            relationship_band TEXT NOT NULL,
+            familiarity INTEGER NOT NULL DEFAULT 0,
+            affinity INTEGER NOT NULL DEFAULT 0,
+            trust INTEGER NOT NULL DEFAULT 0,
+            boundary_pressure INTEGER NOT NULL DEFAULT 0,
+            sensitive INTEGER NOT NULL DEFAULT 0,
+            group_busy INTEGER NOT NULL DEFAULT 0,
+            outcome TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            reason_text TEXT NOT NULL,
+            decided_at INTEGER NOT NULL,
+            next_review_at INTEGER,
+            message_text TEXT NOT NULL DEFAULT '',
+            sent_at INTEGER,
+            status TEXT NOT NULL DEFAULT 'active',
+            correction_reason TEXT NOT NULL DEFAULT '',
+            corrected_at INTEGER,
+            UNIQUE(persona_id, item_id, decided_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_proactive_care_persona_time
+            ON proactive_care_decisions(persona_id, decided_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_proactive_care_due
+            ON proactive_care_decisions(persona_id, outcome, status, next_review_at);
+        """
+    )
+
+
+def _verify_v20(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(proactive_care_decisions)")
+    }
+    required = {
+        "care_id", "persona_id", "item_id", "group_id", "subject_id",
+        "outcome", "reason_code", "decided_at", "status",
+    }
+    if not required.issubset(columns):
+        raise SchemaMigrationError("schema v20 proactive care verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM proactive_care_decisions WHERE outcome NOT IN ('spoke','silent','suppressed') OR status NOT IN ('active','corrected')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v20 contains invalid proactive care decisions")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v20 integrity check failed")
+
+
+def _v20_to_v21(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS fun_feature_events (
+            event_id TEXT PRIMARY KEY,
+            feature_id TEXT NOT NULL,
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            action_kind TEXT NOT NULL,
+            public_value TEXT NOT NULL,
+            private_context_json TEXT NOT NULL DEFAULT '{}',
+            participants_json TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            error_code TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_fun_feature_events_active
+            ON fun_feature_events(
+                persona_id, group_id, feature_id, status, expires_at, created_at DESC
+            );
+        CREATE INDEX IF NOT EXISTS idx_fun_feature_events_time
+            ON fun_feature_events(persona_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS fun_feature_state (
+            feature_id TEXT NOT NULL,
+            persona_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            current_value TEXT NOT NULL DEFAULT '',
+            last_applied_at INTEGER NOT NULL DEFAULT 0,
+            next_due_at INTEGER NOT NULL DEFAULT 0,
+            cooldown_until INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(feature_id, persona_id, group_id)
+        );
+        """
+    )
+
+
+def _verify_v21(db: sqlite3.Connection) -> None:
+    tables = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if not {"fun_feature_events", "fun_feature_state"}.issubset(tables):
+        raise SchemaMigrationError("schema v21 fun feature tables missing")
+    event_columns = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(fun_feature_events)")
+    }
+    required = {
+        "event_id",
+        "feature_id",
+        "persona_id",
+        "group_id",
+        "public_value",
+        "private_context_json",
+        "participants_json",
+        "created_at",
+        "expires_at",
+        "status",
+    }
+    if not required.issubset(event_columns):
+        raise SchemaMigrationError("schema v21 fun feature verification failed")
+    invalid = db.execute(
+        "SELECT COUNT(*) FROM fun_feature_events "
+        "WHERE status NOT IN ('active','failed','restored','expired')"
+    ).fetchone()[0]
+    if invalid:
+        raise SchemaMigrationError("schema v21 contains invalid fun feature events")
+    check = db.execute("PRAGMA integrity_check").fetchone()
+    if not check or check[0] != "ok":
+        raise SchemaMigrationError("schema v21 integrity check failed")
+
+
 def _set_version(db: sqlite3.Connection, version: int) -> None:
     db.execute(
         "UPDATE schema_meta SET value=? WHERE key='version'",
@@ -1293,7 +1430,10 @@ def migrate_database(path: Path) -> Optional[Path]:
                 current, SCHEMA_VERSION
             )
         )
-    if current not in (0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, SCHEMA_VERSION):
+    if current not in (
+        0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        SCHEMA_VERSION,
+    ):
         db.close()
         raise UnsupportedSchemaError(
             "no safe migration path from schema {}".format(current)
@@ -1330,6 +1470,10 @@ def migrate_database(path: Path) -> Optional[Path]:
                 _verify_v18(db)
                 _v18_to_v19(db)
                 _verify_v19(db)
+                _v19_to_v20(db)
+                _verify_v20(db)
+                _v20_to_v21(db)
+                _verify_v21(db)
                 _set_version(db, SCHEMA_VERSION)
             current = SCHEMA_VERSION
         if current == 5:
@@ -1567,6 +1711,34 @@ def migrate_database(path: Path) -> Optional[Path]:
             try:
                 _v18_to_v19(db)
                 _verify_v19(db)
+                _v19_to_v20(db)
+                _verify_v20(db)
+                _v20_to_v21(db)
+                _verify_v21(db)
+                _set_version(db, SCHEMA_VERSION)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = SCHEMA_VERSION
+        if current == 19:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v19_to_v20(db)
+                _verify_v20(db)
+                _v20_to_v21(db)
+                _verify_v21(db)
+                _set_version(db, SCHEMA_VERSION)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            current = SCHEMA_VERSION
+        if current == 20:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                _v20_to_v21(db)
+                _verify_v21(db)
                 _set_version(db, SCHEMA_VERSION)
                 db.commit()
             except BaseException:

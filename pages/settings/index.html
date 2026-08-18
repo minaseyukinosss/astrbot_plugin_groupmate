@@ -26,6 +26,7 @@
           <button class="nav-item" type="button" data-module="members">成员</button>
           <button class="nav-item" type="button" data-module="relationships">关系</button>
           <button class="nav-item" type="button" data-module="memory">记忆</button>
+          <button class="nav-item" type="button" data-module="care">关心</button>
           <button class="nav-item" type="button" data-module="self">自我</button>
           <span class="nav-group-label">行动</span>
           <button class="nav-item" type="button" data-module="capabilities">能力</button>
@@ -221,6 +222,28 @@
           </section>
         </section>
 
+        <section class="module" data-module-panel="care" hidden>
+          <div class="section-heading"><div><h1>关心</h1><p>看她惦记着谁、为什么此刻开口或保持克制，并修正不准确的对象与事项关联。</p></div><span id="care-updated" class="muted"></span></div>
+          <section class="care-summary">
+            <dl class="metric-row">
+              <div><dt>关心判断</dt><dd id="care-total">0</dd></div>
+              <div><dt>自然开口</dt><dd id="care-spoke">0</dd></div>
+              <div><dt>选择沉默</dt><dd id="care-silent">0</dd></div>
+              <div><dt>克制不触碰</dt><dd id="care-suppressed">0</dd></div>
+            </dl>
+          </section>
+          <div class="care-layout">
+            <section class="content-section">
+              <div class="section-title-row"><h2>关心对象与判断</h2><span id="care-count" class="muted">0 条</span></div>
+              <div id="care-list" class="care-list"></div>
+            </section>
+            <aside class="content-section care-reasons-section">
+              <h2>为什么开口或沉默</h2>
+              <div id="care-reasons" class="reason-list wide"></div>
+            </aside>
+          </div>
+        </section>
+
         <section class="module" data-module-panel="capabilities" hidden>
           <div class="section-heading"><div><h1>能力</h1><p>她可以调用哪些行动，以及这些行动的风险和可用状态。</p></div></div>
           <section class="content-section table-section">
@@ -377,6 +400,14 @@
       <label class="dialog-field"><span>否定原因</span><input id="followup-reject-reason" type="text" maxlength="120" placeholder="例如：这句话说的是另一场考试" /></label>
       <p class="dialog-warning">若这次关联曾让事项自动结束，否定后会恢复为进行中；已经发到群里的消息不会被撤回。</p>
       <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-followup>返回</button><button id="followup-confirm-submit" class="button button-danger" type="button">确认否定</button></div>
+    </dialog>
+
+    <dialog id="care-confirm" class="confirm-dialog">
+      <form method="dialog"><button class="close-button dialog-close" value="cancel" aria-label="关闭">×</button></form>
+      <h2>修正这次关心判断</h2><p id="care-confirm-copy"></p>
+      <label class="dialog-field"><span>修正原因</span><input id="care-correct-reason" type="text" maxlength="160" placeholder="例如：这件事属于另一位成员，或不适合主动提起" /></label>
+      <p class="dialog-warning">修正后，这个事项不会再触发主动关心；已经发到群里的消息无法撤回。</p>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-cancel-care>返回</button><button id="care-confirm-submit" class="button button-danger" type="button">确认修正</button></div>
     </dialog>
 
     <script type="module" src="./app.js"></script>

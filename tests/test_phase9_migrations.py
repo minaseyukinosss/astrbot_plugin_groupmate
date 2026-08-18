@@ -53,7 +53,7 @@ def test_v17_database_migrates_through_commitment_scheduler_fields(tmp_path):
 
     store = SQLiteMemoryStore(path)
     try:
-        assert store.schema_version() == SCHEMA_VERSION == 19
+        assert store.schema_version() == SCHEMA_VERSION == 20
         columns = {
             row[1]
             for row in store._db.execute("PRAGMA table_info(self_commitments)")
@@ -65,4 +65,4 @@ def test_v17_database_migrates_through_commitment_scheduler_fields(tmp_path):
         assert migrated.next_attempt_at == 200
     finally:
         store.close()
-    assert list(tmp_path.glob("legacy-v17.db.pre-migrate-v17-to-v19.*"))
+    assert list(tmp_path.glob("legacy-v17.db.pre-migrate-v17-to-v20.*"))

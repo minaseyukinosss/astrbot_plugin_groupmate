@@ -59,6 +59,7 @@ class CommitmentScheduler:
         timezone_name: str = "Asia/Shanghai",
         quiet_start_hour: int = 0,
         quiet_end_hour: int = 7,
+        proactive_care_scheduler=None,
     ) -> None:
         self.context = context
         self.memory = memory
@@ -72,6 +73,7 @@ class CommitmentScheduler:
         self.timezone_name = str(timezone_name or "Asia/Shanghai")
         self.quiet_start_hour = max(0, min(23, int(quiet_start_hour)))
         self.quiet_end_hour = max(0, min(23, int(quiet_end_hour)))
+        self.proactive_care_scheduler = proactive_care_scheduler
         self._cron_job_id = ""
         self._fallback_task = None
         self._closed = False
@@ -204,6 +206,11 @@ class CommitmentScheduler:
                     continue
                 await self._process(item, now=now)
                 processed += 1
+            if self.proactive_care_scheduler is not None and (force or commitment_id is None):
+                try:
+                    await self.proactive_care_scheduler.run_due(now=now)
+                except Exception:
+                    logger.exception("Groupmate proactive care scan failed")
             reason = "ok"
             if processed == 0:
                 reason = "quiet_hours" if deferred_quiet else "ok"

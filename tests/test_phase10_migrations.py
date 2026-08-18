@@ -31,7 +31,7 @@ def test_v18_database_migrates_to_v19_followup_evidence(tmp_path):
 
     store = SQLiteMemoryStore(path)
     try:
-        assert store.schema_version() == SCHEMA_VERSION == 19
+        assert store.schema_version() == SCHEMA_VERSION == 21
         columns = {
             row[1]
             for row in store._db.execute(
@@ -41,6 +41,13 @@ def test_v18_database_migrates_to_v19_followup_evidence(tmp_path):
         assert {"event_id", "item_id", "response_policy", "sent"}.issubset(
             columns
         )
+        tables = {
+            row[0]
+            for row in store._db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert {"fun_feature_events", "fun_feature_state"}.issubset(tables)
     finally:
         store.close()
-    assert list(tmp_path.glob("legacy-v18.db.pre-migrate-v18-to-v19.*"))
+    assert list(tmp_path.glob("legacy-v18.db.pre-migrate-v18-to-v21.*"))

@@ -204,6 +204,17 @@ class ContinuityFollowupStatus(StringEnum):
     REJECTED = "rejected"
 
 
+class ProactiveCareOutcome(StringEnum):
+    SPOKE = "spoke"
+    SILENT = "silent"
+    SUPPRESSED = "suppressed"
+
+
+class ProactiveCareStatus(StringEnum):
+    ACTIVE = "active"
+    CORRECTED = "corrected"
+
+
 class SelfCommitmentStatus(StringEnum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -378,6 +389,52 @@ class ContinuityFollowupEvent:
         )
         object.__setattr__(
             self, "confidence", max(0.0, min(1.0, float(self.confidence)))
+        )
+
+
+@dataclass(frozen=True)
+class ProactiveCareDecision:
+    care_id: str
+    item_id: str
+    group_id: str
+    subject_id: str
+    subject_name: str
+    item_summary: str
+    trigger_basis: str
+    relationship_band: str
+    familiarity: int
+    affinity: int
+    trust: int
+    boundary_pressure: int
+    sensitive: bool
+    group_busy: bool
+    outcome: ProactiveCareOutcome
+    reason_code: str
+    reason_text: str
+    decided_at: int
+    next_review_at: Optional[int] = None
+    message_text: str = ""
+    sent_at: Optional[int] = None
+    status: ProactiveCareStatus = ProactiveCareStatus.ACTIVE
+    correction_reason: str = ""
+    corrected_at: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        outcome = self.outcome
+        if not isinstance(outcome, ProactiveCareOutcome):
+            outcome = ProactiveCareOutcome(str(outcome))
+        status = self.status
+        if not isinstance(status, ProactiveCareStatus):
+            status = ProactiveCareStatus(str(status))
+        object.__setattr__(self, "outcome", outcome)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "subject_name", str(self.subject_name or "成员")[:80])
+        object.__setattr__(self, "item_summary", str(self.item_summary or "")[:240])
+        object.__setattr__(self, "trigger_basis", str(self.trigger_basis or "")[:240])
+        object.__setattr__(self, "reason_text", str(self.reason_text or "")[:240])
+        object.__setattr__(self, "message_text", str(self.message_text or "")[:180])
+        object.__setattr__(
+            self, "correction_reason", str(self.correction_reason or "")[:160]
         )
 
 

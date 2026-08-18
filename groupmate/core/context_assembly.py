@@ -171,6 +171,7 @@ class ContextAssembly:
         capability_status: str = "",
         continuity_items: Sequence[ContinuityItem] = (),
         self_commitments: Sequence[SelfCommitment] = (),
+        fun_context: str = "",
     ) -> str:
         active = select_active_messages(
             topic.messages, topic_created_at=topic.created_at
@@ -287,6 +288,9 @@ class ContextAssembly:
                     "<memory_guide>{}</memory_guide>".format(html.escape(guide[:500]))
                 )
 
+        if str(fun_context or "").strip():
+            sections.append(str(fun_context).strip()[:2400])
+
         response_block = self._response_act_block(
             response_act,
             capability_facts,
@@ -355,6 +359,7 @@ class ContextAssembly:
         capability_status: str = "",
         continuity_items: Sequence[ContinuityItem] = (),
         self_commitments: Sequence[SelfCommitment] = (),
+        fun_context: str = "",
     ) -> AssembledPrompt:
         return AssembledPrompt(
             system=self.build_system(),
@@ -372,6 +377,7 @@ class ContextAssembly:
                 capability_status=capability_status,
                 continuity_items=continuity_items,
                 self_commitments=self_commitments,
+                fun_context=fun_context,
             ),
             soft_trigger=soft_trigger,
         )

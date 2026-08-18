@@ -35,6 +35,10 @@ _OPEN_LOOP_HINT = re.compile(
     r"到时候(告诉|说|喊|报)|"
     r"下次.{0,12}(给你看|带你|一起|告诉))"
 )
+_IMPORTANT_LIFE_EVENT_HINT = re.compile(
+    r"(考试|考研|高考|面试|求职|找工作|入职|离职|搬家|毕业|开学|"
+    r"生病|住院|手术|项目答辩|比赛|出差|旅行)"
+)
 
 
 def looks_like_open_loop(text: str) -> bool:
@@ -42,7 +46,7 @@ def looks_like_open_loop(text: str) -> bool:
     source = " ".join(str(text or "").split())
     if looks_like_timed_reminder_request(source):
         return False
-    return bool(_OPEN_LOOP_HINT.search(source))
+    return bool(_OPEN_LOOP_HINT.search(source) or _IMPORTANT_LIFE_EVENT_HINT.search(source))
 
 
 def close_continuity_for_resolved_reminder(
