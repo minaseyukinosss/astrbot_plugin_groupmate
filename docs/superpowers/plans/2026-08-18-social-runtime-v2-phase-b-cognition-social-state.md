@@ -48,11 +48,11 @@ assert frame.candidate_audiences == ("u1",)
 
 **Interfaces:** Consumes `AttentionFrame` and bounded `CognitiveContext`; produces `CognitiveObservation`; `CognitionService.evaluate(frame, context)` returns immutable `BlackboardSnapshot`.
 
-- [ ] 写失败测试：证据为空、confidence 超出 `0..1`、scene version 不符或过期的 Observation 被拒绝；冲突命题同时保留且标记 conflict。
-- [ ] Run: `pytest tests/contracts/test_cognitive_worker.py tests/social_runtime/test_blackboard.py -q`。
-- [ ] 实现 `CognitiveWorker` Protocol：`async observe(frame, context) -> tuple[CognitiveObservation, ...]`。Model Adapter 只接受 JSON Schema，解析失败返回带错误码的空结果，不返回自由文本权威值。
-- [ ] 实现 Level 0 规则、Level 1 单 Worker、Level 2 多 Worker、Level 3 critic；预算超限时降级为 `OBSERVE`，不能跳过硬安全。
-- [ ] Run focused tests; commit `feat: add governed cognition blackboard`。
+- [x] 写失败测试：证据为空、confidence 超出 `0..1`、scene version 不符或过期的 Observation 被拒绝；冲突命题同时保留且标记 conflict。
+- [x] Run: `pytest tests/contracts/test_cognitive_worker.py tests/social_runtime/test_blackboard.py -q`。
+- [x] 实现 `CognitiveWorker` Protocol：`async observe(frame, context) -> tuple[CognitiveObservation, ...]`。Model Adapter 只接受 JSON Schema，解析失败返回带错误码的空结果，不返回自由文本权威值。
+- [x] 实现 Level 0 规则、Level 1 单 Worker、Level 2 多 Worker、Level 3 critic；预算超限时降级为 `OBSERVE`，不能跳过硬安全。
+- [x] Run focused tests; commit `feat: add governed cognition blackboard`。
 
 ```python
 @dataclass(frozen=True)
