@@ -78,6 +78,23 @@ class ActorCursor:
 
 
 @dataclass(frozen=True)
+class GlobalSelfState:
+    """Authoritative, persisted self state owned by one PersonaSupervisor."""
+
+    persona_id: str
+    presence: str = "awake"
+    energy: int = 100
+    valence: int = 0
+    arousal: int = 0
+    irritation: int = 0
+    cognitive_load: int = 0
+    recovery_state: str = "stable"
+    last_transition_at: int = 0
+    next_transition_at: int | None = None
+    version: int = 0
+
+
+@dataclass(frozen=True)
 class PersonaSnapshot:
     persona_id: str
     state_version: int
@@ -86,6 +103,13 @@ class PersonaSnapshot:
     energy: int
     mode: str
     modifiers: tuple[str, ...]
+    valence: int = 0
+    arousal: int = 0
+    irritation: int = 0
+    cognitive_load: int = 0
+    recovery_state: str = "stable"
+    last_transition_at: int = 0
+    next_transition_at: int | None = None
 
 
 @dataclass(frozen=True)

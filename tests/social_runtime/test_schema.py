@@ -20,6 +20,7 @@ REQUIRED_TABLES = {
     "actor_cursors",
     "snapshots",
     "persona_state",
+    "persona_effects",
     "group_world",
     "attention_frames",
     "cognitive_observations",

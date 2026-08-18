@@ -308,7 +308,7 @@ git commit -m "feat: persist social events atomically"
 - Consumes: `GlobalStateEffect`, Event Store。
 - Produces: `PersonaSupervisor.start/snapshot/apply_effect/close`。
 
-- [ ] **Step 1: 写版本与去重测试**
+- [x] **Step 1: 写版本与去重测试**
 
 ```python
 async def test_effect_applies_once(supervisor):
@@ -320,21 +320,21 @@ async def test_effect_applies_once(supervisor):
     assert after.energy == 95
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 Run: `pytest tests/social_runtime/test_persona_supervisor.py -q`
 
-- [ ] **Step 3: 实现 mailbox 单写者**
+- [x] **Step 3: 实现 mailbox 单写者**
 
 实现 `PersonaSupervisor.start() -> None`、`snapshot(config_version) -> PersonaSnapshot`、`apply_effect(effect) -> PersonaSnapshot` 和 `close() -> None` 四个异步方法。公开调用统一进入 mailbox，Repository 只在 Actor loop 内写入。
 
 energy/cognitive_load 限幅 `0..100`，valence/arousal/irritation 限幅 `-100..100`；过期 expected_version 抛 `StateVersionConflict`。
 
-- [ ] **Step 4: 验证并发恢复**
+- [x] **Step 4: 验证并发恢复**
 
 并发提交 20 个 Effect，版本严格递增且无 lost update；关闭重建后 Snapshot hash 完全一致。
 
-- [ ] **Step 5: 运行并提交**
+- [x] **Step 5: 运行并提交**
 
 Run: `pytest tests/social_runtime/test_persona_supervisor.py tests/recovery/test_supervisor_recovery.py -q`
 ```bash
