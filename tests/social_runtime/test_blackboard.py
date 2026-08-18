@@ -197,3 +197,31 @@ def test_level_three_adds_critic_without_skipping_hard_rules():
     assert snapshot.cost_level == 3
     assert model.calls == critic.calls == 1
     assert any(entry.observation.kind == "fact.safety" for entry in snapshot.entries)
+
+
+def test_hanging_worker_times_out_and_degrades_to_observe():
+    class HangingWorker:
+        name = "w1"
+
+        async def observe(self, frame, context):
+            await asyncio.Event().wait()
+
+    service = CognitionService(
+        workers={"w1": HangingWorker()},
+        budget=CognitionBudget(
+            max_worker_calls=1,
+            max_cost_units=1,
+            worker_timeout_seconds=0.01,
+        ),
+    )
+
+    snapshot = asyncio.run(
+        service.evaluate(
+            _frame(trigger_kind="FAST", requested_workers=("w1",)),
+            _context(),
+        )
+    )
+
+    assert snapshot.degraded is True
+    assert snapshot.recommended_outcome == "OBSERVE"
+    assert "worker_timeout:w1" in snapshot.diagnostics

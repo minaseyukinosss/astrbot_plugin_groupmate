@@ -16,6 +16,22 @@ class RuntimeMode(str, Enum):
 
 
 @dataclass(frozen=True)
+class RuntimeGovernanceState:
+    privacy_allowed: bool = True
+    paused: bool = False
+    platform_available: bool = True
+    capability_allowed: bool = False
+    rate_limited_until: int | None = None
+    minimum_utility: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.rate_limited_until is not None and self.rate_limited_until < 0:
+            raise ValueError("rate_limited_until must not be negative")
+        if self.minimum_utility < 0:
+            raise ValueError("minimum_utility must not be negative")
+
+
+@dataclass(frozen=True)
 class SocialEventEnvelope:
     event_id: str
     event_type: str

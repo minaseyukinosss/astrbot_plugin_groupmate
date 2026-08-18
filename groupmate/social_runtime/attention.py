@@ -28,7 +28,7 @@ class AttentionFrame:
 
 
 @dataclass(frozen=True)
-class _AmbientWindow:
+class PendingAttentionWindow:
     group_id: str
     scene_version: int
     focus_topic_ids: tuple[str, ...]
@@ -43,7 +43,7 @@ class AttentionScheduler:
     """Creates attention opportunities without authorizing any action."""
 
     def __init__(self) -> None:
-        self._ambient: dict[str, _AmbientWindow] = {}
+        self._ambient: dict[str, PendingAttentionWindow] = {}
         self._recent_message_times: dict[str, deque[int]] = defaultdict(deque)
 
     def on_event(
@@ -99,7 +99,7 @@ class AttentionScheduler:
         topic_id = self._topic_id(world, event)
         current = self._ambient.get(event.group_id)
         if current is None:
-            window = _AmbientWindow(
+            window = PendingAttentionWindow(
                 group_id=event.group_id,
                 scene_version=world.scene_version,
                 focus_topic_ids=(topic_id,) if topic_id else (),
@@ -144,6 +144,14 @@ class AttentionScheduler:
             self._ambient.pop(window.group_id, None)
         return frames
 
+    def pending_window(self, group_id: str) -> PendingAttentionWindow | None:
+        return self._ambient.get(group_id)
+
+    def restore_window(self, window: PendingAttentionWindow) -> None:
+        if not window.group_id.strip() or window.scene_version < 1:
+            raise ValueError("pending attention window is invalid")
+        self._ambient[window.group_id] = window
+
     def _refresh_pending_scene(
         self,
         group_id: str,
@@ -185,7 +193,7 @@ class AttentionScheduler:
             config_version=persona.config_version,
         )
 
-    def _ambient_frame(self, window: _AmbientWindow) -> AttentionFrame:
+    def _ambient_frame(self, window: PendingAttentionWindow) -> AttentionFrame:
         return self._build_frame(
             group_id=window.group_id,
             scene_version=window.scene_version,
@@ -267,4 +275,4 @@ class AttentionScheduler:
         return values + (value,)
 
 
-__all__ = ("AttentionFrame", "AttentionScheduler")
+__all__ = ("AttentionFrame", "AttentionScheduler", "PendingAttentionWindow")

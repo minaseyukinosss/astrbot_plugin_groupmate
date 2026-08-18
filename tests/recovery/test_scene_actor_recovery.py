@@ -172,13 +172,9 @@ def test_pending_scene_work_is_reissued_after_restart_until_resolved(tmp_path):
         await recovered.start()
         first_drain = await recovered.drain()
         second_drain = await recovered.drain()
-        accepted = await recovered.accept_result(
-            SceneWorkResult(
-                request_id=original.request_id,
-                group_id=original.group_id,
-                scene_version=original.scene_version,
-                observations=(),
-            )
+        discarded = await recovered.discard_work(
+            original.request_id,
+            "recovery_test_cleanup",
         )
         await recovered.close()
 
@@ -191,15 +187,15 @@ def test_pending_scene_work_is_reissued_after_restart_until_resolved(tmp_path):
         await final.start()
         after_resolution = await final.drain()
         await final.close()
-        return original, first_drain, second_drain, accepted, after_resolution
+        return original, first_drain, second_drain, discarded, after_resolution
 
-    original, first_drain, second_drain, accepted, after_resolution = asyncio.run(
+    original, first_drain, second_drain, discarded, after_resolution = asyncio.run(
         scenario()
     )
 
     assert first_drain == (original,)
     assert second_drain == ()
-    assert accepted is True
+    assert discarded is True
     assert after_resolution == ()
 
 

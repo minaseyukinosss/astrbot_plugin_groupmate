@@ -10,7 +10,7 @@ from groupmate.social_runtime.manager import (
     NoSideEffectExecutionPort,
     ShadowSideEffectForbidden,
 )
-from groupmate.social_runtime.manager import PhaseARuntimeModeError, SocialRuntimeManager
+from groupmate.social_runtime.manager import RuntimeModeUnavailable, SocialRuntimeManager
 from groupmate.social_runtime.contracts import RuntimeMode
 
 
@@ -83,7 +83,7 @@ def test_off_mode_does_not_create_database_or_translate_event(tmp_path):
     assert not (tmp_path / "groupmate-social-runtime-v2.db").exists()
 
 
-def test_phase_a_rejects_social_runtime_before_creating_database(tmp_path):
+def test_release_gate_rejects_social_runtime_before_creating_database(tmp_path):
     async def bridge_scenario():
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
@@ -95,7 +95,7 @@ def test_phase_a_rejects_social_runtime_before_creating_database(tmp_path):
             ),
             data_dir=tmp_path,
         )
-        with pytest.raises(PhaseARuntimeModeError, match="only supports SHADOW"):
+        with pytest.raises(RuntimeModeUnavailable, match="only supports SHADOW"):
             await bridge.start()
 
     asyncio.run(bridge_scenario())
@@ -104,7 +104,7 @@ def test_phase_a_rejects_social_runtime_before_creating_database(tmp_path):
 
 def test_direct_off_manager_construction_is_rejected_without_io(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
-    with pytest.raises(PhaseARuntimeModeError, match="only supports SHADOW"):
+    with pytest.raises(RuntimeModeUnavailable, match="only supports SHADOW"):
         SocialRuntimeManager(
             database_path=path,
             persona_id="aemeath",

@@ -36,6 +36,45 @@ class BlockingWorker:
         )
 
 
+class ImmediateWorker:
+    name = "direct_interaction"
+
+    async def observe(self, frame, context):
+        return (
+            CognitiveObservation.create(
+                worker=self.name,
+                kind="help_request",
+                proposition={"subject_id": "u1", "topic_id": "m1"},
+                confidence=1.0,
+                evidence_event_ids=("qq:m1",),
+                scene_version=context.scene_version,
+                expires_at=context.now + 30,
+                uncertainty=(),
+            ),
+        )
+
+
+class ImmediateAmbientWorker:
+    name = "scene_interpreter"
+
+    async def observe(self, frame, context):
+        return (
+            CognitiveObservation.create(
+                worker=self.name,
+                kind="help_request",
+                proposition={
+                    "subject_id": frame.candidate_audiences[0],
+                    "topic_id": frame.focus_topic_ids[0],
+                },
+                confidence=1.0,
+                evidence_event_ids=(frame.focus_event_ids[0],),
+                scene_version=context.scene_version,
+                expires_at=context.now + 30,
+                uncertainty=(),
+            ),
+        )
+
+
 def _direct_event():
     return SocialEventEnvelope.create(
         **social_event_values(
@@ -77,7 +116,10 @@ def test_config_change_while_worker_runs_discards_stale_act(tmp_path):
         await manager.ingest(_direct_event())
         draining = asyncio.create_task(manager.drain())
         await worker.entered.wait()
-        manager.config_version = 2
+        manager.update_governance_state(
+            manager.governance_state,
+            config_version=2,
+        )
         worker.release.set()
         evaluations = await draining
         journal = manager.event_store.journal("corr:m1")
@@ -155,3 +197,140 @@ def test_persona_change_while_worker_runs_discards_stale_act(tmp_path):
     assert evaluations[0].governor_result.outcome == "ACT"
     assert evaluations[0].accepted is False
     assert evaluations[0].status == "stale"
+
+
+def test_manager_recovers_pending_cognition_after_committed_inbox(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        first = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await first.start()
+        await first.ingest(_direct_event())
+        projected = await first.fabric.drain()
+        assert len(projected) == 1
+        await first.close()
+
+        worker = ImmediateWorker()
+        recovered = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await recovered.start()
+        evaluations = await recovered.drain()
+        actor_count = len(recovered.fabric.actors)
+        await recovered.close()
+        return evaluations, actor_count
+
+    evaluations, actor_count = asyncio.run(scenario())
+
+    assert actor_count == 1
+    assert len(evaluations) == 1
+    assert evaluations[0].accepted is True
+
+
+def test_ambient_window_survives_restart_until_quiet_deadline(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        first = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await first.start()
+        await first.ingest(_ambient_event())
+        projected = await first.fabric.drain()
+        assert projected[0].attention_frames == ()
+        await first.close()
+
+        worker = ImmediateAmbientWorker()
+        recovered = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await recovered.start()
+        evaluations = await recovered.drain(now=103)
+        await recovered.close()
+        return evaluations
+
+    evaluations = asyncio.run(scenario())
+
+    assert len(evaluations) == 1
+    assert evaluations[0].frame.trigger_kind == "AMBIENT"
+    assert evaluations[0].accepted is True
+
+
+def test_close_waits_for_running_cognition_and_leaves_no_actor(tmp_path):
+    async def scenario():
+        worker = BlockingWorker()
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await manager.start()
+        await manager.ingest(_direct_event())
+        draining = asyncio.create_task(manager.drain())
+        await worker.entered.wait()
+        closing = asyncio.create_task(manager.close())
+        await asyncio.sleep(0)
+        close_waited = not closing.done()
+        worker.release.set()
+        evaluations = await draining
+        await closing
+        return close_waited, evaluations, len(manager.fabric.actors)
+
+    close_waited, evaluations, actor_count = asyncio.run(scenario())
+
+    assert close_waited is True
+    assert evaluations[0].accepted is True
+    assert actor_count == 0
+
+
+def test_flushed_ambient_frame_survives_crash_before_cognition(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        first = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await first.start()
+        await first.ingest(_ambient_event())
+        await first.fabric.drain()
+        actor = first.fabric.actors[0]
+        flushed = await actor.flush_attention(103)
+        assert len(flushed[0].attention_frames) == 1
+        await first.close()
+
+        worker = ImmediateAmbientWorker()
+        recovered = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await recovered.start()
+        evaluations = await recovered.drain()
+        await recovered.close()
+        return evaluations
+
+    evaluations = asyncio.run(scenario())
+
+    assert len(evaluations) == 1
+    assert evaluations[0].frame.trigger_kind == "AMBIENT"
+    assert evaluations[0].accepted is True

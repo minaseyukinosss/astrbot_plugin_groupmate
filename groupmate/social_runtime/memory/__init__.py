@@ -1,6 +1,10 @@
 """Governed evidence-backed memory pipeline, retrieval, and consolidation."""
 
-from .consolidation import ConsolidationReport, MemoryConsolidator
+from .consolidation import (
+    CalibrationCandidate,
+    ConsolidationReport,
+    MemoryConsolidator,
+)
 from .pipeline import MemoryCandidate, MemoryDecision, MemoryPipeline, MemoryRecord
 from .retrieval import (
     MemoryContextBlock,
@@ -11,6 +15,7 @@ from .retrieval import (
 
 __all__ = (
     "ConsolidationReport",
+    "CalibrationCandidate",
     "MemoryCandidate",
     "MemoryConsolidator",
     "MemoryContextBlock",

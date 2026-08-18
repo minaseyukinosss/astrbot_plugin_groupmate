@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -14,10 +15,13 @@ from .contracts import CognitiveContext, CognitiveObservation, CognitiveWorker
 class CognitionBudget:
     max_worker_calls: int
     max_cost_units: int
+    worker_timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
         if self.max_worker_calls < 0 or self.max_cost_units < 0:
             raise ValueError("cognition budget must not be negative")
+        if self.worker_timeout_seconds <= 0:
+            raise ValueError("worker timeout must be positive")
 
 
 class LevelZeroRuleWorker:
@@ -79,7 +83,13 @@ class CognitionService:
         self._validate_context(frame, context)
         board = CognitionBlackboard(frame, now=context.now)
         diagnostics: list[str] = []
-        await self._run_worker(self.rule_worker, frame, context, board, diagnostics)
+        rule_completed = await self._run_worker(
+            self.rule_worker,
+            frame,
+            context,
+            board,
+            diagnostics,
+        )
 
         cost_level = self._cost_level(frame)
         selected: list[tuple[CognitiveWorker, int]] = []
@@ -94,7 +104,7 @@ class CognitionService:
 
         used_calls = 0
         used_cost = 0
-        degraded = False
+        degraded = not rule_completed
         for worker, cost in selected:
             if (
                 used_calls + 1 > self.budget.max_worker_calls
@@ -103,7 +113,14 @@ class CognitionService:
                 degraded = True
                 diagnostics.append("cognition_budget_exhausted")
                 break
-            await self._run_worker(worker, frame, context, board, diagnostics)
+            completed = await self._run_worker(
+                worker,
+                frame,
+                context,
+                board,
+                diagnostics,
+            )
+            degraded = degraded or not completed
             used_calls += 1
             used_cost += cost
         if len(selected) > used_calls:
@@ -114,18 +131,26 @@ class CognitionService:
             diagnostics=tuple(diagnostics),
         )
 
-    @staticmethod
-    async def _run_worker(worker, frame, context, board, diagnostics) -> None:
+    async def _run_worker(
+        self, worker, frame, context, board, diagnostics
+    ) -> bool:
         try:
-            observations = await worker.observe(frame, context)
+            observations = await asyncio.wait_for(
+                worker.observe(frame, context),
+                timeout=self.budget.worker_timeout_seconds,
+            )
+        except TimeoutError:
+            diagnostics.append(f"worker_timeout:{worker.name}")
+            return False
         except Exception as exc:
             diagnostics.append(f"worker_error:{worker.name}:{type(exc).__name__}")
-            return
+            return False
         for observation in observations:
             try:
                 board.add(observation)
             except ObservationRejected as exc:
                 diagnostics.append(f"observation_rejected:{worker.name}:{exc}")
+        return True
 
     @staticmethod
     def _cost_level(frame: AttentionFrame) -> int:

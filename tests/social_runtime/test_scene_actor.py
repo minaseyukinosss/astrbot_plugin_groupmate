@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from groupmate.social_runtime.contracts import PersonaSnapshot, SocialEventEnvelope
-from groupmate.social_runtime.persistence.event_store import SQLiteSocialEventStore
+from groupmate.social_runtime.governor import GovernorResult
+from groupmate.social_runtime.persistence.event_store import (
+    JournalEffectIdentityConflict,
+    SQLiteSocialEventStore,
+)
 from groupmate.social_runtime.scene_actor import (
     GroupSceneActor,
     SceneWorkResult,
@@ -73,7 +79,12 @@ def test_stale_external_result_is_rejected_without_changing_scene(tmp_path):
                 request_id=request.request_id,
                 group_id=request.group_id,
                 scene_version=request.scene_version - 1,
-                observations=({"kind": "topic", "topic_id": "wrong"},),
+                config_version=request.persona_snapshot.config_version,
+                persona_state_version=request.persona_snapshot.state_version,
+                frame_id="stale:frame",
+                governor_result=GovernorResult(
+                    "SILENCE", (), (), ("no_action",), None, ("hard_gate_v1",)
+                ),
             )
         )
         after = await actor.snapshot()
@@ -130,3 +141,94 @@ def test_pending_request_tracking_stays_bounded_without_worker_results(tmp_path)
         return pending_count
 
     assert asyncio.run(scenario()) == 1
+
+
+def test_scene_work_result_cannot_omit_governor_and_frozen_versions():
+    with pytest.raises(TypeError):
+        SceneWorkResult(
+            request_id="scene:1",
+            group_id="885617919",
+            scene_version=1,
+        )
+
+
+def test_identical_governor_result_retry_returns_original_acceptance(tmp_path):
+    async def scenario():
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            SQLiteSocialEventStore(tmp_path / "groupmate-social-runtime-v2.db"),
+            _persona_snapshot,
+        )
+        await actor.start()
+        direct = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:retry",
+                source_message_id="retry",
+                correlation_id="corr:retry",
+                payload={"text": "在吗", "direct_address": True},
+            )
+        )
+        request = await actor.submit(direct)
+        frame = request.attention_frames[0]
+        result = SceneWorkResult(
+            request_id=request.request_id,
+            group_id=request.group_id,
+            scene_version=request.scene_version,
+            config_version=frame.config_version,
+            persona_state_version=frame.persona_state_version,
+            frame_id=frame.frame_id,
+            governor_result=GovernorResult(
+                "SILENCE", (), (), ("no_action",), None, ("hard_gate_v1",)
+            ),
+        )
+        first = await actor.accept_result(result)
+        retried = await actor.accept_result(result)
+        await actor.close()
+        return first, retried
+
+    first, retried = asyncio.run(scenario())
+
+    assert first is True
+    assert retried is True
+
+
+def test_changed_governor_result_retry_is_identity_conflict(tmp_path):
+    async def scenario():
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            SQLiteSocialEventStore(tmp_path / "groupmate-social-runtime-v2.db"),
+            _persona_snapshot,
+        )
+        await actor.start()
+        direct = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:conflict",
+                source_message_id="conflict",
+                correlation_id="corr:conflict",
+                payload={"text": "在吗", "direct_address": True},
+            )
+        )
+        request = await actor.submit(direct)
+        frame = request.attention_frames[0]
+
+        def result(reason):
+            return SceneWorkResult(
+                request_id=request.request_id,
+                group_id=request.group_id,
+                scene_version=request.scene_version,
+                config_version=frame.config_version,
+                persona_state_version=frame.persona_state_version,
+                frame_id=frame.frame_id,
+                governor_result=GovernorResult(
+                    "SILENCE", (), (), (reason,), None, ("hard_gate_v1",)
+                ),
+            )
+
+        assert await actor.accept_result(result("first")) is True
+        with pytest.raises(JournalEffectIdentityConflict):
+            await actor.accept_result(result("changed"))
+        await actor.close()
+
+    asyncio.run(scenario())

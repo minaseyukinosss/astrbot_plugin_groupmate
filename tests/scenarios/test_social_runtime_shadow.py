@@ -7,7 +7,10 @@ import pytest
 
 from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
-from groupmate.social_runtime.manager import SocialRuntimeManager
+from groupmate.social_runtime.manager import (
+    RuntimeGovernanceState,
+    SocialRuntimeManager,
+)
 from tests.factories import social_event_values
 
 
@@ -25,7 +28,11 @@ class FixedWorker:
                 kind=self.observation_kind,
                 proposition={
                     "subject_id": frame.candidate_audiences[0],
-                    "topic_id": frame.focus_topic_ids[0],
+                    "topic_id": (
+                        frame.focus_topic_ids[0]
+                        if frame.focus_topic_ids
+                        else None
+                    ),
                     "chain_of_thought": "不得持久化的模型推理",
                 },
                 confidence=0.95,
@@ -87,7 +94,9 @@ def test_direct_social_scenarios_are_governed_in_shadow(
         await manager.ingest(_event("direct"))
         evaluations = await manager.drain()
         journal = manager.event_store.journal("corr:direct")
-        projection = manager.event_store.shadow_evaluations("885617919")
+        projection = manager.event_store.shadow_evaluations(
+            "aemeath", "885617919"
+        )
         outbox_count = manager.event_store.outbox_count()
         await manager.close()
         return manager, evaluations, journal, projection, outbox_count
@@ -137,3 +146,133 @@ def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     assert after_quiet[0].frame.trigger_kind == "AMBIENT"
     assert set(after_quiet[0].frame.focus_topic_ids) == {"topic-a", "topic-b"}
     assert after_quiet[0].governor_result.outcome == "ACT"
+
+
+@pytest.mark.parametrize(
+    ("governance", "event_type", "expected_reason"),
+    (
+        (
+            RuntimeGovernanceState(privacy_allowed=False),
+            "platform.message",
+            "privacy_blocked",
+        ),
+        (RuntimeGovernanceState(paused=True), "platform.message", "runtime_paused"),
+        (
+            RuntimeGovernanceState(platform_available=False),
+            "platform.message",
+            "platform_unavailable",
+        ),
+        (RuntimeGovernanceState(), "safety.boundary", "boundary_active"),
+    ),
+)
+def test_authoritative_runtime_gates_override_high_utility_act(
+    tmp_path, governance, event_type, expected_reason
+):
+    async def scenario():
+        worker = FixedWorker(
+            "safety_guard" if event_type == "safety.boundary" else "direct_interaction",
+            "help_request",
+        )
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+            governance_state=governance,
+        )
+        await manager.start()
+        event = _event("gated")
+        if event_type == "safety.boundary":
+            values = event.to_dict()
+            values["event_type"] = event_type
+            event = SocialEventEnvelope.create(**values)
+        await manager.ingest(event)
+        evaluations = await manager.drain()
+        await manager.close()
+        return evaluations
+
+    evaluations = asyncio.run(scenario())
+
+    result = evaluations[0].governor_result
+    assert result.outcome == "SILENCE"
+    assert expected_reason in result.reason_codes
+    assert expected_reason in result.rejected[0].reason_codes
+
+
+def test_shadow_projection_and_context_are_scoped_by_persona_and_group(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        worker = FixedWorker("direct_interaction", "help_request")
+        managers = []
+        for persona_id in ("persona-a", "persona-b"):
+            manager = SocialRuntimeManager(
+                database_path=path,
+                persona_id=persona_id,
+                mode=RuntimeMode.SHADOW,
+                enabled_groups=("885617919",),
+                cognition_workers={worker.name: worker},
+            )
+            await manager.start()
+            values = _event(persona_id).to_dict()
+            values.update(
+                persona_id=persona_id,
+                event_id=f"qq:{persona_id}",
+                source_message_id=persona_id,
+                correlation_id=f"corr:{persona_id}",
+            )
+            await manager.ingest(SocialEventEnvelope.create(**values))
+            await manager.drain()
+            managers.append(manager)
+
+        store = managers[0].event_store
+        projection_a = store.shadow_evaluations("persona-a", "885617919")
+        projection_b = store.shadow_evaluations("persona-b", "885617919")
+        cross_context = store.event_envelopes(
+            "persona-a",
+            "885617919",
+            ("qq:persona-b",),
+        )
+        for manager in managers:
+            await manager.close()
+        return projection_a, projection_b, cross_context
+
+    projection_a, projection_b, cross_context = asyncio.run(scenario())
+
+    assert len(projection_a) == len(projection_b) == 1
+    assert projection_a[0]["persona_id"] == "persona-a"
+    assert projection_b[0]["persona_id"] == "persona-b"
+    assert cross_context == ()
+
+
+def test_fast_evaluation_does_not_consume_pending_ambient_window(tmp_path):
+    async def scenario():
+        ambient_worker = FixedWorker("scene_interpreter", "help_request")
+        direct_worker = FixedWorker("direct_interaction", "care_signal")
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={
+                ambient_worker.name: ambient_worker,
+                direct_worker.name: direct_worker,
+            },
+        )
+        await manager.start()
+        await manager.ingest(_event("ambient", direct=False, occurred_at=100))
+        await manager.ingest(_event("direct", direct=True, occurred_at=101))
+        fast = await manager.drain()
+        ambient = await manager.drain(now=102)
+        projection = manager.event_store.shadow_evaluations(
+            "aemeath", "885617919"
+        )
+        await manager.close()
+        return fast, ambient, projection
+
+    fast, ambient, projection = asyncio.run(scenario())
+
+    assert [item.frame.trigger_kind for item in fast] == ["FAST"]
+    assert [item.frame.trigger_kind for item in ambient] == ["AMBIENT"]
+    assert all(item.accepted for item in fast + ambient)
+    assert len(projection) == 2

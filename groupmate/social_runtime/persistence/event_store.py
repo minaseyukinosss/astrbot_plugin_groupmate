@@ -53,6 +53,14 @@ class StoredSnapshot:
     created_at: int
 
 
+@dataclass(frozen=True)
+class StoredSceneWorkRequest:
+    request_id: str
+    actor_key: str
+    status: str
+    payload: dict[str, object]
+
+
 class SQLiteSocialEventStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -350,10 +358,17 @@ class SQLiteSocialEventStore:
     def pending_groups(self, persona_id: str) -> tuple[str, ...]:
         with connect_database(self.path) as db:
             rows = db.execute(
+                "SELECT group_id FROM ("
                 "SELECT DISTINCT group_id FROM inbox WHERE persona_id=? "
                 "AND group_id IS NOT NULL "
-                "AND status IN ('pending','processing','failed') ORDER BY group_id",
-                (persona_id,),
+                "AND status IN ('pending','processing','failed') "
+                "UNION "
+                "SELECT DISTINCT inbox.group_id FROM scene_work_requests AS work "
+                "JOIN inbox ON inbox.event_id=work.trigger_event_id "
+                "WHERE inbox.persona_id=? AND inbox.group_id IS NOT NULL "
+                "AND work.status='pending'"
+                ") ORDER BY group_id",
+                (persona_id, persona_id),
             ).fetchall()
         return tuple(str(row[0]) for row in rows)
 
@@ -373,12 +388,38 @@ class SQLiteSocialEventStore:
             ).fetchall()
         return tuple(json.loads(row[0]) for row in rows)
 
-    def resolve_scene_work(
-        self, actor_key: str, request_id: str, status: str
-    ) -> bool:
-        return self.resolve_scene_evaluation(
-            actor_key, request_id, status, evaluation=None
+    def scene_work_request(
+        self, actor_key: str, request_id: str
+    ) -> StoredSceneWorkRequest | None:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT status, request_json FROM scene_work_requests "
+                "WHERE actor_key=? AND request_id=?",
+                (actor_key, request_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredSceneWorkRequest(
+            request_id=request_id,
+            actor_key=actor_key,
+            status=str(row[0]),
+            payload=json.loads(row[1]),
         )
+
+    def refresh_pending_scene_work(
+        self,
+        actor_key: str,
+        request_id: str,
+        request: dict[str, object],
+    ) -> bool:
+        encoded = json.dumps(request, ensure_ascii=False, sort_keys=True)
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE scene_work_requests SET request_json=?, updated_at=? "
+                "WHERE actor_key=? AND request_id=? AND status='pending'",
+                (encoded, int(time.time()), actor_key, request_id),
+            )
+            return cursor.rowcount == 1
 
     def resolve_scene_evaluation(
         self,
@@ -387,24 +428,56 @@ class SQLiteSocialEventStore:
         status: str,
         *,
         evaluation: dict[str, object] | None,
+        keep_pending_request: dict[str, object] | None = None,
     ) -> bool:
         if status not in {"accepted", "stale"}:
             raise ValueError("scene work status must be accepted or stale")
         if status == "stale" and evaluation is not None:
             raise ValueError("stale scene work cannot persist an evaluation")
+        if keep_pending_request is not None and (
+            status != "accepted" or evaluation is None
+        ):
+            raise ValueError("pending continuation requires an accepted evaluation")
         db = connect_database(self.path)
         try:
             db.execute("BEGIN IMMEDIATE")
-            cursor = db.execute(
-                "UPDATE scene_work_requests SET status=?, updated_at=? "
-                "WHERE actor_key=? AND request_id=? AND status='pending'",
-                (status, int(time.time()), actor_key, request_id),
-            )
+            if keep_pending_request is None:
+                cursor = db.execute(
+                    "UPDATE scene_work_requests SET status=?, updated_at=? "
+                    "WHERE actor_key=? AND request_id=? AND status='pending'",
+                    (status, int(time.time()), actor_key, request_id),
+                )
+            else:
+                encoded_request = json.dumps(
+                    keep_pending_request,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                cursor = db.execute(
+                    "UPDATE scene_work_requests SET request_json=?, updated_at=? "
+                    "WHERE actor_key=? AND request_id=? AND status='pending'",
+                    (
+                        encoded_request,
+                        int(time.time()),
+                        actor_key,
+                        request_id,
+                    ),
+                )
             if cursor.rowcount != 1:
+                if status == "accepted" and evaluation is not None:
+                    accepted = self._resolved_evaluation_matches(
+                        db,
+                        actor_key,
+                        request_id,
+                        evaluation,
+                    )
+                    db.rollback()
+                    return accepted
                 db.rollback()
                 return False
             if evaluation is not None:
-                self._insert_shadow_evaluation(db, actor_key, evaluation)
+                if not self._evaluation_identity_matches(db, evaluation):
+                    self._insert_shadow_evaluation(db, actor_key, evaluation)
             db.commit()
             return True
         except Exception:
@@ -412,6 +485,48 @@ class SQLiteSocialEventStore:
             raise
         finally:
             db.close()
+
+    @staticmethod
+    def _resolved_evaluation_matches(
+        db: sqlite3.Connection,
+        actor_key: str,
+        request_id: str,
+        evaluation: dict[str, object],
+    ) -> bool:
+        work = db.execute(
+            "SELECT status FROM scene_work_requests "
+            "WHERE actor_key=? AND request_id=?",
+            (actor_key, request_id),
+        ).fetchone()
+        if work is None or str(work[0]) not in {"pending", "accepted"}:
+            return False
+        return SQLiteSocialEventStore._evaluation_identity_matches(db, evaluation)
+
+    @staticmethod
+    def _evaluation_identity_matches(
+        db: sqlite3.Connection,
+        evaluation: dict[str, object],
+    ) -> bool:
+        result = db.execute(
+            "SELECT result_json FROM governor_results WHERE result_id=?",
+            (str(evaluation.get("result_id") or ""),),
+        ).fetchone()
+        journal = db.execute(
+            "SELECT effect_json FROM journal WHERE effect_id=?",
+            (str(evaluation.get("effect_id") or ""),),
+        ).fetchone()
+        encoded = json.dumps(evaluation, ensure_ascii=False, sort_keys=True)
+        if result is None and journal is None:
+            return False
+        if result is None or journal is None:
+            raise JournalEffectIdentityConflict(
+                "scene work is missing part of its evaluation identity"
+            )
+        if str(result[0]) != encoded or str(journal[0]) != encoded:
+            raise JournalEffectIdentityConflict(
+                "scene work belongs to a different evaluation"
+            )
+        return True
 
     @staticmethod
     def _insert_shadow_evaluation(
@@ -467,16 +582,22 @@ class SQLiteSocialEventStore:
         )
 
     def event_envelopes(
-        self, event_ids: tuple[str, ...]
+        self,
+        persona_id: str,
+        group_id: str,
+        event_ids: tuple[str, ...],
     ) -> tuple[SocialEventEnvelope, ...]:
+        if not persona_id.strip() or not group_id.strip():
+            raise ValueError("event context requires persona_id and group_id")
         if not event_ids:
             return ()
         placeholders = ",".join("?" for _ in event_ids)
         with connect_database(self.path) as db:
             rows = db.execute(
                 f"SELECT event_id, envelope_json FROM inbox "
-                f"WHERE event_id IN ({placeholders})",
-                event_ids,
+                f"WHERE persona_id=? AND group_id=? "
+                f"AND event_id IN ({placeholders})",
+                (persona_id, group_id, *event_ids),
             ).fetchall()
         by_id = {
             str(row["event_id"]): SocialEventEnvelope.from_dict(
@@ -486,14 +607,17 @@ class SQLiteSocialEventStore:
         }
         return tuple(by_id[event_id] for event_id in event_ids if event_id in by_id)
 
-    def shadow_evaluations(self, group_id: str) -> tuple[dict[str, object], ...]:
-        if not group_id.strip():
-            raise ValueError("group_id is required")
+    def shadow_evaluations(
+        self, persona_id: str, group_id: str
+    ) -> tuple[dict[str, object], ...]:
+        if not persona_id.strip() or not group_id.strip():
+            raise ValueError("shadow scope requires persona_id and group_id")
         with connect_database(self.path) as db:
             rows = db.execute(
                 "SELECT result_json FROM governor_results "
-                "WHERE group_id=? ORDER BY created_at, result_id",
-                (group_id,),
+                "WHERE persona_id=? AND group_id=? "
+                "ORDER BY created_at, result_id",
+                (persona_id, group_id),
             ).fetchall()
         return tuple(json.loads(row[0]) for row in rows)
 

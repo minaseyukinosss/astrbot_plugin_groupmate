@@ -28,7 +28,7 @@ sqlite3 groupmate-social-runtime-v2.recovery.db \
   "SELECT status, COUNT(*) FROM outbox GROUP BY status ORDER BY status;"
 ```
 
-`pending`、`failed` 或同一 Actor 所有的 `processing` 事件可以由 V2 重领。Phase A 的 Outbox 必须为空；如果不为空，停止恢复并调查，禁止尝试发送。
+`pending`、`failed` 或同一 Actor 所有的 `processing` 事件可以由 V2 重领。Shadow 模式的 Outbox 必须为空；如果不为空，停止恢复并调查，禁止尝试发送。
 
 ## 4. 在备份上 dry replay
 
