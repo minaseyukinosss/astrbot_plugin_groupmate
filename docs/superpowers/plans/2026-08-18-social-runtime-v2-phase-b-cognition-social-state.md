@@ -26,11 +26,11 @@
 
 **Interfaces:** Consumes `GroupWorldState`, `PersonaSnapshot`, `SocialEventEnvelope`; produces `AttentionFrame(frame_id, group_id, scene_version, trigger_kind, focus_topic_ids, focus_event_ids, candidate_audiences, urgency, deadline, requested_workers)`.
 
-- [ ] 写失败测试：直接 @ 立即产生 `FAST` Frame；普通连续消息在 2–4 秒动态窗口合并；已过期承诺只产生 `TEMPORAL` 候选而不授权行动。
-- [ ] Run: `pytest tests/social_runtime/test_attention.py tests/scenarios/test_attention_windows.py -q`；Expected: import failure。
-- [ ] 实现 `AttentionScheduler.on_event(event, world, persona, now)` 和 `flush_due(now)`。窗口按群速率选择 1–2/2–4/3–6 秒，direct/boundary/capability result 的 deadline 不等待 Ambient。
-- [ ] 增加场景版本变化测试：Frame 尚未派发时更新到新版本；已派发结果由下游按原版本拒绝。
-- [ ] Run: `pytest tests/social_runtime/test_attention.py tests/scenarios/test_attention_windows.py -q`; commit `feat: add three-lane attention scheduler`。
+- [x] 写失败测试：直接 @ 立即产生 `FAST` Frame；普通连续消息在 2–4 秒动态窗口合并；已过期承诺只产生 `TEMPORAL` 候选而不授权行动。
+- [x] Run: `pytest tests/social_runtime/test_attention.py tests/scenarios/test_attention_windows.py -q`；Expected: import failure。
+- [x] 实现 `AttentionScheduler.on_event(event, world, persona, now)` 和 `flush_due(now)`。窗口按群速率选择 1–2/2–4/3–6 秒，direct/boundary/capability result 的 deadline 不等待 Ambient。
+- [x] 增加场景版本变化测试：Frame 尚未派发时更新到新版本；已派发结果由下游按原版本拒绝。
+- [x] Run: `pytest tests/social_runtime/test_attention.py tests/scenarios/test_attention_windows.py -q`; commit `feat: add three-lane attention scheduler`。
 
 关键断言：
 ```python
