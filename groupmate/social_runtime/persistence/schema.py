@@ -20,7 +20,8 @@ class SchemaVerificationError(RuntimeError):
 
 _REQUIRED_TABLES = {
     "social_runtime_schema", "inbox", "journal", "actor_cursors", "snapshots",
-    "persona_state", "persona_effects", "group_world", "attention_frames",
+    "persona_state", "persona_effects", "group_world", "scene_work_requests",
+    "attention_frames",
     "cognitive_observations",
     "candidate_intentions", "governor_results", "action_plans", "tasks",
     "task_events", "delivery_bundles", "outbox", "relationship_events",
@@ -153,6 +154,18 @@ CREATE TABLE group_world (
     state_json TEXT NOT NULL, updated_at INTEGER NOT NULL,
     PRIMARY KEY(persona_id, group_id)
 );
+CREATE TABLE scene_work_requests (
+    request_id TEXT PRIMARY KEY,
+    actor_key TEXT NOT NULL,
+    trigger_event_id TEXT NOT NULL,
+    scene_version INTEGER NOT NULL,
+    request_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','accepted','stale')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_scene_work_pending
+    ON scene_work_requests(actor_key, status, scene_version);
 CREATE TABLE attention_frames (
     frame_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
     scene_version INTEGER NOT NULL, status TEXT NOT NULL, frame_json TEXT NOT NULL,

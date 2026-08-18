@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..settings import SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
-from ..social_runtime.manager import SocialRuntimeManager
+from ..social_runtime.manager import PhaseARuntimeModeError, SocialRuntimeManager
 from .astrbot_events import AstrBotEventTranslator
 
 
@@ -33,7 +33,9 @@ class AstrBotSocialRuntimeBridge:
         if self._started:
             return
         mode = RuntimeMode(self.settings.runtime_mode)
-        if mode is not RuntimeMode.OFF:
+        if mode is RuntimeMode.SOCIAL_RUNTIME:
+            raise PhaseARuntimeModeError("Phase A bridge only supports SHADOW")
+        if mode is RuntimeMode.SHADOW:
             self._manager = SocialRuntimeManager(
                 database_path=self.data_dir / self.settings.database_name,
                 persona_id=self.settings.persona_id,

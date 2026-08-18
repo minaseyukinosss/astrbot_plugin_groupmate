@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Awaitable, Callable, Union
 
 from .contracts import PersonaSnapshot, SocialEventEnvelope
@@ -88,12 +88,23 @@ class GroupSceneActor:
         self._lifecycle_lock = asyncio.Lock()
         self._drain_lock = asyncio.Lock()
         self._pending_request_ids: set[str] = set()
+        self._recovered_requests: list[SceneWorkRequest] = []
+        self._snapshot_failure_count = 0
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self._actor_task is not None and not self._actor_task.done():
                 return
             self._state = self._recover()
+            self._recovered_requests = [
+                self._request_from_dict(payload)
+                for payload in self._store.pending_scene_work(
+                    self.actor_key, self._state.scene_version
+                )
+            ]
+            self._pending_request_ids.update(
+                request.request_id for request in self._recovered_requests
+            )
             self._actor_task = asyncio.create_task(
                 self._run(), name=f"group-scene:{self.persona_id}:{self.group_id}"
             )
@@ -115,6 +126,8 @@ class GroupSceneActor:
         self._ensure_running()
         produced: list[SceneWorkRequest] = []
         async with self._drain_lock:
+            produced.extend(self._recovered_requests)
+            self._recovered_requests.clear()
             while True:
                 cursor = self._store.cursor(self.actor_key)
                 claimed = self._store.claim(
@@ -135,7 +148,10 @@ class GroupSceneActor:
                         _ProcessCommand(item, persona_snapshot, future)
                     )
                     produced.append(await future)
-        return tuple(produced)
+        current_version = self._require_state().scene_version
+        return tuple(
+            request for request in produced if request.scene_version == current_version
+        )
 
     async def accept_result(self, result: SceneWorkResult) -> bool:
         self._ensure_running()
@@ -203,13 +219,26 @@ class GroupSceneActor:
                         and command.result.scene_version == state.scene_version
                         and command.result.request_id in self._pending_request_ids
                     )
+                    persisted = self._store.resolve_scene_work(
+                        self.actor_key,
+                        command.result.request_id,
+                        "accepted" if accepted else "stale",
+                    )
                     self._pending_request_ids.discard(command.result.request_id)
-                    command.future.set_result(accepted)
+                    command.future.set_result(accepted and persisted)
                     continue
                 command.future.set_result(self._process(command))
             except BaseException as exc:
-                if isinstance(command, _ProcessCommand):
-                    self._store.fail(self.actor_key, command.claimed.sequence, type(exc).__name__)
+                if (
+                    isinstance(command, _ProcessCommand)
+                    and self._store.cursor(self.actor_key).last_sequence
+                    < command.claimed.sequence
+                ):
+                    self._store.fail(
+                        self.actor_key,
+                        command.claimed.sequence,
+                        type(exc).__name__,
+                    )
                 if not command.future.done():
                     command.future.set_exception(exc)
                 if isinstance(command, _StopCommand):
@@ -219,6 +248,20 @@ class GroupSceneActor:
 
     def _process(self, command: _ProcessCommand) -> SceneWorkRequest:
         state = self._projector.apply(self._require_state(), command.claimed.event)
+        request_id = (
+            f"scene:{self.persona_id}:{self.group_id}:"
+            f"{command.claimed.event.event_id}:{state.scene_version}"
+        )
+        request = SceneWorkRequest(
+            request_id=request_id,
+            persona_id=self.persona_id,
+            group_id=self.group_id,
+            scene_version=state.scene_version,
+            trigger_event_id=command.claimed.event.event_id,
+            event=command.claimed.event,
+            world_snapshot=state,
+            persona_snapshot=command.persona_snapshot,
+        )
         self._store.commit(
             self.actor_key,
             command.claimed,
@@ -232,24 +275,51 @@ class GroupSceneActor:
                     "scene_version": state.scene_version,
                 },
             ),
+            work_requests=(
+                {
+                    "request_id": request_id,
+                    "trigger_event_id": command.claimed.event.event_id,
+                    "scene_version": state.scene_version,
+                    "request": self._request_to_dict(request),
+                },
+            ),
         )
         self._state = state
-        request_id = (
-            f"scene:{self.persona_id}:{self.group_id}:"
-            f"{command.claimed.event.event_id}:{state.scene_version}"
-        )
         self._pending_request_ids.add(request_id)
         if state.scene_version % self.SNAPSHOT_INTERVAL == 0:
-            self._save_snapshot()
+            try:
+                self._save_snapshot()
+            except Exception:
+                # The event, Journal, and Cursor are already committed. A
+                # periodic Snapshot is an optimization; recovery can replay
+                # committed events and must never downgrade Inbox status.
+                self._snapshot_failure_count += 1
+        return request
+
+    def _request_to_dict(self, request: SceneWorkRequest) -> dict[str, object]:
+        return {
+            "request_id": request.request_id,
+            "persona_id": request.persona_id,
+            "group_id": request.group_id,
+            "scene_version": request.scene_version,
+            "trigger_event_id": request.trigger_event_id,
+            "event": request.event.to_dict(),
+            "world_snapshot": self._projector.to_dict(request.world_snapshot),
+            "persona_snapshot": asdict(request.persona_snapshot),
+        }
+
+    def _request_from_dict(self, payload: dict[str, object]) -> SceneWorkRequest:
+        persona_values = dict(payload["persona_snapshot"])
+        persona_values["modifiers"] = tuple(persona_values["modifiers"])
         return SceneWorkRequest(
-            request_id=request_id,
-            persona_id=self.persona_id,
-            group_id=self.group_id,
-            scene_version=state.scene_version,
-            trigger_event_id=command.claimed.event.event_id,
-            event=command.claimed.event,
-            world_snapshot=state,
-            persona_snapshot=command.persona_snapshot,
+            request_id=str(payload["request_id"]),
+            persona_id=str(payload["persona_id"]),
+            group_id=str(payload["group_id"]),
+            scene_version=int(payload["scene_version"]),
+            trigger_event_id=str(payload["trigger_event_id"]),
+            event=SocialEventEnvelope.from_dict(payload["event"]),
+            world_snapshot=self._projector.from_dict(payload["world_snapshot"]),
+            persona_snapshot=PersonaSnapshot(**persona_values),
         )
 
     def _save_snapshot(self) -> None:

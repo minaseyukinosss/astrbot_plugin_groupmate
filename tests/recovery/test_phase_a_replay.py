@@ -18,11 +18,11 @@ class FailBeforeSeventeenthCommit(SQLiteSocialEventStore):
         super().__init__(path)
         self.commit_attempt = 0
 
-    def commit(self, actor_key, claimed, effects):
+    def commit(self, actor_key, claimed, effects, work_requests=()):
         self.commit_attempt += 1
         if self.commit_attempt == 17:
             raise RuntimeError("injected crash before effect commit")
-        return super().commit(actor_key, claimed, effects)
+        return super().commit(actor_key, claimed, effects, work_requests)
 
 
 def _event(index):

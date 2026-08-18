@@ -16,15 +16,22 @@ class ShadowSideEffectForbidden(RuntimeError):
     """Raised when a Shadow runtime attempts an external side effect."""
 
 
+class PhaseARuntimeModeError(RuntimeError):
+    """Raised before I/O when a mode is not available during Phase A."""
+
+
 class NoSideEffectExecutionPort:
     """Fail-closed execution port installed for Phase A Shadow operation."""
 
+    def __init__(self) -> None:
+        self._calls: list[object] = []
+
     @property
     def calls(self) -> tuple[object, ...]:
-        return ()
+        return tuple(self._calls)
 
     async def execute(self, action: object) -> None:
-        del action
+        self._calls.append(action)
         raise ShadowSideEffectForbidden("external side effects are disabled")
 
 
@@ -39,8 +46,11 @@ class SocialRuntimeManager:
         config_version: int = 1,
         event_store: SQLiteSocialEventStore | None = None,
     ) -> None:
+        resolved_mode = RuntimeMode(mode)
+        if resolved_mode is not RuntimeMode.SHADOW:
+            raise PhaseARuntimeModeError("Phase A manager only supports SHADOW")
         self.persona_id = persona_id
-        self.mode = RuntimeMode(mode)
+        self.mode = resolved_mode
         self.enabled_groups = frozenset(map(str, enabled_groups))
         self.config_version = config_version
         self.event_store = event_store or SQLiteSocialEventStore(database_path)
@@ -50,6 +60,7 @@ class SocialRuntimeManager:
         self.execution_port = NoSideEffectExecutionPort()
         self.fabric = SocialEventFabric(self._new_actor)
         self._started = False
+        self._startup_requests = ()
 
     async def start(self) -> None:
         if not self._started:
@@ -58,7 +69,7 @@ class SocialRuntimeManager:
                 if group_id in self.enabled_groups:
                     await self.fabric.notify(self.persona_id, group_id)
             self._started = True
-            await self.fabric.drain()
+            self._startup_requests = await self.fabric.drain()
 
     async def ingest(self, envelope: SocialEventEnvelope) -> AppendResult | None:
         if self.mode is RuntimeMode.OFF:
@@ -73,7 +84,9 @@ class SocialRuntimeManager:
         return appended
 
     async def drain(self):
-        return await self.fabric.drain()
+        recovered = self._startup_requests
+        self._startup_requests = ()
+        return recovered + await self.fabric.drain()
 
     async def group_snapshot(self, group_id: str):
         return await (await self.fabric.notify(self.persona_id, group_id)).snapshot()
@@ -93,6 +106,7 @@ class SocialRuntimeManager:
 
 __all__ = (
     "NoSideEffectExecutionPort",
+    "PhaseARuntimeModeError",
     "ShadowSideEffectForbidden",
     "SocialRuntimeManager",
 )

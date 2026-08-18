@@ -16,6 +16,10 @@ class EventClaimError(RuntimeError):
     """Raised when an actor attempts to commit an event it does not own."""
 
 
+class JournalEffectIdentityConflict(RuntimeError):
+    """Raised when an effect id is reused for different causal content."""
+
+
 @dataclass(frozen=True)
 class AppendResult:
     inserted: bool
@@ -168,6 +172,7 @@ class SQLiteSocialEventStore:
         actor_key: str,
         claimed: ClaimedEvent,
         effects: tuple[dict[str, object], ...],
+        work_requests: tuple[dict[str, object], ...] = (),
     ) -> ActorCursor:
         db = connect_database(self.path)
         try:
@@ -188,8 +193,29 @@ class SQLiteSocialEventStore:
                 effect_type = str(effect.get("kind") or "").strip()
                 if not effect_id or not effect_type:
                     raise ValueError("effects require effect_id and kind")
+                effect_json = json.dumps(effect, ensure_ascii=False, sort_keys=True)
+                existing = db.execute(
+                    "SELECT source_event_id, correlation_id, causation_id, "
+                    "actor_key, effect_type, effect_json FROM journal "
+                    "WHERE effect_id=?",
+                    (effect_id,),
+                ).fetchone()
+                identity = (
+                    claimed.event.event_id,
+                    claimed.event.correlation_id,
+                    claimed.event.causation_id,
+                    actor_key,
+                    effect_type,
+                    effect_json,
+                )
+                if existing is not None:
+                    if tuple(existing) != identity:
+                        raise JournalEffectIdentityConflict(
+                            f"effect id belongs to different content: {effect_id}"
+                        )
+                    continue
                 db.execute(
-                    "INSERT OR IGNORE INTO journal("
+                    "INSERT INTO journal("
                     "effect_id, source_event_id, correlation_id, causation_id, "
                     "actor_key, effect_type, effect_json, committed_at"
                     ") VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
@@ -200,7 +226,56 @@ class SQLiteSocialEventStore:
                         claimed.event.causation_id,
                         actor_key,
                         effect_type,
-                        json.dumps(effect, ensure_ascii=False, sort_keys=True),
+                        effect_json,
+                        now,
+                    ),
+                )
+            for request in work_requests:
+                request_id = str(request.get("request_id") or "").strip()
+                trigger_event_id = str(
+                    request.get("trigger_event_id") or ""
+                ).strip()
+                scene_version = int(request.get("scene_version") or 0)
+                request_payload = request.get("request")
+                if not request_id or not trigger_event_id or scene_version < 1:
+                    raise ValueError("work request identity is incomplete")
+                request_json = json.dumps(
+                    request_payload, ensure_ascii=False, sort_keys=True
+                )
+                existing_request = db.execute(
+                    "SELECT actor_key, trigger_event_id, scene_version, request_json "
+                    "FROM scene_work_requests WHERE request_id=?",
+                    (request_id,),
+                ).fetchone()
+                request_identity = (
+                    actor_key,
+                    trigger_event_id,
+                    scene_version,
+                    request_json,
+                )
+                if existing_request is not None:
+                    if tuple(existing_request) != request_identity:
+                        raise JournalEffectIdentityConflict(
+                            f"work request id belongs to different content: {request_id}"
+                        )
+                    continue
+                db.execute(
+                    "UPDATE scene_work_requests SET status='stale', updated_at=? "
+                    "WHERE actor_key=? AND status='pending' AND scene_version<?",
+                    (now, actor_key, scene_version),
+                )
+                db.execute(
+                    "INSERT INTO scene_work_requests("
+                    "request_id, actor_key, trigger_event_id, scene_version, "
+                    "request_json, status, created_at, updated_at"
+                    ") VALUES(?, ?, ?, ?, ?, 'pending', ?, ?)",
+                    (
+                        request_id,
+                        actor_key,
+                        trigger_event_id,
+                        scene_version,
+                        request_json,
+                        now,
                         now,
                     ),
                 )
@@ -281,6 +356,35 @@ class SQLiteSocialEventStore:
                 (persona_id,),
             ).fetchall()
         return tuple(str(row[0]) for row in rows)
+
+    def outbox_count(self) -> int:
+        with connect_database(self.path) as db:
+            return int(db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0])
+
+    def pending_scene_work(
+        self, actor_key: str, scene_version: int
+    ) -> tuple[dict[str, object], ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT request_json FROM scene_work_requests "
+                "WHERE actor_key=? AND scene_version=? AND status='pending' "
+                "ORDER BY created_at, request_id",
+                (actor_key, scene_version),
+            ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
+
+    def resolve_scene_work(
+        self, actor_key: str, request_id: str, status: str
+    ) -> bool:
+        if status not in {"accepted", "stale"}:
+            raise ValueError("scene work status must be accepted or stale")
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE scene_work_requests SET status=?, updated_at=? "
+                "WHERE actor_key=? AND request_id=? AND status='pending'",
+                (status, int(time.time()), actor_key, request_id),
+            )
+            return cursor.rowcount == 1
 
     def save_snapshot(self, actor_key: str, version: int, payload: dict) -> None:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)

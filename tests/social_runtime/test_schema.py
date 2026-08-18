@@ -22,6 +22,7 @@ REQUIRED_TABLES = {
     "persona_state",
     "persona_effects",
     "group_world",
+    "scene_work_requests",
     "attention_frames",
     "cognitive_observations",
     "candidate_intentions",

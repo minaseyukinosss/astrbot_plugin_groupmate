@@ -4,6 +4,7 @@ import pytest
 
 from groupmate.social_runtime.persistence.event_store import (
     EventClaimError,
+    JournalEffectIdentityConflict,
     SQLiteSocialEventStore,
 )
 from tests.factories import social_event_values
@@ -88,3 +89,27 @@ def test_actor_cannot_commit_another_actors_claim(tmp_path):
         )
 
     assert store.journal("corr-1") == ()
+
+
+def test_effect_id_reuse_with_different_content_rolls_back_event_commit(tmp_path):
+    store = SQLiteSocialEventStore(tmp_path / "groupmate-social-runtime-v2.db")
+    actor_key = "group:aemeath:g1"
+    store.append(_event(event_id="evt-1", group_id="g1", correlation_id="corr-1"))
+    store.append(_event(event_id="evt-2", group_id="g1", correlation_id="corr-2"))
+    first = store.claim(actor_key, 0, 1, persona_id="aemeath", group_id="g1")[0]
+    store.commit(
+        actor_key,
+        first,
+        ({"effect_id": "fx-shared", "kind": "world.changed", "version": 1},),
+    )
+    second = store.claim(actor_key, first.sequence, 1, persona_id="aemeath", group_id="g1")[0]
+
+    with pytest.raises(JournalEffectIdentityConflict, match="fx-shared"):
+        store.commit(
+            actor_key,
+            second,
+            ({"effect_id": "fx-shared", "kind": "world.changed", "version": 2},),
+        )
+
+    assert store.cursor(actor_key).last_sequence == first.sequence
+    assert store.journal("corr-2") == ()

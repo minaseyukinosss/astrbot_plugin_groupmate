@@ -28,7 +28,9 @@ AstrBot/QQ 原始事件
 
 ## 开发验证
 
+最低 Python 版本：3.11。先在项目根目录创建虚拟环境并安装测试依赖，然后使用相对路径执行门禁：
+
 ```bash
-/Users/minase/Desktop/ams/astrbot_plugin_groupmate/.venv/bin/python -m pytest -q -p no:cacheprovider
-/Users/minase/Desktop/ams/astrbot_plugin_groupmate/.venv/bin/python -m tests.architecture_guard
+.venv/bin/python -m pytest -q -p no:cacheprovider
+.venv/bin/python -m tests.architecture_guard
 ```
