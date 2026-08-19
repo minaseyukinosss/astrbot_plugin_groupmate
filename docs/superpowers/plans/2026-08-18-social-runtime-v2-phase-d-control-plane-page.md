@@ -26,10 +26,10 @@
 
 **Interfaces:** `ProjectionConsumer.consume(limit)`, `rebuild(name)`, `ProjectionQueries.bootstrap/runtime/activity/scenes/people/culture/tasks/persona/governance/evaluation/health`.
 
-- [ ] 写测试：每个 Projection 独立 Cursor；重复 Journal effect 幂等；一个 Consumer 崩溃不影响 Actor；删除 Projection 后可完整重建。
-- [ ] 实现 read tables 与 `projection_version`；查询返回显式 `as_of/cursor/stale`，不拼装领域写模型。
-- [ ] 隐私裁剪：成员页面可显示管理员允许的事实摘要和 evidence reference，不能返回原始敏感 payload。
-- [ ] Run: `pytest tests/contracts/test_projection_consumer.py tests/recovery/test_projection_rebuild.py -q`; commit `feat: build independent social projections`。
+- [x] 写测试：每个 Projection 独立 Cursor；重复 Journal effect 幂等；一个 Consumer 崩溃不影响 Actor；删除 Projection 后可完整重建。
+- [x] 实现 read tables 与 `projection_version`；查询返回显式 `as_of/cursor/stale`，不拼装领域写模型。
+- [x] 隐私裁剪：成员页面可显示管理员允许的事实摘要和 evidence reference，不能返回原始敏感 payload。
+- [x] Run: `pytest tests/contracts/test_projection_consumer.py tests/recovery/test_projection_rebuild.py -q`; commit `feat: build independent social projections`。
 
 ---
 
