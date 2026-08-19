@@ -12,7 +12,7 @@ from groupmate.social_runtime.media.contracts import (
 from groupmate.social_runtime.media.registry import MediaSelector
 
 
-CONTENT = b"persona-media"
+CONTENT = b"\x89PNG\r\n\x1a\n" + b"persona-media"
 
 
 def _asset(tmp_path, asset_id="asset-a", **overrides):
@@ -140,3 +140,16 @@ def test_mode_and_culture_participate_in_selection(tmp_path):
     assert selection.selected_asset_id == "asset-cultural"
     assert "culture_match" in selection.reason_codes
 
+
+def test_zero_tag_match_returns_no_relevant_asset(tmp_path):
+    irrelevant = _asset(
+        tmp_path,
+        semantic_tags=("farewell",),
+        emotion_tags=("sad",),
+        act_tags=("leave",),
+    )
+
+    selection = MediaSelector(tmp_path).select((irrelevant,), _context())
+
+    assert selection.selected_asset_id is None
+    assert selection.reason_codes == ("no_relevant_asset",)

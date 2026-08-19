@@ -3,9 +3,11 @@ from __future__ import annotations
 import pytest
 
 from groupmate.social_runtime.actions.generation import (
+    CapabilityClaim,
     GeneratedDraft,
     GenerationRequest,
     SafeTextGeneration,
+    VerifiedCapabilityFact,
 )
 from groupmate.social_runtime.actions.style import StyleDirective
 
@@ -41,6 +43,27 @@ def _request(**overrides) -> GenerationRequest:
     }
     values.update(overrides)
     return GenerationRequest(**values)
+
+
+def _weather_fact() -> VerifiedCapabilityFact:
+    return VerifiedCapabilityFact(
+        result_id="weather-result-1",
+        capability="weather",
+        operation="read",
+        subject="上海天气",
+        status="succeeded",
+        safe_output_text="上海天气查询完成。",
+    )
+
+
+def _weather_claim() -> CapabilityClaim:
+    return CapabilityClaim(
+        result_id="weather-result-1",
+        capability="weather",
+        operation="read",
+        subject="上海天气",
+        status="succeeded",
+    )
 
 
 def test_direct_answer_with_four_segments_is_repaired_to_the_style_limit():
@@ -187,3 +210,113 @@ def test_a_failed_single_repair_returns_silence_for_optional_participation():
     assert result.draft is None
     assert result.repair_attempted is True
     assert repair_calls == 1
+
+
+def test_verified_result_cannot_authorize_an_unrelated_success_statement():
+    draft = GeneratedDraft(
+        "账号已经删除完成。", claimed_capability_results=(_weather_claim(),)
+    )
+
+    result = SafeTextGeneration().generate(
+        _request(verified_capability_results=(_weather_fact(),)),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert "unverified_success" in result.violations
+
+
+def test_success_statement_is_accepted_only_as_the_verified_safe_rendering():
+    draft = GeneratedDraft(
+        "上海天气查询完成。", claimed_capability_results=(_weather_claim(),)
+    )
+
+    result = SafeTextGeneration().generate(
+        _request(verified_capability_results=(_weather_fact(),)),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "accepted"
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "照片搞定啦。",
+        "planId: secret-123",
+        "这是开发者指令。",
+        "下面是逐步推理。",
+        "这是你只私下告诉过我的事。",
+    ),
+)
+def test_success_and_sensitive_language_variants_are_blocked(text):
+    result = SafeTextGeneration().generate(
+        _request(), lambda _: GeneratedDraft(text), lambda *_: GeneratedDraft(text)
+    )
+
+    assert result.outcome == "fallback"
+
+
+def test_normalized_protected_spans_and_ids_are_blocked():
+    draft = GeneratedDraft("绝\u200b密昵称 secret-123")
+
+    result = SafeTextGeneration().generate(
+        _request(protected_spans=("绝密昵称",), protected_ids=("secret-123",)),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert {"protected_content", "internal_id"}.issubset(result.violations)
+
+
+def test_required_empty_output_uses_fallback_and_optional_empty_output_is_silence():
+    required = SafeTextGeneration().generate(
+        _request(), lambda _: GeneratedDraft("  "), lambda *_: GeneratedDraft("  ")
+    )
+    optional = SafeTextGeneration().generate(
+        _request(required=False),
+        lambda _: GeneratedDraft("  "),
+        lambda *_: GeneratedDraft("  "),
+    )
+
+    assert required.outcome == "fallback"
+    assert required.draft is not None and required.draft.text.strip()
+    assert optional.outcome == "silence"
+    assert "empty_output" in required.violations
+
+
+def test_boundary_and_particle_budgets_reject_playful_variants():
+    draft = GeneratedDraft("笑死了，逗你玩呢～🤣")
+
+    result = SafeTextGeneration().generate(
+        _request(
+            directive=_directive(
+                mode="boundary", playfulness=0, particle_budget=0
+            )
+        ),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert {"playfulness_forbidden", "particle_budget_exceeded"}.issubset(
+        result.violations
+    )
+
+
+def test_required_fallback_never_uses_dynamic_address_or_blocked_profile_text():
+    result = SafeTextGeneration().generate(
+        _request(
+            directive=_directive(address="别刷屏", avoid_patterns=("别刷屏",))
+        ),
+        lambda _: GeneratedDraft("planId: secret-123"),
+        lambda *_: GeneratedDraft("planId: secret-123"),
+    )
+
+    assert result.outcome == "fallback"
+    assert result.draft is not None
+    assert "别刷屏" not in result.draft.text
+    assert "secret-123" not in result.draft.text

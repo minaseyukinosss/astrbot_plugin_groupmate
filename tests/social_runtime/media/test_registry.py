@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,50 @@ def test_register_deduplicates_identical_content_without_rewriting_identity(tmp_
     assert second.asset_id == first.asset_id
     assert Path(second.relative_path) == Path(first.relative_path)
 
+
+def test_manifest_restore_rejects_non_media_file_outside_registered_files(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private plugin data", encoding="utf-8")
+    digest = hashlib.sha256(secret.read_bytes()).hexdigest()
+    manifest = tmp_path / "persona_media" / "index.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "asset_id": "media:" + digest[:24],
+                        "source": "forged",
+                        "license_status": "owned",
+                        "mime_type": "image/png",
+                        "size_bytes": secret.stat().st_size,
+                        "sha256": digest,
+                        "relative_path": "secret.txt",
+                        "semantic_tags": ["greeting"],
+                        "emotion_tags": [],
+                        "act_tags": [],
+                        "allowed_modes": ["social"],
+                        "min_familiarity": 0,
+                        "max_boundary_pressure": 100,
+                        "intensity": 1,
+                        "enabled": True,
+                        "cooldown_seconds": 0,
+                        "culture_tags": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises((InvalidMediaAsset, UnsafeMediaPath)):
+        MediaRegistry(tmp_path, max_asset_bytes=8)
+
+
+def test_manifest_restore_revalidates_registered_file_bytes_and_metadata(tmp_path):
+    registry = MediaRegistry(tmp_path, max_asset_bytes=1024)
+    asset = _register(registry)
+    (tmp_path / asset.relative_path).write_bytes(b"not-a-png")
+
+    with pytest.raises(InvalidMediaAsset):
+        MediaRegistry(tmp_path, max_asset_bytes=1024)
