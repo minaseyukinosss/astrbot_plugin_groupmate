@@ -87,10 +87,10 @@ assert planner.plan(text_intention, context).node_kinds() == (
 
 **Interfaces:** `OutboxService.commit_bundle(bundle)`, `claim_ready(now)`, `record_receipt(receipt)`; `DeliveryDispatcher.dispatch(part)`.
 
-- [ ] 写测试：每 Part 独立 idempotency/order/expiry；发送前 DB 状态必须是 `sending`；success 写 bot ledger；retryable failure 回 ready；unknown 保持 unknown；过期装饰 Part suppressed。
-- [ ] Bundle Part 支持 text/mention/face/image/audio/video/file/forward/poke；平台不支持的 kind 在 Validator 阶段拒绝。
-- [ ] 部分成功重启后只恢复未确认 Part，绝不重发 sent Part；Task result 可取代未发送 progress Part。
-- [ ] Run delivery + recovery tests; commit `feat: deliver social actions transactionally`。
+- [x] 写测试：每 Part 独立 idempotency/order/expiry；发送前 DB 状态必须是 `sending`；success 写 bot ledger；retryable failure 回 ready；unknown 保持 unknown；过期装饰 Part suppressed。
+- [x] Bundle Part 支持 text/mention/face/image/audio/video/file/forward/poke；平台不支持的 kind 在 Validator 阶段拒绝。
+- [x] 部分成功重启后只恢复未确认 Part，绝不重发 sent Part；Task result 可取代未发送 progress Part。
+- [x] Run delivery + recovery tests; commit `feat: deliver social actions transactionally`。
 
 ```python
 await dispatcher.dispatch(part)
