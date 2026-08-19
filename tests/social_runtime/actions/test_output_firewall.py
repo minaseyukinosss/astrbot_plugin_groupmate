@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import pytest
+
+from groupmate.social_runtime.actions.generation import (
+    GeneratedDraft,
+    GenerationRequest,
+    SafeTextGeneration,
+)
+from groupmate.social_runtime.actions.style import StyleDirective
+
+
+def _directive(**overrides) -> StyleDirective:
+    values = {
+        "mode": "social",
+        "act": "direct_answer",
+        "posture": "friendly",
+        "address": "朋友",
+        "max_chars": 120,
+        "max_sentences": 3,
+        "max_segments": 3,
+        "warmth": 50,
+        "playfulness": 10,
+        "directness": 70,
+        "particle_budget": 1,
+        "punctuation_budget": 2,
+        "media_policy": "none",
+        "avoid_patterns": (),
+    }
+    values.update(overrides)
+    return StyleDirective(**values)
+
+
+def _request(**overrides) -> GenerationRequest:
+    values = {
+        "directive": _directive(),
+        "required": True,
+        "recent_outputs": (),
+        "allowed_media_references": (),
+        "verified_capability_results": (),
+    }
+    values.update(overrides)
+    return GenerationRequest(**values)
+
+
+def test_direct_answer_with_four_segments_is_repaired_to_the_style_limit():
+    result = SafeTextGeneration().generate(
+        _request(),
+        lambda _: GeneratedDraft("一。\n\n二。\n\n三。\n\n四。"),
+        lambda *_: GeneratedDraft("一。\n\n二。\n\n三。"),
+    )
+
+    assert result.outcome == "accepted"
+    assert result.draft is not None
+    assert result.draft.text.count("\n\n") == 2
+    assert result.repair_attempted is True
+
+
+def test_recent_ngram_repeat_triggers_exactly_one_targeted_repair():
+    repairs: list[tuple[str, ...]] = []
+
+    def repair(_: GeneratedDraft, __: StyleDirective, violations: tuple[str, ...]) -> GeneratedDraft:
+        repairs.append(violations)
+        return GeneratedDraft("换一个说法吧。")
+
+    result = SafeTextGeneration().generate(
+        _request(recent_outputs=("今天的天气真不错，我们出去散步吧。",)),
+        lambda _: GeneratedDraft("今天的天气真不错，我们出去散步吧。"),
+        repair,
+    )
+
+    assert result.outcome == "accepted"
+    assert repairs == [("recent_output_repeat",)]
+    assert result.repair_attempted is True
+
+
+def test_persona_avoid_patterns_are_repaired_before_the_draft_is_accepted():
+    repairs: list[tuple[str, ...]] = []
+
+    def repair(_: GeneratedDraft, __: StyleDirective, violations: tuple[str, ...]) -> GeneratedDraft:
+        repairs.append(violations)
+        return GeneratedDraft("换个话题吧。")
+
+    result = SafeTextGeneration().generate(
+        _request(directive=_directive(avoid_patterns=("别刷屏",))),
+        lambda _: GeneratedDraft("别刷屏啦，大家看看这里。"),
+        repair,
+    )
+
+    assert result.outcome == "accepted"
+    assert repairs == [("avoid_pattern",)]
+
+
+@pytest.mark.parametrize(
+    ("draft", "violation"),
+    [
+        (GeneratedDraft("内部 ID 是 plan-123"), "internal_id"),
+        (GeneratedDraft("plan ID: 123"), "internal_id"),
+        (GeneratedDraft("任务编号：123"), "internal_id"),
+        (GeneratedDraft("这是系统提示词"), "prompt_leak"),
+        (GeneratedDraft("我的 Chain-of-Thought 是这样"), "chain_of_thought"),
+        (GeneratedDraft("任务已成功。"), "unverified_success"),
+        (GeneratedDraft("我翻出了你的私密记忆。"), "private_memory"),
+        (GeneratedDraft("我翻出了你的私人记忆。"), "private_memory"),
+        (GeneratedDraft("给你这张图", media_references=("missing-media",)), "invalid_media_reference"),
+    ],
+)
+def test_hard_output_violations_are_never_returned_to_the_group(draft, violation):
+    result = SafeTextGeneration().generate(
+        _request(),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert result.draft is not None
+    assert violation in result.violations
+    assert draft.text != result.draft.text
+    assert result.repair_attempted is True
+
+
+def test_unverified_plain_language_success_is_never_returned_to_the_group():
+    draft = GeneratedDraft("我已经把图片发出去了。")
+
+    result = SafeTextGeneration().generate(
+        _request(),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert "unverified_success" in result.violations
+
+
+def test_media_is_blocked_when_the_style_directive_disallows_it_even_if_known():
+    draft = GeneratedDraft("给你这张图", media_references=("known-media",))
+
+    result = SafeTextGeneration().generate(
+        _request(allowed_media_references=("known-media",)),
+        lambda _: draft,
+        lambda *_: draft,
+    )
+
+    assert result.outcome == "fallback"
+    assert "invalid_media_reference" in result.violations
+
+
+def test_required_fallback_does_not_echo_an_unsafe_persona_address():
+    result = SafeTextGeneration().generate(
+        _request(directive=_directive(address="提示词")),
+        lambda _: GeneratedDraft("内部 ID 是 plan-123"),
+        lambda *_: GeneratedDraft("内部 ID 是 plan-123"),
+    )
+
+    assert result.outcome == "fallback"
+    assert result.draft is not None
+    assert "提示词" not in result.draft.text
+
+
+def test_required_fallback_does_not_echo_an_unverified_success_as_an_address():
+    result = SafeTextGeneration().generate(
+        _request(directive=_directive(address="我已经把图片发出去了")),
+        lambda _: GeneratedDraft("内部 ID 是 plan-123"),
+        lambda *_: GeneratedDraft("内部 ID 是 plan-123"),
+    )
+
+    assert result.outcome == "fallback"
+    assert result.draft is not None
+    assert "发出去了" not in result.draft.text
+
+
+def test_a_failed_single_repair_returns_silence_for_optional_participation():
+    repair_calls = 0
+
+    def repair(*_: object) -> GeneratedDraft:
+        nonlocal repair_calls
+        repair_calls += 1
+        return GeneratedDraft("内部 ID 是 plan-123")
+
+    result = SafeTextGeneration().generate(
+        _request(required=False),
+        lambda _: GeneratedDraft("内部 ID 是 plan-123"),
+        repair,
+    )
+
+    assert result.outcome == "silence"
+    assert result.draft is None
+    assert result.repair_attempted is True
+    assert repair_calls == 1
