@@ -262,6 +262,11 @@ class AttentionScheduler:
 
     @staticmethod
     def _topic_id(world: GroupWorldState, event: SocialEventEnvelope) -> str:
+        task_topic_id = str(event.payload.get("topic_id") or "").strip()
+        if task_topic_id and any(
+            topic.topic_id == task_topic_id for topic in world.active_topics
+        ):
+            return task_topic_id
         message_id = event.source_message_id or event.event_id
         try:
             return world.topic_for_message(message_id).topic_id

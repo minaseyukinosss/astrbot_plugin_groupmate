@@ -125,6 +125,7 @@ def _request_to_dict(request: CapabilityRequest) -> dict[str, object]:
         "idempotency_key": request.idempotency_key,
         "correlation_id": request.correlation_id,
         "expires_at": request.expires_at,
+        "direct_request": request.direct_request,
     }
 
 
@@ -139,6 +140,7 @@ def _request_from_dict(value: Mapping[str, object]) -> CapabilityRequest:
         idempotency_key=value["idempotency_key"],
         correlation_id=value["correlation_id"],
         expires_at=value["expires_at"],
+        direct_request=value.get("direct_request", False),
     )
 
 
@@ -200,6 +202,19 @@ def _event_to_dict(event: ProviderEvent) -> dict[str, object]:
         "media": [_media_to_dict(item) for item in event.media],
         "error_code": event.error_code,
     }
+
+
+def _event_from_dict(value: Mapping[str, object]) -> ProviderEvent:
+    return ProviderEvent.create(
+        event_id=value["event_id"],
+        task_id=value["task_id"],
+        kind=ProviderEventKind(value["kind"]),
+        occurred_at=value["occurred_at"],
+        progress=value.get("progress"),
+        result=value.get("result"),
+        media=tuple(ProviderMedia(**item) for item in value.get("media", ())),
+        error_code=value.get("error_code"),
+    )
 
 
 class TaskRuntime:
@@ -506,6 +521,16 @@ class TaskRuntime:
                 (task_id,),
             ).fetchone()
         return int(row["count"])
+
+    def provider_events(self) -> tuple[ProviderEvent, ...]:
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT event_json FROM task_events "
+                "WHERE event_type LIKE 'provider.%' ORDER BY rowid"
+            ).fetchall()
+        return tuple(
+            _event_from_dict(json.loads(row["event_json"])) for row in rows
+        )
 
     def _list_status(self, status: TaskStatus) -> tuple[TaskRun, ...]:
         with closing(connect_database(self.path)) as db:

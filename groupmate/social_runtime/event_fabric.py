@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Callable
 
+from .contracts import SocialEventEnvelope
+from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .scene_actor import GroupSceneActor, SceneWorkRequest
 
 
@@ -13,8 +15,13 @@ class EventFabricClosed(RuntimeError):
 
 
 class SocialEventFabric:
-    def __init__(self, actor_factory: Callable[[str, str], GroupSceneActor]) -> None:
+    def __init__(
+        self,
+        actor_factory: Callable[[str, str], GroupSceneActor],
+        event_store: SQLiteSocialEventStore | None = None,
+    ) -> None:
         self._actor_factory = actor_factory
+        self._event_store = event_store
         self._actors: dict[tuple[str, str], GroupSceneActor] = {}
         self._lock = asyncio.Lock()
         self._closed = False
@@ -40,6 +47,16 @@ class SocialEventFabric:
                 await actor.start()
                 self._actors[key] = actor
             return actor
+
+    async def publish(self, event: SocialEventEnvelope) -> AppendResult:
+        if self._event_store is None:
+            raise RuntimeError("event fabric has no durable event store")
+        if not event.group_id:
+            raise ValueError("group events require group_id")
+        appended = self._event_store.append(event)
+        if appended.inserted:
+            await self.notify(event.persona_id, event.group_id)
+        return appended
 
     async def drain(self) -> tuple[SceneWorkRequest, ...]:
         batches = await asyncio.gather(*(actor.drain() for actor in self.actors))

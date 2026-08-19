@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, Optional, Tuple
@@ -108,14 +109,33 @@ class PlanValidation:
     errors: Tuple[str, ...]
     reduced_plan: Optional[ActionPlan]
     disposition: Optional[str] = None
+    plan_id: Optional[str] = None
+    plan_digest: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.accepted:
             if self.errors or self.reduced_plan is not None or self.disposition is not None:
                 raise ValueError("accepted validation cannot carry a disposition or reduction")
+            if not self.plan_id or not self.plan_digest:
+                raise ValueError("accepted validation must bind one action plan")
             return
         if self.disposition not in _INVALID_DISPOSITIONS:
             raise ValueError("invalid plan requires a governance disposition")
+        if self.plan_id is not None or self.plan_digest is not None:
+            raise ValueError("rejected validation cannot bind an action plan")
+
+
+def action_plan_digest(plan: ActionPlan) -> str:
+    if not isinstance(plan, ActionPlan):
+        raise ValueError("plan must be an ActionPlan")
+    encoded = json.dumps(
+        asdict(plan),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class DeliveryPartKind(str, Enum):
@@ -368,6 +388,7 @@ __all__ = (
     "MAX_AUTONOMOUS_FOLLOWUPS",
     "PlanContext",
     "PlanValidation",
+    "action_plan_digest",
     "OutboxPart",
     "OutboxStatus",
 )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass, replace
+from enum import Enum
 from typing import Awaitable, Callable, Union
 
 from .attention import AttentionFrame, AttentionScheduler, PendingAttentionWindow
@@ -21,6 +22,19 @@ class SceneActorNotRunning(RuntimeError):
     """Raised when a command targets an inactive group actor."""
 
 
+class TaskResultDisposition(str, Enum):
+    SEND = "SEND"
+    DEFER = "DEFER"
+    SILENCE = "SILENCE"
+
+
+@dataclass(frozen=True)
+class TaskResultDecision:
+    task_id: str
+    disposition: TaskResultDisposition
+    reason_codes: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class SceneWorkRequest:
     request_id: str
@@ -31,6 +45,7 @@ class SceneWorkRequest:
     event: SocialEventEnvelope
     world_snapshot: GroupWorldState
     persona_snapshot: PersonaSnapshot
+    task_result_decision: TaskResultDecision | None = None
     governance_snapshot: RuntimeGovernanceState = RuntimeGovernanceState()
     attention_frames: tuple[AttentionFrame, ...] = ()
     attention_window: PendingAttentionWindow | None = None
@@ -403,7 +418,11 @@ class GroupSceneActor:
                 self._mailbox.task_done()
 
     def _process(self, command: _ProcessCommand) -> SceneWorkRequest:
-        state = self._projector.apply(self._require_state(), command.claimed.event)
+        prior_state = self._require_state()
+        task_result_decision = self._task_result_decision(
+            command.claimed.event, prior_state
+        )
+        state = self._projector.apply(prior_state, command.claimed.event)
         attention_frames = self._attention.on_event(
             command.claimed.event,
             state,
@@ -423,6 +442,7 @@ class GroupSceneActor:
             event=command.claimed.event,
             world_snapshot=state,
             persona_snapshot=command.persona_snapshot,
+            task_result_decision=task_result_decision,
             governance_snapshot=command.governance_snapshot,
             attention_frames=attention_frames,
             attention_window=self._attention.pending_window(self.group_id),
@@ -550,6 +570,11 @@ class GroupSceneActor:
             "event": request.event.to_dict(),
             "world_snapshot": self._projector.to_dict(request.world_snapshot),
             "persona_snapshot": asdict(request.persona_snapshot),
+            "task_result_decision": (
+                asdict(request.task_result_decision)
+                if request.task_result_decision is not None
+                else None
+            ),
             "governance_snapshot": asdict(request.governance_snapshot),
             "attention_frames": [
                 asdict(frame) for frame in request.attention_frames
@@ -565,6 +590,13 @@ class GroupSceneActor:
     def _request_from_dict(self, payload: dict[str, object]) -> SceneWorkRequest:
         persona_values = dict(payload["persona_snapshot"])
         persona_values["modifiers"] = tuple(persona_values["modifiers"])
+        task_decision = payload.get("task_result_decision")
+        if task_decision is not None:
+            task_decision = dict(task_decision)
+            task_decision["disposition"] = TaskResultDisposition(
+                task_decision["disposition"]
+            )
+            task_decision["reason_codes"] = tuple(task_decision["reason_codes"])
         return SceneWorkRequest(
             request_id=str(payload["request_id"]),
             persona_id=str(payload["persona_id"]),
@@ -574,6 +606,11 @@ class GroupSceneActor:
             event=SocialEventEnvelope.from_dict(payload["event"]),
             world_snapshot=self._projector.from_dict(payload["world_snapshot"]),
             persona_snapshot=PersonaSnapshot(**persona_values),
+            task_result_decision=(
+                None
+                if task_decision is None
+                else TaskResultDecision(**task_decision)
+            ),
             governance_snapshot=RuntimeGovernanceState(
                 **payload.get("governance_snapshot", {})
             ),
@@ -633,6 +670,52 @@ class GroupSceneActor:
             frame.frame_id not in evaluated for frame in request.attention_frames
         )
 
+    @staticmethod
+    def _task_result_decision(
+        event: SocialEventEnvelope, state: GroupWorldState
+    ) -> TaskResultDecision | None:
+        if event.event_type not in {"capability.progress", "capability.result"}:
+            return None
+        task_id = str(event.payload.get("task_id") or "").strip()
+        if not task_id:
+            return None
+        if bool(event.payload.get("direct_request")):
+            return TaskResultDecision(
+                task_id,
+                TaskResultDisposition.SEND,
+                ("direct_request_obligation",),
+            )
+        if not bool(event.payload.get("delivery_relevant", True)):
+            return TaskResultDecision(
+                task_id,
+                TaskResultDisposition.SILENCE,
+                ("delivery_no_longer_relevant",),
+            )
+        topic_id = str(event.payload.get("topic_id") or "").strip()
+        active_topic_ids = {topic.topic_id for topic in state.active_topics}
+        latest = (
+            max(state.active_topics, key=lambda topic: topic.last_event_at).topic_id
+            if state.active_topics
+            else None
+        )
+        if topic_id and topic_id == latest:
+            return TaskResultDecision(
+                task_id,
+                TaskResultDisposition.SEND,
+                ("task_topic_current",),
+            )
+        if topic_id and topic_id in active_topic_ids:
+            return TaskResultDecision(
+                task_id,
+                TaskResultDisposition.DEFER,
+                ("task_topic_temporarily_displaced",),
+            )
+        return TaskResultDecision(
+            task_id,
+            TaskResultDisposition.SILENCE,
+            ("task_topic_has_no_social_value",),
+        )
+
     def _save_snapshot(self) -> None:
         state = self._require_state()
         cursor = self._store.cursor(self.actor_key)
@@ -660,4 +743,6 @@ __all__ = (
     "SceneActorNotRunning",
     "SceneWorkRequest",
     "SceneWorkResult",
+    "TaskResultDecision",
+    "TaskResultDisposition",
 )

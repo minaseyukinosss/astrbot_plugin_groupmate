@@ -378,6 +378,13 @@ class OutboxService:
         with closing(connect_database(self.path)) as db:
             return int(db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0])
 
+    def receipted_parts(self) -> tuple[OutboxPart, ...]:
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT part_id FROM outbox WHERE receipt_json IS NOT NULL ORDER BY rowid"
+            ).fetchall()
+        return tuple(self.outbox(str(row["part_id"])) for row in rows)
+
     @staticmethod
     def in_memory_part(
         bundle: DeliveryBundle,

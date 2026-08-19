@@ -106,10 +106,10 @@ assert store.bot_ledger(part.part_id).correlation_id == bundle.correlation_id
 
 **Interfaces:** Consumes validated Plan; emits plan/task/delivery events back through Event Fabric; never mutates Actor directly.
 
-- [ ] 测试 text、media、capability、confirmation、progress、result DAG；并行无依赖节点可运行，依赖未满足节点不可运行。
-- [ ] 新场景使结果失去相关性时，Task 仍准确完成但可见 result 可 `DEFER/SILENCE`；直接请求义务仍要给精确状态。
-- [ ] Coordinator 每次推进持久化 node state 和 next runnable set；重启从 node state 恢复。
-- [ ] Run: `pytest tests/social_runtime/actions tests/scenarios/test_task_topic_change.py -q`; commit `feat: coordinate persistent social actions`。
+- [x] 测试 text、media、capability、confirmation、progress、result DAG；并行无依赖节点可运行，依赖未满足节点不可运行。
+- [x] 新场景使结果失去相关性时，Task 仍准确完成但可见 result 可 `DEFER/SILENCE`；直接请求义务仍要给精确状态。
+- [x] Coordinator 每次推进持久化 node state 和 next runnable set；重启从 node state 恢复。
+- [x] Run: `pytest tests/social_runtime/actions tests/scenarios/test_task_topic_change.py -q`; commit `feat: coordinate persistent social actions`。
 
 ---
 

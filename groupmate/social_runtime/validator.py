@@ -12,6 +12,7 @@ from .actions.contracts import (
     ActionPlan,
     PlanContext,
     PlanValidation,
+    action_plan_digest,
 )
 
 
@@ -30,7 +31,13 @@ class ActionPlanValidator:
                 reduced_plan=None,
                 disposition=self._disposition(errors),
             )
-        return PlanValidation(True, (), None)
+        return PlanValidation(
+            accepted=True,
+            errors=(),
+            reduced_plan=None,
+            plan_id=plan.plan_id,
+            plan_digest=action_plan_digest(plan),
+        )
 
     @staticmethod
     def _validate_plan_scope(

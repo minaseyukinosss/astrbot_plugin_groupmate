@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .attention import AttentionFrame
+from .actions.coordinator import ExecutionCoordinator
 from .cognition.contracts import CognitiveContext, CognitiveWorker
 from .cognition.service import CognitionBudget, CognitionService
 from .contracts import (
@@ -20,8 +21,10 @@ from .governor import GovernorContext, GovernorResult, SocialGovernor
 from .intentions import IntentionEngine
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.repositories import SQLitePersonaStateRepository
+from .delivery.outbox import OutboxService
 from .scene_actor import GroupSceneActor, SceneWorkRequest, SceneWorkResult
 from .supervisor import PersonaSupervisor
+from .tasks.runtime import TaskRuntime
 
 
 class ShadowSideEffectForbidden(RuntimeError):
@@ -89,7 +92,15 @@ class SocialRuntimeManager:
         self.intentions = IntentionEngine()
         self.governor = SocialGovernor()
         self._governance_state = governance_state or RuntimeGovernanceState()
-        self.fabric = SocialEventFabric(self._new_actor)
+        self.fabric = SocialEventFabric(self._new_actor, self.event_store)
+        self.task_runtime = TaskRuntime(database_path)
+        self.outbox = OutboxService(database_path)
+        self.coordinator = ExecutionCoordinator(
+            database_path,
+            task_runtime=self.task_runtime,
+            outbox=self.outbox,
+            event_sink=self._publish_execution_event,
+        )
         self._started = False
         self._closing = False
         self._active_drains = 0
@@ -102,6 +113,7 @@ class SocialRuntimeManager:
 
     async def start(self) -> None:
         while True:
+            initialize_feedback = False
             async with self._lifecycle_lock:
                 if self._closing:
                     closed = self._closed
@@ -115,8 +127,17 @@ class SocialRuntimeManager:
                             await self.fabric.notify(self.persona_id, group_id)
                     self._started = True
                     self._closed.set()
-                    self._startup_requests = await self.fabric.drain()
-                    return
+                    initialize_feedback = True
+            if initialize_feedback:
+                try:
+                    await self.coordinator.recover_feedback()
+                    startup_requests = await self.fabric.drain()
+                except BaseException:
+                    await self.close()
+                    raise
+                async with self._lifecycle_lock:
+                    self._startup_requests = startup_requests
+                return
             await closed.wait()
 
     async def ingest(self, envelope: SocialEventEnvelope) -> AppendResult | None:
@@ -126,10 +147,18 @@ class SocialRuntimeManager:
                 raise ValueError("event persona does not match manager")
             if not envelope.group_id or envelope.group_id not in self.enabled_groups:
                 return None
-            appended = self.event_store.append(envelope)
-            if appended.inserted:
-                await self.fabric.notify(envelope.persona_id, envelope.group_id)
-            return appended
+            return await self.fabric.publish(envelope)
+
+    async def _publish_execution_event(
+        self, envelope: SocialEventEnvelope
+    ) -> AppendResult:
+        async with self._lifecycle_lock:
+            self._ensure_available()
+            if envelope.persona_id != self.persona_id:
+                raise ValueError("execution feedback persona does not match manager")
+            if not envelope.group_id or envelope.group_id not in self.enabled_groups:
+                raise ValueError("execution feedback requires an enabled group")
+            return await self.fabric.publish(envelope)
 
     async def drain(self, *, now: int | None = None) -> tuple[ShadowEvaluation, ...]:
         await self._begin_drain()

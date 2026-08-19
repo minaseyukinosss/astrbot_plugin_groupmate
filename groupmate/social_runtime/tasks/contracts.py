@@ -166,6 +166,7 @@ class CapabilityRequest:
     idempotency_key: str
     correlation_id: str
     expires_at: int
+    direct_request: bool = False
 
     @classmethod
     def create(cls, **values: object) -> "CapabilityRequest":
@@ -195,6 +196,9 @@ class CapabilityRequest:
         if expires_at < 0:
             raise ValueError("expires_at must not be negative")
         normalized["expires_at"] = expires_at
+        if not isinstance(normalized.get("direct_request", False), bool):
+            raise ValueError("direct_request must be a boolean")
+        normalized["direct_request"] = normalized.get("direct_request", False)
         return cls(**normalized)
 
 
@@ -483,6 +487,7 @@ def normalize_request(value: CapabilityRequest) -> CapabilityRequest:
         idempotency_key=value.idempotency_key,
         correlation_id=value.correlation_id,
         expires_at=value.expires_at,
+        direct_request=value.direct_request,
     )
 
 
