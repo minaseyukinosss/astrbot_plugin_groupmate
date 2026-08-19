@@ -58,10 +58,10 @@ assert repository.published_version() == 3
 
 **Interfaces:** `/bootstrap`, `/runtime`, `/activity`, `/scenes`, `/people`, `/culture`, `/tasks`, `/persona`, `/governance`, `/evaluation`, `/health`, `/commands`, `/events`.
 
-- [ ] 写 API 测试：Query 不触发领域写；Command 传服务端 admin identity；409 保留；SSE 从 `Last-Event-ID` 续传，过期 Cursor 返回 `snapshot_required`。
-- [ ] SSE event 固定为 `cursor/kind/scope/entity/projection_version/summary`，禁止 payload 中出现 `prompt`, `chain_of_thought`, `secret`, `auth_code`。
-- [ ] SSE 失败不取消 Projection；客户端可降级到 15 秒有界轮询，health 返回真实降级原因。
-- [ ] Run contracts tests; commit `feat: expose governed control plane api`。
+- [x] 写 API 测试：Query 不触发领域写；Command 传服务端 admin identity；409 保留；SSE 从 `Last-Event-ID` 续传，过期 Cursor 返回 `snapshot_required`。
+- [x] SSE event 固定为 `cursor/kind/scope/entity/projection_version/summary`，禁止 payload 中出现 `prompt`, `chain_of_thought`, `secret`, `auth_code`。
+- [x] SSE 失败不取消 Projection；客户端可降级到 15 秒有界轮询，health 返回真实降级原因。
+- [x] Run contracts tests; commit `feat: expose governed control plane api`。
 
 ---
 

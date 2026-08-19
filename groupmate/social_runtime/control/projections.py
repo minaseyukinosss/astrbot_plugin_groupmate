@@ -151,7 +151,13 @@ class ProjectionConsumer:
                 )
                 if item is not None:
                     version += 1
-                    self._upsert_item(db, item, version)
+                    self._upsert_item(
+                        db,
+                        item,
+                        version,
+                        effect_id=str(row["effect_id"]),
+                        source_journal_rowid=int(row["journal_rowid"]),
+                    )
                     applied += 1
                 db.execute(
                     "INSERT INTO control_projection_applied("
@@ -282,7 +288,12 @@ class ProjectionConsumer:
             "culture": ("culture.",),
             "tasks": ("task.", "capability.", "delivery.", "outbox.", "plan."),
             "persona": ("persona.", "constitution.", "mode.", "style.", "media."),
-            "governance": ("governance.", "config.", "calibration."),
+            "governance": (
+                "governance.",
+                "config.",
+                "calibration.",
+                "control.",
+            ),
             "evaluation": ("evaluation.", "shadow.", "governor."),
         }
         return effect_type.startswith(prefixes[self.projection_name])
@@ -331,9 +342,14 @@ class ProjectionConsumer:
             summary["fact_summary"] = str(payload["fact_summary"]).strip()
         return summary
 
-    @staticmethod
     def _upsert_item(
-        db: sqlite3.Connection, item: _ProjectedItem, version: int
+        self,
+        db: sqlite3.Connection,
+        item: _ProjectedItem,
+        version: int,
+        *,
+        effect_id: str,
+        source_journal_rowid: int,
     ) -> None:
         db.execute(
             "INSERT INTO control_projection_items("
@@ -355,6 +371,24 @@ class ProjectionConsumer:
                 version,
                 json.dumps(item.summary, ensure_ascii=False, sort_keys=True),
                 json.dumps(item.evidence_refs, ensure_ascii=False),
+                item.as_of,
+            ),
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO control_projection_events("
+            "projection_name, source_effect_id, source_journal_rowid, "
+            "persona_id, group_id, kind, entity_ref, projection_version, "
+            "summary_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self.projection_name,
+                effect_id,
+                int(source_journal_rowid),
+                item.persona_id,
+                item.group_id,
+                item.kind,
+                item.entity_ref,
+                version,
+                json.dumps(item.summary, ensure_ascii=False, sort_keys=True),
                 item.as_of,
             ),
         )
@@ -389,6 +423,24 @@ class ProjectionConsumer:
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     last_journal_rowid INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS control_projection_events (
+                    stream_cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                    projection_name TEXT NOT NULL,
+                    source_effect_id TEXT NOT NULL,
+                    source_journal_rowid INTEGER NOT NULL,
+                    persona_id TEXT NOT NULL,
+                    group_id TEXT,
+                    kind TEXT NOT NULL,
+                    entity_ref TEXT NOT NULL,
+                    projection_version INTEGER NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(projection_name, source_effect_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_control_projection_events_scope
+                    ON control_projection_events(
+                        persona_id, group_id, stream_cursor
+                    );
                 INSERT INTO control_projection_source(singleton, last_journal_rowid)
                     VALUES(1, (SELECT COALESCE(MAX(rowid), 0) FROM journal))
                     ON CONFLICT(singleton) DO UPDATE SET
