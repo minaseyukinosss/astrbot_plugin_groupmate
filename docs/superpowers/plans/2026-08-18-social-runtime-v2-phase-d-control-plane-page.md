@@ -99,8 +99,8 @@ assert repository.published_version() == 3
 
 **Interfaces:** 完整管理工作流 pause→inspect→draft→dry-run→publish→correct→rollback。
 
-- [ ] 用本地 AstrBot API fake 验证五 route、SSE 重连、409 conflict refresh、窄屏、200% zoom、键盘焦点、dark/light、reduced motion。
-- [ ] 插入 `<img onerror>`、脚本字符串、路径逃逸文件名，断言只以 textContent 呈现且上传拒绝。
-- [ ] Projection 服务停止时验证群聊 Actor/Task/Delivery 继续，页面显示 stale 与 polling fallback。
-- [ ] Run: `pytest tests/contracts tests/page tests/recovery -q && python -m tests.architecture_guard && git diff --check`。
-- [ ] Commit `test: verify social runtime control plane`，请求评审，通过后进入 Phase E。
+- [x] 用本地 AstrBot API fake 验证五 route、SSE 重连、409 conflict refresh、窄屏、200% zoom、键盘焦点、dark/light、reduced motion。
+- [x] 插入 `<img onerror>`、脚本字符串、路径逃逸文件名，断言只以 textContent 呈现且上传拒绝。
+- [x] Projection 服务停止时验证群聊 Actor/Task/Delivery 继续，页面显示 stale 与 polling fallback。
+- [x] Run: `pytest tests/contracts tests/page tests/recovery -q && python -m tests.architecture_guard && git diff --check`。
+- [x] Commit `test: verify social runtime control plane`，请求评审，通过后进入 Phase E。
