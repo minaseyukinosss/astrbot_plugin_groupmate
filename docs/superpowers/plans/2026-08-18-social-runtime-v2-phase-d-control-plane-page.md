@@ -39,10 +39,10 @@
 
 **Interfaces:** `CommandContext(admin_id, persona_id, group_id, expected_version, reason, confirmed)`; `CommandService.execute(command, context)`; config lifecycle `DRAFT→VALIDATED→PUBLISHED→SUPERSEDED`.
 
-- [ ] 写测试：非管理员 403、跨群 ID 404、缺原因 400、版本冲突 409、重复 command ID 幂等；发布失败保留 Draft。
-- [ ] 实现 pause/reset/config draft/validate/dry-run/publish/restore/review/forget/correct/link/cancel/approve calibration 命令。
-- [ ] Dry-run 使用固定历史事件和 Worker outputs，返回语义 diff，不修改正式 Config；新周期才读取新版本。
-- [ ] Run contracts tests; commit `feat: add versioned social runtime commands`。
+- [x] 写测试：非管理员 403、跨群 ID 404、缺原因 400、版本冲突 409、重复 command ID 幂等；发布失败保留 Draft。
+- [x] 实现 pause/reset/config draft/validate/dry-run/publish/restore/review/forget/correct/link/cancel/approve calibration 命令。
+- [x] Dry-run 使用固定历史事件和 Worker outputs，返回语义 diff，不修改正式 Config；新周期才读取新版本。
+- [x] Run contracts tests; commit `feat: add versioned social runtime commands`。
 
 ```python
 with pytest.raises(ExpectedVersionConflict):
