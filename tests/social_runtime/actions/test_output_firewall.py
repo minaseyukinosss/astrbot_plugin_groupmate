@@ -259,6 +259,23 @@ def test_success_and_sensitive_language_variants_are_blocked(text):
     assert result.outcome == "fallback"
 
 
+@pytest.mark.parametrize(
+    "text",
+    (
+        "systemPrompt: hidden",
+        "chainOfThought: hidden",
+        "privateMemory: hidden",
+        "plan\u200bId: secret-123",
+    ),
+)
+def test_compact_and_format_obscured_sensitive_markers_are_blocked(text):
+    result = SafeTextGeneration().generate(
+        _request(), lambda _: GeneratedDraft(text), lambda *_: GeneratedDraft(text)
+    )
+
+    assert result.outcome == "fallback"
+
+
 def test_normalized_protected_spans_and_ids_are_blocked():
     draft = GeneratedDraft("绝\u200b密昵称 secret-123")
 

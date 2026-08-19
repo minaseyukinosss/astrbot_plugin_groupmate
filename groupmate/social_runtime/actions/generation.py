@@ -123,8 +123,18 @@ class OutputFirewall:
         self, text: str, request: GenerationRequest
     ) -> tuple[str, ...]:
         folded = self._normalize(text)
+        compact = re.sub(r"[\W_]+", "", folded)
         violations: list[str] = []
-        if self._INTERNAL_ID.search(text) or "内部 id" in folded or "internal id" in folded:
+        compact_internal_id = re.search(
+            r"(?:plan|correlation|persona|group|event|task|node)(?:id|identifier)[a-z0-9]",
+            compact,
+        )
+        if (
+            self._INTERNAL_ID.search(folded)
+            or compact_internal_id
+            or "内部 id" in folded
+            or "internal id" in folded
+        ):
             violations.append("internal_id")
         if any(
             value in folded
@@ -137,6 +147,9 @@ class OutputFirewall:
                 "开发者指令",
                 "开发者消息",
             )
+        ) or any(
+            value in compact
+            for value in ("systemprompt", "developerinstruction", "developermessage")
         ):
             violations.append("prompt_leak")
         if any(
@@ -150,6 +163,8 @@ class OutputFirewall:
                 "逐步推理",
                 "逐步思考",
             )
+        ) or any(
+            value in compact for value in ("chainofthought", "reasoningsteps")
         ):
             violations.append("chain_of_thought")
         if any(
@@ -163,6 +178,13 @@ class OutputFirewall:
                 "私人记忆",
                 "只私下告诉",
                 "私下告诉过我",
+            )
+        ) or any(
+            value in compact
+            for value in (
+                "privatememory",
+                "confidentialmemory",
+                "onlytoldmeprivately",
             )
         ):
             violations.append("private_memory")
