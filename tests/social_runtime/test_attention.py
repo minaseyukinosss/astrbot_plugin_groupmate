@@ -97,3 +97,62 @@ def test_overdue_commitment_only_creates_temporal_revalidation_candidate():
     assert frame.requested_workers == ("commitment_revalidator",)
     assert frame.deadline == 100
     assert not hasattr(frame, "authorized_action")
+
+
+def test_malformed_autonomous_temporal_payload_fails_closed():
+    event = _event(
+        "opportunity-bad",
+        event_type="temporal.opportunity_due",
+        payload={
+            "source_event_ids": ["qq:source-1"],
+            "audience": ["u1"],
+            "earliest_at": "not-an-integer",
+            "expires_at": 150,
+            "attempt": 1,
+            "followup_count": 0,
+            "kind": "delayed-scene",
+        },
+    )
+
+    frames = AttentionScheduler().on_event(
+        event, _world_with(event), _persona(), now=100
+    )
+
+    assert frames == ()
+
+
+def test_recursive_or_unknown_autonomous_temporal_source_fails_closed():
+    scheduler = AttentionScheduler()
+    recursive = _event(
+        "opportunity-recursive",
+        event_type="temporal.opportunity_due",
+        payload={
+            "source_event_ids": ["autonomy:opportunity:prior:1"],
+            "audience": ["u1"],
+            "earliest_at": 90,
+            "expires_at": 150,
+            "attempt": 1,
+            "followup_count": 0,
+            "kind": "delayed-scene",
+        },
+    )
+    unknown = _event(
+        "opportunity-unknown",
+        event_type="temporal.opportunity_due",
+        payload={
+            "source_event_ids": ["qq:source-1"],
+            "audience": ["u1"],
+            "earliest_at": 90,
+            "expires_at": 150,
+            "attempt": 1,
+            "followup_count": 0,
+            "kind": "presence-ping",
+        },
+    )
+
+    assert scheduler.on_event(
+        recursive, _world_with(recursive), _persona(), now=100
+    ) == ()
+    assert scheduler.on_event(
+        unknown, _world_with(unknown), _persona(), now=100
+    ) == ()

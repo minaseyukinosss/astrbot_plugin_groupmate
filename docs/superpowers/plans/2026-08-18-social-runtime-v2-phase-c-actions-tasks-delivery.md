@@ -119,10 +119,10 @@ assert store.bot_ledger(part.part_id).correlation_id == bundle.correlation_id
 
 **Interfaces:** `AutonomousOpportunity(source_event_ids, group_id, audience, earliest_at, expires_at, max_attempts, kind)`; scheduler only emits Temporal event.
 
-- [ ] 测试缺来源/对象/expiry 的机会拒绝；quiet hours 延迟；过期取消；执行前 scene/relationship/boundary/budget 重新验证；机会不能递归创建机会。
-- [ ] 来源仅允许 commitment/task/member-event/group-ritual/delayed-scene/self-open-loop；最大 attempts=2，自主 follow-up=1。
-- [ ] Scheduler 只向 Fabric 追加 `temporal.opportunity_due`，最终仍经过 Attention→Governor→Plan。
-- [ ] Run focused/scenario tests; commit `feat: add bounded autonomous opportunities`。
+- [x] 测试缺来源/对象/expiry 的机会拒绝；quiet hours 延迟；过期取消；执行前 scene/relationship/boundary/budget 重新验证；机会不能递归创建机会。
+- [x] 来源仅允许 commitment/task/member-event/group-ritual/delayed-scene/self-open-loop；最大 attempts=2，自主 follow-up=1。
+- [x] Scheduler 只向 Fabric 追加 `temporal.opportunity_due`，最终仍经过 Attention→Governor→Plan。
+- [x] Run focused/scenario tests; commit `feat: add bounded autonomous opportunities`。
 
 ---
 

@@ -7,6 +7,7 @@ import json
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
 
+from .autonomy import ALLOWED_OPPORTUNITY_KINDS
 from .contracts import PersonaSnapshot, SocialEventEnvelope
 from .world import GroupWorldState
 
@@ -59,6 +60,9 @@ class AttentionScheduler:
             raise ValueError("attention requires a projected scene")
         now = int(now)
         self._refresh_pending_scene(event.group_id, world, persona)
+
+        if event.event_type == "temporal.opportunity_due":
+            return self._autonomous_frames(event, world, persona, now)
 
         if event.event_type == "temporal.commitment_due":
             due_at = int(event.payload.get("due_at") or now)
@@ -208,6 +212,56 @@ class AttentionScheduler:
             config_version=window.config_version,
         )
 
+    def _autonomous_frames(
+        self,
+        event: SocialEventEnvelope,
+        world: GroupWorldState,
+        persona: PersonaSnapshot,
+        now: int,
+    ) -> tuple[AttentionFrame, ...]:
+        source_event_ids = self._payload_texts(
+            event.payload.get("source_event_ids")
+        )
+        audience = self._payload_texts(event.payload.get("audience"))
+        expires_at = self._payload_int(event.payload.get("expires_at"))
+        earliest_at = self._payload_int(event.payload.get("earliest_at"))
+        attempt = self._payload_int(event.payload.get("attempt"))
+        followup_count = self._payload_int(event.payload.get("followup_count"))
+        kind = str(event.payload.get("kind") or "").strip()
+        if (
+            not source_event_ids
+            or not audience
+            or any(value.startswith("autonomy:") for value in source_event_ids)
+            or kind not in ALLOWED_OPPORTUNITY_KINDS
+            or earliest_at is None
+            or expires_at is None
+            or attempt is None
+            or followup_count is None
+            or earliest_at > now
+            or expires_at <= now
+            or attempt not in {1, 2}
+            or followup_count not in {0, 1}
+        ):
+            return ()
+        topic_id = self._topic_id(world, event)
+        return (
+            self._build_frame(
+                group_id=world.group_id,
+                scene_version=world.scene_version,
+                trigger_kind="TEMPORAL",
+                focus_topic_ids=(topic_id,) if topic_id else (),
+                focus_event_ids=self._append_unique(
+                    source_event_ids, event.event_id
+                ),
+                candidate_audiences=audience,
+                urgency="normal",
+                deadline=now,
+                requested_workers=("autonomy_revalidator",),
+                persona_state_version=persona.state_version,
+                config_version=persona.config_version,
+            ),
+        )
+
     @staticmethod
     def _build_frame(**values) -> AttentionFrame:
         identity = {
@@ -278,6 +332,25 @@ class AttentionScheduler:
         if not value or value in values:
             return values
         return values + (value,)
+
+    @staticmethod
+    def _payload_texts(value: object) -> tuple[str, ...]:
+        if not isinstance(value, (list, tuple)):
+            return ()
+        normalized = tuple(dict.fromkeys(str(item).strip() for item in value))
+        if any(not item for item in normalized):
+            return ()
+        return normalized
+
+    @staticmethod
+    def _payload_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return None
+        return normalized if normalized >= 0 else None
 
 
 __all__ = ("AttentionFrame", "AttentionScheduler", "PendingAttentionWindow")
