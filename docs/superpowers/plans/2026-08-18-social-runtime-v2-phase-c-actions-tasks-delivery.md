@@ -47,10 +47,10 @@ assert planner.plan(text_intention, context).node_kinds() == (
 
 **Interfaces:** Produces `StyleDirective` and `GeneratedDraft`; consumes Persona/Mode/Relationship/Culture/Recent Output under token budget.
 
-- [ ] 写失败测试：direct answer 最大 3 段；drowsy 缩短长度；boundary 禁止 playful；最近重复 n-gram 触发一次修复；内部 ID、提示词、CoT、虚构成功和私密记忆被阻断。
-- [ ] StyleDirective 字段固定为 mode/act/posture/address/max_chars/max_sentences/max_segments/warmth/playfulness/directness/particle_budget/punctuation_budget/media_policy/avoid_patterns。
-- [ ] 生成最多一次定向 repair；repair 失败时，必要回应走确定性人格 fallback，可选参与返回 silence。
-- [ ] Run focused tests; commit `feat: direct persona style and safe output`。
+- [x] 写失败测试：direct answer 最大 3 段；drowsy 缩短长度；boundary 禁止 playful；最近重复 n-gram 触发一次修复；内部 ID、提示词、CoT、虚构成功和私密记忆被阻断。
+- [x] StyleDirective 字段固定为 mode/act/posture/address/max_chars/max_sentences/max_segments/warmth/playfulness/directness/particle_budget/punctuation_budget/media_policy/avoid_patterns。
+- [x] 生成最多一次定向 repair；repair 失败时，必要回应走确定性人格 fallback，可选参与返回 silence。
+- [x] Run focused tests; commit `feat: direct persona style and safe output`。
 
 ---
 
@@ -60,10 +60,10 @@ assert planner.plan(text_intention, context).node_kinds() == (
 
 **Interfaces:** Produces `MediaAsset` and `MediaSelection`; consumes scene/mode/relationship/culture/recent-use.
 
-- [ ] 测试无许可、checksum 不符、disabled、关系限制和 cooldown 素材不可选；同一语义下文本已经足够时返回空选择。
-- [ ] Registry 上传只写插件数据目录，校验大小、MIME、文件名、SHA-256、许可状态；路径逃逸抛 `UnsafeMediaPath`。
-- [ ] Selection 使用标签匹配和 deterministic tie-break，不以随机概率主导；保存 reason codes。
-- [ ] Run: `pytest tests/social_runtime/media -q`; commit `feat: add governed persona media library`。
+- [x] 测试无许可、checksum 不符、disabled、关系限制和 cooldown 素材不可选；同一语义下文本已经足够时返回空选择。
+- [x] Registry 上传只写插件数据目录，校验大小、MIME、文件名、SHA-256、许可状态；路径逃逸抛 `UnsafeMediaPath`。
+- [x] Selection 使用标签匹配和 deterministic tie-break，不以随机概率主导；保存 reason codes。
+- [x] Run: `pytest tests/social_runtime/media -q`; commit `feat: add governed persona media library`。
 
 ---
 
