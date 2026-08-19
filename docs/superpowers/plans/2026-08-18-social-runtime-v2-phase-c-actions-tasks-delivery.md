@@ -73,11 +73,11 @@ assert planner.plan(text_intention, context).node_kinds() == (
 
 **Interfaces:** `CapabilityDescriptor` 声明 typed I/O/risk/scope/idempotency/cancel/progress/latency/media/confirmation；`TaskRuntime.propose/confirm/start/apply_event/cancel/expire` 返回 `TaskRun`。
 
-- [ ] 写合法状态测试：`PROPOSED→AWAITING_CONFIRMATION→QUEUED→RUNNING→SUCCEEDED`；非法 `SUCCEEDED→RUNNING` 拒绝；重复 Provider Event 幂等。
-- [ ] 外部副作用/sensitive/destructive 必须确认；requester/group/topic/auth/idempotency/provider 全量持久化。
-- [ ] AstrBot Adapter 只通过已注册 Provider Contract 调用，不解析其他 bot 文本；结构化结果和媒体先验证再发 Task Event。
-- [ ] 崩溃恢复 RUNNING Task：幂等 Provider 查询状态；不可查询的标记 `UNKNOWN` 并进入治理，不重做副作用。
-- [ ] Run focused/recovery tests; commit `feat: run persistent governed capabilities`。
+- [x] 写合法状态测试：`PROPOSED→AWAITING_CONFIRMATION→QUEUED→RUNNING→SUCCEEDED`；非法 `SUCCEEDED→RUNNING` 拒绝；重复 Provider Event 幂等。
+- [x] 外部副作用/sensitive/destructive 必须确认；requester/group/topic/auth/idempotency/provider 全量持久化。
+- [x] AstrBot Adapter 只通过已注册 Provider Contract 调用，不解析其他 bot 文本；结构化结果和媒体先验证再发 Task Event。
+- [x] 崩溃恢复 RUNNING Task：幂等 Provider 查询状态；不可查询的标记 `UNKNOWN` 并进入治理，不重做副作用。
+- [x] Run focused/recovery tests; commit `feat: run persistent governed capabilities`。
 
 ---
 
