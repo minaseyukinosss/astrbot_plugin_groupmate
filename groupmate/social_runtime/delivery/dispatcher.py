@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Awaitable, Callable, Protocol
 
 from ..actions.contracts import DeliveryReceipt, OutboxPart, OutboxStatus
 from .outbox import OutboxService, OutboxStateConflict
@@ -13,9 +13,16 @@ class DeliveryTransport(Protocol):
 
 
 class DeliveryDispatcher:
-    def __init__(self, outbox: OutboxService, transport: DeliveryTransport) -> None:
+    def __init__(
+        self,
+        outbox: OutboxService,
+        transport: DeliveryTransport,
+        *,
+        receipt_handler: Callable[[DeliveryReceipt], Awaitable[OutboxPart]] | None = None,
+    ) -> None:
         self.outbox = outbox
         self.transport = transport
+        self.receipt_handler = receipt_handler
 
     async def dispatch(self, part: OutboxPart) -> OutboxPart:
         durable = self.outbox.outbox(part.part_id)
@@ -28,7 +35,18 @@ class DeliveryDispatcher:
             raise OutboxStateConflict("delivery transport must return DeliveryReceipt")
         if receipt.part_id != durable.part_id:
             raise OutboxStateConflict("delivery receipt belongs to another part")
-        return self.outbox.record_receipt(receipt)
+        if self.receipt_handler is None:
+            return self.outbox.record_receipt(receipt)
+        handled = await self.receipt_handler(receipt)
+        if (
+            not isinstance(handled, OutboxPart)
+            or handled.part_id != durable.part_id
+            or handled.receipt != receipt
+        ):
+            raise OutboxStateConflict(
+                "receipt handler must persist and return the matching Outbox part"
+            )
+        return handled
 
     async def dispatch_next(self, *, now: int) -> OutboxPart | None:
         claimed = self.outbox.claim_ready(now=now)

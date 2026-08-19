@@ -144,6 +144,7 @@ NodeExecutor = Callable[
     Awaitable[NodeExecutionResult],
 ]
 EventSink = Callable[[SocialEventEnvelope], Awaitable[object]]
+PlanAuthorizer = Callable[[ActionPlan], None]
 
 _TASK_EVENT_NODE_KINDS = frozenset(
     {
@@ -176,6 +177,7 @@ class ExecutionCoordinator:
         task_runtime: TaskRuntime | None = None,
         outbox: OutboxService | None = None,
         event_sink: EventSink | None = None,
+        plan_authorizer: PlanAuthorizer | None = None,
     ) -> None:
         self.path = Path(path)
         initialize_database(self.path)
@@ -183,6 +185,7 @@ class ExecutionCoordinator:
         self.task_runtime = task_runtime or TaskRuntime(self.path)
         self.outbox = outbox or OutboxService(self.path)
         self._event_sink = event_sink
+        self._plan_authorizer = plan_authorizer
 
     def submit(
         self,
@@ -200,6 +203,8 @@ class ExecutionCoordinator:
             raise PlanNotValidated("coordinator requires validation for this exact plan")
         if plan.expires_at <= now:
             raise PlanNotValidated("validated plan has expired before execution")
+        if self._plan_authorizer is not None:
+            self._plan_authorizer(plan)
         states = tuple(
             NodeExecutionState(
                 node_id=node.node_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import closing
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from ..actions.contracts import (
     BotLedgerEntry,
@@ -26,6 +26,10 @@ class BundleIdentityConflict(RuntimeError):
 
 class UnsupportedDeliveryPart(ValueError):
     """Raised before an unsupported platform part enters Outbox."""
+
+
+class OutboxAuthorizationError(PermissionError):
+    """Raised when the composition release gate forbids a bundle's group."""
 
 
 class OutboxStateConflict(RuntimeError):
@@ -124,18 +128,23 @@ class OutboxService:
         path: Path,
         *,
         supported_part_kinds: Iterable[DeliveryPartKind] = tuple(DeliveryPartKind),
+        group_authorizer: Callable[[str], bool] | None = None,
+        bundle_authorizer: Callable[[DeliveryBundle], bool] | None = None,
     ) -> None:
         self.path = Path(path)
         initialize_database(self.path)
         self.supported_part_kinds = frozenset(
             DeliveryPartKind(item) for item in supported_part_kinds
         )
+        self._group_authorizer = group_authorizer
+        self._bundle_authorizer = bundle_authorizer
 
     def commit_bundle(self, bundle: DeliveryBundle) -> DeliveryBundle:
         if not isinstance(bundle, DeliveryBundle):
             raise ValueError("bundle must be a DeliveryBundle")
         # Recreate at the authority boundary so direct dataclass construction cannot bypass it.
         bundle = _bundle_from_dict(_bundle_to_dict(bundle))
+        self._require_authorized(bundle)
         for part in bundle.parts:
             if part.kind not in self.supported_part_kinds:
                 raise UnsupportedDeliveryPart(
@@ -216,6 +225,9 @@ class OutboxService:
                 for row in rows:
                     if len(claimed) >= limit:
                         break
+                    bundle = _bundle_from_dict(json.loads(row["bundle_json"]))
+                    if not self._is_authorized(bundle):
+                        continue
                     part = _part_from_dict(json.loads(row["payload_json"]))
                     siblings = db.execute(
                         "SELECT status, payload_json FROM outbox WHERE bundle_id=?",
@@ -239,7 +251,6 @@ class OutboxService:
                         (part.part_id,),
                     ).rowcount
                     if changed == 1:
-                        bundle = _bundle_from_dict(json.loads(row["bundle_json"]))
                         claimed.append(
                             self.in_memory_part(bundle, part, OutboxStatus.SENDING)
                         )
@@ -378,6 +389,27 @@ class OutboxService:
         with closing(connect_database(self.path)) as db:
             return int(db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0])
 
+    def _require_authorized(self, bundle: DeliveryBundle) -> None:
+        if self._group_authorizer is not None and not self._group_authorizer(
+            bundle.group_id
+        ):
+            raise OutboxAuthorizationError(
+                "Gate C forbids DeliveryBundle persistence for this group"
+            )
+        if self._bundle_authorizer is not None and not self._bundle_authorizer(bundle):
+            raise OutboxAuthorizationError(
+                "DeliveryBundle requires a matching validated ActionPlan"
+            )
+
+    def _is_authorized(self, bundle: DeliveryBundle) -> bool:
+        return bool(
+            (self._group_authorizer is None or self._group_authorizer(bundle.group_id))
+            and (
+                self._bundle_authorizer is None
+                or self._bundle_authorizer(bundle)
+            )
+        )
+
     def receipted_parts(self) -> tuple[OutboxPart, ...]:
         with closing(connect_database(self.path)) as db:
             rows = db.execute(
@@ -443,6 +475,7 @@ class OutboxService:
 
 __all__ = (
     "BundleIdentityConflict",
+    "OutboxAuthorizationError",
     "OutboxService",
     "OutboxStateConflict",
     "UnsupportedDeliveryPart",

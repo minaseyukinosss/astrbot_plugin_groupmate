@@ -9,6 +9,7 @@ from typing import Mapping
 @dataclass(frozen=True)
 class SocialRuntimeSettings:
     enabled_groups: tuple[str, ...]
+    social_runtime_test_groups: tuple[str, ...]
     runtime_mode: str
     generation_provider: str
     vision_provider: str
@@ -23,6 +24,11 @@ class SocialRuntimeSettings:
             enabled_groups=tuple(
                 str(value).strip()
                 for value in source.get("enabled_groups", ())
+                if str(value).strip()
+            ),
+            social_runtime_test_groups=tuple(
+                str(value).strip()
+                for value in source.get("social_runtime_test_groups", ())
                 if str(value).strip()
             ),
             runtime_mode=str(source.get("runtime_mode", "OFF") or "OFF").upper(),

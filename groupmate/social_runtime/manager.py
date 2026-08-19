@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping
 
 from .attention import AttentionFrame
+from .actions.contracts import ActionPlan, DeliveryBundle, PlanValidation
 from .actions.coordinator import ExecutionCoordinator
 from .cognition.contracts import CognitiveContext, CognitiveWorker
 from .cognition.service import CognitionBudget, CognitionService
@@ -20,6 +22,7 @@ from .event_fabric import SocialEventFabric
 from .governor import GovernorContext, GovernorResult, SocialGovernor
 from .intentions import IntentionEngine
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
+from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import GroupSceneActor, SceneWorkRequest, SceneWorkResult
@@ -67,6 +70,7 @@ class SocialRuntimeManager:
         persona_id: str,
         mode: RuntimeMode,
         enabled_groups: tuple[str, ...],
+        social_runtime_test_groups: tuple[str, ...] = (),
         config_version: int = 1,
         event_store: SQLiteSocialEventStore | None = None,
         cognition_workers: Mapping[str, CognitiveWorker] | None = None,
@@ -74,11 +78,31 @@ class SocialRuntimeManager:
         governance_state: RuntimeGovernanceState | None = None,
     ) -> None:
         resolved_mode = RuntimeMode(mode)
-        if resolved_mode is not RuntimeMode.SHADOW:
-            raise RuntimeModeUnavailable("current release gate only supports SHADOW")
+        enabled = frozenset(
+            str(group_id).strip()
+            for group_id in enabled_groups
+            if str(group_id).strip()
+        )
+        test_groups = frozenset(
+            str(group_id).strip()
+            for group_id in social_runtime_test_groups
+            if str(group_id).strip()
+        )
+        if resolved_mode is RuntimeMode.OFF:
+            raise RuntimeModeUnavailable(
+                "current release gate only supports SHADOW or allowlisted SOCIAL_RUNTIME"
+            )
+        if resolved_mode is RuntimeMode.SOCIAL_RUNTIME and (
+            not test_groups or not test_groups.issubset(enabled)
+        ):
+            raise RuntimeModeUnavailable(
+                "current release gate only supports SHADOW unless Gate C has a "
+                "test group allowlist contained in enabled_groups"
+            )
         self.persona_id = persona_id
         self.mode = resolved_mode
-        self.enabled_groups = frozenset(map(str, enabled_groups))
+        self.enabled_groups = enabled
+        self.social_runtime_test_groups = test_groups
         self.config_version = config_version
         self.event_store = event_store or SQLiteSocialEventStore(database_path)
         self.supervisor = PersonaSupervisor(
@@ -94,12 +118,20 @@ class SocialRuntimeManager:
         self._governance_state = governance_state or RuntimeGovernanceState()
         self.fabric = SocialEventFabric(self._new_actor, self.event_store)
         self.task_runtime = TaskRuntime(database_path)
-        self.outbox = OutboxService(database_path)
+        self.outbox = OutboxService(
+            database_path,
+            group_authorizer=lambda group_id: self.group_mode(group_id)
+            is RuntimeMode.SOCIAL_RUNTIME,
+            bundle_authorizer=self._bundle_has_matching_plan,
+        )
         self.coordinator = ExecutionCoordinator(
             database_path,
             task_runtime=self.task_runtime,
             outbox=self.outbox,
             event_sink=self._publish_execution_event,
+            plan_authorizer=lambda plan: self.require_social_runtime_group(
+                plan.group_id
+            ),
         )
         self._started = False
         self._closing = False
@@ -198,6 +230,53 @@ class SocialRuntimeManager:
     @property
     def governance_state(self) -> RuntimeGovernanceState:
         return self._governance_state
+
+    def group_mode(self, group_id: str) -> RuntimeMode:
+        normalized = str(group_id).strip()
+        if normalized not in self.enabled_groups:
+            return RuntimeMode.OFF
+        if (
+            self.mode is RuntimeMode.SOCIAL_RUNTIME
+            and normalized in self.social_runtime_test_groups
+        ):
+            return RuntimeMode.SOCIAL_RUNTIME
+        return RuntimeMode.SHADOW
+
+    def require_social_runtime_group(self, group_id: str) -> None:
+        if self.group_mode(group_id) is not RuntimeMode.SOCIAL_RUNTIME:
+            raise RuntimeModeUnavailable(
+                "Gate C external actions require an explicit test group allowlist"
+            )
+
+    def submit_plan(
+        self,
+        plan: ActionPlan,
+        validation: PlanValidation,
+        *,
+        now: int,
+    ):
+        self.require_social_runtime_group(plan.group_id)
+        return self.coordinator.submit(plan, validation, now=now)
+
+    def _bundle_has_matching_plan(self, bundle: DeliveryBundle) -> bool:
+        if not hasattr(self, "coordinator"):
+            return False
+        with closing(connect_database(self.outbox.path)) as db:
+            rows = db.execute(
+                "SELECT plan_id FROM action_plans WHERE correlation_id=? "
+                "AND persona_id=? AND group_id=? "
+                "AND status IN ('running','completed')",
+                (bundle.correlation_id, bundle.persona_id, bundle.group_id),
+            ).fetchall()
+        for row in rows:
+            plan = self.coordinator.load(str(row["plan_id"])).plan
+            if (
+                bundle.topic_id == plan.topic_id
+                and bundle.expires_at <= plan.expires_at
+                and bundle.created_at < bundle.expires_at
+            ):
+                return True
+        return False
 
     def update_governance_state(
         self,

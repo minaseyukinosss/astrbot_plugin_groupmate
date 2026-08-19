@@ -423,6 +423,16 @@ class TaskRuntime:
             if task.status not in (TaskStatus.QUEUED, TaskStatus.RUNNING):
                 self._invalid_event(task, event)
             target = TaskStatus.CANCELED
+        if (
+            event.occurred_at >= task.expires_at
+            and event.kind
+            in {
+                ProviderEventKind.SUCCEEDED,
+                ProviderEventKind.FAILED,
+                ProviderEventKind.CANCELED,
+            }
+        ):
+            changes["delivery_relevant"] = False
         updated = task.transition(target, now=event.occurred_at, **changes)
         return self._save(
             task,

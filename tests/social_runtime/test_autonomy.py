@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -285,3 +286,55 @@ def test_failed_fabric_append_reuses_same_event_identity_after_restart(tmp_path)
     assert recovered == (persisted,)
     assert persisted.status is OpportunityStatus.EMITTED
     assert persisted.attempts == 1
+
+
+def test_stale_revalidation_cannot_roll_back_an_emitted_opportunity(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        emitted = []
+
+        async def sink(event):
+            emitted.append(event.event_id)
+
+        first = AutonomousOpportunityScheduler(
+            path,
+            persona_id="persona-1",
+            event_sink=sink,
+        )
+        second = AutonomousOpportunityScheduler(
+            path,
+            persona_id="persona-1",
+            event_sink=sink,
+        )
+        scheduled = first.schedule(_opportunity(), now=90)
+
+        def stale_revalidation(opportunity):
+            del opportunity
+            failure = []
+
+            def emit_from_second_scheduler():
+                try:
+                    asyncio.run(
+                        second.run_due(
+                            now=100,
+                            revalidate=lambda candidate: _revalidation(),
+                        )
+                    )
+                except BaseException as exc:
+                    failure.append(exc)
+
+            thread = threading.Thread(target=emit_from_second_scheduler)
+            thread.start()
+            thread.join()
+            if failure:
+                raise failure[0]
+            return _revalidation(scene_allows=False)
+
+        await first.run_due(now=100, revalidate=stale_revalidation)
+        return first.get(scheduled.opportunity_id), emitted
+
+    persisted, emitted = asyncio.run(scenario())
+
+    assert persisted.status is OpportunityStatus.EMITTED
+    assert persisted.attempts == 1
+    assert len(emitted) == 1

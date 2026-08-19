@@ -8,7 +8,12 @@
     "description": "运行模式",
     "type": "string",
     "default": "OFF",
-    "options": ["OFF", "SHADOW"]
+    "options": ["OFF", "SHADOW", "SOCIAL_RUNTIME"]
+  },
+  "social_runtime_test_groups": {
+    "description": "Gate C 测试群白名单（仅允许 fake/test group）",
+    "type": "list",
+    "default": []
   },
   "generation_provider": {
     "description": "文本生成模型",

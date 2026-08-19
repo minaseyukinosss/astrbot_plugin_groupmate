@@ -284,40 +284,52 @@ class AutonomousOpportunityScheduler:
             raise ValueError("scheduler time must not be negative")
         emitted = []
         for opportunity_id in self._due_ids(now):
-            opportunity = self.get(opportunity_id)
-            if opportunity.expires_at <= now:
-                self._persist(replace(opportunity, status=OpportunityStatus.EXPIRED), now)
+            current = self.get(opportunity_id)
+            if current.expires_at <= now:
+                self._persist(
+                    replace(current, status=OpportunityStatus.EXPIRED),
+                    now,
+                    expected=current,
+                )
                 continue
-            context = revalidate(opportunity)
+            context = revalidate(current)
             if not isinstance(context, OpportunityRevalidation):
                 raise ValueError("opportunity revalidator returned an invalid context")
             opportunity = replace(
-                opportunity,
+                current,
                 last_scene_version=context.scene_version,
                 last_relationship_version=context.relationship_version,
             )
             if context.quiet_until is not None and context.quiet_until > now:
                 if context.quiet_until >= opportunity.expires_at:
                     self._persist(
-                        replace(opportunity, status=OpportunityStatus.EXPIRED), now
+                        replace(opportunity, status=OpportunityStatus.EXPIRED),
+                        now,
+                        expected=current,
                     )
                 else:
                     self._persist(
-                        replace(opportunity, earliest_at=context.quiet_until), now
+                        replace(opportunity, earliest_at=context.quiet_until),
+                        now,
+                        expected=current,
                     )
                 continue
             if not self._all_gates_allow(context):
-                self._persist(opportunity, now)
+                self._persist(opportunity, now, expected=current)
                 continue
             if opportunity.status is OpportunityStatus.SCHEDULED:
-                opportunity = self._claim(opportunity, now)
+                opportunity = self._claim(opportunity, now, expected=current)
+            elif not self._persist(opportunity, now, expected=current):
+                opportunity = self.get(opportunity.opportunity_id)
             if opportunity.status is not OpportunityStatus.EMITTING:
                 continue
             event = self._due_event(opportunity, now)
             await self._event_sink(event)
-            opportunity = replace(opportunity, status=OpportunityStatus.EMITTED)
-            self._persist(opportunity, now)
-            emitted.append(opportunity)
+            completed = replace(opportunity, status=OpportunityStatus.EMITTED)
+            if self._persist(completed, now, expected=opportunity):
+                emitted.append(completed)
+            else:
+                emitted.append(self.get(opportunity.opportunity_id))
         return tuple(emitted)
 
     def schedule_followup(
@@ -345,15 +357,24 @@ class AutonomousOpportunityScheduler:
             followup_count=current.followup_count + 1,
             status=OpportunityStatus.SCHEDULED,
         )
-        self._persist(updated, now)
+        if not self._persist(updated, now, expected=current):
+            raise OpportunityIdentityConflict(
+                "opportunity advanced concurrently before follow-up scheduling"
+            )
         return updated
 
     def _claim(
-        self, opportunity: AutonomousOpportunity, now: int
+        self,
+        opportunity: AutonomousOpportunity,
+        now: int,
+        *,
+        expected: AutonomousOpportunity,
     ) -> AutonomousOpportunity:
         if opportunity.attempts >= opportunity.max_attempts:
             self._persist(
-                replace(opportunity, status=OpportunityStatus.EXPIRED), now
+                replace(opportunity, status=OpportunityStatus.EXPIRED),
+                now,
+                expected=expected,
             )
             return self.get(opportunity.opportunity_id)
         attempt = opportunity.attempts + 1
@@ -369,7 +390,7 @@ class AutonomousOpportunityScheduler:
                 changed = db.execute(
                     "UPDATE autonomous_opportunities SET status=?, earliest_at=?, "
                     "state_json=?, updated_at=? WHERE persona_id=? AND opportunity_id=? "
-                    "AND status='scheduled'",
+                    "AND state_json=?",
                     (
                         claimed.status.value,
                         claimed.earliest_at,
@@ -377,6 +398,7 @@ class AutonomousOpportunityScheduler:
                         now,
                         self.persona_id,
                         claimed.opportunity_id,
+                        _canonical_json(_opportunity_to_dict(expected)),
                     ),
                 ).rowcount
                 db.commit()
@@ -385,12 +407,18 @@ class AutonomousOpportunityScheduler:
                 raise
         return claimed if changed == 1 else self.get(opportunity.opportunity_id)
 
-    def _persist(self, opportunity: AutonomousOpportunity, now: int) -> None:
+    def _persist(
+        self,
+        opportunity: AutonomousOpportunity,
+        now: int,
+        *,
+        expected: AutonomousOpportunity,
+    ) -> bool:
         with closing(connect_database(self.path)) as db:
             changed = db.execute(
                 "UPDATE autonomous_opportunities SET status=?, earliest_at=?, "
                 "expires_at=?, state_json=?, updated_at=? "
-                "WHERE persona_id=? AND opportunity_id=?",
+                "WHERE persona_id=? AND opportunity_id=? AND state_json=?",
                 (
                     opportunity.status.value,
                     opportunity.earliest_at,
@@ -399,11 +427,18 @@ class AutonomousOpportunityScheduler:
                     int(now),
                     self.persona_id,
                     opportunity.opportunity_id,
+                    _canonical_json(_opportunity_to_dict(expected)),
                 ),
             ).rowcount
             db.commit()
-        if changed != 1:
+            exists = db.execute(
+                "SELECT 1 FROM autonomous_opportunities "
+                "WHERE persona_id=? AND opportunity_id=?",
+                (self.persona_id, opportunity.opportunity_id),
+            ).fetchone()
+        if exists is None:
             raise KeyError(opportunity.opportunity_id)
+        return changed == 1
 
     def _due_ids(self, now: int) -> tuple[str, ...]:
         with closing(connect_database(self.path)) as db:

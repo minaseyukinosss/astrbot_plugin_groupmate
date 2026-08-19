@@ -132,8 +132,8 @@ assert store.bot_ledger(part.part_id).correlation_id == bundle.correlation_id
 
 **Interfaces:** Phase C 完整 Event→Receipt 线路。
 
-- [ ] 故障矩阵覆盖 generator failure、Provider timeout、duplicate progress、cancel race、partial send、unknown receipt、restart、expired result、projection failure。
-- [ ] 在 fake OneBot 测试群启用 `SOCIAL_RUNTIME`；未列入 allowlist 的群仍强制 `SHADOW/OFF`。
-- [ ] Run: `pytest tests/social_runtime tests/scenarios tests/contracts tests/recovery tests/shared -q && python -m tests.architecture_guard && git diff --check`。
-- [ ] 验证所有可见 Part 均可追溯到 Decision/Plan/Bundle/idempotency；Shadow 测试仍零副作用。
-- [ ] Commit `test: verify action task and delivery recovery`，请求代码评审，通过后进入 Phase D。
+- [x] 故障矩阵覆盖 generator failure、Provider timeout、duplicate progress、cancel race、partial send、unknown receipt、restart、expired result、projection failure。
+- [x] 在 fake OneBot 测试群启用 `SOCIAL_RUNTIME`；未列入 allowlist 的群仍强制 `SHADOW/OFF`。
+- [x] Run: `pytest tests/social_runtime tests/scenarios tests/contracts tests/recovery tests/shared -q && python -m tests.architecture_guard && git diff --check`。
+- [x] 验证所有可见 Part 均可追溯到 Decision/Plan/Bundle/idempotency；Shadow 测试仍零副作用。
+- [x] Commit `test: verify action task and delivery recovery`，请求代码评审，通过后进入 Phase D。

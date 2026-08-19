@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..settings import SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
-from ..social_runtime.manager import RuntimeModeUnavailable, SocialRuntimeManager
+from ..social_runtime.manager import SocialRuntimeManager
 from .astrbot_events import AstrBotEventTranslator
 
 
@@ -33,14 +33,13 @@ class AstrBotSocialRuntimeBridge:
         if self._started:
             return
         mode = RuntimeMode(self.settings.runtime_mode)
-        if mode is RuntimeMode.SOCIAL_RUNTIME:
-            raise RuntimeModeUnavailable("current release gate only supports SHADOW")
-        if mode is RuntimeMode.SHADOW:
+        if mode in {RuntimeMode.SHADOW, RuntimeMode.SOCIAL_RUNTIME}:
             self._manager = SocialRuntimeManager(
                 database_path=self.data_dir / self.settings.database_name,
                 persona_id=self.settings.persona_id,
                 mode=mode,
                 enabled_groups=self.settings.enabled_groups,
+                social_runtime_test_groups=self.settings.social_runtime_test_groups,
             )
             await self._manager.start()
         self._started = True

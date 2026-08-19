@@ -292,7 +292,12 @@ class GroupSceneActor:
             command = await self._mailbox.get()
             try:
                 if isinstance(command, _StopCommand):
-                    self._save_snapshot()
+                    try:
+                        self._save_snapshot()
+                    except Exception:
+                        # Shutdown snapshots are the same replay optimization as
+                        # periodic snapshots; committed Inbox/Journal state wins.
+                        self._snapshot_failure_count += 1
                     command.future.set_result(None)
                     return
                 if isinstance(command, _SnapshotCommand):
