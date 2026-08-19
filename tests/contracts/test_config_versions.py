@@ -77,7 +77,9 @@ def test_config_lifecycle_is_versioned_and_new_cycles_only_read_new_publish(tmp_
     assert first.data["status"] == ConfigStatus.PUBLISHED.value
     assert first.event.payload["status"] == ConfigStatus.PUBLISHED.value
     assert first.event.payload["config_version"] == 1
+    assert first.event.payload["control_version"] == 3
     assert second.data["version"] == 2
+    assert second.event.payload["control_version"] == 6
     assert repository.load("behavior", 1).status is ConfigStatus.SUPERSEDED
     assert repository.load("behavior", 2).status is ConfigStatus.PUBLISHED
     assert repository.published_version() == 2

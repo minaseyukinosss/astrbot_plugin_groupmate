@@ -131,6 +131,7 @@ def test_duplicate_command_id_is_idempotent_but_cannot_change_identity(tmp_path)
     assert replay == first
     assert first.event.event_type == "control.runtime_paused"
     assert first.event.payload["paused"] is True
+    assert first.event.payload["control_version"] == 1
     assert first.version == 1
     assert _action_count(path) == 1
 

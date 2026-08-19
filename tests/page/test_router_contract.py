@@ -69,6 +69,7 @@ def test_store_ignores_stale_entities_and_never_optimistically_applies_commands(
         "entity:'people:one', projection_version:3, summary:{status:'corrected'}});"
         "console.log(JSON.stringify({"
         "afterCommand, afterStale, current:store.selectEntity('people:one'),"
+        "liveView:store.selectView('people'),"
         "pendingAfterCommand, pendingAfterProjection:store.snapshot().pendingCommands.length"
         "}));",
     )
@@ -77,6 +78,9 @@ def test_store_ignores_stale_entities_and_never_optimistically_applies_commands(
     assert result["afterStale"]["summary"]["status"] == "active"
     assert result["current"]["summary"]["status"] == "corrected"
     assert result["current"]["projection_version"] == 3
+    assert result["liveView"]["items"][0]["summary"]["status"] == "corrected"
+    assert result["liveView"]["cursor"] == 3
+    assert result["liveView"]["projection_version"] == 3
     assert result["pendingAfterCommand"] == 1
     assert result["pendingAfterProjection"] == 0
 

@@ -114,6 +114,16 @@ class ControlPlaneWebAPI:
                 self._degraded["query"] = str(exc)
                 return self._error(503, "projection_query_unavailable", detail=str(exc))
             self._degraded.pop("query", None)
+            entity_ref = str(request.query.get("entity_ref") or "").strip()
+            if entity_ref:
+                items = [
+                    item
+                    for item in body.get("items", [])
+                    if str(item.get("entity_ref") or "") == entity_ref
+                ]
+                if not items:
+                    return self._error(404, "entity_not_found")
+                body = {**body, "items": items}
             if endpoint == "bootstrap":
                 body = {
                     **body,

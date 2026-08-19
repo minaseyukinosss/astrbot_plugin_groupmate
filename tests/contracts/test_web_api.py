@@ -157,6 +157,45 @@ def test_bootstrap_selects_scope_from_server_when_page_has_no_group_context(tmp_
     assert response.body["selected_group_id"] == "group-1"
 
 
+def test_inspector_query_filters_by_scoped_projection_entity_ref(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    _seed_runtime(path)
+    api = _api(path, [])
+
+    listing = asyncio.run(api.handle(_request("/runtime")))
+    entity_ref = listing.body["items"][0]["entity_ref"]
+    request = _request("/runtime")
+    detail = asyncio.run(
+        api.handle(
+            WebRequest(
+                method=request.method,
+                path=request.path,
+                query={**request.query, "entity_ref": entity_ref},
+                headers=request.headers,
+                json_body=request.json_body,
+                username=request.username,
+            )
+        )
+    )
+    missing = asyncio.run(
+        api.handle(
+            WebRequest(
+                method=request.method,
+                path=request.path,
+                query={**request.query, "entity_ref": "runtime:not-in-scope"},
+                headers=request.headers,
+                json_body=request.json_body,
+                username=request.username,
+            )
+        )
+    )
+
+    assert detail.status == 200
+    assert [item["entity_ref"] for item in detail.body["items"]] == [entity_ref]
+    assert missing.status == 404
+    assert missing.body["error"] == "entity_not_found"
+
+
 def test_command_uses_server_username_publishes_event_and_preserves_409(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
     _seed_runtime(path)

@@ -37,6 +37,7 @@ _SAFE_SCALAR_FIELDS = (
     "outcome",
     "scene_version",
     "config_version",
+    "control_version",
     "persona_state_version",
     "delivery_relevant",
     "direct_request",

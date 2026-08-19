@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -135,3 +136,18 @@ def test_bridge_uses_only_astrbot_page_bridge_and_exposes_real_states():
     assert "disconnected" in source
     assert "conflict" in source
     assert "15_000" in source
+
+
+def test_all_es_modules_parse_and_resolve_only_existing_relative_modules():
+    for path in PAGE.rglob("*.js"):
+        source = path.read_text(encoding="utf-8")
+        subprocess.run(
+            ["node", "--input-type=module", "--check"],
+            input=source,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        for imported in re.findall(r"from\s+[\"']([^\"']+)[\"']", source):
+            if imported.startswith("."):
+                assert (path.parent / imported).resolve().is_file()

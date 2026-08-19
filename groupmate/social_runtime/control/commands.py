@@ -299,6 +299,7 @@ class CommandService:
                     "action_ref": action_id,
                     "reason": context.reason.strip(),
                     "version": result_version,
+                    "control_version": control_version,
                     "result": data,
                     **event_summary,
                 },

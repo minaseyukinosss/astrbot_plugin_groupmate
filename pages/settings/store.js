@@ -60,14 +60,32 @@ export class ProjectionStore {
 
   applyProjectionEvent(event) {
     if (!event || !event.entity) return false;
-    const applied = this.mergeEntity({
+    const entity = {
       entity_ref: event.entity,
       kind: event.kind,
       projection_version: Number(event.projection_version || 0),
       summary: clone(event.summary || {}),
       cursor: Number(event.cursor || 0),
-    });
+    };
+    const applied = this.mergeEntity(entity);
     if (applied) {
+      const projection = String(event.entity).split(":", 1)[0];
+      const view = this.views.get(projection);
+      if (view) {
+        const items = [...(view.items || [])];
+        const index = items.findIndex((item) => item.entity_ref === event.entity);
+        if (index === -1) items.push(entity);
+        else items[index] = entity;
+        this.views.set(projection, {
+          ...view,
+          items,
+          cursor: Math.max(Number(view.cursor || 0), Number(event.cursor || 0)),
+          projection_version: Math.max(
+            Number(view.projection_version || 0),
+            Number(event.projection_version || 0),
+          ),
+        });
+      }
       for (const [commandId, pending] of this.pendingCommands) {
         if (Number(event.projection_version || 0) > Number(pending.expected_version || 0)) {
           this.pendingCommands.delete(commandId);

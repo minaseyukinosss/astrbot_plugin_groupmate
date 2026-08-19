@@ -85,11 +85,11 @@ assert repository.published_version() == 3
 
 **Interfaces:** 每个 workspace 只接收 Store selector 和 command callback；Inspector 使用 entity ref Query。
 
-- [ ] Runtime：状态叙述、实时活动、任务、健康、暂停/恢复；Persona：Constitution、状态/模式、注意力、自主性、Governor、风格、媒体、工具、Draft/Diff/Dry-run。
-- [ ] People：身份、关系维度、印象、经历、事实、open loops、承诺、文化、历史；Activity：因果时间线、观察、意图、Governor、Plan、Task、Delivery。
-- [ ] Governance：待复核、纠正、遗忘、身份关联、配置版本、校准、导出、保留和 Evaluation；任何 destructive action 二次确认并要求原因。
-- [ ] Inspector 只展示证据、结构化 Observation、候选/效用贡献、硬约束、Plan/版本/结果，不展示思维链。
-- [ ] Run: `pytest tests/page/test_workspaces.py -q`; commit `feat: add five social runtime workspaces`。
+- [x] Runtime：状态叙述、实时活动、任务、健康、暂停/恢复；Persona：Constitution、状态/模式、注意力、自主性、Governor、风格、媒体、工具、Draft/Diff/Dry-run。
+- [x] People：身份、关系维度、印象、经历、事实、open loops、承诺、文化、历史；Activity：因果时间线、观察、意图、Governor、Plan、Task、Delivery。
+- [x] Governance：待复核、纠正、遗忘、身份关联、配置版本、校准、导出、保留和 Evaluation；任何 destructive action 二次确认并要求原因。
+- [x] Inspector 只展示证据、结构化 Observation、候选/效用贡献、硬约束、Plan/版本/结果，不展示思维链。
+- [x] Run: `pytest tests/page/test_workspaces.py -q`; commit `feat: add five social runtime workspaces`。
 
 ---
 
