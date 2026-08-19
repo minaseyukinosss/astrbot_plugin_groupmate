@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +93,30 @@ class ProjectionStream:
             for row in rows
         )
         return StreamBatch(events, latest, False)
+
+    async def subscribe(
+        self,
+        *,
+        last_event_id: str | None,
+        persona_id: str,
+        group_id: str,
+        poll_seconds: float = 1.0,
+    ):
+        interval = float(poll_seconds)
+        if interval < 0:
+            raise ValueError("SSE poll interval must not be negative")
+        cursor = last_event_id
+        while True:
+            batch = self.read(
+                last_event_id=cursor,
+                persona_id=persona_id,
+                group_id=group_id,
+                limit=100,
+            )
+            yield self.encode(batch)
+            if batch.events:
+                cursor = str(batch.events[-1]["cursor"])
+            await asyncio.sleep(interval)
 
     @staticmethod
     def encode(batch: StreamBatch) -> str:

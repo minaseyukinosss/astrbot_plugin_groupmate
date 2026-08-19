@@ -5,6 +5,7 @@
 ## 上线边界
 
 - 当前 Gate D 只证明控制面的隔离性、可审计性和页面安全性。
+- `_conf_schema.json` 的 `control_admin_ids` 是服务端管理员用户名 allowlist；默认空列表会拒绝全部 Query、SSE 和 Command，不能用请求 body 或当前 username 动态扩权。
 - 真实 QQ 发送保持禁用。Phase D 不改变 `SOCIAL_RUNTIME` 的生产发送 Gate，也不扩大任何群 allowlist。
 - 只有后续阶段完成明确上线审批后，才能在指定测试群以外改变发送策略。
 - 关系亲密度不提供管理员权限，也不能替代高影响命令确认。

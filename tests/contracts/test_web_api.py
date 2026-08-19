@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 
 from groupmate.adapters.web_api import (
@@ -73,6 +74,7 @@ def _api(path, published):
         event_publisher=publish,
         persona_id="aemeath",
         group_ids=("group-1",),
+        admin_ids=("admin:root",),
     )
 
 
@@ -130,7 +132,49 @@ def test_query_endpoints_read_only_projection_and_never_domain_write_models(tmp_
 
     assert all(response.status == 200 for response in responses)
     assert all(response.body["cursor"] == 1 for response in responses)
+    assert all(
+        response.body["scope"]
+        == {"persona_id": "aemeath", "group_id": "group-1"}
+        for response in responses
+    )
     assert after == before == (0, 0, 0, 1)
+
+
+def test_read_and_write_endpoints_require_deployment_admin_allowlist(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    _seed_runtime(path)
+    factory_calls = []
+    api = ControlPlaneWebAPI(
+        queries=ProjectionQueries(path),
+        stream=ProjectionStream(path),
+        command_service_for=lambda username: factory_calls.append(username),
+        event_publisher=lambda _event: None,
+        persona_id="aemeath",
+        group_ids=("group-1",),
+        admin_ids=("admin:root",),
+    )
+
+    query = asyncio.run(api.handle(_request("/runtime", username="member:1")))
+    command = asyncio.run(
+        api.handle(
+            _request(
+                "/commands",
+                method="POST",
+                username="member:1",
+                body={
+                    "type": "pause",
+                    "expected_version": 0,
+                    "reason": "unauthorized",
+                    "confirmed": False,
+                    "payload": {"paused": True},
+                },
+            )
+        )
+    )
+
+    assert query.status == command.status == 403
+    assert query.body["error"] == command.body["error"] == "administrator_forbidden"
+    assert factory_calls == []
 
 
 def test_bootstrap_selects_scope_from_server_when_page_has_no_group_context(tmp_path):
@@ -332,3 +376,9 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
     methods = {call[0].rsplit("/", 1)[-1]: call[2] for call in context.calls}
     assert methods["commands"] == ["POST"]
     assert methods["events"] == ["GET"]
+
+
+def test_astrbot_route_forwards_scoped_inspector_entity_reference():
+    source = inspect.getsource(AstrBotControlPlaneRoutes._handler)
+
+    assert '"entity_ref": request.query.get("entity_ref")' in source

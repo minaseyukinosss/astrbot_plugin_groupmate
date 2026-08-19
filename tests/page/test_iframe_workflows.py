@@ -87,6 +87,7 @@ def test_complete_admin_workflow_preserves_independent_expected_versions(tmp_pat
         event_publisher=published.append,
         persona_id="aemeath",
         group_ids=("group-1",),
+        admin_ids=("admin:root",),
     )
     people = asyncio.run(
         api.handle(
@@ -185,6 +186,7 @@ await bridge.connect({{
 }});
 handlers.onOpen();
 handlers.onMessage({{parsed:{{entity:'tasks:one'}}}});
+handlers.onMessage({{parsed:{{kind:'snapshot_required', summary:{{reason:'cursor_expired'}}}}}});
 handlers.onError(new Error('offline'));
 await bridge.disconnect();
 console.log(JSON.stringify({{calls, states, polls}}));
@@ -206,4 +208,5 @@ console.log(JSON.stringify({{calls, states, polls}}));
         "disconnected",
         "polling",
     ]
-    assert value["polls"] == 1
+    assert ["event", None] not in value["calls"]
+    assert value["polls"] == 2

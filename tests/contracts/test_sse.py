@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from groupmate.social_runtime.contracts import SocialEventEnvelope
@@ -139,3 +140,42 @@ def test_expired_sse_cursor_returns_snapshot_required(tmp_path):
             "summary": {"reason": "cursor_expired"},
         },
     )
+
+
+def test_subscription_stays_open_and_delivers_later_projection_batches(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    store = SQLiteSocialEventStore(path)
+    _commit(
+        store,
+        1,
+        kind="control.runtime_paused",
+        payload={"paused": True},
+    )
+    projection = ProjectionConsumer(path, "governance")
+    projection.consume(10)
+    stream = ProjectionStream(path, retention=20)
+
+    async def scenario():
+        subscription = stream.subscribe(
+            last_event_id=None,
+            persona_id="aemeath",
+            group_id="group-1",
+            poll_seconds=0,
+        )
+        first = await anext(subscription)
+        _commit(
+            store,
+            2,
+            kind="control.runtime_resumed",
+            payload={"paused": False},
+        )
+        projection.consume(10)
+        second = await anext(subscription)
+        await subscription.aclose()
+        return first, second
+
+    first, second = asyncio.run(scenario())
+
+    assert "control.runtime_paused" in first
+    assert "control.runtime_resumed" in second
+    assert first != second

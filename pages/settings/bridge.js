@@ -33,6 +33,10 @@ export class ApiBridge {
           },
           onMessage: (event) => {
             if (event.parsed && typeof event.parsed === "object") {
+              if (event.parsed.kind === "snapshot_required") {
+                onPoll(params);
+                return;
+              }
               onEvent(event.parsed);
             }
           },

@@ -143,6 +143,9 @@ class ProjectionConsumer:
                         else self._optional_text(payload.get("group_id"))
                     ),
                     source_event_type=str(envelope.get("event_type") or ""),
+                    source_correlation_id=str(
+                        envelope.get("correlation_id") or ""
+                    ),
                     source_payload=(
                         envelope.get("payload")
                         if isinstance(envelope.get("payload"), Mapping)
@@ -231,6 +234,7 @@ class ProjectionConsumer:
         persona_id: str,
         group_id: str | None,
         source_event_type: str,
+        source_correlation_id: str,
         source_payload: Mapping[str, object],
         committed_at: int,
     ) -> _ProjectedItem | None:
@@ -257,6 +261,8 @@ class ProjectionConsumer:
             f"{hashlib.sha256((self.projection_name + chr(0) + scope).encode()).hexdigest()[:20]}"
         )
         summary = self._safe_summary(projected_kind, projected_payload)
+        if source_event_type.startswith("control.") and source_correlation_id:
+            summary["command_id"] = source_correlation_id
         evidence_refs = tuple(
             f"evidence:{hashlib.sha256(str(value).encode()).hexdigest()[:20]}"
             for value in self._sequence(projected_payload.get("evidence_event_ids"))

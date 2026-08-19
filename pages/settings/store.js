@@ -20,6 +20,13 @@ export class ProjectionStore {
 
   merge(view) {
     if (!view || typeof view !== "object" || !view.projection) return false;
+    if (
+      view.scope
+      && (
+        String(view.scope.persona_id || "") !== String(this.scope.persona_id || "")
+        || String(view.scope.group_id || "") !== String(this.scope.group_id || "")
+      )
+    ) return false;
     const name = String(view.projection);
     const incomingVersion = Number(view.projection_version || 0);
     const current = this.views.get(name);
@@ -30,18 +37,19 @@ export class ProjectionStore {
     for (const item of view.items || []) {
       this.mergeEntity(item);
     }
+    this.reconcileCommands(view.items || []);
     this.emit();
     return true;
   }
 
   mergeBootstrap(bootstrap) {
-    this.scope = {
+    this.setScope({
       persona_id: bootstrap.persona_id || null,
       group_id: bootstrap.selected_group_id || null,
       available_groups: [...(bootstrap.available_groups || [])],
-    };
+    }, false);
     for (const metadata of bootstrap.items || []) {
-      this.merge({ ...metadata, items: [] });
+      this.merge({ ...metadata, scope: bootstrap.scope, items: [] });
     }
     this.emit();
   }
@@ -59,7 +67,13 @@ export class ProjectionStore {
   }
 
   applyProjectionEvent(event) {
-    if (!event || !event.entity) return false;
+    const scope = event?.scope;
+    if (
+      !event?.entity
+      || !scope
+      || String(scope.persona_id || "") !== String(this.scope.persona_id || "")
+      || String(scope.group_id || "") !== String(this.scope.group_id || "")
+    ) return false;
     const entity = {
       entity_ref: event.entity,
       kind: event.kind,
@@ -86,11 +100,7 @@ export class ProjectionStore {
           ),
         });
       }
-      for (const [commandId, pending] of this.pendingCommands) {
-        if (Number(event.projection_version || 0) > Number(pending.expected_version || 0)) {
-          this.pendingCommands.delete(commandId);
-        }
-      }
+      this.reconcileCommands([entity]);
       this.emit();
     }
     return applied;
@@ -107,6 +117,36 @@ export class ProjectionStore {
     const removed = this.pendingCommands.delete(String(commandId));
     if (removed) this.emit();
     return removed;
+  }
+
+  reconcileCommands(items) {
+    let removed = false;
+    for (const item of items || []) {
+      const commandId = String(item?.summary?.command_id || "");
+      if (commandId && this.pendingCommands.delete(commandId)) removed = true;
+    }
+    return removed;
+  }
+
+  setScope(scope, notify = true) {
+    const next = {
+      persona_id: scope?.persona_id || null,
+      group_id: scope?.group_id || null,
+      available_groups: [...(scope?.available_groups || [])],
+    };
+    const changed = (
+      this.scope.persona_id !== next.persona_id
+      || this.scope.group_id !== next.group_id
+    );
+    if (changed) {
+      this.views.clear();
+      this.entities.clear();
+      this.pendingCommands.clear();
+      this.error = null;
+    }
+    this.scope = next;
+    if (notify) this.emit();
+    return changed;
   }
 
   setConnection(connection) {

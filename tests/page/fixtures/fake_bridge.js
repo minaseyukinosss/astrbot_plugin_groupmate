@@ -13,6 +13,7 @@
   };
   const response = (projection) => ({
     projection,
+    scope: { persona_id: "aemeath", group_id: "group-1" },
     as_of: 1787126400,
     cursor: 1,
     projection_version: 1,

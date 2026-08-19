@@ -16,6 +16,7 @@ class SocialRuntimeSettings:
     database_name: str
     persona_id: str
     bot_qq: str
+    control_admin_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -37,4 +38,9 @@ class SocialRuntimeSettings:
             database_name="groupmate-social-runtime-v2.db",
             persona_id=str(source.get("persona_id", "aemeath") or "aemeath").strip(),
             bot_qq=str(source.get("bot_qq", "323537051") or "323537051").strip(),
+            control_admin_ids=tuple(
+                str(value).strip()
+                for value in source.get("control_admin_ids", ())
+                if str(value).strip()
+            ),
         )

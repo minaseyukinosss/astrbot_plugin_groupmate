@@ -238,3 +238,24 @@ def test_task_projection_uses_only_committed_structured_source_event(tmp_path):
     }
     assert "task:private:42" not in encoded
     assert "raw provider result" not in encoded
+
+
+def test_control_projection_carries_only_admin_command_correlation(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    store = SQLiteSocialEventStore(path)
+    _commit_effect(
+        store,
+        1,
+        kind="group_world.projected",
+        payload={"scene_version": 1},
+        event_type="control.runtime_paused",
+        event_payload={"paused": True},
+    )
+
+    ProjectionConsumer(path, "governance").consume(10)
+    result = ProjectionQueries(path).governance(
+        persona_id="aemeath", group_id="group-1"
+    )
+
+    assert result["items"][0]["summary"]["command_id"] == "corr:1"
+    assert result["items"][0]["summary"]["paused"] is True

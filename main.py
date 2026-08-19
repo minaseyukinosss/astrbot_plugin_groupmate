@@ -52,11 +52,12 @@ class GroupmatePlugin(Star):
                     path,
                     persona_id=self.settings.persona_id,
                     group_ids=self.settings.enabled_groups,
-                    admin_ids=(username,),
+                    admin_ids=self.settings.control_admin_ids,
                 ),
                 event_publisher=self._publish_control_event,
                 persona_id=self.settings.persona_id,
                 group_ids=self.settings.enabled_groups,
+                admin_ids=self.settings.control_admin_ids,
             )
             self._refresh_projections()
 

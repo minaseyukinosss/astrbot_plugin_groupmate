@@ -15,6 +15,11 @@
     "type": "list",
     "default": []
   },
+  "control_admin_ids": {
+    "description": "Social Runtime 控制面管理员用户名 allowlist（默认空，仅只读拒绝）",
+    "type": "list",
+    "default": []
+  },
   "generation_provider": {
     "description": "文本生成模型",
     "type": "string",

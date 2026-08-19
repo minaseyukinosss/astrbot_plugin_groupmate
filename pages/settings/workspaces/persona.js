@@ -38,7 +38,7 @@ export function renderPersona(select, command) {
       { name: "config_id", label: "草稿 ID", defaultValue: draftId },
     ] }),
     action("恢复版本", "config_restore", {}, { danger: true, fields: [
-      { name: "config_id", label: "新版本 ID", defaultValue: draftId },
+      { name: "config_id", label: "已发布配置 ID", defaultValue: "" },
       { name: "source_version", label: "来源版本", format: "number", defaultValue: Math.max(1, expectedVersion) },
     ] }),
   ];

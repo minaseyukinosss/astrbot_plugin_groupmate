@@ -43,6 +43,8 @@ def test_runtime_workspace_uses_real_runtime_task_activity_and_health_projection
         assert label in source
     assert 'type: "pause"' in source
     assert "controlVersion" in source
+    assert "degraded_reasons" in source
+    assert "fallback_poll_seconds" in source
     assert "setTimeout" not in source
     assert "处理中" not in source
 
@@ -76,6 +78,7 @@ def test_persona_workspace_covers_versioned_behavior_and_draft_flow():
     assert 'name: "config"' in source
     assert 'format: "json"' in source
     assert "publishedConfigVersion" in source
+    assert '{ name: "config_id", label: "已发布配置 ID", defaultValue: "" }' in source
 
 
 def test_people_workspace_exposes_social_evidence_without_sensitive_payloads():

@@ -55,6 +55,7 @@ def test_store_ignores_stale_entities_and_never_optimistically_applies_commands(
     result = _run_module(
         "store.js",
         "const store = new module.ProjectionStore();"
+        "store.setScope({persona_id:'aemeath',group_id:'group-1',available_groups:['group-1']});"
         "store.merge({projection:'people', projection_version:2, items:[{"
         "entity_ref:'people:one', projection_version:2, summary:{status:'active'}"
         "}]});"
@@ -66,11 +67,18 @@ def test_store_ignores_stale_entities_and_never_optimistically_applies_commands(
         "}]});"
         "const afterStale = store.selectEntity('people:one');"
         "store.applyProjectionEvent({cursor:3, kind:'memory.updated',"
+        "scope:{persona_id:'aemeath',group_id:'group-1'},"
         "entity:'people:one', projection_version:3, summary:{status:'corrected'}});"
+        "const pendingAfterUnrelated = store.snapshot().pendingCommands.length;"
+        "store.applyProjectionEvent({cursor:4, kind:'control.runtime_paused',"
+        "scope:{persona_id:'aemeath',group_id:'group-1'},"
+        "entity:'governance:command', projection_version:4,"
+        "summary:{command_id:'command:1', paused:true}});"
         "console.log(JSON.stringify({"
         "afterCommand, afterStale, current:store.selectEntity('people:one'),"
         "liveView:store.selectView('people'),"
-        "pendingAfterCommand, pendingAfterProjection:store.snapshot().pendingCommands.length"
+        "pendingAfterCommand, pendingAfterUnrelated,"
+        "pendingAfterProjection:store.snapshot().pendingCommands.length"
         "}));",
     )
 
@@ -82,7 +90,62 @@ def test_store_ignores_stale_entities_and_never_optimistically_applies_commands(
     assert result["liveView"]["cursor"] == 3
     assert result["liveView"]["projection_version"] == 3
     assert result["pendingAfterCommand"] == 1
+    assert result["pendingAfterUnrelated"] == 1
     assert result["pendingAfterProjection"] == 0
+
+
+def test_polling_snapshot_reconciles_only_its_matching_command_id():
+    result = _run_module(
+        "store.js",
+        "const store = new module.ProjectionStore();"
+        "store.trackCommand({command_id:'command:poll', expected_version:0});"
+        "store.merge({projection:'governance', projection_version:1, items:[{"
+        "entity_ref:'governance:other', projection_version:1,"
+        "summary:{command_id:'command:other'}"
+        "}]});"
+        "const afterOther = store.snapshot().pendingCommands.length;"
+        "store.merge({projection:'governance', projection_version:2, items:[{"
+        "entity_ref:'governance:poll', projection_version:2,"
+        "summary:{command_id:'command:poll'}"
+        "}]});"
+        "console.log(JSON.stringify({"
+        "afterOther, afterMatch:store.snapshot().pendingCommands.length"
+        "}));",
+    )
+
+    assert result == {"afterOther": 1, "afterMatch": 0}
+
+
+def test_scope_change_clears_old_group_state_and_rejects_late_sse_events():
+    result = _run_module(
+        "store.js",
+        "const store = new module.ProjectionStore();"
+        "store.setScope({persona_id:'aemeath',group_id:'group-1',available_groups:['group-1','group-2']});"
+        "store.merge({projection:'people',projection_version:9,items:[{"
+        "entity_ref:'people:group-one',projection_version:9,summary:{status:'private-one'}"
+        "}]});"
+        "store.setScope({persona_id:'aemeath',group_id:'group-2',available_groups:['group-1','group-2']});"
+        "const lateMerge=store.merge({projection:'people',projection_version:10,"
+        "scope:{persona_id:'aemeath',group_id:'group-1'},items:[{"
+        "entity_ref:'people:late-http',projection_version:10,summary:{status:'must-not-cross-http'}"
+        "}]});"
+        "store.merge({projection:'people',projection_version:1,"
+        "scope:{persona_id:'aemeath',group_id:'group-2'},items:[{"
+        "entity_ref:'people:group-two',projection_version:1,summary:{status:'private-two'}"
+        "}]});"
+        "const lateApplied=store.applyProjectionEvent({cursor:10,kind:'memory.updated',"
+        "scope:{persona_id:'aemeath',group_id:'group-1'},entity:'people:late-one',"
+        "projection_version:10,summary:{status:'must-not-cross'}});"
+        "console.log(JSON.stringify({lateMerge,lateApplied,snapshot:store.snapshot()}));",
+    )
+
+    assert result["lateMerge"] is False
+    assert result["lateApplied"] is False
+    assert set(result["snapshot"]["entities"]) == {"people:group-two"}
+    assert [
+        item["entity_ref"] for item in result["snapshot"]["views"]["people"]["items"]
+    ] == ["people:group-two"]
+    assert result["snapshot"]["scope"]["group_id"] == "group-2"
 
 
 def test_store_tracks_connection_and_error_impact_without_faking_domain_success():

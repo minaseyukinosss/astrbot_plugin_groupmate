@@ -142,7 +142,9 @@ async function openInspector(projection, entityRef) {
 }
 
 async function selectGroup(groupId) {
-  store.scope.group_id = groupId;
+  await bridge.disconnect();
+  const currentScope = store.snapshot().scope;
+  store.setScope({ ...currentScope, group_id: groupId });
   await loadWorkspace(activeRoute);
   await bridge.connect({
     params: scopeParams(),

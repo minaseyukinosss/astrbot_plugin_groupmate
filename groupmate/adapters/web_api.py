@@ -74,6 +74,7 @@ class ControlPlaneWebAPI:
         ],
         persona_id: str,
         group_ids: tuple[str, ...],
+        admin_ids: tuple[str, ...],
     ) -> None:
         self.queries = queries
         self.stream = stream
@@ -84,6 +85,9 @@ class ControlPlaneWebAPI:
             dict.fromkeys(str(value).strip() for value in group_ids if str(value).strip())
         )
         self.group_ids = frozenset(self._group_order)
+        self.admin_ids = frozenset(
+            str(value).strip() for value in admin_ids if str(value).strip()
+        )
         if not self.persona_id or not self.group_ids:
             raise ValueError("control API requires persona and group scope")
         self._degraded: dict[str, str] = {}
@@ -99,6 +103,8 @@ class ControlPlaneWebAPI:
 
     async def handle(self, request: WebRequest) -> WebResponse:
         endpoint = str(request.path).strip().strip("/")
+        if str(request.username or "").strip() not in self.admin_ids:
+            return self._error(403, "administrator_forbidden")
         if endpoint in self.QUERY_ENDPOINTS:
             if str(request.method).upper() != "GET":
                 return self._error(405, "method_not_allowed")
@@ -114,6 +120,10 @@ class ControlPlaneWebAPI:
                 self._degraded["query"] = str(exc)
                 return self._error(503, "projection_query_unavailable", detail=str(exc))
             self._degraded.pop("query", None)
+            body = {
+                **body,
+                "scope": {"persona_id": persona_id, "group_id": group_id},
+            }
             entity_ref = str(request.query.get("entity_ref") or "").strip()
             if entity_ref:
                 items = [
@@ -416,6 +426,7 @@ class AstrBotControlPlaneRoutes:
             query = {
                 "persona_id": request.query.get("persona_id"),
                 "group_id": request.query.get("group_id"),
+                "entity_ref": request.query.get("entity_ref"),
             }
             response = await api.handle(
                 WebRequest(
@@ -429,7 +440,19 @@ class AstrBotControlPlaneRoutes:
             )
             if response.headers.get("Content-Type") == "text/event-stream":
                 async def events():
-                    yield str(response.body)
+                    try:
+                        async for chunk in api.stream.subscribe(
+                            last_event_id=ControlPlaneWebAPI._header(
+                                dict(request.headers), "last-event-id"
+                            ),
+                            persona_id=str(query["persona_id"]),
+                            group_id=str(query["group_id"]),
+                        ):
+                            api.clear_degraded("sse")
+                            yield chunk
+                    except Exception as exc:
+                        api.mark_degraded("sse", str(exc))
+                        return
 
                 return stream_response(events())
             return response.body, response.status
