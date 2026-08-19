@@ -1,0 +1,146 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 14.5rem minmax(0, 1fr) auto;
+  grid-template-rows: 3.75rem minmax(calc(100vh - 3.75rem), auto);
+  min-height: 100vh;
+}
+
+.sidebar {
+  grid-row: 1 / -1;
+  padding: var(--space-4) var(--space-3);
+  background: var(--color-surface);
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 0 var(--space-5);
+  background: var(--color-bg);
+  border-block-end: 1px solid var(--color-border);
+}
+
+main {
+  min-width: 0;
+  padding: var(--space-6) clamp(1rem, 4vw, 3.5rem);
+}
+
+.workspace-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  max-width: 76rem;
+  padding-block-end: var(--space-5);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.workspace {
+  max-width: 76rem;
+  padding-block: var(--space-6);
+}
+
+.inspector {
+  grid-column: 3;
+  grid-row: 1 / -1;
+  width: min(24rem, 36vw);
+  padding: var(--space-5);
+  background: var(--color-surface-raised);
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.inspector header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 64rem) {
+  .app-shell {
+    grid-template-columns: 12rem minmax(0, 1fr);
+  }
+
+  .inspector {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: var(--z-modal);
+    width: min(26rem, 88vw);
+  }
+}
+
+@media (max-width: 44rem) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    padding: var(--space-2);
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--color-border);
+  }
+
+  .brand-block,
+  .sidebar-note {
+    display: none;
+  }
+
+  .sidebar nav {
+    display: flex;
+    gap: var(--space-1);
+    overflow-x: auto;
+  }
+
+  .topbar {
+    position: static;
+    align-items: flex-start;
+    padding: var(--space-3);
+  }
+
+  .scope-controls {
+    flex-wrap: wrap;
+  }
+
+  .meta-label,
+  .scope-divider {
+    display: none;
+  }
+
+  .runtime-controls {
+    align-items: flex-end;
+  }
+
+  main {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .workspace-heading {
+    display: block;
+  }
+}

@@ -133,6 +133,30 @@ def test_query_endpoints_read_only_projection_and_never_domain_write_models(tmp_
     assert after == before == (0, 0, 0, 1)
 
 
+def test_bootstrap_selects_scope_from_server_when_page_has_no_group_context(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    _seed_runtime(path)
+    api = _api(path, [])
+
+    response = asyncio.run(
+        api.handle(
+            WebRequest(
+                method="GET",
+                path="/bootstrap",
+                query={},
+                headers={},
+                json_body=None,
+                username="admin:root",
+            )
+        )
+    )
+
+    assert response.status == 200
+    assert response.body["persona_id"] == "aemeath"
+    assert response.body["available_groups"] == ["group-1"]
+    assert response.body["selected_group_id"] == "group-1"
+
+
 def test_command_uses_server_username_publishes_event_and_preserves_409(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
     _seed_runtime(path)
@@ -172,6 +196,39 @@ def test_command_uses_server_username_publishes_event_and_preserves_409(tmp_path
     assert stale.status == 409
     assert stale.body["error"] == "expected_version_conflict"
     assert stale.body["current_version"] == 1
+
+
+def test_command_accepts_bridge_body_scope_but_still_validates_server_allowlist(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    _seed_runtime(path)
+    published = []
+    api = _api(path, published)
+    body = {
+        "type": "pause",
+        "command_id": "command:body-scope",
+        "expected_version": 0,
+        "reason": "page bridge command",
+        "confirmed": False,
+        "persona_id": "aemeath",
+        "group_id": "group-1",
+        "payload": {"paused": True},
+    }
+
+    response = asyncio.run(
+        api.handle(
+            WebRequest(
+                method="POST",
+                path="/commands",
+                query={},
+                headers={},
+                json_body=body,
+                username="admin:root",
+            )
+        )
+    )
+
+    assert response.status == 202
+    assert published[0].group_id == "group-1"
 
 
 def test_sse_failure_degrades_health_without_canceling_projection(tmp_path, monkeypatch):

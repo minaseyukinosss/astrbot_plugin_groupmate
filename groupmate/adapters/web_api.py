@@ -80,7 +80,10 @@ class ControlPlaneWebAPI:
         self._command_service_for = command_service_for
         self._event_publisher = event_publisher
         self.persona_id = str(persona_id).strip()
-        self.group_ids = frozenset(str(value).strip() for value in group_ids)
+        self._group_order = tuple(
+            dict.fromkeys(str(value).strip() for value in group_ids if str(value).strip())
+        )
+        self.group_ids = frozenset(self._group_order)
         if not self.persona_id or not self.group_ids:
             raise ValueError("control API requires persona and group scope")
         self._degraded: dict[str, str] = {}
@@ -100,7 +103,9 @@ class ControlPlaneWebAPI:
             if str(request.method).upper() != "GET":
                 return self._error(405, "method_not_allowed")
             try:
-                persona_id, group_id = self._scope(request)
+                persona_id, group_id = self._scope(
+                    request, allow_default=endpoint == "bootstrap"
+                )
                 query = getattr(self.queries, endpoint)
                 body = query(persona_id=persona_id, group_id=group_id)
             except LookupError:
@@ -109,6 +114,13 @@ class ControlPlaneWebAPI:
                 self._degraded["query"] = str(exc)
                 return self._error(503, "projection_query_unavailable", detail=str(exc))
             self._degraded.pop("query", None)
+            if endpoint == "bootstrap":
+                body = {
+                    **body,
+                    "persona_id": persona_id,
+                    "available_groups": list(self._group_order),
+                    "selected_group_id": group_id,
+                }
             if endpoint == "health":
                 body = {
                     **body,
@@ -166,8 +178,11 @@ class ControlPlaneWebAPI:
         if not username:
             return self._error(403, "administrator_identity_required")
         try:
-            persona_id, group_id = self._scope(request)
             body = dict(request.json_body or {})
+            persona_id, group_id = self._scope_values(
+                request.query.get("persona_id") or body.get("persona_id"),
+                request.query.get("group_id") or body.get("group_id"),
+            )
             command = self._parse_command(body)
             context = CommandContext(
                 admin_id=username,
@@ -214,9 +229,21 @@ class ControlPlaneWebAPI:
             {"Content-Type": "application/json"},
         )
 
-    def _scope(self, request: WebRequest) -> tuple[str, str]:
+    def _scope(
+        self, request: WebRequest, *, allow_default: bool = False
+    ) -> tuple[str, str]:
         persona_id = str(request.query.get("persona_id") or "").strip()
         group_id = str(request.query.get("group_id") or "").strip()
+        if allow_default:
+            persona_id = persona_id or self.persona_id
+            group_id = group_id or self._group_order[0]
+        return self._scope_values(persona_id, group_id)
+
+    def _scope_values(
+        self, persona_id: object, group_id: object
+    ) -> tuple[str, str]:
+        persona_id = str(persona_id or "").strip()
+        group_id = str(group_id or "").strip()
         if persona_id != self.persona_id or group_id not in self.group_ids:
             raise LookupError("control API scope is not available")
         return persona_id, group_id

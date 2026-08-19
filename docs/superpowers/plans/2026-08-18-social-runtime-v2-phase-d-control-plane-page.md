@@ -71,11 +71,11 @@ assert repository.published_version() == 3
 
 **Interfaces:** Hash routes `#/runtime`, `#/persona`, `#/people`, `#/activity`, `#/governance`; `ApiBridge.query/command/connect`; normalized Projection Store.
 
-- [ ] 写静态契约测试：无 inline script、所有模块相对路径、五 routes、skip link、ARIA live connection state、主题 tokens、`prefers-reduced-motion`。
-- [ ] 实现紧凑左栏、顶部群/人格/版本/连接/暂停、主工作区、按需右 Inspector；植物绿只用于 primary/selected/healthy。
-- [ ] Store 只合并带更高 projection_version 的实体；Command 后等待 Projection event，不乐观伪造领域成功。
-- [ ] 400/403/409/500、SSE 断开和 polling 状态显示真实影响。
-- [ ] Run: `pytest tests/page/test_shell_assets.py tests/page/test_router_contract.py -q`; commit `feat: rebuild groupmate plugin shell`。
+- [x] 写静态契约测试：无 inline script、所有模块相对路径、五 routes、skip link、ARIA live connection state、主题 tokens、`prefers-reduced-motion`。
+- [x] 实现紧凑左栏、顶部群/人格/版本/连接/暂停、主工作区、按需右 Inspector；植物绿只用于 primary/selected/healthy。
+- [x] Store 只合并带更高 projection_version 的实体；Command 后等待 Projection event，不乐观伪造领域成功。
+- [x] 400/403/409/500、SSE 断开和 polling 状态显示真实影响。
+- [x] Run: `pytest tests/page/test_shell_assets.py tests/page/test_router_contract.py -q`; commit `feat: rebuild groupmate plugin shell`。
 
 ---
 
