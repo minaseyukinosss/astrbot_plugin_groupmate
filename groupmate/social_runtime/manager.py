@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -19,7 +19,12 @@ from .contracts import (
     SocialEventEnvelope,
 )
 from .event_fabric import SocialEventFabric
-from .governor import GovernorContext, GovernorResult, SocialGovernor
+from .governor import (
+    GovernorContext,
+    GovernorResult,
+    RejectedIntention,
+    SocialGovernor,
+)
 from .intentions import CandidateIntention, IntentionEngine
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
@@ -52,6 +57,95 @@ class ShadowEvaluation:
     candidates: tuple[CandidateIntention, ...]
     accepted: bool
     status: str
+
+    def to_capture_evidence(self) -> dict[str, object]:
+        frame_id = (
+            self.frame.frame_id
+            if self.frame is not None
+            else f"external:{self.request_id}"
+        )
+        return {
+            "capture_id": f"runtime-shadow:{self.persona_id}:{frame_id}",
+            "evaluation": {
+                "persona_id": self.persona_id,
+                "request_id": self.request_id,
+                "runtime_mode": self.runtime_mode.value,
+                "scene_version": self.scene_version,
+                "config_version": self.config_version,
+                "frame": asdict(self.frame) if self.frame is not None else None,
+                "governor_result": asdict(self.governor_result),
+                "source_event": self.source_event.to_dict(),
+                "context_events": [
+                    event.to_dict() for event in self.context_events
+                ],
+                "candidates": [asdict(candidate) for candidate in self.candidates],
+                "accepted": self.accepted,
+                "status": self.status,
+            },
+        }
+
+    @classmethod
+    def from_capture_evidence(
+        cls, evidence: Mapping[str, object]
+    ) -> "ShadowEvaluation":
+        values = dict(evidence.get("evaluation") or {})
+        frame_values = values.get("frame")
+        if frame_values is not None:
+            frame_values = dict(frame_values)
+            for key in (
+                "focus_topic_ids",
+                "focus_event_ids",
+                "candidate_audiences",
+                "requested_workers",
+            ):
+                frame_values[key] = tuple(frame_values.get(key, ()))
+        governor_values = dict(values["governor_result"])
+        governor_values["selected_intention_ids"] = tuple(
+            governor_values.get("selected_intention_ids", ())
+        )
+        governor_values["rejected"] = tuple(
+            RejectedIntention(
+                intention_id=str(item["intention_id"]),
+                reason_codes=tuple(item.get("reason_codes", ())),
+            )
+            for item in governor_values.get("rejected", ())
+        )
+        governor_values["reason_codes"] = tuple(
+            governor_values.get("reason_codes", ())
+        )
+        governor_values["constraints"] = tuple(
+            governor_values.get("constraints", ())
+        )
+        candidates = []
+        for item in values.get("candidates", ()):
+            candidate = dict(item)
+            candidate["evidence_event_ids"] = tuple(
+                candidate.get("evidence_event_ids", ())
+            )
+            candidates.append(CandidateIntention(**candidate))
+        return cls(
+            persona_id=str(values["persona_id"]),
+            request_id=str(values["request_id"]),
+            runtime_mode=RuntimeMode(values["runtime_mode"]),
+            scene_version=int(values["scene_version"]),
+            config_version=int(values["config_version"]),
+            frame=None if frame_values is None else AttentionFrame(**frame_values),
+            governor_result=GovernorResult(**governor_values),
+            source_event=SocialEventEnvelope.from_dict(values["source_event"]),
+            context_events=tuple(
+                SocialEventEnvelope.from_dict(item)
+                for item in values.get("context_events", ())
+            ),
+            candidates=tuple(candidates),
+            accepted=bool(values["accepted"]),
+            status=str(values["status"]),
+        )
+
+
+@dataclass(frozen=True)
+class PendingShadowReviewEvidence:
+    capture_id: str
+    evaluation: ShadowEvaluation
 
 
 class NoSideEffectExecutionPort:
@@ -260,6 +354,22 @@ class SocialRuntimeManager:
                 "Gate C external actions require an explicit test group allowlist"
             )
 
+    def pending_shadow_review_evidence(
+        self,
+    ) -> tuple[PendingShadowReviewEvidence, ...]:
+        return tuple(
+            PendingShadowReviewEvidence(
+                capture_id=item.capture_id,
+                evaluation=ShadowEvaluation.from_capture_evidence(item.payload),
+            )
+            for item in self.event_store.pending_shadow_captures(
+                self.persona_id, tuple(sorted(self.enabled_groups))
+            )
+        )
+
+    def complete_shadow_review_evidence(self, capture_id: str) -> bool:
+        return self.event_store.complete_shadow_capture(capture_id)
+
     def submit_plan(
         self,
         plan: ActionPlan,
@@ -386,23 +496,12 @@ class SocialRuntimeManager:
                 minimum_utility=request.governance_snapshot.minimum_utility,
             ),
         )
-        result = SceneWorkResult(
-            request_id=request.request_id,
-            group_id=request.group_id,
-            scene_version=frame.scene_version,
-            config_version=frame.config_version,
-            persona_state_version=frame.persona_state_version,
-            frame_id=frame.frame_id,
-            governor_result=governor_result,
-        )
-        actor = await self.fabric.notify(request.persona_id, request.group_id)
-        accepted = await actor.accept_result(result)
         context_events = self.event_store.event_envelopes(
             request.persona_id,
             request.group_id,
             request.world_snapshot.recent_presence.recent_event_ids[-20:],
         )
-        return ShadowEvaluation(
+        evaluation = ShadowEvaluation(
             persona_id=request.persona_id,
             request_id=request.request_id,
             runtime_mode=self.group_mode(request.group_id),
@@ -413,6 +512,23 @@ class SocialRuntimeManager:
             source_event=request.event,
             context_events=context_events,
             candidates=candidates,
+            accepted=True,
+            status="accepted",
+        )
+        result = SceneWorkResult(
+            request_id=request.request_id,
+            group_id=request.group_id,
+            scene_version=frame.scene_version,
+            config_version=frame.config_version,
+            persona_state_version=frame.persona_state_version,
+            frame_id=frame.frame_id,
+            governor_result=governor_result,
+            capture_evidence=evaluation.to_capture_evidence(),
+        )
+        actor = await self.fabric.notify(request.persona_id, request.group_id)
+        accepted = await actor.accept_result(result)
+        return replace(
+            evaluation,
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
@@ -429,15 +545,12 @@ class SocialRuntimeManager:
         self, request: SceneWorkRequest
     ) -> ShadowEvaluation:
         actor = await self.fabric.notify(request.persona_id, request.group_id)
-        accepted = await actor.discard_work(
-            request.request_id, "external_plugin_owned"
-        )
         context_events = self.event_store.event_envelopes(
             request.persona_id,
             request.group_id,
             request.world_snapshot.recent_presence.recent_event_ids[-20:],
         )
-        return ShadowEvaluation(
+        evaluation = ShadowEvaluation(
             persona_id=request.persona_id,
             request_id=request.request_id,
             runtime_mode=self.group_mode(request.group_id),
@@ -455,6 +568,16 @@ class SocialRuntimeManager:
             source_event=request.event,
             context_events=context_events,
             candidates=(),
+            accepted=True,
+            status="accepted",
+        )
+        accepted = await actor.discard_work(
+            request.request_id,
+            "external_plugin_owned",
+            capture_evidence=evaluation.to_capture_evidence(),
+        )
+        return replace(
+            evaluation,
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
@@ -478,6 +601,7 @@ class SocialRuntimeManager:
 
 __all__ = (
     "NoSideEffectExecutionPort",
+    "PendingShadowReviewEvidence",
     "RuntimeGovernanceState",
     "RuntimeModeUnavailable",
     "ShadowEvaluation",

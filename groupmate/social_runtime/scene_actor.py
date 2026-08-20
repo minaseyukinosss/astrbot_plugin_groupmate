@@ -61,6 +61,7 @@ class SceneWorkResult:
     persona_state_version: int
     frame_id: str
     governor_result: GovernorResult
+    capture_evidence: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class _FlushAttentionCommand:
 class _DiscardCommand:
     request_id: str
     reason_code: str
+    capture_evidence: dict[str, object] | None
     future: asyncio.Future[bool]
 
 
@@ -237,12 +239,20 @@ class GroupSceneActor:
         await self._mailbox.put(_FlushAttentionCommand(int(now), future))
         return await future
 
-    async def discard_work(self, request_id: str, reason_code: str) -> bool:
+    async def discard_work(
+        self,
+        request_id: str,
+        reason_code: str,
+        *,
+        capture_evidence: dict[str, object] | None = None,
+    ) -> bool:
         self._ensure_running()
         if not request_id.strip() or not reason_code.strip():
             raise ValueError("discard identity and reason are required")
         future = asyncio.get_running_loop().create_future()
-        await self._mailbox.put(_DiscardCommand(request_id, reason_code, future))
+        await self._mailbox.put(
+            _DiscardCommand(request_id, reason_code, capture_evidence, future)
+        )
         return await future
 
     async def snapshot(self) -> GroupWorldState:
@@ -316,6 +326,7 @@ class GroupSceneActor:
                             "kind": "explicit_discard",
                             "reason_code": command.reason_code,
                         },
+                        capture_evidence=command.capture_evidence,
                     )
                     self._pending_requests.pop(command.request_id, None)
                     command.future.set_result(discarded)
@@ -340,6 +351,7 @@ class GroupSceneActor:
                                     command.result,
                                     request,
                                 ),
+                                capture_evidence=command.result.capture_evidence,
                             )
                             command.future.set_result(persisted)
                             continue
@@ -393,6 +405,9 @@ class GroupSceneActor:
                                 "kind": "stale_result",
                                 "reason_code": "version_or_scope_mismatch",
                             }
+                        ),
+                        capture_evidence=(
+                            command.result.capture_evidence if accepted else None
                         ),
                     )
                     if persisted and keep_pending and updated_request is not None:

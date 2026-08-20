@@ -369,6 +369,182 @@ def test_external_plugin_trigger_projects_no_attention_compatibility_decision(tm
     assert outbox_count == 0
 
 
+class _FailFirstRuntimeCapture(ShadowReviewRepository):
+    def __init__(self, path):
+        super().__init__(path)
+        self.failed = False
+
+    def capture_runtime(self, evaluation):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("injected capture outage")
+        return super().capture_runtime(evaluation)
+
+
+class _FailFirstShadowProjection(ShadowReviewRepository):
+    def __init__(self, path):
+        super().__init__(path)
+        self.failed = False
+
+    def _append_projection_effect(self, event, item):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("injected projection outage")
+        return super()._append_projection_effect(event, item)
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_restart_recovers_durable_shadow_capture_without_replaying_runtime(
+    tmp_path, external
+):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        settings_values = {
+            "runtime_mode": "SHADOW",
+            "enabled_groups": ["group-1"],
+        }
+        message = [
+            {"type": "text", "data": {"text": "@你 看一下"}},
+            {"type": "at", "data": {"qq": "323537051"}},
+        ]
+        if external:
+            settings_values["external_command_prefixes"] = ["xw=astrbot.waves"]
+            message = [{"type": "text", "data": {"text": "xw帮助"}}]
+        settings = SocialRuntimeSettings.from_mapping(settings_values)
+        event = {
+            "message_id": "recover-external" if external else "recover-normal",
+            "group_id": "group-1",
+            "user_id": "42",
+            "time": 1_700_000_040,
+            "message": message,
+        }
+
+        failing = _FailFirstRuntimeCapture(path)
+        first = AstrBotSocialRuntimeBridge(
+            object(), settings, tmp_path, shadow_reviews=failing
+        )
+        await first.start()
+        await first.handle_event(event)
+        assert failing.list_items(persona_id="aemeath", group_id="group-1") == ()
+        assert first.shadow_review_error == "RuntimeError: injected capture outage"
+        assert (await first.manager.group_snapshot("group-1")).scene_version == 1
+        await first.close()
+
+        reviews = ShadowReviewRepository(path)
+        restarted = AstrBotSocialRuntimeBridge(
+            object(), settings, tmp_path, shadow_reviews=reviews
+        )
+        await restarted.start()
+        recovered_without_new_chat = reviews.list_items(
+            persona_id="aemeath", group_id="group-1"
+        )
+        duplicate = await restarted.handle_event(event)
+        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        scene_version = (
+            await restarted.manager.group_snapshot("group-1")
+        ).scene_version
+        calls = restarted.manager.execution_port.calls
+        outbox_count = restarted.manager.event_store.outbox_count()
+        await restarted.close()
+
+        with connect_database(path) as db:
+            world_effects = db.execute(
+                "SELECT COUNT(*) FROM journal WHERE effect_type='group_world.projected'"
+            ).fetchone()[0]
+            governor_results = db.execute(
+                "SELECT COUNT(*) FROM governor_results"
+            ).fetchone()[0]
+            capture_effects = db.execute(
+                "SELECT COUNT(*) FROM journal "
+                "WHERE effect_type='evaluation.shadow_decision_captured'"
+            ).fetchone()[0]
+        return (
+            recovered_without_new_chat,
+            duplicate,
+            items,
+            scene_version,
+            calls,
+            outbox_count,
+            world_effects,
+            governor_results,
+            capture_effects,
+        )
+
+    (
+        recovered_without_new_chat,
+        duplicate,
+        items,
+        scene_version,
+        calls,
+        outbox_count,
+        world_effects,
+        governor_results,
+        capture_effects,
+    ) = asyncio.run(scenario())
+    assert len(recovered_without_new_chat) == 1
+    assert duplicate.inserted is False
+    assert len(items) == 1
+    assert items[0].capture.evaluation_lane == (
+        "EXTERNAL_PLUGIN_COMPATIBILITY" if external else "SOCIAL_CONVERSATION"
+    )
+    assert scene_version == 1
+    assert calls == ()
+    assert outbox_count == 0
+    assert world_effects == 1
+    assert governor_results == (0 if external else 1)
+    assert capture_effects == 1
+
+
+def test_restart_repairs_projection_after_shadow_record_was_committed(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        settings = SocialRuntimeSettings.from_mapping(
+            {"runtime_mode": "SHADOW", "enabled_groups": ["group-1"]}
+        )
+        event = {
+            "message_id": "recover-partial-projection",
+            "group_id": "group-1",
+            "user_id": "42",
+            "time": 1_700_000_050,
+            "message": [
+                {"type": "text", "data": {"text": "@你 帮忙看看"}},
+                {"type": "at", "data": {"qq": "323537051"}},
+            ],
+        }
+        failing = _FailFirstShadowProjection(path)
+        first = AstrBotSocialRuntimeBridge(
+            object(), settings, tmp_path, shadow_reviews=failing
+        )
+        await first.start()
+        await first.handle_event(event)
+        assert len(failing.list_items(persona_id="aemeath", group_id="group-1")) == 1
+        await first.close()
+
+        with connect_database(path) as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM journal "
+                "WHERE effect_type='evaluation.shadow_decision_captured'"
+            ).fetchone()[0] == 0
+
+        reviews = ShadowReviewRepository(path)
+        restarted = AstrBotSocialRuntimeBridge(
+            object(), settings, tmp_path, shadow_reviews=reviews
+        )
+        await restarted.start()
+        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        await restarted.close()
+        with connect_database(path) as db:
+            capture_effects = db.execute(
+                "SELECT COUNT(*) FROM journal "
+                "WHERE effect_type='evaluation.shadow_decision_captured'"
+            ).fetchone()[0]
+        return items, capture_effects
+
+    items, capture_effects = asyncio.run(scenario())
+    assert len(items) == 1
+    assert capture_effects == 1
+
+
 def test_review_primary_verdicts_require_human_labels_and_corrections(tmp_path):
     repository = ShadowReviewRepository(
         tmp_path / "groupmate-social-runtime-v2.db"

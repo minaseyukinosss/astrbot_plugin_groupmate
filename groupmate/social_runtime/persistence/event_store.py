@@ -62,6 +62,12 @@ class StoredSceneWorkRequest:
     resolution: dict[str, object] | None
 
 
+@dataclass(frozen=True)
+class PendingShadowCapture:
+    capture_id: str
+    payload: dict[str, object]
+
+
 class SQLiteSocialEventStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -84,6 +90,18 @@ class SQLiteSocialEventStore:
                     "ALTER TABLE scene_work_requests "
                     "ADD COLUMN resolution_json TEXT"
                 )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS shadow_capture_evidence ("
+                "capture_id TEXT PRIMARY KEY, actor_key TEXT NOT NULL, "
+                "request_id TEXT NOT NULL, persona_id TEXT NOT NULL, "
+                "group_id TEXT NOT NULL, evidence_json TEXT NOT NULL, "
+                "status TEXT NOT NULL CHECK(status IN ('pending','completed')), "
+                "created_at INTEGER NOT NULL, completed_at INTEGER)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_shadow_capture_pending "
+                "ON shadow_capture_evidence(status, created_at, capture_id)"
+            )
 
     def append(self, event: SocialEventEnvelope) -> AppendResult:
         encoded = json.dumps(event.to_dict(), ensure_ascii=False, sort_keys=True)
@@ -454,6 +472,7 @@ class SQLiteSocialEventStore:
         evaluation: dict[str, object] | None,
         keep_pending_request: dict[str, object] | None = None,
         resolution: dict[str, object] | None = None,
+        capture_evidence: dict[str, object] | None = None,
     ) -> bool:
         if status not in {"accepted", "stale"}:
             raise ValueError("scene work status must be accepted or stale")
@@ -517,6 +536,13 @@ class SQLiteSocialEventStore:
             if evaluation is not None:
                 if not self._evaluation_identity_matches(db, evaluation):
                     self._insert_shadow_evaluation(db, actor_key, evaluation)
+            if capture_evidence is not None:
+                self._insert_shadow_capture_evidence(
+                    db,
+                    actor_key=actor_key,
+                    request_id=request_id,
+                    evidence=capture_evidence,
+                )
             db.commit()
             return True
         except Exception:
@@ -619,6 +645,97 @@ class SQLiteSocialEventStore:
                 now,
             ),
         )
+
+    @staticmethod
+    def _insert_shadow_capture_evidence(
+        db: sqlite3.Connection,
+        *,
+        actor_key: str,
+        request_id: str,
+        evidence: dict[str, object],
+    ) -> None:
+        capture_id = str(evidence.get("capture_id") or "").strip()
+        if not capture_id:
+            raise ValueError("shadow capture evidence identity is required")
+        evaluation = evidence.get("evaluation")
+        if not isinstance(evaluation, dict):
+            raise ValueError("shadow capture evaluation evidence is required")
+        persona_id = str(evaluation.get("persona_id") or "").strip()
+        source_event = evaluation.get("source_event")
+        group_id = (
+            str(source_event.get("group_id") or "").strip()
+            if isinstance(source_event, dict)
+            else ""
+        )
+        if not persona_id or not group_id:
+            raise ValueError("shadow capture evidence scope is required")
+        encoded = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+        existing = db.execute(
+            "SELECT actor_key, request_id, persona_id, group_id, evidence_json "
+            "FROM shadow_capture_evidence WHERE capture_id=?",
+            (capture_id,),
+        ).fetchone()
+        identity = (actor_key, request_id, persona_id, group_id, encoded)
+        if existing is not None:
+            if tuple(existing) != identity:
+                raise JournalEffectIdentityConflict(
+                    "shadow capture identity belongs to different evidence"
+                )
+            return
+        db.execute(
+            "INSERT INTO shadow_capture_evidence("
+            "capture_id, actor_key, request_id, persona_id, group_id, "
+            "evidence_json, status, created_at"
+            ") VALUES(?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (
+                capture_id,
+                actor_key,
+                request_id,
+                persona_id,
+                group_id,
+                encoded,
+                int(time.time()),
+            ),
+        )
+
+    def pending_shadow_captures(
+        self,
+        persona_id: str,
+        group_ids: tuple[str, ...],
+    ) -> tuple[PendingShadowCapture, ...]:
+        if not persona_id.strip() or not group_ids:
+            return ()
+        placeholders = ",".join("?" for _ in group_ids)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT capture_id, evidence_json FROM shadow_capture_evidence "
+                f"WHERE status='pending' AND persona_id=? "
+                f"AND group_id IN ({placeholders}) "
+                "ORDER BY created_at, capture_id",
+                (persona_id, *group_ids),
+            ).fetchall()
+        return tuple(
+            PendingShadowCapture(str(row[0]), json.loads(row[1])) for row in rows
+        )
+
+    def complete_shadow_capture(self, capture_id: str) -> bool:
+        normalized = str(capture_id).strip()
+        if not normalized:
+            raise ValueError("shadow capture identity is required")
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE shadow_capture_evidence "
+                "SET status='completed', completed_at=? "
+                "WHERE capture_id=? AND status='pending'",
+                (int(time.time()), normalized),
+            )
+            if cursor.rowcount == 1:
+                return True
+            row = db.execute(
+                "SELECT status FROM shadow_capture_evidence WHERE capture_id=?",
+                (normalized,),
+            ).fetchone()
+            return row is not None and str(row[0]) == "completed"
 
     def event_envelopes(
         self,

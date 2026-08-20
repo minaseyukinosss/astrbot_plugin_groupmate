@@ -56,6 +56,7 @@ class AstrBotSocialRuntimeBridge:
             )
             await self._manager.start()
         self._started = True
+        self._reconcile_shadow_reviews()
 
     async def handle_event(self, event: object):
         if not self._started:
@@ -64,25 +65,32 @@ class AstrBotSocialRuntimeBridge:
             return None
         result = await self._manager.ingest(self.translator.translate(event))
         if result is not None and result.inserted:
-            evaluations = await self._manager.drain()
-            if self.shadow_reviews is not None:
-                capture = getattr(self.shadow_reviews, "capture_runtime", None)
-                if not callable(capture):
-                    self.shadow_review_error = (
-                        "shadow review recorder contract is invalid"
-                    )
-                    return result
-                for evaluation in evaluations:
-                    if not evaluation.accepted:
-                        continue
-                    try:
-                        capture(evaluation)
-                        self.shadow_review_error = None
-                    except Exception as exc:
-                        self.shadow_review_error = (
-                            f"{type(exc).__name__}: {exc}"
-                        )
+            await self._manager.drain()
+        self._reconcile_shadow_reviews()
         return result
+
+    def _reconcile_shadow_reviews(self) -> None:
+        if self._manager is None or self.shadow_reviews is None:
+            return
+        capture = getattr(self.shadow_reviews, "capture_runtime", None)
+        if not callable(capture):
+            self.shadow_review_error = "shadow review recorder contract is invalid"
+            return
+        try:
+            pending_evidence = self._manager.pending_shadow_review_evidence()
+        except Exception as exc:
+            self.shadow_review_error = f"{type(exc).__name__}: {exc}"
+            return
+        for pending in pending_evidence:
+            try:
+                capture(pending.evaluation)
+                if not self._manager.complete_shadow_review_evidence(
+                    pending.capture_id
+                ):
+                    raise RuntimeError("shadow review evidence acknowledgement failed")
+                self.shadow_review_error = None
+            except Exception as exc:
+                self.shadow_review_error = f"{type(exc).__name__}: {exc}"
 
     async def close(self) -> None:
         if self._manager is not None:
