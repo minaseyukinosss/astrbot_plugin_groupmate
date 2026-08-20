@@ -73,17 +73,18 @@ def test_fake_load_report_is_exact_machine_readable_and_bitwise_deterministic():
     payload = first.to_dict()
 
     assert first.to_json() == second.to_json()
+    assert payload["evidence_kind"] == "synthetic_preflight"
     assert payload["workload"] == {
-        "groups": 50,
+        "groups": 3,
         "messages_per_group_second": 5,
         "virtual_seconds": 1_800,
-        "messages": 450_000,
+        "messages": 27_000,
         "concurrent_long_tasks": 10,
         "fake_delivery_attempts": 1_000,
     }
     assert payload["event_accounting"] == {
-        "ingested": 450_000,
-        "committed": 450_000,
+        "ingested": 27_000,
+        "committed": 27_000,
         "dropped": 0,
     }
     assert payload["delivery_accounting"] == {
@@ -93,11 +94,11 @@ def test_fake_load_report_is_exact_machine_readable_and_bitwise_deterministic():
     }
     assert payload["percentile_algorithm"] == "nearest-rank-ceiling"
     assert payload["denominators"] == {
-        "event_loss_rate": 450_000,
-        "fast_decision_latency_ms": 3_000,
-        "ambient_decision_latency_ms": 18_000,
-        "ambient_expiry": 18_000,
-        "projection_lag_ms": 21_000,
+        "event_loss_rate": 27_000,
+        "fast_decision_latency_ms": 180,
+        "ambient_decision_latency_ms": 1_080,
+        "ambient_expiry": 1_080,
+        "projection_lag_ms": 1_260,
         "unknown_delivery_rate": 1_000,
     }
     assert payload["source_evaluation_facts"] == {
@@ -143,16 +144,28 @@ def test_virtual_load_uses_runtime_priority_queue_and_hard_cap():
     payload = run_fake_load(worker_concurrency_limit=12).to_dict()
 
     assert payload["scheduling"]["direct_starvation_count"] == 0
-    assert payload["scheduling"]["direct_admitted_ahead_of_ambient"] > 0
-    assert payload["scheduling"]["peak_worker_concurrency"] == 12
+    assert payload["scheduling"]["peak_worker_concurrency"] <= 12
     assert payload["scheduling"]["peak_long_task_concurrency"] == 10
     assert payload["budgets"]["actor_backlog"]["observed"] <= 100
-    assert payload["budgets"]["worker_concurrency"] == {
-        "observed": 12,
-        "budget": 12,
-        "applicable": True,
-        "pass": True,
-    }
+    assert payload["budgets"]["worker_concurrency"]["budget"] == 12
+    assert payload["budgets"]["worker_concurrency"]["pass"] is True
+    assert payload["scheduling"]["production_gate"][
+        "direct_started_before_queued_ambient"
+    ] is True
+
+
+def test_group_scope_is_positive_and_50_groups_is_optional_synthetic_stress():
+    from eval.load_runner import run_fake_load
+
+    with pytest.raises(ValueError, match="groups must be a positive integer"):
+        run_fake_load(groups=0)
+
+    stress = run_fake_load(groups=50).to_dict()
+    assert stress["evidence_kind"] == "synthetic_preflight"
+    assert stress["workload"]["groups"] == 50
+    assert stress["event_accounting"]["ingested"] == 450_000
+    assert stress["denominators"]["fast_decision_latency_ms"] == 3_000
+    assert stress["denominators"]["ambient_expiry"] == 18_000
 
 
 def test_worker_concurrency_hard_limit_is_config_visible_and_cross_group_enforced():
@@ -223,11 +236,12 @@ def test_nearest_rank_percentiles_have_a_fixed_small_sample_definition():
     }
 
 
-def test_streaming_faults_drive_accounting_backlog_and_projection_verdicts():
+def test_optional_50_group_fault_stress_drives_backlog_and_projection_verdicts():
     from eval.load_runner import run_fake_load
 
     try:
         report = run_fake_load(
+            groups=50,
             faults={
                 "drop_every": 100_000,
                 "actor_capacity_per_second": 200,
@@ -252,16 +266,16 @@ def test_streaming_faults_drive_accounting_backlog_and_projection_verdicts():
 def test_drop_only_fault_fails_machine_readable_zero_loss_budget():
     from eval.load_runner import run_fake_load
 
-    payload = run_fake_load(faults={"drop_every": 100_000}).to_dict()
+    payload = run_fake_load(faults={"drop_every": 10_000}).to_dict()
 
     assert payload["event_accounting"] == {
-        "ingested": 450_000,
-        "committed": 449_996,
-        "dropped": 4,
+        "ingested": 27_000,
+        "committed": 26_998,
+        "dropped": 2,
     }
-    assert payload["denominators"]["event_loss_rate"] == 450_000
+    assert payload["denominators"]["event_loss_rate"] == 27_000
     assert payload["budgets"]["event_loss_rate"] == {
-        "observed": 0.000008888889,
+        "observed": 0.000074074074,
         "budget": 0.0,
         "applicable": True,
         "pass": False,
@@ -336,7 +350,7 @@ def test_load_direct_priority_is_measured_through_production_cognition_gate(
 def test_ambient_tail_expires_fail_closed_instead_of_hiding_behind_p95():
     from eval.load_runner import run_fake_load
 
-    payload = run_fake_load(worker_concurrency_limit=1).to_dict()
+    payload = run_fake_load(groups=50, worker_concurrency_limit=1).to_dict()
 
     assert payload["denominators"]["ambient_expiry"] == 18_000
     assert payload["scheduling"]["ambient_expired_count"] >= 498

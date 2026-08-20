@@ -2,7 +2,9 @@
 
 ## 当前证据边界
 
-Task 4 使用确定性虚拟时间负载验证调度、容量记账和公开预算，不把它解释为操作系统耐久 soak。固定 workload 是 50 群、每群 5 message/s、1,800 秒，共 450,000 个事件，另有 10 个相互重叠的长任务和 1,000 个 fake delivery attempts。运行器不会 wall-clock sleep，也不会连接真实 Provider、OneBot endpoint 或 QQ；`SHADOW` 仍然禁止创建发送副作用。
+Task 4 使用确定性虚拟时间负载验证调度、容量记账和公开预算，不把它解释为操作系统耐久 soak。默认 workload 按实际部署范围设为 3 群、每群 5 message/s、1,800 秒，共 27,000 个事件，另有 10 个相互重叠的长任务和 1,000 个 fake delivery attempts。运行器不会 wall-clock sleep，也不会连接真实 Provider、OneBot endpoint 或 QQ；`SHADOW` 仍然禁止创建发送副作用。
+
+报告固定公开 `evidence_kind=synthetic_preflight`。它只能作为合成预检，不能单独满足 Production Readiness；放量依据必须来自 installed live no-send SHADOW 的真实事件、决策、expiry 和 delivery evidence。50 群仅能通过 `run_fake_load(groups=50)` 显式运行 optional non-gating stress，不属于默认或 Readiness 证据。
 
 运行命令：
 
@@ -16,9 +18,9 @@ Python 调用 `eval.load_runner.run_fake_load()` 返回 `LoadReport`。`to_json(
 
 ## 固定 workload 形状
 
-- 每个虚拟秒为每群逐项记入 5 个事件；streaming accumulator 实际遍历精确 450,000 个输入而不物化事件对象。默认 `ingested == committed == 450000`、`dropped == 0`；fault profile 会从同一状态导出 drop 和 backlog verdict，不能用固定常量替代。
-- 每群每 30 秒有一个确定性的 FAST 直接事件，共 3,000 个 FAST denominator；群号错峰，避免用单批常量伪造延迟。
-- 持续 Ambient 流量按 5 秒有界窗口聚合，共生成 18,000 个 Ambient decision。超过 frame deadline 后 8 秒仍不能完成的机会会 fail-closed 丢弃；accepted latency denominator 和 expired count 分开公开，总 expiry denominator 固定为 18,000。
+- 每个虚拟秒为每群逐项记入 5 个事件；默认 streaming accumulator 实际遍历 27,000 个输入而不物化事件对象。默认 `ingested == committed == 27000`、`dropped == 0`；groups 必须是正整数，messages/accounting/denominator 全部从它推导。
+- 每群每 30 秒有一个确定性的 FAST 直接事件；默认 3 群的 FAST denominator 为 180。群号错峰，避免用单批常量伪造延迟。
+- 持续 Ambient 流量按 5 秒有界窗口聚合；默认生成 1,080 个 Ambient decision。超过 frame deadline 后 8 秒仍不能完成的机会会 fail-closed 丢弃；accepted latency denominator 和 expired count 分开公开。
 - 10 个长任务通过真实 `TaskRuntime` 执行 `PROPOSED → QUEUED → RUNNING`，在独立 SQLite 状态中产生 30 个 Task events；报告公开 proposed/running/peak concurrency，默认峰值为 10。
 - 虚拟 decision 调度使用生产 `WorkerAdmissionQueue`；另一个有界 probe 通过真实 `CognitionService` concurrency gate 跨群提交工作。FAST 排在已经等待的 AMBIENT 之前，但不会中断已运行工作；报告公开 gate submitted/peak/priority evidence、`direct_admitted_ahead_of_ambient` 和 `direct_starvation_count`。
 - Projection lag 由逐秒 Projection consumer backlog 状态计算；fault profile 可以降低 consumer capacity，使同一状态推导出的 lag budget 确定性失败。
@@ -29,19 +31,19 @@ Python 调用 `eval.load_runner.run_fake_load()` 返回 `LoadReport`。`to_json(
 | 名称 | 初始预算 | denominator / 语义 |
 | --- | ---: | --- |
 | Actor backlog | 告警 100 / 单群 | 未关闭 Ambient 窗口中的事件峰值 |
-| Event loss rate | 0 | `dropped / 450,000 ingested`；任何丢失均阻止放量 |
+| Event loss rate | 0 | `dropped / ingested`；默认 denominator 27,000，任何丢失均阻止放量 |
 | Worker concurrency | 配置硬限制，默认 12 | 跨群共享的实际运行 Worker 峰值 |
 | Worker cost | 50 cost units / virtual second | 实际 admitted FAST=1、Ambient=2 的总成本除以 1,800；已过期未运行的 Ambient 不计成本 |
-| Fast decision P95 | ≤ 2,500 ms | 3,000 个 FAST decision；不包含外部 Task duration |
+| Fast decision P95 | ≤ 2,500 ms | 默认 180 个 FAST decision；不包含外部 Task duration |
 | Ambient decision P95 | ≤ 8,000 ms | accepted Ambient decisions |
 | Ambient decision P99 | ≤ 8,000 ms | accepted Ambient decisions；避免 P95 隐藏尾部 |
-| Ambient expired rate | 0 | `expired / 18,000 generated Ambient decisions`，任何过期均 fail-closed 并阻止放量 |
-| Projection lag P95 | ≤ 5,000 ms | 21,000 个 decision projection |
+| Ambient expired rate | 0 | `expired / generated Ambient decisions`；默认 denominator 1,080，任何过期均 fail-closed 并阻止放量 |
+| Projection lag P95 | ≤ 5,000 ms | 默认 1,260 个 decision projection |
 | Unknown delivery rate | < 0.001 | `UNKNOWN parts / attempted parts` |
 
 Latency 的 P50/P95/P99 使用固定 nearest-rank ceiling：先升序排列 N 个样本，P 百分位取一基位置 `ceil(N × P / 100)`。各 latency 和 delivery rate 使用独立 denominator，绝不混合。
 
-默认 hard cap 12 时 18,000 个 Ambient 全部按期完成。诊断 profile `worker_concurrency_limit=1` 会稳定产生 16,498 个 expiry：accepted Ambient P99 仍为 7,794 ms，但 `ambient_expired_rate=0.916555555556` 明确失败，证明 P95/P99 不会掩盖被丢弃尾部。
+默认 3 群在 hard cap 12 时 1,080 个 Ambient 全部按期完成。显式 optional `groups=50, worker_concurrency_limit=1` stress 会稳定产生 16,498 个 expiry：accepted Ambient P99 仍为 7,794 ms，但 `ambient_expired_rate=0.916555555556` 明确失败，证明 P95/P99 不会掩盖被丢弃尾部；该 stress 不计入 Readiness。
 
 默认 fake delivery 为 attempted=1,000、sent=1,000、unknown=0，因此 unknown budget applicable 且 pass。诊断 profile `unknown_every=1000` 通过 production adapter 的 timeout→UNKNOWN 路径得到 1/1,000=0.001；预算要求严格 `<0.001`，所以边界值明确失败且 UNKNOWN 不重试。
 

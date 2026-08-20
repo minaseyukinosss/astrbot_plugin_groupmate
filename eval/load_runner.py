@@ -59,6 +59,7 @@ class BudgetResult:
 
 @dataclass(frozen=True)
 class LoadReport:
+    evidence_kind: str
     workload: Mapping[str, int]
     event_accounting: Mapping[str, int]
     delivery_accounting: Mapping[str, int]
@@ -73,6 +74,7 @@ class LoadReport:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "evidence_kind": self.evidence_kind,
             "workload": dict(self.workload),
             "event_accounting": dict(self.event_accounting),
             "delivery_accounting": dict(self.delivery_accounting),
@@ -132,19 +134,25 @@ def nearest_rank_percentiles(values: Iterable[int | float]) -> dict[str, int | f
 
 def run_fake_load(
     *,
+    groups: int = 3,
     worker_concurrency_limit: int = 12,
     evaluation_reports: Iterable[EvaluationReport] = (),
     faults: Mapping[str, int] | None = None,
     runtime_path: Path | None = None,
 ) -> LoadReport:
+    if isinstance(groups, bool):
+        raise ValueError("groups must be a positive integer")
+    group_count = int(groups)
+    if group_count < 1:
+        raise ValueError("groups must be a positive integer")
     limit = int(worker_concurrency_limit)
     if limit < 1:
         raise ValueError("worker_concurrency_limit must be positive")
     workload = {
-        "groups": 50,
+        "groups": group_count,
         "messages_per_group_second": 5,
         "virtual_seconds": 1_800,
-        "messages": 450_000,
+        "messages": group_count * 5 * 1_800,
         "concurrent_long_tasks": 10,
         "fake_delivery_attempts": 1_000,
     }
@@ -152,17 +160,20 @@ def run_fake_load(
     streaming = _stream_workload(workload, fault_profile)
     if runtime_path is None:
         with TemporaryDirectory() as directory:
-            task_accounting = _run_long_tasks(Path(directory) / "load-tasks.db")
+            task_accounting = _run_long_tasks(
+                Path(directory) / "load-tasks.db", group_count
+            )
     else:
-        task_accounting = _run_long_tasks(Path(runtime_path))
-    gate_evidence = asyncio.run(_exercise_production_gate(limit))
+        task_accounting = _run_long_tasks(Path(runtime_path), group_count)
+    gate_evidence = asyncio.run(_exercise_production_gate(limit, group_count))
     delivery_accounting = asyncio.run(
         _run_fake_deliveries(
             workload["fake_delivery_attempts"],
+            groups=group_count,
             unknown_every=fault_profile["unknown_every"],
         )
     )
-    jobs = _workload_jobs()
+    jobs = _workload_jobs(group_count)
     simulation = _simulate(jobs, limit)
     fast_latency = simulation["fast_latency"]
     ambient_latency = simulation["ambient_latency"]
@@ -210,6 +221,7 @@ def run_fake_load(
         ),
     }
     report = LoadReport(
+        evidence_kind="synthetic_preflight",
         workload=workload,
         event_accounting={
             "ingested": streaming.ingested,
@@ -312,7 +324,7 @@ def _stream_workload(
 
 
 async def _run_fake_deliveries(
-    attempts: int, *, unknown_every: int
+    attempts: int, *, groups: int, unknown_every: int
 ) -> dict[str, int]:
     call_count = 0
 
@@ -338,7 +350,7 @@ async def _run_fake_deliveries(
             bundle_id=f"load-delivery-bundle-{index}",
             correlation_id=f"load-delivery:{index}",
             persona_id="load-persona",
-            group_id=f"load-group-{index % 50}",
+            group_id=f"load-group-{index % groups}",
             topic_id=None,
             parts=(part,),
             created_at=0,
@@ -352,11 +364,11 @@ async def _run_fake_deliveries(
     return {"attempted": call_count, "sent": sent, "unknown": unknown}
 
 
-def _workload_jobs() -> tuple[_VirtualJob, ...]:
+def _workload_jobs(groups: int) -> tuple[_VirtualJob, ...]:
     jobs: list[_VirtualJob] = []
     direct_index = 0
     for second in range(1_800):
-        for group in range(50):
+        for group in range(groups):
             if second % 30 == group % 30:
                 duration = 300 if direct_index % 97 == 0 else 200
                 jobs.append(
@@ -371,7 +383,7 @@ def _workload_jobs() -> tuple[_VirtualJob, ...]:
                 )
                 direct_index += 1
     for window in range(360):
-        for group in range(50):
+        for group in range(groups):
             jobs.append(
                 _VirtualJob(
                     f"ambient:{window}:{group}",
@@ -385,7 +397,7 @@ def _workload_jobs() -> tuple[_VirtualJob, ...]:
     return tuple(sorted(jobs, key=lambda item: (item.arrived_at, item.job_id)))
 
 
-def _run_long_tasks(path: Path) -> dict[str, int]:
+def _run_long_tasks(path: Path, groups: int) -> dict[str, int]:
     runtime = TaskRuntime(path)
     descriptor = CapabilityDescriptor.create(
         capability_id="load.long_task",
@@ -408,7 +420,7 @@ def _run_long_tasks(path: Path) -> dict[str, int]:
             CapabilityRequest.create(
                 requester_id="load-user",
                 persona_id="load-persona",
-                group_id=f"load-group-{index}",
+                group_id=f"load-group-{index % groups}",
                 topic_id=f"load-topic-{index}",
                 input_payload={"task_number": index},
                 authorization_scopes=("load.read",),
@@ -443,7 +455,7 @@ class _GateProbeWorker:
         return ()
 
 
-async def _exercise_production_gate(limit: int) -> dict[str, object]:
+async def _exercise_production_gate(limit: int, groups: int) -> dict[str, object]:
     worker = _GateProbeWorker(limit)
     service = CognitionService(
         workers={worker.name: worker},
@@ -455,14 +467,20 @@ async def _exercise_production_gate(limit: int) -> dict[str, object]:
     )
     tasks = [
         asyncio.create_task(
-            service.evaluate(_gate_frame(index, "AMBIENT"), _gate_context(index))
+            service.evaluate(
+                _gate_frame(index, "AMBIENT", groups),
+                _gate_context(index, groups),
+            )
         )
         for index in range(limit)
     ]
     await asyncio.wait_for(worker.initial_full.wait(), timeout=1)
     tasks.extend(
         asyncio.create_task(
-            service.evaluate(_gate_frame(index, "AMBIENT"), _gate_context(index))
+            service.evaluate(
+                _gate_frame(index, "AMBIENT", groups),
+                _gate_context(index, groups),
+            )
         )
         for index in range(limit, limit + 2)
     )
@@ -470,7 +488,8 @@ async def _exercise_production_gate(limit: int) -> dict[str, object]:
     tasks.append(
         asyncio.create_task(
             service.evaluate(
-                _gate_frame(limit + 2, "FAST"), _gate_context(limit + 2)
+                _gate_frame(limit + 2, "FAST", groups),
+                _gate_context(limit + 2, groups),
             )
         )
     )
@@ -494,10 +513,11 @@ async def _wait_for_gate_queue(service: CognitionService, count: int) -> None:
     await asyncio.wait_for(wait_until_ready(), timeout=1)
 
 
-def _gate_frame(index: int, lane: str) -> AttentionFrame:
+def _gate_frame(index: int, lane: str, groups: int) -> AttentionFrame:
+    group = index % groups
     return AttentionFrame(
         frame_id=f"load-gate:{index}",
-        group_id=f"load-group-{index}",
+        group_id=f"load-group-{group}",
         scene_version=1,
         trigger_kind=lane,
         focus_topic_ids=(f"topic-{index}",),
@@ -511,9 +531,9 @@ def _gate_frame(index: int, lane: str) -> AttentionFrame:
     )
 
 
-def _gate_context(index: int) -> CognitiveContext:
+def _gate_context(index: int, groups: int) -> CognitiveContext:
     return CognitiveContext.create(
-        group_id=f"load-group-{index}",
+        group_id=f"load-group-{index % groups}",
         scene_version=1,
         persona_state_version=1,
         config_version=1,
