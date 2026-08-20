@@ -42,6 +42,12 @@
     "type": "string",
     "default": "323537051"
   },
+  "worker_concurrency_limit": {
+    "description": "跨群认知 Worker 全局并发硬限制",
+    "type": "int",
+    "default": 12,
+    "minimum": 1
+  },
   "external_command_prefixes": {
     "description": "当前 AstrBot 实例的外置插件触发规则（rule=provider；参考群指令不会自动加入）",
     "type": "list",

@@ -176,6 +176,7 @@ class SocialRuntimeManager:
         event_store: SQLiteSocialEventStore | None = None,
         cognition_workers: Mapping[str, CognitiveWorker] | None = None,
         cognition_budget: CognitionBudget | None = None,
+        worker_concurrency_limit: int = 12,
         governance_state: RuntimeGovernanceState | None = None,
     ) -> None:
         resolved_mode = RuntimeMode(mode)
@@ -212,7 +213,12 @@ class SocialRuntimeManager:
         self.execution_port = NoSideEffectExecutionPort()
         self.cognition = CognitionService(
             workers=cognition_workers or {},
-            budget=cognition_budget or CognitionBudget(8, 12),
+            budget=cognition_budget
+            or CognitionBudget(
+                8,
+                12,
+                max_worker_concurrency=int(worker_concurrency_limit),
+            ),
         )
         self.intentions = IntentionEngine()
         self.governor = SocialGovernor()

@@ -16,6 +16,7 @@ class SocialRuntimeSettings:
     database_name: str
     persona_id: str
     bot_qq: str
+    worker_concurrency_limit: int = 12
     control_admin_ids: tuple[str, ...] = ()
     external_command_prefixes: tuple[str, ...] = ()
     external_link_domains: tuple[str, ...] = ()
@@ -40,6 +41,10 @@ class SocialRuntimeSettings:
             database_name="groupmate-social-runtime-v2.db",
             persona_id=str(source.get("persona_id", "aemeath") or "aemeath").strip(),
             bot_qq=str(source.get("bot_qq", "323537051") or "323537051").strip(),
+            worker_concurrency_limit=cls._positive_int(
+                source.get("worker_concurrency_limit", 12),
+                "worker_concurrency_limit",
+            ),
             control_admin_ids=tuple(
                 str(value).strip()
                 for value in source.get("control_admin_ids", ())
@@ -56,3 +61,15 @@ class SocialRuntimeSettings:
                 if str(value).strip()
             ),
         )
+
+    @staticmethod
+    def _positive_int(value: object, field: str) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} must be a positive integer")
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be a positive integer") from exc
+        if normalized < 1:
+            raise ValueError(f"{field} must be a positive integer")
+        return normalized

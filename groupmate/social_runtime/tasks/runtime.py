@@ -378,6 +378,10 @@ class TaskRuntime:
             return self.load(event.task_id)
 
         task = self.load(event.task_id)
+        if event.occurred_at < task.updated_at:
+            raise InvalidTaskTransition(
+                "provider occurred_at must not precede current task state"
+            )
         changes: dict[str, object] = {}
         if event.kind is ProviderEventKind.ACCEPTED:
             if task.status not in (TaskStatus.QUEUED, TaskStatus.RUNNING):

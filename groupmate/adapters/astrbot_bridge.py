@@ -53,6 +53,7 @@ class AstrBotSocialRuntimeBridge:
                 mode=mode,
                 enabled_groups=self.settings.enabled_groups,
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
+                worker_concurrency_limit=self.settings.worker_concurrency_limit,
             )
             await self._manager.start()
         self._started = True
