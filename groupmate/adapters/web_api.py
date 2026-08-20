@@ -106,7 +106,8 @@ class ControlPlaneWebAPI:
 
     async def handle(self, request: WebRequest) -> WebResponse:
         endpoint = str(request.path).strip().strip("/")
-        if str(request.username or "").strip() not in self.admin_ids:
+        username = str(request.username or "").strip()
+        if not username or (self.admin_ids and username not in self.admin_ids):
             return self._error(403, "administrator_forbidden")
         if endpoint in self.QUERY_ENDPOINTS:
             if str(request.method).upper() != "GET":

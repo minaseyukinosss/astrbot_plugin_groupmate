@@ -1,66 +1,29 @@
 {
   "enabled_groups": {
-    "description": "启用群列表",
+    "description": "启用 Groupmate 的群",
     "type": "list",
-    "default": []
-  },
-  "runtime_mode": {
-    "description": "运行模式",
-    "type": "string",
-    "default": "OFF",
-    "options": ["OFF", "SHADOW", "SOCIAL_RUNTIME"]
-  },
-  "social_runtime_test_groups": {
-    "description": "Gate C 测试群白名单（仅允许 fake/test group）",
-    "type": "list",
-    "default": []
-  },
-  "control_admin_ids": {
-    "description": "Social Runtime 控制面管理员用户名 allowlist（默认空，仅只读拒绝）",
-    "type": "list",
-    "default": []
+    "default": [],
+    "hint": "填写 AstrBot 已接入平台中的群 ID。保存后先进入无发送的 SHADOW 观察模式。"
   },
   "generation_provider": {
-    "description": "文本生成模型",
+    "description": "Groupmate 文本模型",
     "type": "string",
     "_special": "select_provider",
-    "default": ""
+    "default": "",
+    "hint": "从 AstrBot 已配置的模型 Provider 中选择，独立于普通聊天会话。"
   },
   "vision_provider": {
-    "description": "图片理解模型",
+    "description": "Groupmate 视觉模型（可选）",
     "type": "string",
     "_special": "select_provider",
-    "default": ""
+    "default": "",
+    "hint": "不需要理解图片时可以留空。"
   },
   "persona_id": {
-    "description": "人格标识",
+    "description": "Groupmate 人格",
     "type": "string",
-    "default": "aemeath"
-  },
-  "bot_qq": {
-    "description": "机器人 QQ（用于识别自身消息和 @）",
-    "type": "string",
-    "default": "323537051"
-  },
-  "worker_concurrency_limit": {
-    "description": "跨群认知 Worker 全局并发硬限制",
-    "type": "int",
-    "default": 12,
-    "minimum": 1
-  },
-  "external_command_prefixes": {
-    "description": "当前 AstrBot 实例的外置插件触发规则（rule=provider；参考群指令不会自动加入）",
-    "type": "list",
-    "default": []
-  },
-  "external_link_domains": {
-    "description": "当前 AstrBot 实例的自动链接解析域名（domain=provider；仅填写实际安装插件）",
-    "type": "list",
-    "default": []
-  },
-  "database_name": {
-    "description": "V2 独立数据库文件名（固定，不读取旧数据库）",
-    "type": "string",
-    "default": "groupmate-social-runtime-v2.db"
+    "_special": "select_persona",
+    "default": "",
+    "hint": "从 AstrBot 已创建的人格中选择，作为 Groupmate 的独立身份。"
   }
 }

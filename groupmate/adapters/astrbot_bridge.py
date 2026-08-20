@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from ..settings import SocialRuntimeSettings
+from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
@@ -28,7 +28,6 @@ class AstrBotSocialRuntimeBridge:
         self.data_dir = Path(data_dir)
         self.translator = AstrBotEventTranslator(
             settings.persona_id,
-            bot_qq=settings.bot_qq,
             external_trigger_policy=ExternalTriggerPolicy.from_entries(
                 command_prefixes=settings.external_command_prefixes,
                 link_domains=settings.external_link_domains,
@@ -55,7 +54,7 @@ class AstrBotSocialRuntimeBridge:
             and self.settings.enabled_groups
         ):
             self._manager = SocialRuntimeManager(
-                database_path=self.data_dir / self.settings.database_name,
+                database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,
                 mode=mode,
                 enabled_groups=self.settings.enabled_groups,

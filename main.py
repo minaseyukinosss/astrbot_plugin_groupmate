@@ -13,7 +13,7 @@ from .groupmate.adapters.web_api import (
     AstrBotControlPlaneRoutes,
     ControlPlaneWebAPI,
 )
-from .groupmate.settings import SocialRuntimeSettings
+from .groupmate.settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from .groupmate.social_runtime.control.commands import CommandService
 from .groupmate.social_runtime.control.projections import ProjectionConsumer
 from .groupmate.social_runtime.control.queries import ProjectionQueries
@@ -43,7 +43,7 @@ class GroupmatePlugin(Star):
     async def initialize(self) -> None:
         await self.bridge.start()
         if self.settings.runtime_mode != "OFF" and self.settings.enabled_groups:
-            path = self.data_dir / self.settings.database_name
+            path = self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             self._shadow_reviews = ShadowReviewRepository(path)
             self.bridge.shadow_reviews = self._shadow_reviews
             self._projection_consumers = tuple(
@@ -57,7 +57,7 @@ class GroupmatePlugin(Star):
                     path,
                     persona_id=self.settings.persona_id,
                     group_ids=self.settings.enabled_groups,
-                    admin_ids=self.settings.control_admin_ids,
+                    admin_ids=self.settings.control_admin_ids or (username,),
                     shadow_repository=self._shadow_reviews,
                 ),
                 event_publisher=self._publish_control_event,

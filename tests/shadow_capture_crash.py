@@ -34,7 +34,12 @@ async def _main(data_dir: Path) -> None:
     bridge = AstrBotSocialRuntimeBridge(
         object(),
         SocialRuntimeSettings.from_mapping(
-            {"runtime_mode": "SHADOW", "enabled_groups": [GROUP]}
+            {
+                "runtime_mode": "SHADOW",
+                "enabled_groups": [GROUP],
+                "generation_provider": "provider:test",
+                "persona_id": "aemeath",
+            }
         ),
         data_dir,
         shadow_reviews=repository,
@@ -43,6 +48,7 @@ async def _main(data_dir: Path) -> None:
     await bridge.handle_event(
         {
             "message_id": "abrupt-shadow-capture",
+            "self_id": "323537051",
             "group_id": GROUP,
             "user_id": "fake-user",
             "time": 100,

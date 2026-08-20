@@ -169,7 +169,7 @@ def test_installed_astrbot_shadow_is_captured_projected_and_never_sent(tmp_path)
         reviews = ShadowReviewRepository(path)
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
-            settings=SocialRuntimeSettings.from_mapping(
+            settings=_runtime_settings(
                 {
                     "runtime_mode": "SHADOW",
                     "enabled_groups": ["group-1"],
@@ -181,7 +181,8 @@ def test_installed_astrbot_shadow_is_captured_projected_and_never_sent(tmp_path)
         await bridge.start()
         await bridge.handle_event(
             {
-                "message_id": "raw-platform-message-998877",
+                    "message_id": "raw-platform-message-998877",
+                    "self_id": "323537051",
                 "group_id": "group-1",
                 "user_id": "99887766",
                 "time": 1_700_000_000,
@@ -244,7 +245,7 @@ def test_social_runtime_group_mode_cannot_be_recorded_as_installed_live_shadow(t
         reviews = ShadowReviewRepository(path)
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
-            settings=SocialRuntimeSettings.from_mapping(
+            settings=_runtime_settings(
                 {
                     "runtime_mode": "SOCIAL_RUNTIME",
                     "enabled_groups": ["group-1"],
@@ -257,7 +258,8 @@ def test_social_runtime_group_mode_cannot_be_recorded_as_installed_live_shadow(t
         await bridge.start()
         await bridge.handle_event(
             {
-                "message_id": "social-runtime-event",
+                    "message_id": "social-runtime-event",
+                    "self_id": "323537051",
                 "group_id": "group-1",
                 "user_id": "42",
                 "time": 1_700_000_010,
@@ -283,7 +285,7 @@ def test_unknown_owner_remains_unknown_in_runtime_capture(tmp_path):
         reviews = ShadowReviewRepository(path)
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
-            settings=SocialRuntimeSettings.from_mapping(
+            settings=_runtime_settings(
                 {"runtime_mode": "SHADOW", "enabled_groups": ["group-1"]}
             ),
             data_dir=tmp_path,
@@ -292,7 +294,8 @@ def test_unknown_owner_remains_unknown_in_runtime_capture(tmp_path):
         await bridge.start()
         await bridge.handle_event(
             {
-                "message_id": "unknown-owner-event",
+                    "message_id": "unknown-owner-event",
+                    "self_id": "323537051",
                 "group_id": "group-1",
                 "user_id": "42",
                 "time": 1_700_000_020,
@@ -317,7 +320,7 @@ def test_external_plugin_trigger_projects_no_attention_compatibility_decision(tm
         reviews = ShadowReviewRepository(path)
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
-            settings=SocialRuntimeSettings.from_mapping(
+            settings=_runtime_settings(
                 {
                     "runtime_mode": "SHADOW",
                     "enabled_groups": ["group-1"],
@@ -330,7 +333,8 @@ def test_external_plugin_trigger_projects_no_attention_compatibility_decision(tm
         await bridge.start()
         await bridge.handle_event(
             {
-                "message_id": "external-command-event",
+                    "message_id": "external-command-event",
+                    "self_id": "323537051",
                 "group_id": "group-1",
                 "user_id": "42",
                 "time": 1_700_000_030,
@@ -410,9 +414,10 @@ def test_restart_recovers_durable_shadow_capture_without_replaying_runtime(
         if external:
             settings_values["external_command_prefixes"] = ["xw=astrbot.waves"]
             message = [{"type": "text", "data": {"text": "xw帮助"}}]
-        settings = SocialRuntimeSettings.from_mapping(settings_values)
+        settings = _runtime_settings(settings_values)
         event = {
             "message_id": "recover-external" if external else "recover-normal",
+            "self_id": "323537051",
             "group_id": "group-1",
             "user_id": "42",
             "time": 1_700_000_040,
@@ -498,11 +503,12 @@ def test_restart_recovers_durable_shadow_capture_without_replaying_runtime(
 def test_restart_repairs_projection_after_shadow_record_was_committed(tmp_path):
     async def scenario():
         path = tmp_path / "groupmate-social-runtime-v2.db"
-        settings = SocialRuntimeSettings.from_mapping(
+        settings = _runtime_settings(
             {"runtime_mode": "SHADOW", "enabled_groups": ["group-1"]}
         )
         event = {
             "message_id": "recover-partial-projection",
+            "self_id": "323537051",
             "group_id": "group-1",
             "user_id": "42",
             "time": 1_700_000_050,
@@ -1168,3 +1174,11 @@ def test_shadow_review_command_updates_only_scoped_pending_item(tmp_path):
     assert result.event.event_type == "control.shadow_decision_reviewed"
     assert result.data["decision"] == "reasonable"
     assert repository.load(item.entity_ref).reviewer_id == "admin:root"
+def _runtime_settings(values):
+    return SocialRuntimeSettings.from_mapping(
+        {
+            "generation_provider": "provider:test",
+            "persona_id": "aemeath",
+            **values,
+        }
+    )

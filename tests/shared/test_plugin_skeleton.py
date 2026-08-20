@@ -7,20 +7,61 @@ import json
 from pathlib import Path
 
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
-from groupmate.settings import SocialRuntimeSettings
+from groupmate.settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 
 
-def test_default_settings_are_off_and_use_a_new_database():
+def test_default_settings_are_off_and_database_is_plugin_owned():
     settings = SocialRuntimeSettings.from_mapping({})
 
     assert settings.runtime_mode == "OFF"
-    assert settings.database_name == "groupmate-social-runtime-v2.db"
+    assert SOCIAL_RUNTIME_DATABASE_NAME == "groupmate-social-runtime-v2.db"
+    assert not hasattr(settings, "database_name")
     assert settings.control_admin_ids == ()
     assert settings.external_command_prefixes == ()
     assert settings.external_link_domains == ()
 
 
-def test_control_administrators_are_an_explicit_trimmed_deployment_allowlist():
+def test_astrbot_config_only_exposes_groupmate_deployment_choices():
+    root = Path(__file__).parents[2]
+    schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+    visible = {
+        name
+        for name, definition in schema.items()
+        if definition.get("invisible") is not True
+    }
+
+    assert visible == {
+        "enabled_groups",
+        "generation_provider",
+        "vision_provider",
+        "persona_id",
+    }
+    assert schema["generation_provider"]["_special"] == "select_provider"
+    assert schema["vision_provider"]["_special"] == "select_provider"
+    assert schema["persona_id"]["_special"] == "select_persona"
+    assert "bot_qq" not in schema
+    assert "database_name" not in schema
+
+
+def test_complete_native_configuration_enters_no_send_shadow_automatically():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": [" group-1 "],
+            "generation_provider": "provider:text",
+            "vision_provider": "provider:vision",
+            "persona_id": "persona:groupmate",
+        }
+    )
+
+    assert settings.enabled_groups == ("group-1",)
+    assert settings.generation_provider == "provider:text"
+    assert settings.vision_provider == "provider:vision"
+    assert settings.persona_id == "persona:groupmate"
+    assert settings.runtime_mode == "SHADOW"
+
+
+def test_control_administrators_are_internal_governance_state():
     settings = SocialRuntimeSettings.from_mapping(
         {"control_admin_ids": [" admin:root ", "", "ops:two"]}
     )
@@ -30,13 +71,12 @@ def test_control_administrators_are_an_explicit_trimmed_deployment_allowlist():
     root = Path(__file__).parents[2]
     schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
     composition = (root / "main.py").read_text(encoding="utf-8")
-    assert schema["control_admin_ids"]["default"] == []
-    assert "admin_ids=(username,)" not in composition
-    assert "admin_ids=self.settings.control_admin_ids" in composition
+    assert "control_admin_ids" not in schema
+    assert "admin_ids=self.settings.control_admin_ids or (username,)" in composition
     assert "EventMessageType.GROUP_MESSAGE, priority=-100" in composition
 
 
-def test_external_trigger_rules_are_deployment_specific_and_trimmed():
+def test_external_trigger_rules_are_not_first_run_configuration():
     settings = SocialRuntimeSettings.from_mapping(
         {
             "external_command_prefixes": [" xw=astrbot.waves ", ""],
@@ -54,8 +94,8 @@ def test_external_trigger_rules_are_deployment_specific_and_trimmed():
 
     root = Path(__file__).parents[2]
     schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
-    assert schema["external_command_prefixes"]["default"] == []
-    assert schema["external_link_domains"]["default"] == []
+    assert "external_command_prefixes" not in schema
+    assert "external_link_domains" not in schema
 
 
 def test_off_bridge_starts_and_stops_without_creating_runtime_data(tmp_path: Path):

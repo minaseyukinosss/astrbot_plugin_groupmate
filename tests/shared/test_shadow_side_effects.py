@@ -30,10 +30,12 @@ def test_shadow_persists_and_projects_without_side_effects(tmp_path):
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
             settings=SocialRuntimeSettings.from_mapping(
-                {
-                    "runtime_mode": "SHADOW",
-                    "enabled_groups": ["885617919"],
-                }
+                    {
+                        "runtime_mode": "SHADOW",
+                        "enabled_groups": ["885617919"],
+                        "generation_provider": "provider:test",
+                        "persona_id": "aemeath",
+                    }
             ),
             data_dir=tmp_path,
         )

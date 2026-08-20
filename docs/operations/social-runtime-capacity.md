@@ -49,7 +49,7 @@ Latency 的 P50/P95/P99 使用固定 nearest-rank ceiling：先升序排列 N �
 
 ## 配置与处置
 
-`worker_concurrency_limit` 是 AstrBot 配置中可见的正整数，默认 12。它由单个 Social Runtime Manager 的 CognitionService 跨所有启用群共享执行，不是每群限制。减小它可以硬控并发，但可能抬高 FAST/Ambient latency；修改后必须重跑 load report，并保存完整 JSON。
+`worker_concurrency_limit` 是治理面高级运维参数，默认 12，不在 AstrBot 首次安装配置中展示。它由单个 Social Runtime Manager 的 CognitionService 跨所有启用群共享执行，不是每群限制。调整它可能改变 FAST/Ambient latency；修改后必须重跑 load report，并保存完整 JSON。
 
 Manager/Bridge 默认使用当前 epoch clock；测试和离线重放必须显式注入 fake clock，或向 `drain(now=...)` 提供固定虚拟时刻。`drain(now=None)` 会用当前 clock flush Ambient，并在 cognition gate 返回后再次检查 deadline；跨 deadline 的结果持久化为 `explicit_discard/attention_deadline_expired_after_cognition`，不进入 capture/outbox。显式 `now` 在整次 decision 前后保持不变，确保确定性回放。
 

@@ -4,7 +4,7 @@ Groupmate v2 是 clean-slate 的持久群聊社会运行时。事实事件进入
 
 ## 配置与数据
 
-配置契约见 `_conf_schema.json`。主要字段包括 `runtime_mode`、`enabled_groups`、`social_runtime_test_groups`、`control_admin_ids`、Provider、Persona、Worker 并发上限和已安装外置插件触发规则。
+普通安装配置只包含启用群、Groupmate 独立文本模型、可选视觉模型和 AstrBot Persona。模型与人格使用 AstrBot 原生选择器；Bot 身份从消息事件的 `self_id` 自动取得。运行模式、管理员授权、外置插件兼容规则和 Worker 并发属于治理状态，不在首次安装配置中展示。
 
 权威 V2 数据库固定为：
 
@@ -13,6 +13,8 @@ data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db
 ```
 
 V2 不读取、升级或迁移旧 `groupmate.db`。旧数据库、旧配置和旧内部 API 均不兼容；请按 V2 schema 重新配置，社会状态从空状态开始。
+
+数据库文件名和路径由插件内部固定管理，不能在配置页选择或覆盖。完整填写启用群、文本模型和 Persona 后，插件只进入无发送的 `SHADOW`；视觉模型可以留空。
 
 ## 模式与治理
 

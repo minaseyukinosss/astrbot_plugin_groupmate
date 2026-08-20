@@ -258,13 +258,15 @@ def test_gate_c_only_promotes_explicit_fake_groups_and_keeps_other_groups_safe(
     schema = json.loads(
         (Path(__file__).parents[2] / "_conf_schema.json").read_text(encoding="utf-8")
     )
-    assert "SOCIAL_RUNTIME" in schema["runtime_mode"]["options"]
+    assert "runtime_mode" not in schema
 
     settings = SocialRuntimeSettings.from_mapping(
         {
             "runtime_mode": "SOCIAL_RUNTIME",
             "enabled_groups": [FAKE_GROUP, SHADOW_GROUP],
             "social_runtime_test_groups": [FAKE_GROUP],
+            "generation_provider": "provider:test",
+            "persona_id": "persona-1",
         }
     )
     assert settings.social_runtime_test_groups == (FAKE_GROUP,)

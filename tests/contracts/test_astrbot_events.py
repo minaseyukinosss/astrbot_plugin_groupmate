@@ -7,6 +7,7 @@ from groupmate.social_runtime.ownership import ExternalTriggerPolicy
 def test_translator_preserves_platform_facts_without_social_inference():
     raw = {
         "message_id": "51",
+        "self_id": "323537051",
         "group_id": "885617919",
         "user_id": "42",
         "time": 1700000000,
@@ -19,7 +20,7 @@ def test_translator_preserves_platform_facts_without_social_inference():
         ],
     }
 
-    event = AstrBotEventTranslator("aemeath", bot_qq="323537051").translate(raw)
+    event = AstrBotEventTranslator("aemeath").translate(raw)
 
     assert event.event_id == "qq:51"
     assert event.source_message_id == "51"
@@ -88,6 +89,30 @@ def test_translator_reads_astrbot_event_accessors_and_raw_message():
     assert translated.group_id == "885617919"
     assert translated.actor_id == "42"
     assert translated.payload["sender"]["name"] == "小夏"
+
+
+def test_translator_derives_bot_identity_from_astrbot_message_object():
+    class MessageObject:
+        self_id = "bot-native-id"
+        raw_message = {
+            "message_id": "native-self",
+            "group_id": "group-1",
+            "user_id": "bot-native-id",
+            "time": 10,
+            "message": [
+                {"type": "at", "data": {"qq": "bot-native-id"}},
+                {"type": "text", "data": {"text": "状态"}},
+            ],
+        }
+
+    class Event:
+        message_obj = MessageObject()
+        message_str = "状态"
+
+    translated = AstrBotEventTranslator("persona:groupmate").translate(Event())
+
+    assert translated.payload["is_self"] is True
+    assert translated.payload["mentions_bot"] is True
 
 
 def test_translator_marks_only_configured_deployment_triggers_as_external():

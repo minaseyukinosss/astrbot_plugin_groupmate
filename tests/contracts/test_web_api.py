@@ -93,6 +93,33 @@ def _request(path, *, method="GET", body=None, username="admin:root", headers=No
     )
 
 
+def test_empty_secondary_allowlist_uses_authenticated_astrbot_dashboard_identity(
+    tmp_path,
+):
+    path = tmp_path / "native-dashboard-admin.db"
+    _seed_runtime(path)
+    api = ControlPlaneWebAPI(
+        queries=ProjectionQueries(path),
+        stream=ProjectionStream(path),
+        command_service_for=lambda username: CommandService(
+            path,
+            persona_id="aemeath",
+            group_ids=("group-1",),
+            admin_ids=(username,),
+        ),
+        event_publisher=lambda _event: None,
+        persona_id="aemeath",
+        group_ids=("group-1",),
+        admin_ids=(),
+    )
+
+    response = asyncio.run(api.handle(_request("/runtime", username="astrbot")))
+    anonymous = asyncio.run(api.handle(_request("/runtime", username=None)))
+
+    assert response.status == 200
+    assert anonymous.status == 403
+
+
 def test_query_endpoints_read_only_projection_and_never_domain_write_models(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
     _seed_runtime(path)

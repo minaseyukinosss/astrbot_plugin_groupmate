@@ -42,11 +42,9 @@ class AstrBotEventTranslator:
         self,
         persona_id: str,
         *,
-        bot_qq: str = "323537051",
         external_trigger_policy: ExternalTriggerPolicy | None = None,
     ) -> None:
         self.persona_id = persona_id
-        self.bot_qq = str(bot_qq)
         self.platform = "qq"
         self.external_trigger_policy = (
             external_trigger_policy or ExternalTriggerPolicy.create()
@@ -98,7 +96,11 @@ class AstrBotEventTranslator:
         )
         sender = raw.get("sender") if isinstance(raw.get("sender"), Mapping) else {}
         sender_name = str(sender.get("card") or sender.get("nickname") or _call_text(host_event, "get_sender_name"))
-        is_self = bool(actor_id and actor_id == self.bot_qq)
+        message_obj = getattr(host_event, "message_obj", None)
+        bot_id = str(
+            getattr(message_obj, "self_id", "") or raw.get("self_id") or ""
+        ).strip()
+        is_self = bool(bot_id and actor_id and actor_id == bot_id)
         ownership = self.external_trigger_policy.classify(message_text)
         if ownership is None:
             ownership = InteractionOwnership(
@@ -127,7 +129,7 @@ class AstrBotEventTranslator:
                 "segments": segments,
                 "reply_to": reply_to or None,
                 "mentions": mentions,
-                "mentions_bot": self.bot_qq in mentions,
+                "mentions_bot": bool(bot_id and bot_id in mentions),
                 "media": media,
                 "sender": {"id": actor_id, "name": sender_name},
                 "is_self": is_self,

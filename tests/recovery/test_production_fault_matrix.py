@@ -328,6 +328,7 @@ def test_abrupt_process_crash_reconciles_committed_shadow_capture_once(tmp_path)
 
     raw_event = {
         "message_id": "abrupt-shadow-capture",
+        "self_id": "323537051",
         "group_id": GROUP,
         "user_id": "fake-user",
         "time": 100,
@@ -343,7 +344,12 @@ def test_abrupt_process_crash_reconciles_committed_shadow_capture_once(tmp_path)
         bridge = AstrBotSocialRuntimeBridge(
             object(),
             SocialRuntimeSettings.from_mapping(
-                {"runtime_mode": "SHADOW", "enabled_groups": [GROUP]}
+                {
+                    "runtime_mode": "SHADOW",
+                    "enabled_groups": [GROUP],
+                    "generation_provider": "provider:test",
+                    "persona_id": "aemeath",
+                }
             ),
             tmp_path,
             shadow_reviews=reviews,
@@ -513,7 +519,12 @@ def test_bridge_default_clock_flushes_and_discards_expired_ambient_work(
         bridge = AstrBotSocialRuntimeBridge(
             object(),
             SocialRuntimeSettings.from_mapping(
-                {"runtime_mode": "SHADOW", "enabled_groups": [GROUP]}
+                {
+                    "runtime_mode": "SHADOW",
+                    "enabled_groups": [GROUP],
+                    "generation_provider": "provider:test",
+                    "persona_id": "aemeath",
+                }
             ),
             tmp_path,
         )

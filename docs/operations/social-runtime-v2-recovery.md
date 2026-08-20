@@ -4,7 +4,7 @@
 
 ## 1. 停止新事件进入
 
-先将插件 `runtime_mode` 改为 `OFF`，再停止或重载插件实例。确认没有第二个 AstrBot 实例仍在使用同一数据目录。恢复期间不要手工把 Inbox 标成 `committed`，也不要直接修改 Cursor。
+先通过 Groupmate 治理页暂停 Runtime，再停止或重载插件实例。`runtime_mode` 不再是普通插件配置。确认没有第二个 AstrBot 实例仍在使用同一数据目录。恢复期间不要手工把 Inbox 标成 `committed`，也不要直接修改 Cursor。
 
 ## 2. 生成一致备份
 
@@ -68,4 +68,4 @@ sqlite3 groupmate-social-runtime-v2.recovery.db \
 - Execution 调用为零；
 - 未触碰旧数据库。
 
-任何一项不满足都应重新切回 `OFF`，保留现场和备份，不要通过手工改状态绕过恢复协议。
+任何一项不满足都应保持治理暂停，保留现场和备份，不要通过手工改状态绕过恢复协议。
