@@ -138,6 +138,80 @@ class InvalidLatencyRuntime(FixedRuntime):
         return result
 
 
+class CapabilityQualityRuntime(FixedRuntime):
+    def __init__(self, quality):
+        self.quality = quality
+
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        result["quality"] = self.quality
+        return result
+
+
+class PredictionSelfScoringRuntime(FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        result["prediction"].update(
+            {"task": True, "delivery": True, "recovery": True}
+        )
+        return result
+
+
+def test_capability_quality_comes_only_from_structured_candidate_result():
+    scenario = _scenario("capability-quality", lane="GROUPMATE_CAPABILITY")
+
+    quality_report = EvaluationRunner().run(
+        (scenario,),
+        CapabilityQualityRuntime(
+            {"task": True, "delivery": False, "recovery": True}
+        ),
+        worker_mode="fixed",
+    )
+    quality = quality_report.lanes["GROUPMATE_CAPABILITY"].metrics["quality"]
+    degraded_report = EvaluationRunner().run(
+        (scenario,),
+        CapabilityQualityRuntime(
+            {"task": True, "delivery": True, "recovery": True}
+        ),
+        worker_mode="fixed",
+    )
+    spoofed = EvaluationRunner().run(
+        (scenario,), PredictionSelfScoringRuntime(), worker_mode="fixed"
+    ).lanes["GROUPMATE_CAPABILITY"].metrics["quality"]
+
+    assert quality == {
+        "persona": None,
+        "relationship": None,
+        "culture": None,
+        "task": 1.0,
+        "delivery": 0.0,
+        "recovery": 1.0,
+        "style": None,
+        "media": None,
+    }
+    assert spoofed["task"] is None
+    assert spoofed["delivery"] is None
+    assert spoofed["recovery"] is None
+    assert quality_report.candidate_digest != degraded_report.candidate_digest
+
+
+@pytest.mark.parametrize(
+    "quality",
+    (
+        {"task": 1, "delivery": True, "recovery": True},
+        {"task": True, "delivery": True, "recovery": True, "reasoning": True},
+        "all-good",
+    ),
+)
+def test_candidate_quality_rejects_non_boolean_or_unrecognized_fields(quality):
+    with pytest.raises(ValueError, match="candidate quality"):
+        EvaluationRunner().run(
+            (_scenario("invalid-quality", lane="GROUPMATE_CAPABILITY"),),
+            CapabilityQualityRuntime(quality),
+            worker_mode="fixed",
+        )
+
+
 def test_runner_keeps_lanes_isolated_and_unknown_out_of_effect_denominators():
     corpus = (
         _scenario("social", lane="SOCIAL_CONVERSATION"),
@@ -337,6 +411,10 @@ def test_readiness_requires_installed_frozen_live_shadow_manifest_with_fixed_dig
         [{"scenario_id": item["scenario_id"], "label": item["label"]} for item in corpus],
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode()).hexdigest()
+    artifact_digest = hashlib.sha256(json.dumps(
+        corpus,
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode()).hexdigest()
     provenance = {
         "kind": "installed_live_shadow",
         "manifest_version": 1,
@@ -345,11 +423,17 @@ def test_readiness_requires_installed_frozen_live_shadow_manifest_with_fixed_dig
         "frozen": True,
         "scenario_digest": scenario_digest,
         "label_digest": label_digest,
+        "artifact_digest": artifact_digest,
     }
     for record in corpus:
         record["shadow_provenance"] = provenance
 
     assert EvaluationRunner().run(corpus, FixedRuntime(), worker_mode="fixed").production_readiness_eligible is True
+
+    corpus[0]["categories"] = ["care"]
+    assert EvaluationRunner().run(
+        corpus, FixedRuntime(), worker_mode="fixed"
+    ).production_readiness_eligible is False
 
 
 @pytest.mark.parametrize("latency", (-1, float("nan"), float("inf"), None))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 import pytest
@@ -483,6 +484,7 @@ class _FixedRuntime:
             "latency_ms": 1,
             "cost": {"tokens": 1, "usd": 0.0},
             "candidate_owner": "GROUPMATE",
+            "quality": {"task": True, "delivery": True, "recovery": True},
         }
         if worker_mode == "live":
             result["model"] = {
@@ -513,6 +515,25 @@ class _ExternalStealRuntime(_FixedRuntime):
                     "part": "stolen-response",
                 },
             )
+        return result
+
+
+class _CapabilityDeliveryRegressionRuntime(_FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        if scenario["evaluation_lane"] == "GROUPMATE_CAPABILITY":
+            result["quality"] = {
+                "task": True,
+                "delivery": False,
+                "recovery": True,
+            }
+        return result
+
+
+class _MissingQualityRuntime(_FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        result.pop("quality")
         return result
 
 
@@ -599,6 +620,79 @@ def test_calibration_fails_closed_without_required_lane_coverage_and_diffs_each_
         "GROUPMATE_CAPABILITY",
         "EXTERNAL_PLUGIN_COMPATIBILITY",
     }
+
+    capability_degraded = ShadowCalibrationService(mixed).run(
+        persona_id="aemeath",
+        group_id="group-1",
+        proposed_config=proposed,
+        release_config=required,
+        baseline_runtime=_FixedRuntime(),
+        candidate_runtime=_CapabilityDeliveryRegressionRuntime(),
+    )
+    assert capability_degraded.status == "REJECTED"
+    assert (
+        "holdout_capability_delivery_regression"
+        in capability_degraded.reason_codes
+    )
+    assert "holdout_capability_delivery_failed" in capability_degraded.reason_codes
+
+    unavailable_baseline = ShadowCalibrationService(mixed).run(
+        persona_id="aemeath",
+        group_id="group-1",
+        proposed_config=proposed,
+        release_config=required,
+        baseline_runtime=_MissingQualityRuntime(),
+        candidate_runtime=_FixedRuntime(),
+    )
+    assert unavailable_baseline.status == "REJECTED"
+    assert "capability_coverage_unavailable" in unavailable_baseline.reason_codes
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"lane_minimums": {
+            "SOCIAL_CONVERSATION": 0,
+            "GROUPMATE_CAPABILITY": 0,
+            "EXTERNAL_PLUGIN_COMPATIBILITY": 0,
+        }},
+        {
+            "lane_minimums": {
+                "SOCIAL_CONVERSATION": 1,
+                "GROUPMATE_CAPABILITY": 0,
+                "EXTERNAL_PLUGIN_COMPATIBILITY": 0,
+            },
+            "capability_minimums": {
+                "task": 0.1, "delivery": 0.0, "recovery": 0.0,
+            },
+        },
+        {
+            "lane_minimums": {
+                "SOCIAL_CONVERSATION": 1,
+                "GROUPMATE_CAPABILITY": 1,
+                "EXTERNAL_PLUGIN_COMPATIBILITY": 0,
+            },
+            "capability_minimums": {
+                "task": 0.0, "delivery": 0.0, "recovery": 0.0,
+            },
+        },
+        {
+            "lane_minimums": {
+                "SOCIAL_CONVERSATION": 1,
+                "GROUPMATE_CAPABILITY": 0,
+                "EXTERNAL_PLUGIN_COMPATIBILITY": 0,
+            },
+            "compatibility_minimums": {
+                "no_steal": 0.1,
+                "no_duplicate": 0.0,
+                "no_self_attribution": 0.0,
+            },
+        },
+    ),
+)
+def test_release_config_requires_explicit_consistent_lane_applicability(overrides):
+    with pytest.raises(ValueError, match="lane|minimum|applicability"):
+        _release(**overrides)
 
 
 def test_frozen_manifest_detects_any_evaluation_content_mutation(tmp_path):
@@ -689,12 +783,77 @@ def test_calibration_approval_rejects_stale_baseline_and_merges_full_config(tmp_
     )
     approved = commands.execute(ApproveCalibration(fresh.entity_ref), context)
     published = configs.load(
-        "shadow-calibration:group-1", approved.data["config_version"]
+        approved.data["config_id"], approved.data["config_version"]
     )
     assert published.config["retention_days"] == 45
     assert {
         name: published.config[name] for name in proposed
     } == proposed
+
+
+def test_calibration_config_identity_is_opaque_and_scoped_by_persona_and_group(tmp_path):
+    repository = ShadowReviewRepository(
+        tmp_path / "groupmate-social-runtime-v2.db"
+    )
+    proposed = {
+        "attention_window_ms": 4_000,
+        "reply_length_tendency": "short",
+        "media_preference": "contextual",
+        "participation_weights": {"direct": 1.1},
+    }
+    digest = hashlib.sha256(b"{}").hexdigest()
+    runs = {
+        persona: repository.save_calibration(
+            persona_id=persona,
+            group_id="shared-raw-group",
+            manifest_version=1,
+            proposed_config=proposed,
+            comparison={},
+            baseline_config_version=0,
+            baseline_config_digest=digest,
+            status="PENDING_APPROVAL",
+            reason_codes=(),
+        )
+        for persona in ("persona-alpha", "persona-beta")
+    }
+    config_ids = {}
+    for persona, run in runs.items():
+        commands = CommandService(
+            repository.path,
+            persona_id=persona,
+            group_ids=("shared-raw-group",),
+            admin_ids=("admin:root",),
+            shadow_repository=repository,
+        )
+        approved = commands.execute(
+            ApproveCalibration(run.entity_ref),
+            CommandContext(
+                admin_id="admin:root",
+                persona_id=persona,
+                group_id="shared-raw-group",
+                expected_version=0,
+                reason="independent scoped approval",
+                confirmed=True,
+            ),
+        )
+        config_id = approved.data["config_id"]
+        config_ids[persona] = config_id
+        assert persona not in config_id
+        assert "shared-raw-group" not in config_id
+        rollback = commands.execute(
+            RestoreConfig(config_id, 1),
+            CommandContext(
+                admin_id="admin:root",
+                persona_id=persona,
+                group_id="shared-raw-group",
+                expected_version=1,
+                reason="independent rollback drill",
+                confirmed=True,
+            ),
+        )
+        assert rollback.data["version"] == 2
+
+    assert config_ids["persona-alpha"] != config_ids["persona-beta"]
 
 
 def test_calibration_runs_live_both_splits_rejects_safety_and_publishes_rollback_version(tmp_path):
@@ -787,12 +946,12 @@ def test_calibration_runs_live_both_splits_rejects_safety_and_publishes_rollback
     approved = commands.execute(ApproveCalibration(pending.entity_ref), context)
     assert approved.data["status"] == "APPROVED"
     assert approved.data["config_version"] == 1
-    published = commands.config_repository.load("shadow-calibration:group-1", 1)
+    published = commands.config_repository.load(approved.data["config_id"], 1)
     assert published.status is ConfigStatus.PUBLISHED
     assert set(published.config) == set(proposed)
 
     rollback = commands.execute(
-        RestoreConfig("shadow-calibration:group-1", 1),
+        RestoreConfig(approved.data["config_id"], 1),
         CommandContext(
             admin_id="admin:root",
             persona_id="aemeath",

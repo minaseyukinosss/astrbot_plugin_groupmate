@@ -26,10 +26,32 @@ _MODEL_FACT_FIELDS = (
     "output_tokens",
     "latency_ms",
 )
+_CANDIDATE_QUALITY_FIELDS = frozenset({"task", "delivery", "recovery"})
 
 
 def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def frozen_artifact_digest(
+    scenarios: Iterable[Mapping[str, object]],
+) -> str:
+    normalized = [
+        {
+            key: value
+            for key, value in scenario.items()
+            if key != "shadow_provenance"
+        }
+        for scenario in scenarios
+    ]
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _runtime_result(runtime: object, scenario: Mapping[str, object], worker_mode: str) -> Mapping[str, object]:
@@ -91,7 +113,12 @@ class EvaluationRunner:
             prediction = result.get("prediction")
             if not isinstance(prediction, Mapping):
                 raise ValueError("evaluation runtime result requires a prediction mapping")
-            candidates.append({"scenario_id": scenario.get("scenario_id"), "prediction": prediction})
+            candidate_quality = self._candidate_quality(result.get("quality"))
+            candidates.append({
+                "scenario_id": scenario.get("scenario_id"),
+                "prediction": prediction,
+                "quality": candidate_quality,
+            })
 
             latency = result.get("latency_ms")
             if (
@@ -155,7 +182,14 @@ class EvaluationRunner:
                 and type(provenance.get("complete_member_context")) is bool
                 and provenance["complete_member_context"]
             )
-            lane_records[lane].append({"label": scenario.get("label"), "prediction": prediction, "scenario": scenario, "social_applicable": complete_context, "result": result})
+            lane_records[lane].append({
+                "label": scenario.get("label"),
+                "prediction": prediction,
+                "candidate_quality": candidate_quality,
+                "scenario": scenario,
+                "social_applicable": complete_context,
+                "result": result,
+            })
 
         lanes = {
             lane: self._lane_report(lane, records)
@@ -178,7 +212,11 @@ class EvaluationRunner:
     @staticmethod
     def _lane_report(lane: str, records: list[dict[str, object]]) -> LaneReport:
         metric_records = [
-            {"label": item["label"], "prediction": item["prediction"]}
+            {
+                "label": item["label"],
+                "prediction": item["prediction"],
+                "frozen_truth": item["candidate_quality"],
+            }
             for item in records
             if item["social_applicable"]
         ]
@@ -223,6 +261,19 @@ class EvaluationRunner:
                 else None
             ),
         )
+
+    @staticmethod
+    def _candidate_quality(value: object) -> dict[str, bool]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("candidate quality must be a mapping")
+        unknown = set(value) - _CANDIDATE_QUALITY_FIELDS
+        if unknown:
+            raise ValueError("candidate quality contains an unrecognized field")
+        if any(type(item) is not bool for item in value.values()):
+            raise ValueError("candidate quality values must be booleans")
+        return {str(name): bool(item) for name, item in value.items()}
 
     @staticmethod
     def _compatibility(records):
@@ -283,6 +334,7 @@ class EvaluationRunner:
             [{"scenario_id": item.get("scenario_id"), "label": item.get("label")} for item in scenarios],
             ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode()).hexdigest()
+        artifact_digest = frozen_artifact_digest(scenarios)
         frozen_shadow = bool(scenarios) and splits == {"calibration", "holdout"} and all(
             item.get("corpus_kind") == "shadow"
             and type(item.get("labels_frozen")) is bool and item["labels_frozen"]
@@ -294,6 +346,7 @@ class EvaluationRunner:
             and item["shadow_provenance"].get("frozen") is True
             and item["shadow_provenance"].get("scenario_digest") == scenario_digest
             and item["shadow_provenance"].get("label_digest") == label_digest
+            and item["shadow_provenance"].get("artifact_digest") == artifact_digest
             for item in scenarios
         )
         if frozen_shadow:
@@ -305,4 +358,4 @@ class EvaluationRunner:
         )
 
 
-__all__ = ("EvaluationRunner", "LANES")
+__all__ = ("EvaluationRunner", "LANES", "frozen_artifact_digest")

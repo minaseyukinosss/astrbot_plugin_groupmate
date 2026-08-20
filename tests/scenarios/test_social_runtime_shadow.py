@@ -56,6 +56,16 @@ class BlockingFixedWorker(FixedWorker):
         return await super().observe(frame, context)
 
 
+class CountingFixedWorker(FixedWorker):
+    def __init__(self, name, observation_kind):
+        super().__init__(name, observation_kind)
+        self.calls = 0
+
+    async def observe(self, frame, context):
+        self.calls += 1
+        return await super().observe(frame, context)
+
+
 def _event(
     message_id: str,
     *,
@@ -78,6 +88,53 @@ def _event(
             payload=payload,
         )
     )
+
+
+def test_external_owned_event_has_zero_frames_workers_candidates_and_outbox(tmp_path):
+    async def scenario():
+        worker = CountingFixedWorker("direct_interaction", "help_request")
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await manager.start()
+        event = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:external-owned",
+                source_message_id="external-owned",
+                occurred_at=100,
+                received_at=100,
+                correlation_id="corr:external-owned",
+                payload={
+                    "text": "structured external trigger",
+                    "interaction_owner": "EXTERNAL_PLUGIN",
+                    "social_eligible": False,
+                    "owner_ref": "astrbot.external",
+                },
+            )
+        )
+        await manager.ingest(event)
+        evaluations = await manager.drain()
+        scene_version = (await manager.group_snapshot("885617919")).scene_version
+        outbox_count = manager.event_store.outbox_count()
+        calls = manager.execution_port.calls
+        await manager.close()
+        return worker.calls, evaluations, scene_version, outbox_count, calls
+
+    worker_calls, evaluations, scene_version, outbox_count, calls = asyncio.run(
+        scenario()
+    )
+    assert worker_calls == 0
+    assert len(evaluations) == 1
+    assert evaluations[0].frame is None
+    assert evaluations[0].candidates == ()
+    assert evaluations[0].governor_result.outcome == "SILENCE"
+    assert scene_version == 1
+    assert outbox_count == 0
+    assert calls == ()
 
 
 @pytest.mark.parametrize(

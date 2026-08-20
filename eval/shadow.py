@@ -24,7 +24,7 @@ from groupmate.social_runtime.persistence.schema import (
     initialize_database,
 )
 
-from .runner import EvaluationRunner
+from .runner import EvaluationRunner, frozen_artifact_digest
 from .schema import EvaluationLabel
 
 
@@ -318,6 +318,21 @@ class ShadowReleaseConfig:
                 for value in values.values()
             ):
                 raise ValueError("lane quality minimums must be between 0 and 1")
+        if self.lane_minimums["SOCIAL_CONVERSATION"] <= 0:
+            raise ValueError("social lane minimum must be positive")
+        for lane, thresholds in (
+            ("GROUPMATE_CAPABILITY", self.capability_minimums),
+            ("EXTERNAL_PLUGIN_COMPATIBILITY", self.compatibility_minimums),
+        ):
+            applicable = self.lane_minimums[lane] > 0
+            if applicable and any(float(value) <= 0 for value in thresholds.values()):
+                raise ValueError(
+                    "applicable lane minimums must all be explicitly positive"
+                )
+            if not applicable and any(float(value) != 0 for value in thresholds.values()):
+                raise ValueError(
+                    "inapplicable lane minimums must all be explicitly zero"
+                )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -697,7 +712,7 @@ class ShadowReviewRepository:
                 )
             records = self._records_on(db, persona, group)
             scenario_digest, label_digest = self._digests(records)
-            artifact_digest = self._artifact_digest(records)
+            artifact_digest = frozen_artifact_digest(records)
             version = int(
                 db.execute(
                     "SELECT COALESCE(MAX(manifest_version), 0) + 1 "
@@ -730,7 +745,7 @@ class ShadowReviewRepository:
         with connect_database(self.path) as db:
             records = self._records_on(db, persona_id, group_id)
         scenario_digest, label_digest = self._digests(records)
-        artifact_digest = self._artifact_digest(records)
+        artifact_digest = frozen_artifact_digest(records)
         if (
             scenario_digest != str(manifest["scenario_digest"])
             or label_digest != str(manifest["label_digest"])
@@ -867,7 +882,10 @@ class ShadowReviewRepository:
             raise ShadowCalibrationRejected(
                 "only a passing pending calibration may be approved"
             )
-        config_id = f"shadow-calibration:{group_id}"
+        config_scope = hashlib.sha256(
+            f"{persona_id}\0{group_id}".encode()
+        ).hexdigest()[:24]
+        config_id = f"shadow-calibration:{config_scope}"
         proposed = json.loads(str(row["proposed_config_json"]))
         current = config_repository._published_on(
             db, persona_id=persona_id, group_id=group_id
@@ -1197,21 +1215,6 @@ class ShadowReviewRepository:
         ).hexdigest()
         return scenario_digest, label_digest
 
-    @staticmethod
-    def _artifact_digest(records: tuple[Mapping[str, object], ...]) -> str:
-        return hashlib.sha256(
-            _canonical(
-                [
-                    {
-                        key: value
-                        for key, value in record.items()
-                        if key != "shadow_provenance"
-                    }
-                    for record in records
-                ]
-            ).encode()
-        ).hexdigest()
-
     def _latest_manifest(self, persona_id: str, group_id: str):
         with connect_database(self.path) as db:
             return db.execute(
@@ -1281,20 +1284,6 @@ class ShadowReviewRepository:
             if "artifact_digest" not in manifest_columns:
                 db.execute(
                     "ALTER TABLE shadow_manifests ADD COLUMN artifact_digest TEXT NOT NULL DEFAULT ''"
-                )
-            for manifest in db.execute(
-                "SELECT persona_id, group_id FROM shadow_manifests "
-                "WHERE artifact_digest=''"
-            ).fetchall():
-                records = self._records_on(db, str(manifest[0]), str(manifest[1]))
-                db.execute(
-                    "UPDATE shadow_manifests SET artifact_digest=? "
-                    "WHERE persona_id=? AND group_id=? AND artifact_digest=''",
-                    (
-                        self._artifact_digest(records),
-                        str(manifest[0]),
-                        str(manifest[1]),
-                    ),
                 )
             calibration_columns = {
                 str(row[1])
@@ -1451,7 +1440,7 @@ class ShadowCalibrationService:
     ) -> tuple[dict[str, object], ...]:
         copied = tuple(copy.deepcopy(dict(record)) for record in records)
         scenario_digest, label_digest = ShadowReviewRepository._digests(copied)
-        artifact_digest = ShadowReviewRepository._artifact_digest(copied)
+        artifact_digest = frozen_artifact_digest(copied)
         provenance = {
             "kind": "installed_live_shadow",
             "manifest_version": int(manifest_version),
@@ -1581,7 +1570,7 @@ class ShadowCalibrationService:
         for name, threshold in minimums.items():
             before = baseline_values.get(name) if isinstance(baseline_values, Mapping) else None
             after = candidate_values.get(name) if isinstance(candidate_values, Mapping) else None
-            if after is None:
+            if before is None or after is None:
                 if float(threshold) > 0:
                     reasons.append(f"{lane_label}_coverage_unavailable")
                 continue
