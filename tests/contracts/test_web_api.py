@@ -382,3 +382,44 @@ def test_astrbot_route_forwards_scoped_inspector_entity_reference():
     source = inspect.getsource(AstrBotControlPlaneRoutes._handler)
 
     assert '"entity_ref": request.query.get("entity_ref")' in source
+
+
+def test_web_api_parses_primary_shadow_review_semantics_without_send_command():
+    reasonable = ControlPlaneWebAPI._parse_command(
+        {
+            "type": "shadow_review",
+            "payload": {
+                "entity_ref": "evaluation:opaque",
+                "decision": "reasonable",
+                "categories": [],
+            },
+        }
+    )
+    corrected = ControlPlaneWebAPI._parse_command(
+        {
+            "type": "shadow_review",
+            "payload": {
+                "entity_ref": "evaluation:opaque",
+                "decision": "unreasonable",
+                "categories": ["ambiguous_target"],
+                "correction": {
+                    "attention": True,
+                    "action": False,
+                    "target": None,
+                    "acceptable_intents": [],
+                    "unacceptable_intents": ["interrupt"],
+                    "modalities": [],
+                    "sensitivity": "group",
+                    "expires_after_ms": 0,
+                },
+            },
+        }
+    )
+
+    assert reasonable.decision == "reasonable"
+    assert corrected.decision == "unreasonable"
+    assert corrected.categories == ("ambiguous_target",)
+    assert not any(
+        key in inspect.getsource(ControlPlaneWebAPI._parse_command).casefold()
+        for key in ("send_message", "deliver_now", "impersonate_user")
+    )

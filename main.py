@@ -17,6 +17,7 @@ from .groupmate.social_runtime.control.commands import CommandService
 from .groupmate.social_runtime.control.projections import ProjectionConsumer
 from .groupmate.social_runtime.control.queries import ProjectionQueries
 from .groupmate.social_runtime.control.stream import ProjectionStream
+from .eval.shadow import ShadowReviewRepository
 
 
 class GroupmatePlugin(Star):
@@ -30,6 +31,7 @@ class GroupmatePlugin(Star):
         self._control_api: ControlPlaneWebAPI | None = None
         self._projection_consumers: tuple[ProjectionConsumer, ...] = ()
         self._control_routes: AstrBotControlPlaneRoutes | None = None
+        self._shadow_reviews: ShadowReviewRepository | None = None
         if settings.runtime_mode != "OFF":
             self._control_routes = AstrBotControlPlaneRoutes(
                 context,
@@ -41,6 +43,8 @@ class GroupmatePlugin(Star):
         await self.bridge.start()
         if self.settings.runtime_mode != "OFF":
             path = self.data_dir / self.settings.database_name
+            self._shadow_reviews = ShadowReviewRepository(path)
+            self.bridge.shadow_reviews = self._shadow_reviews
             self._projection_consumers = tuple(
                 ProjectionConsumer(path, name)
                 for name in ProjectionConsumer.PROJECTION_NAMES
@@ -53,6 +57,7 @@ class GroupmatePlugin(Star):
                     persona_id=self.settings.persona_id,
                     group_ids=self.settings.enabled_groups,
                     admin_ids=self.settings.control_admin_ids,
+                    shadow_repository=self._shadow_reviews,
                 ),
                 event_publisher=self._publish_control_event,
                 persona_id=self.settings.persona_id,
@@ -97,3 +102,4 @@ class GroupmatePlugin(Star):
         await self.bridge.close()
         self._control_api = None
         self._projection_consumers = ()
+        self._shadow_reviews = None

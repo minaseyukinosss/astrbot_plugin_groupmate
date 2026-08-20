@@ -13,7 +13,12 @@ from .astrbot_events import AstrBotEventTranslator
 
 class AstrBotSocialRuntimeBridge:
     def __init__(
-        self, context: object, settings: SocialRuntimeSettings, data_dir: Path
+        self,
+        context: object,
+        settings: SocialRuntimeSettings,
+        data_dir: Path,
+        *,
+        shadow_reviews: object | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
@@ -27,6 +32,8 @@ class AstrBotSocialRuntimeBridge:
             ),
         )
         self._manager: SocialRuntimeManager | None = None
+        self.shadow_reviews = shadow_reviews
+        self.shadow_review_error: str | None = None
         self._started = False
 
     @property
@@ -57,7 +64,24 @@ class AstrBotSocialRuntimeBridge:
             return None
         result = await self._manager.ingest(self.translator.translate(event))
         if result is not None and result.inserted:
-            await self._manager.drain()
+            evaluations = await self._manager.drain()
+            if self.shadow_reviews is not None:
+                capture = getattr(self.shadow_reviews, "capture_runtime", None)
+                if not callable(capture):
+                    self.shadow_review_error = (
+                        "shadow review recorder contract is invalid"
+                    )
+                    return result
+                for evaluation in evaluations:
+                    if not evaluation.accepted:
+                        continue
+                    try:
+                        capture(evaluation)
+                        self.shadow_review_error = None
+                    except Exception as exc:
+                        self.shadow_review_error = (
+                            f"{type(exc).__name__}: {exc}"
+                        )
         return result
 
     async def close(self) -> None:

@@ -20,7 +20,7 @@ from .contracts import (
 )
 from .event_fabric import SocialEventFabric
 from .governor import GovernorContext, GovernorResult, SocialGovernor
-from .intentions import IntentionEngine
+from .intentions import CandidateIntention, IntentionEngine
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
@@ -40,9 +40,13 @@ class RuntimeModeUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class ShadowEvaluation:
+    persona_id: str
     request_id: str
     frame: AttentionFrame
     governor_result: GovernorResult
+    source_event: SocialEventEnvelope
+    context_events: tuple[SocialEventEnvelope, ...]
+    candidates: tuple[CandidateIntention, ...]
     accepted: bool
     status: str
 
@@ -335,20 +339,18 @@ class SocialRuntimeManager:
         *,
         now: int,
     ) -> ShadowEvaluation:
+        focus_events = self.event_store.event_envelopes(
+            request.persona_id,
+            request.group_id,
+            frame.focus_event_ids,
+        )
         context = CognitiveContext.create(
             group_id=request.group_id,
             scene_version=frame.scene_version,
             persona_state_version=frame.persona_state_version,
             config_version=frame.config_version,
             now=now,
-            focus_events=tuple(
-                event.to_dict()
-                for event in self.event_store.event_envelopes(
-                    request.persona_id,
-                    request.group_id,
-                    frame.focus_event_ids,
-                )
-            ),
+            focus_events=tuple(event.to_dict() for event in focus_events),
             world_summary=asdict(request.world_snapshot),
             constraints=("shadow_only", "no_side_effects", "evidence_required"),
             token_budget=1024,
@@ -387,10 +389,19 @@ class SocialRuntimeManager:
         )
         actor = await self.fabric.notify(request.persona_id, request.group_id)
         accepted = await actor.accept_result(result)
+        context_events = self.event_store.event_envelopes(
+            request.persona_id,
+            request.group_id,
+            request.world_snapshot.recent_presence.recent_event_ids[-20:],
+        )
         return ShadowEvaluation(
+            persona_id=request.persona_id,
             request_id=request.request_id,
             frame=frame,
             governor_result=governor_result,
+            source_event=request.event,
+            context_events=context_events,
+            candidates=candidates,
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )

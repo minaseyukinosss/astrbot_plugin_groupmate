@@ -148,12 +148,31 @@ def test_governance_workspace_has_audited_high_impact_actions():
     assert 'type: "approve_calibration"' in source
     assert 'type: "reset"' in source
     assert "controlVersion" in source
+    for label in (
+        "历史摘要",
+        "唯一 Focus",
+        "Attention",
+        "对象",
+        "候选响应与动作",
+        "Governor outcome",
+        "结构化理由",
+        "有效期",
+        "合理",
+        "不合理",
+        "证据不足",
+    ):
+        assert label in source
+    assert 'type: "shadow_review"' in source
+    assert "suggested_categories" in source
+    assert "raw_ids" not in source
+    assert "message_text" not in source
 
     dialog = _source(COMPONENTS / "command-dialog.js")
     assert "expected_version" in dialog
     assert "reason" in dialog
     assert "confirmed" in dialog
     assert "requiresConfirmation" in dialog
+    assert '"shadow_review"' in dialog
     assert "reason.value.trim()" in dialog
     assert "options.fields" in dialog
     assert "JSON.parse" in dialog

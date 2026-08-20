@@ -24,6 +24,7 @@ from ..social_runtime.control.commands import (
     ResetState,
     RestoreConfig,
     ReviewEvidence,
+    ReviewShadowDecision,
     ValidateConfig,
 )
 from ..social_runtime.control.queries import ProjectionQueries
@@ -308,6 +309,15 @@ class ControlPlaneWebAPI:
             "review": lambda: ReviewEvidence(
                 str(payload.get("entity_ref") or ""),
                 str(payload.get("decision") or ""),
+                command_id=command_id,
+            ),
+            "shadow_review": lambda: ReviewShadowDecision(
+                str(payload.get("entity_ref") or ""),
+                str(payload.get("decision") or ""),
+                tuple(payload.get("categories") or ()),
+                payload.get("correction")
+                if isinstance(payload.get("correction"), Mapping)
+                else None,
                 command_id=command_id,
             ),
             "forget": lambda: ForgetMemory(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,8 +53,12 @@ _SAFE_SCALAR_FIELDS = (
     "culture_status",
     "runtime_mode",
     "paused",
+    "decision",
+    "labels_frozen",
+    "split",
+    "manifest_version",
 )
-_SAFE_SEQUENCE_FIELDS = ("reason_codes", "constraints")
+_SAFE_SEQUENCE_FIELDS = ("reason_codes", "constraints", "categories")
 _ENTITY_FIELDS = (
     "task_id",
     "plan_id",
@@ -64,6 +69,7 @@ _ENTITY_FIELDS = (
     "result_id",
     "frame_id",
     "config_id",
+    "entity_ref",
 )
 
 
@@ -256,9 +262,24 @@ class ProjectionConsumer:
         )
         scope = f"{persona_id}\0{group_id or ''}\0{identity}"
         entity_key = hashlib.sha256(scope.encode()).hexdigest()
+        supplied_ref = str(projected_payload.get("entity_ref") or "").strip()
         entity_ref = (
-            f"{self.projection_name}:"
-            f"{hashlib.sha256((self.projection_name + chr(0) + scope).encode()).hexdigest()[:20]}"
+            supplied_ref
+            if (
+                (
+                    projected_kind == "evaluation.shadow_decision_captured"
+                    and supplied_ref.startswith("evaluation:")
+                )
+                or (
+                    projected_kind.startswith("calibration.shadow_")
+                    and supplied_ref.startswith("calibration:")
+                )
+            )
+            and len(supplied_ref) <= 64
+            else (
+                f"{self.projection_name}:"
+                f"{hashlib.sha256((self.projection_name + chr(0) + scope).encode()).hexdigest()[:20]}"
+            )
         )
         summary = self._safe_summary(projected_kind, projected_payload)
         if source_event_type.startswith("control.") and source_correlation_id:
@@ -301,7 +322,12 @@ class ProjectionConsumer:
                 "calibration.",
                 "control.",
             ),
-            "evaluation": ("evaluation.", "shadow.", "governor."),
+            "evaluation": (
+                "evaluation.",
+                "shadow.",
+                "governor.",
+                "control.shadow_",
+            ),
         }
         return effect_type.startswith(prefixes[self.projection_name])
 
@@ -347,7 +373,138 @@ class ProjectionConsumer:
             and str(payload["fact_summary"]).strip()
         ):
             summary["fact_summary"] = str(payload["fact_summary"]).strip()
+        if effect_type == "evaluation.shadow_decision_captured":
+            summary.update(ProjectionConsumer._safe_shadow_review(payload))
+        if effect_type == "calibration.shadow_candidate_evaluated":
+            summary["comparison"] = ProjectionConsumer._safe_calibration_comparison(
+                payload.get("comparison")
+            )
         return summary
+
+    @staticmethod
+    def _safe_calibration_comparison(value: object) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            return {}
+        result: dict[str, object] = {}
+        fields = (
+            "worker_mode",
+            "report_kind",
+            "safety_issue_count",
+            "false_positive_rate",
+            "attention_precision",
+            "action_precision",
+            "target_precision",
+        )
+        for split in ("calibration", "holdout"):
+            split_value = value.get(split)
+            if not isinstance(split_value, Mapping):
+                continue
+            sides = {}
+            for side in ("baseline", "candidate"):
+                side_value = split_value.get(side)
+                if not isinstance(side_value, Mapping):
+                    continue
+                sides[side] = {
+                    field: side_value[field]
+                    for field in fields
+                    if isinstance(side_value.get(field), (str, int, float))
+                    and not isinstance(side_value.get(field), bool)
+                }
+            result[split] = sides
+        return result
+
+    @staticmethod
+    def _safe_shadow_review(payload: Mapping[str, object]) -> dict[str, object]:
+        def safe_text(value: object, limit: int) -> str:
+            text = str(value or "").strip()
+            text = re.sub(r"https?://\S+", "[link]", text, flags=re.IGNORECASE)
+            text = re.sub(
+                r"(?<![A-Za-z0-9])\d{5,}(?![A-Za-z0-9])",
+                "[number]",
+                text,
+            )
+            text = re.sub(
+                r"chain[_ -]?of[_ -]?thought|system[_ -]?prompt|\bprompt\b|api[_ -]?key|auth[_ -]?code",
+                "[protected]",
+                text,
+                flags=re.IGNORECASE,
+            )
+            return text[:limit]
+
+        def event_summary(value: object) -> dict[str, object] | None:
+            if not isinstance(value, Mapping):
+                return None
+            actor_ref = str(value.get("actor_ref") or "").strip()
+            if actor_ref and not actor_ref.startswith("member:"):
+                actor_ref = "member:unknown"
+            result: dict[str, object] = {
+                "occurred_at": int(value.get("occurred_at") or 0),
+                "actor_ref": actor_ref or None,
+                "summary": safe_text(value.get("summary"), 240),
+            }
+            media = ProjectionConsumer._sequence(value.get("media"))
+            if media and all(isinstance(item, str) for item in media):
+                result["media"] = list(media[:8])
+            return result
+
+        history = tuple(
+            item
+            for item in (
+                event_summary(value)
+                for value in ProjectionConsumer._sequence(payload.get("history"))[-20:]
+            )
+            if item is not None
+        )
+        focus = tuple(
+            item
+            for item in (
+                event_summary(value)
+                for value in ProjectionConsumer._sequence(payload.get("focus"))[:1]
+            )
+            if item is not None
+        )
+        attention_value = payload.get("attention")
+        attention = {}
+        if isinstance(attention_value, Mapping):
+            for name in ("trigger_kind", "urgency", "deadline"):
+                value = attention_value.get(name)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    attention[name] = value
+        candidate_actions = []
+        for value in ProjectionConsumer._sequence(payload.get("candidate_actions")):
+            if not isinstance(value, Mapping):
+                continue
+            candidate_actions.append(
+                {
+                    name: str(value.get(name) or "").strip()[:80]
+                    for name in ("kind", "proposed_act")
+                }
+            )
+        categories = [
+            safe_text(value, 80)
+            for value in ProjectionConsumer._sequence(
+                payload.get("suggested_categories")
+            )
+            if isinstance(value, str) and str(value).strip()
+        ]
+        return {
+            "history": list(history),
+            "focus": list(focus),
+            "attention": attention,
+            "target": (
+                safe_text(payload.get("target"), 64)
+                if str(payload.get("target") or "").startswith("member:")
+                else None
+            ),
+            "candidate_response": (
+                safe_text(payload.get("candidate_response"), 500)
+                if payload.get("candidate_response") is not None
+                else None
+            ),
+            "candidate_actions": candidate_actions,
+            "suggested_categories": categories,
+            "expires_at": int(payload.get("expires_at") or 0),
+        }
 
     def _upsert_item(
         self,
@@ -369,7 +526,7 @@ class ProjectionConsumer:
             "summary_json=excluded.summary_json, "
             "evidence_refs_json=excluded.evidence_refs_json, as_of=excluded.as_of",
             (
-                item.entity_ref.split(":", 1)[0],
+                self.projection_name,
                 item.entity_key,
                 item.entity_ref,
                 item.persona_id,

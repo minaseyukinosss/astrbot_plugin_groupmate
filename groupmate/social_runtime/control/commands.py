@@ -115,6 +115,15 @@ class ReviewEvidence:
 
 
 @dataclass(frozen=True)
+class ReviewShadowDecision:
+    entity_ref: str
+    decision: str
+    categories: tuple[str, ...] = ()
+    correction: Mapping[str, object] | None = None
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ForgetMemory:
     entity_ref: str
     command_id: str | None = None
@@ -156,6 +165,7 @@ ControlCommand = (
     | PublishConfig
     | RestoreConfig
     | ReviewEvidence
+    | ReviewShadowDecision
     | ForgetMemory
     | CorrectSocialState
     | LinkIdentity
@@ -182,6 +192,7 @@ _HIGH_IMPACT = (
     LinkIdentity,
     CancelTask,
     ApproveCalibration,
+    ReviewShadowDecision,
 )
 _CONFIG_COMMANDS = (
     CreateConfigDraft,
@@ -213,6 +224,7 @@ class CommandService:
         group_ids: tuple[str, ...],
         admin_ids: tuple[str, ...],
         config_repository: ConfigVersionRepository | None = None,
+        shadow_repository: object | None = None,
     ) -> None:
         self.path = Path(path)
         initialize_database(self.path)
@@ -228,6 +240,7 @@ class CommandService:
         self.config_repository = config_repository or ConfigVersionRepository(
             self.path
         )
+        self.shadow_repository = shadow_repository
         if self.config_repository.path != self.path:
             raise ValueError("config repository must share the command database")
 
@@ -279,9 +292,17 @@ class CommandService:
             )
             event_summary = {
                 key: data[key]
-                for key in ("paused", "status", "decision")
+                for key in (
+                    "paused",
+                    "status",
+                    "decision",
+                    "entity_ref",
+                    "categories",
+                )
                 if key in data
             }
+            if "config_version" in data:
+                event_summary["config_version"] = data["config_version"]
             if isinstance(command, _CONFIG_COMMANDS) and "version" in data:
                 event_summary["config_version"] = data["version"]
             event = SocialEventEnvelope.create(
@@ -419,6 +440,29 @@ class CommandService:
                 ),
                 "decision": decision,
             }, "control.evidence_reviewed"
+        if isinstance(command, ReviewShadowDecision):
+            if self.shadow_repository is None:
+                raise CommandValidationError("shadow review governance is unavailable")
+            review = getattr(self.shadow_repository, "_review_on", None)
+            if not callable(review):
+                raise CommandValidationError("shadow review repository contract is invalid")
+            try:
+                data = review(
+                    db,
+                    command.entity_ref,
+                    persona_id=context.persona_id,
+                    group_id=context.group_id,
+                    reviewer_id=context.admin_id,
+                    decision=command.decision,
+                    categories=tuple(command.categories),
+                    correction=command.correction,
+                    reviewed_at=now,
+                )
+            except LookupError as exc:
+                raise CommandNotFound("command target is not available") from exc
+            except ValueError as exc:
+                raise CommandValidationError(str(exc)) from exc
+            return data, "control.shadow_decision_reviewed"
         if isinstance(command, ForgetMemory):
             return {
                 "entity_ref": self._scoped_ref(
@@ -460,6 +504,26 @@ class CommandService:
                 )
             }, "control.task_cancel_requested"
         if isinstance(command, ApproveCalibration):
+            if self.shadow_repository is not None:
+                approve = getattr(
+                    self.shadow_repository, "_approve_calibration_on", None
+                )
+                if not callable(approve):
+                    raise CommandValidationError(
+                        "shadow calibration repository contract is invalid"
+                    )
+                try:
+                    data = approve(
+                        db,
+                        command.entity_ref,
+                        persona_id=context.persona_id,
+                        group_id=context.group_id,
+                        config_repository=self.config_repository,
+                        now=now,
+                    )
+                except LookupError as exc:
+                    raise CommandNotFound("command target is not available") from exc
+                return data, "control.calibration_approved"
             return {
                 "entity_ref": self._scoped_ref(
                     db,
@@ -677,5 +741,6 @@ __all__ = (
     "ResetState",
     "RestoreConfig",
     "ReviewEvidence",
+    "ReviewShadowDecision",
     "ValidateConfig",
 )

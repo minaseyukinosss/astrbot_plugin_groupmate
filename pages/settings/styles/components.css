@@ -239,12 +239,69 @@ h2 {
 }
 
 .projection-list,
-.definition-list {
+.definition-list,
+.shadow-review-list,
+.shadow-history {
   display: grid;
   gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.shadow-review-list {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.shadow-review-item {
+  padding-block-end: var(--space-5);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.shadow-focus {
+  margin-block: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+}
+
+.shadow-focus p,
+.shadow-decision-facts dd {
+  margin: var(--space-1) 0 0;
+}
+
+.shadow-actor {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.shadow-history {
+  margin-block: var(--space-2) var(--space-4);
+}
+
+.shadow-history li {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-block-end: 1px solid var(--color-border);
+}
+
+.shadow-decision-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: var(--space-4) 0;
+}
+
+.shadow-decision-facts dt {
+  font-weight: 650;
+}
+
+.shadow-decision-facts dd {
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
 }
 
 .projection-list > li,

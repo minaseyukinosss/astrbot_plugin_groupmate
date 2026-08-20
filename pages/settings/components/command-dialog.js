@@ -9,6 +9,7 @@ const HIGH_IMPACT = new Set([
   "link",
   "cancel",
   "approve_calibration",
+  "shadow_review",
 ]);
 
 export function requiresConfirmation(type) {
@@ -147,5 +148,6 @@ function labelFor(type) {
     link: "建立身份关联",
     cancel: "取消任务",
     approve_calibration: "批准校准",
+    shadow_review: "复核 SHADOW 决策",
   })[type] || "提交受治理命令";
 }
