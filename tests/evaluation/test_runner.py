@@ -118,6 +118,13 @@ class DeliveredExternalRuntime(FixedRuntime):
         return result
 
 
+class WrappedDeliveredExternalRuntime(FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        result["outbox"] = ({"correlation_id": "external:001", "bundle": {"parts": [{"part": {"idempotency_key": "delivery:001"}}]}},)
+        return result
+
+
 class InvalidLatencyRuntime(FixedRuntime):
     def __init__(self, latency):
         self.latency = latency
@@ -260,6 +267,20 @@ def test_external_compatibility_fails_when_actual_groupmate_outbox_claims_extern
     scenario["external_response_correlation"] = "external:001"
 
     report = EvaluationRunner().run((scenario,), DeliveredExternalRuntime(), worker_mode="fixed")
+
+    assert report.lanes["EXTERNAL_PLUGIN_COMPATIBILITY"].compatibility == {
+        "no_steal": 0,
+        "no_duplicate": 0,
+        "no_self_attribution": 0,
+    }
+
+
+def test_external_compatibility_resolves_parent_correlation_for_nested_delivery_part():
+    scenario = _scenario("external-wrapped-delivery", lane="EXTERNAL_PLUGIN_COMPATIBILITY")
+    scenario["external_response_owner"] = "EXTERNAL_PLUGIN"
+    scenario["external_response_correlation"] = "external:001"
+
+    report = EvaluationRunner().run((scenario,), WrappedDeliveredExternalRuntime(), worker_mode="fixed")
 
     assert report.lanes["EXTERNAL_PLUGIN_COMPATIBILITY"].compatibility == {
         "no_steal": 0,

@@ -127,6 +127,11 @@ class SafetyScanner:
     def _scan_capabilities(self, plans: Iterable[object], issues: set[SafetyIssue]) -> None:
         for plan_index, plan in enumerate(plans):
             for path, value in self._mappings(_plain(plan), f"[{plan_index}]"):
+                permission = str(value.get("permission") or "")
+                if str(value.get("kind") or "") == "capability" and not permission:
+                    issues.add(SafetyIssue("plan", "missing_capability_permission", f"{path}.permission"))
+                elif str(value.get("kind") or "") == "capability" and permission not in self.authorized_capabilities:
+                    issues.add(SafetyIssue("plan", "unauthorized_capability", f"{path}.permission"))
                 nodes = value.get("nodes")
                 if not isinstance(nodes, (tuple, list)):
                     continue

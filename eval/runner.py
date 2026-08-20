@@ -246,14 +246,15 @@ class EvaluationRunner:
 
     @staticmethod
     def _has_groupmate_delivery(result, correlation):
-        def walk(value):
+        def walk(value, inherited_correlation=None):
             if isinstance(value, Mapping):
-                if "part" in value or "platform_message_id" in value or "response" in value:
-                    if correlation is None or value.get("correlation_id") == correlation:
+                current_correlation = value.get("correlation_id", inherited_correlation)
+                if "part" in value or "platform_message_id" in value or "response" in value or "idempotency_key" in value:
+                    if correlation is None or current_correlation == correlation:
                         return True
-                return any(walk(child) for child in value.values())
+                return any(walk(child, current_correlation) for child in value.values())
             if isinstance(value, (tuple, list)):
-                return any(walk(child) for child in value)
+                return any(walk(child, inherited_correlation) for child in value)
             return False
         return walk(result.get("outbox", ())) or walk(result.get("responses", ()))
 

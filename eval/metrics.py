@@ -186,7 +186,8 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
                     focus_at = timestamps.get(focus_id)
                     decision_at = timestamps.get(evidence_id)
                     if type(focus_at) is int and type(decision_at) is int:
-                        autonomous_expiry.append(decision_at - focus_at <= truth.expires_after_ms)
+                        delta = decision_at - focus_at
+                        autonomous_expiry.append(0 <= delta <= truth.expires_after_ms)
 
         conversation = record.get("conversation", {})
         if isinstance(conversation, Mapping):

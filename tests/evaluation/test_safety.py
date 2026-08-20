@@ -116,3 +116,14 @@ def test_safety_recursively_validates_nested_evidence_and_capability_nodes():
         ("plan", "missing_capability_permission"),
         ("plan", "unauthorized_capability"),
     }
+
+
+def test_safety_validates_any_nested_capability_mapping_not_only_nodes_lists():
+    report = SafetyScanner(authorized_capabilities=()).scan(
+        group_id="group:001",
+        plans=({"wrapper": {"kind": "capability"}},),
+    )
+
+    assert [(issue.artifact, issue.rule) for issue in report.issues] == [
+        ("plan", "missing_capability_permission"),
+    ]

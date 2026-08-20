@@ -152,3 +152,20 @@ def test_autonomy_expiry_uses_frozen_truth_and_artifact_timestamps_not_candidate
     metrics = collect_metrics((candidate_claim, frozen_artifact)).to_dict()
 
     assert metrics["autonomy"] == {"count": 1, "mean_value": 0.5, "expiry_correct": 0.0}
+
+
+def test_autonomy_expiry_rejects_a_frozen_decision_before_its_focus_event():
+    record = {
+        "label": _label(),
+        "prediction": {"attention": True, "action": True, "target": "member:001"},
+        "frozen_truth": {"autonomy": True, "autonomy_evidence_event_id": "event:decision"},
+        "artifacts": {
+            "focus_event_id": "event:focus",
+            "events": [
+                {"event_id": "event:focus", "occurred_at_ms": 10_000},
+                {"event_id": "event:decision", "occurred_at_ms": 9_000},
+            ],
+        },
+    }
+
+    assert collect_metrics((record,)).to_dict()["autonomy"]["expiry_correct"] == 0.0
