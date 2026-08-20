@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Groupmate 人工评估复核</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232f7650'/%3E%3Cpath d='M23 15v10H9V7h14v4h-4V11h-6v10h6v-2h-4v-4z' fill='white'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/review.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true">G</span>
+        <div>
+          <strong>Groupmate</strong>
+          <span>人工评估复核</span>
+        </div>
+      </div>
+      <div class="run-state" aria-label="复核运行状态">
+        <span class="local-badge"><span class="status-dot" aria-hidden="true"></span>仅限本机</span>
+        <span id="progress-copy" class="progress-copy" aria-live="polite">正在读取队列</span>
+      </div>
+    </header>
+
+    <div class="progress-track" aria-hidden="true">
+      <span id="progress-bar"></span>
+    </div>
+
+    <main id="main-content" tabindex="-1">
+      <header class="page-heading">
+        <p class="eyebrow">Phase E · 固定语料</p>
+        <h1>逐条确认目标行为</h1>
+        <p>每次只判断一条明确标出的成员消息。此前的成员消息和 Bot 发言仅用于理解当时语境；建议只作为填写起点，只有明确提交的人工决定才会进入评估集。</p>
+      </header>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+      <section id="loading-state" class="loading-state" aria-label="正在载入" aria-busy="true">
+        <div class="skeleton skeleton-heading"></div>
+        <div class="skeleton skeleton-line"></div>
+        <div class="skeleton skeleton-line skeleton-short"></div>
+      </section>
+
+      <section id="complete-state" class="complete-state" hidden>
+        <span class="complete-mark" aria-hidden="true">✓</span>
+        <div>
+          <h2>当前队列已全部复核</h2>
+          <p>人工决定已保存到本机私有文件。此页面不会自动生成或发布正式评估集。</p>
+        </div>
+      </section>
+
+      <div id="review-workspace" class="review-workspace" hidden>
+        <section class="context-panel" aria-labelledby="context-title">
+          <header class="panel-heading">
+            <div>
+              <p class="section-label">去标识上下文</p>
+              <h2 id="context-title">对话窗口</h2>
+            </div>
+            <div class="scenario-meta">
+              <span id="split-badge" class="badge"></span>
+              <code id="scenario-id"></code>
+            </div>
+          </header>
+          <div id="observable-tags" class="tag-list" aria-label="可观察特征"></div>
+          <p id="scene-summary" class="scene-summary"></p>
+
+          <section class="focus-block" aria-labelledby="focus-title">
+            <div class="focus-heading">
+              <div>
+                <span class="focus-kicker">本次只判断这一条</span>
+                <h3 id="focus-title">判定消息</h3>
+              </div>
+              <span class="focus-rule">只评价带有“本条需要判定”的消息</span>
+            </div>
+            <ol id="focus-list" class="context-list focus-list"></ol>
+          </section>
+
+          <details id="history-details" class="history-details">
+            <summary>
+              <span id="history-summary">查看此前历史</span>
+              <small>仅作上下文，不是本次判定对象</small>
+            </summary>
+            <ol id="history-list" class="context-list history-list"></ol>
+          </details>
+        </section>
+
+        <aside class="decision-panel" aria-labelledby="decision-title">
+          <header class="panel-heading decision-heading">
+            <div>
+              <p class="section-label">人工决定</p>
+              <h2 id="decision-title">判断是否合理</h2>
+            </div>
+            <span id="confidence-badge" class="confidence-badge"></span>
+          </header>
+
+          <section class="recommendation-summary" aria-labelledby="recommendation-title">
+            <span class="recommendation-label">建议结论</span>
+            <h3 id="recommendation-title"></h3>
+            <div id="recommendation-facts" class="recommendation-facts"></div>
+          </section>
+
+          <p class="suggestion-note">这只是填写起点。请以左侧对话为准，独立判断 Aemeath 此时是否应该回应。</p>
+
+          <div class="behavior-guidance">
+            <section class="guidance-group" aria-labelledby="acceptable-title">
+              <h3 id="acceptable-title">可以这样做</h3>
+              <ul id="acceptable-guidance" class="guidance-list"></ul>
+            </section>
+            <section class="guidance-group guidance-avoid" aria-labelledby="unacceptable-title">
+              <h3 id="unacceptable-title">必须避免</h3>
+              <ul id="unacceptable-guidance" class="guidance-list"></ul>
+            </section>
+          </div>
+
+          <div class="scope-summary">
+            <p><strong>回应方式</strong><span id="modality-guidance"></span></p>
+            <p><strong>判断范围</strong><span id="sensitivity-guidance"></span></p>
+          </div>
+
+          <div>
+            <span class="field-label">建议场景分类</span>
+            <div id="suggested-categories" class="tag-list"></div>
+          </div>
+
+          <section id="category-completion" class="category-completion" aria-labelledby="category-completion-title" hidden>
+            <h3 id="category-completion-title">先补充这条消息的场景分类</h3>
+            <p>当前行为建议可以保留，但正式标签必须说明它属于哪类群聊场景。至少选择一项；不确定时可在下方标记“上下文不足”。</p>
+            <div id="quick-category-options" class="category-grid"></div>
+          </section>
+
+          <details class="technical-details">
+            <summary>查看技术标签</summary>
+            <dl id="suggestion-summary" class="definition-list"></dl>
+          </details>
+
+          <div class="confirmation-block">
+            <label for="scenario-confirmation">输入完整场景 ID 以确认本条决定</label>
+            <input id="scenario-confirmation" name="scenario_confirmation" autocomplete="off" spellcheck="false">
+            <p id="confirmation-help" class="field-help">只有与当前场景完全一致时才能提交。</p>
+          </div>
+
+          <form id="approve-form" class="approve-form">
+            <button id="approve-button" class="button button-primary" type="submit" disabled>批准当前建议</button>
+            <p id="approve-help" class="field-help"></p>
+          </form>
+
+          <form id="category-completion-form" class="category-completion-form" hidden>
+            <button id="category-completion-button" class="button button-primary" type="submit" disabled>补充分类并提交当前建议</button>
+            <p id="category-completion-help" class="field-help">至少选择一项场景分类。</p>
+          </form>
+
+          <form id="insufficient-form" class="insufficient-form">
+            <button id="insufficient-button" class="button button-secondary" type="submit" disabled>现有上下文不足，跳过本条</button>
+            <p class="field-help">这不会生成行为标签；后续必须补入新的替代场景，才能凑齐正式评估集。</p>
+          </form>
+
+          <details id="correction-details" class="correction-details">
+            <summary>建议不准确，填写修正</summary>
+            <form id="correction-form" class="correction-form">
+              <fieldset>
+                <legend>核心判断</legend>
+                <div class="check-row">
+                  <label><input id="label-attention" type="checkbox"> 值得留意这条消息</label>
+                  <label><input id="label-action" type="checkbox"> 应该回复或采取可见行动</label>
+                </div>
+                <label for="label-target">回应对象（去标识成员）</label>
+                <input id="label-target" type="text" placeholder="例如 member:001；无对象时留空">
+              </fieldset>
+
+              <fieldset>
+                <legend>允许与禁止的行为</legend>
+                <label for="label-acceptable">允许的行为代码</label>
+                <input id="label-acceptable" type="text" placeholder="例如 respond, support">
+                <p class="form-hint"><code>respond</code> 表示回应当前成员；多个代码用英文逗号分隔。</p>
+                <label for="label-unacceptable">必须避免的行为代码</label>
+                <input id="label-unacceptable" type="text" placeholder="例如 interrupt, misaddress">
+                <p class="form-hint"><code>interrupt</code> 是不合时宜地插话，<code>misaddress</code> 是回应错对象。</p>
+                <label for="label-modalities">回应方式代码</label>
+                <input id="label-modalities" type="text" placeholder="例如 text, media">
+                <p class="form-hint"><code>text</code> 是文字回应，<code>media</code> 是图片或其他媒体回应。</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>范围与时效</legend>
+                <div class="field-grid">
+                  <div>
+                    <label for="label-sensitivity">判断范围代码</label>
+                    <input id="label-sensitivity" type="text" required>
+                    <p class="form-hint"><code>group</code> 表示只依据当前群聊语境判断。</p>
+                  </div>
+                  <div>
+                    <label for="label-expires">回应窗口（毫秒）</label>
+                    <input id="label-expires" type="number" min="0" step="1" required>
+                    <p class="form-hint">普通即时回应通常为 60000；无需回应时为 0。</p>
+                  </div>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>场景分类（至少一项）</legend>
+                <div id="category-options" class="category-grid"></div>
+              </fieldset>
+
+              <button id="correct-button" class="button button-secondary" type="submit" disabled>提交人工修正</button>
+            </form>
+          </details>
+          <p id="save-status" class="save-status" aria-live="polite"></p>
+        </aside>
+      </div>
+    </main>
+
+    <script type="module" src="/review.mjs"></script>
+  </body>
+</html>
