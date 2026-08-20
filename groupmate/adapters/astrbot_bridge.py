@@ -50,7 +50,10 @@ class AstrBotSocialRuntimeBridge:
         if self._started:
             return
         mode = RuntimeMode(self.settings.runtime_mode)
-        if mode in {RuntimeMode.SHADOW, RuntimeMode.SOCIAL_RUNTIME}:
+        if (
+            mode in {RuntimeMode.SHADOW, RuntimeMode.SOCIAL_RUNTIME}
+            and self.settings.enabled_groups
+        ):
             self._manager = SocialRuntimeManager(
                 database_path=self.data_dir / self.settings.database_name,
                 persona_id=self.settings.persona_id,

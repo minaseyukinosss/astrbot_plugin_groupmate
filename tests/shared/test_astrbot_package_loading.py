@@ -20,6 +20,7 @@ def test_plugin_imports_from_the_astrbot_data_plugins_namespace(tmp_path: Path):
     )
     script = textwrap.dedent(
         f"""
+        import asyncio
         import sys
         import types
 
@@ -51,7 +52,8 @@ def test_plugin_imports_from_the_astrbot_data_plugins_namespace(tmp_path: Path):
                 return lambda handler: handler
 
         class Context:
-            pass
+            def register_web_api(self, *_args, **_kwargs):
+                pass
 
         class Star:
             def __init__(self, context):
@@ -85,6 +87,18 @@ def test_plugin_imports_from_the_astrbot_data_plugins_namespace(tmp_path: Path):
         assert plugin.data_dir == (
             __import__("pathlib").Path(plugin_data) / "astrbot_plugin_groupmate"
         )
+
+        async def initialize_without_group_scope():
+            unscoped = module.GroupmatePlugin(
+                Context(),
+                {{"runtime_mode": "SHADOW", "enabled_groups": []}},
+            )
+            await unscoped.initialize()
+            assert unscoped.bridge._manager is None
+            assert unscoped._control_api is None
+            await unscoped.terminate()
+
+        asyncio.run(initialize_without_group_scope())
         """
     )
 

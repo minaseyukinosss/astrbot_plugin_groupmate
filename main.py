@@ -33,7 +33,7 @@ class GroupmatePlugin(Star):
         self._projection_consumers: tuple[ProjectionConsumer, ...] = ()
         self._control_routes: AstrBotControlPlaneRoutes | None = None
         self._shadow_reviews: ShadowReviewRepository | None = None
-        if settings.runtime_mode != "OFF":
+        if settings.runtime_mode != "OFF" and settings.enabled_groups:
             self._control_routes = AstrBotControlPlaneRoutes(
                 context,
                 api_factory=self._require_control_api,
@@ -42,7 +42,7 @@ class GroupmatePlugin(Star):
 
     async def initialize(self) -> None:
         await self.bridge.start()
-        if self.settings.runtime_mode != "OFF":
+        if self.settings.runtime_mode != "OFF" and self.settings.enabled_groups:
             path = self.data_dir / self.settings.database_name
             self._shadow_reviews = ShadowReviewRepository(path)
             self.bridge.shadow_reviews = self._shadow_reviews
