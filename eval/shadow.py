@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Mapping
 
 from groupmate.social_runtime.contracts import SocialEventEnvelope
+from groupmate.social_runtime.control.config_versions import ConfigVersionRepository
 from groupmate.social_runtime.persistence.schema import (
     connect_database,
     initialize_database,
@@ -237,6 +238,9 @@ class ShadowReleaseConfig:
     holdout_minimums: Mapping[str, float]
     attention_window_ms_bounds: tuple[int, int]
     participation_weight_bounds: tuple[float, float]
+    lane_minimums: Mapping[str, int]
+    capability_minimums: Mapping[str, float]
+    compatibility_minimums: Mapping[str, float]
     minimum_reviewed: int = 100
     calibration_fraction: float = 0.8
 
@@ -290,6 +294,30 @@ class ShadowReleaseConfig:
             <= float(self.participation_weight_bounds[1])
         ):
             raise ValueError("participation_weight_bounds are invalid")
+        lane_names = {
+            "SOCIAL_CONVERSATION",
+            "GROUPMATE_CAPABILITY",
+            "EXTERNAL_PLUGIN_COMPATIBILITY",
+        }
+        if set(self.lane_minimums) != lane_names or any(
+            type(value) is not int or value < 0
+            for value in self.lane_minimums.values()
+        ):
+            raise ValueError("lane_minimums must explicitly define every lane")
+        if set(self.capability_minimums) != {"task", "delivery", "recovery"}:
+            raise ValueError("capability_minimums must define task/delivery/recovery")
+        if set(self.compatibility_minimums) != {
+            "no_steal", "no_duplicate", "no_self_attribution"
+        }:
+            raise ValueError("compatibility_minimums must define compatibility gates")
+        for values in (self.capability_minimums, self.compatibility_minimums):
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0 <= float(value) <= 1
+                for value in values.values()
+            ):
+                raise ValueError("lane quality minimums must be between 0 and 1")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -298,6 +326,9 @@ class ShadowReleaseConfig:
             "holdout_minimums": dict(self.holdout_minimums),
             "attention_window_ms_bounds": list(self.attention_window_ms_bounds),
             "participation_weight_bounds": list(self.participation_weight_bounds),
+            "lane_minimums": dict(self.lane_minimums),
+            "capability_minimums": dict(self.capability_minimums),
+            "compatibility_minimums": dict(self.compatibility_minimums),
             "minimum_reviewed": self.minimum_reviewed,
             "calibration_fraction": self.calibration_fraction,
         }
@@ -308,6 +339,7 @@ class FrozenShadowCorpus:
     manifest_version: int
     scenario_digest: str
     label_digest: str
+    artifact_digest: str
     records: tuple[dict[str, object], ...]
 
 
@@ -322,6 +354,8 @@ class ShadowCalibrationRun:
     proposed_config: dict[str, object]
     comparison: dict[str, object]
     reason_codes: tuple[str, ...]
+    baseline_config_version: int
+    baseline_config_digest: str
     config_version: int | None = None
 
 
@@ -341,6 +375,8 @@ class ShadowReviewRepository:
         source_kind = (
             "installed_live_shadow"
             if capture.installed and capture.runtime_mode == "SHADOW"
+            else "installed_live_social_runtime"
+            if capture.installed and capture.runtime_mode == "SOCIAL_RUNTIME"
             else "historical_bootstrap"
         )
         encoded = _canonical(asdict(capture))
@@ -374,7 +410,7 @@ class ShadowReviewRepository:
 
     def capture_runtime(self, evaluation: object) -> ShadowCaptureResult:
         if not bool(getattr(evaluation, "accepted", False)):
-            raise ValueError("only accepted SHADOW evaluations may be reviewed")
+            raise ValueError("only accepted runtime evaluations may be reviewed")
         frame = evaluation.frame
         candidates = tuple(getattr(evaluation, "candidates", ()))
         selected = set(evaluation.governor_result.selected_intention_ids)
@@ -387,7 +423,11 @@ class ShadowReviewRepository:
         )
         target_alias = _alias(target)
         events = tuple(getattr(evaluation, "context_events", ()))
-        focus_id = frame.focus_event_ids[-1] if frame.focus_event_ids else None
+        focus_id = (
+            frame.focus_event_ids[-1]
+            if frame is not None and frame.focus_event_ids
+            else evaluation.source_event.event_id
+        )
 
         def safe_event(event: SocialEventEnvelope) -> dict[str, object]:
             return {
@@ -421,8 +461,6 @@ class ShadowReviewRepository:
         )
         source_event = getattr(evaluation, "source_event", focus_event)
         ownership = str(source_event.payload.get("interaction_owner") or "GROUPMATE")
-        if ownership == "UNKNOWN" and source_event.payload.get("social_eligible") is not False:
-            ownership = "GROUPMATE"
         lane = (
             "EXTERNAL_PLUGIN_COMPATIBILITY"
             if ownership == "EXTERNAL_PLUGIN"
@@ -431,25 +469,45 @@ class ShadowReviewRepository:
             else "SOCIAL_CONVERSATION"
         )
         outcome = evaluation.governor_result.outcome
-        categories = self._suggest_categories(frame, candidates, outcome)
+        categories = (
+            ("correct_silence",)
+            if frame is None and ownership == "EXTERNAL_PLUGIN"
+            else self._suggest_categories(frame, candidates, outcome)
+        )
         expires_at = max(
             (candidate.expires_at for candidate in candidates),
-            default=frame.deadline,
+            default=(frame.deadline if frame is not None else source_event.occurred_at),
         )
+        runtime_mode = getattr(evaluation, "runtime_mode", None)
+        if runtime_mode is None:
+            raise ValueError("authoritative runtime mode is required")
+        runtime_mode_value = getattr(runtime_mode, "value", str(runtime_mode))
         capture = ShadowDecisionCapture.create(
             persona_id=getattr(evaluation, "persona_id"),
-            group_id=frame.group_id,
-            frame_id=frame.frame_id,
+            group_id=source_event.group_id,
+            frame_id=(
+                frame.frame_id
+                if frame is not None
+                else f"external:{evaluation.request_id}"
+            ),
             source_event_id=source_event.event_id,
             correlation_id=source_event.correlation_id,
             occurred_at=source_event.occurred_at,
-            config_version=frame.config_version,
+            config_version=evaluation.config_version,
             history=history,
             focus=safe_event(focus_event),
             attention={
-                "trigger_kind": frame.trigger_kind,
-                "urgency": frame.urgency,
-                "deadline": frame.deadline,
+                "trigger_kind": (
+                    frame.trigger_kind
+                    if frame is not None
+                    else "EXTERNAL_COMPATIBILITY"
+                ),
+                "urgency": frame.urgency if frame is not None else "none",
+                "deadline": (
+                    frame.deadline
+                    if frame is not None
+                    else source_event.occurred_at
+                ),
             },
             target=target_alias,
             candidate_response=None,
@@ -462,7 +520,7 @@ class ShadowReviewRepository:
             },
             expires_at=expires_at,
             prediction={
-                "attention": True,
+                "attention": frame is not None,
                 "action": outcome == "ACT",
                 "target": target_alias,
                 "intent": (
@@ -475,7 +533,7 @@ class ShadowReviewRepository:
             evaluation_lane=lane,
             ownership=ownership,
             installed=True,
-            runtime_mode="SHADOW",
+            runtime_mode=runtime_mode_value,
         )
         item = self.record(capture)
         event = self._projection_event(item)
@@ -639,6 +697,7 @@ class ShadowReviewRepository:
                 )
             records = self._records_on(db, persona, group)
             scenario_digest, label_digest = self._digests(records)
+            artifact_digest = self._artifact_digest(records)
             version = int(
                 db.execute(
                     "SELECT COALESCE(MAX(manifest_version), 0) + 1 "
@@ -648,14 +707,15 @@ class ShadowReviewRepository:
             )
             db.execute(
                 "INSERT INTO shadow_manifests(manifest_version, persona_id, group_id, "
-                "scenario_digest, label_digest, release_config_json, created_at) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                "scenario_digest, label_digest, artifact_digest, "
+                "release_config_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     version,
                     persona,
                     group,
                     scenario_digest,
                     label_digest,
+                    artifact_digest,
                     _canonical(release_config.to_dict()),
                     int(time.time()),
                 ),
@@ -670,11 +730,14 @@ class ShadowReviewRepository:
         with connect_database(self.path) as db:
             records = self._records_on(db, persona_id, group_id)
         scenario_digest, label_digest = self._digests(records)
+        artifact_digest = self._artifact_digest(records)
         if (
             scenario_digest != str(manifest["scenario_digest"])
             or label_digest != str(manifest["label_digest"])
         ):
             raise ValueError("frozen SHADOW manifest no longer matches its labels")
+        if artifact_digest != str(manifest["artifact_digest"]):
+            raise ValueError("frozen SHADOW content no longer matches its manifest")
         provenance = {
             "kind": "installed_live_shadow",
             "manifest_version": int(manifest["manifest_version"]),
@@ -683,6 +746,7 @@ class ShadowReviewRepository:
             "frozen": True,
             "scenario_digest": scenario_digest,
             "label_digest": label_digest,
+            "artifact_digest": artifact_digest,
         }
         bound = tuple(
             {**record, "shadow_provenance": copy.deepcopy(provenance)}
@@ -692,6 +756,7 @@ class ShadowReviewRepository:
             manifest_version=int(manifest["manifest_version"]),
             scenario_digest=scenario_digest,
             label_digest=label_digest,
+            artifact_digest=artifact_digest,
             records=bound,
         )
 
@@ -722,6 +787,8 @@ class ShadowReviewRepository:
         manifest_version: int,
         proposed_config: Mapping[str, object],
         comparison: Mapping[str, object],
+        baseline_config_version: int,
+        baseline_config_digest: str,
         status: str,
         reason_codes: tuple[str, ...],
     ) -> ShadowCalibrationRun:
@@ -732,6 +799,8 @@ class ShadowReviewRepository:
                 "manifest_version": manifest_version,
                 "proposed_config": proposed_config,
                 "comparison": comparison,
+                "baseline_config_version": baseline_config_version,
+                "baseline_config_digest": baseline_config_digest,
             }
         )
         calibration_id = "shadow-calibration-run:" + hashlib.sha256(
@@ -745,7 +814,8 @@ class ShadowReviewRepository:
                 "INSERT OR IGNORE INTO shadow_calibration_runs("
                 "calibration_id, entity_ref, persona_id, group_id, manifest_version, "
                 "status, proposed_config_json, comparison_json, reason_codes_json, "
-                "created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "baseline_config_version, baseline_config_digest, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     calibration_id,
                     entity_ref,
@@ -756,6 +826,8 @@ class ShadowReviewRepository:
                     _canonical(dict(proposed_config)),
                     _canonical(dict(comparison)),
                     _canonical(reason_codes),
+                    int(baseline_config_version),
+                    _required_text(baseline_config_digest, "baseline_config_digest"),
                     int(time.time()),
                 ),
             )
@@ -797,10 +869,24 @@ class ShadowReviewRepository:
             )
         config_id = f"shadow-calibration:{group_id}"
         proposed = json.loads(str(row["proposed_config_json"]))
+        current = config_repository._published_on(
+            db, persona_id=persona_id, group_id=group_id
+        )
+        current_version = 0 if current is None else current.version
+        current_config = {} if current is None else current.config
+        current_digest = hashlib.sha256(_canonical(current_config).encode()).hexdigest()
+        if (
+            current_version != int(row["baseline_config_version"])
+            or current_digest != str(row["baseline_config_digest"])
+        ):
+            raise ShadowCalibrationRejected(
+                "calibration baseline is stale; rerun against current config"
+            )
+        merged = {**current_config, **proposed}
         draft = config_repository._create_draft_on(
             db,
             config_id,
-            proposed,
+            merged,
             persona_id=persona_id,
             group_id=group_id,
             now=now,
@@ -811,15 +897,12 @@ class ShadowReviewRepository:
             persona_id=persona_id,
             group_id=group_id,
         )
-        current = config_repository._published_version_on(
-            db, persona_id=persona_id, group_id=group_id
-        )
         published = config_repository._publish_on(
             db,
             config_id,
             persona_id=persona_id,
             group_id=group_id,
-            expected_version=current,
+            expected_version=current_version,
         )
         db.execute(
             "UPDATE shadow_calibration_runs SET status='APPROVED', "
@@ -1018,6 +1101,8 @@ class ShadowReviewRepository:
             proposed_config=json.loads(str(row["proposed_config_json"])),
             comparison=json.loads(str(row["comparison_json"])),
             reason_codes=tuple(json.loads(str(row["reason_codes_json"]))),
+            baseline_config_version=int(row["baseline_config_version"]),
+            baseline_config_digest=str(row["baseline_config_digest"]),
             config_version=(
                 None if row["config_version"] is None else int(row["config_version"])
             ),
@@ -1063,6 +1148,27 @@ class ShadowReviewRepository:
                     "label": copy.deepcopy(item.label),
                     "prediction": copy.deepcopy(item.capture.prediction),
                     "decision_occurred_at": item.occurred_at,
+                    "frozen_truth": (
+                        {
+                            "task": item.status == "reasonable",
+                            "delivery": item.status == "reasonable",
+                            "recovery": item.status == "reasonable",
+                        }
+                        if item.capture.evaluation_lane == "GROUPMATE_CAPABILITY"
+                        else {}
+                    ),
+                    "external_response_owner": (
+                        "EXTERNAL_PLUGIN"
+                        if item.capture.evaluation_lane
+                        == "EXTERNAL_PLUGIN_COMPATIBILITY"
+                        else None
+                    ),
+                    "external_response_correlation": (
+                        f"external:{item.decision_id}"
+                        if item.capture.evaluation_lane
+                        == "EXTERNAL_PLUGIN_COMPATIBILITY"
+                        else None
+                    ),
                 }
             )
         return tuple(records)
@@ -1090,6 +1196,21 @@ class ShadowReviewRepository:
             ).encode()
         ).hexdigest()
         return scenario_digest, label_digest
+
+    @staticmethod
+    def _artifact_digest(records: tuple[Mapping[str, object], ...]) -> str:
+        return hashlib.sha256(
+            _canonical(
+                [
+                    {
+                        key: value
+                        for key, value in record.items()
+                        if key != "shadow_provenance"
+                    }
+                    for record in records
+                ]
+            ).encode()
+        ).hexdigest()
 
     def _latest_manifest(self, persona_id: str, group_id: str):
         with connect_database(self.path) as db:
@@ -1130,6 +1251,7 @@ class ShadowReviewRepository:
                     group_id TEXT NOT NULL,
                     scenario_digest TEXT NOT NULL,
                     label_digest TEXT NOT NULL,
+                    artifact_digest TEXT NOT NULL,
                     release_config_json TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     PRIMARY KEY(persona_id, group_id, manifest_version)
@@ -1144,6 +1266,8 @@ class ShadowReviewRepository:
                     proposed_config_json TEXT NOT NULL,
                     comparison_json TEXT NOT NULL,
                     reason_codes_json TEXT NOT NULL,
+                    baseline_config_version INTEGER NOT NULL DEFAULT 0,
+                    baseline_config_digest TEXT NOT NULL DEFAULT '',
                     config_id TEXT,
                     config_version INTEGER,
                     created_at INTEGER NOT NULL,
@@ -1151,6 +1275,41 @@ class ShadowReviewRepository:
                 );
                 """
             )
+            manifest_columns = {
+                str(row[1]) for row in db.execute("PRAGMA table_info(shadow_manifests)")
+            }
+            if "artifact_digest" not in manifest_columns:
+                db.execute(
+                    "ALTER TABLE shadow_manifests ADD COLUMN artifact_digest TEXT NOT NULL DEFAULT ''"
+                )
+            for manifest in db.execute(
+                "SELECT persona_id, group_id FROM shadow_manifests "
+                "WHERE artifact_digest=''"
+            ).fetchall():
+                records = self._records_on(db, str(manifest[0]), str(manifest[1]))
+                db.execute(
+                    "UPDATE shadow_manifests SET artifact_digest=? "
+                    "WHERE persona_id=? AND group_id=? AND artifact_digest=''",
+                    (
+                        self._artifact_digest(records),
+                        str(manifest[0]),
+                        str(manifest[1]),
+                    ),
+                )
+            calibration_columns = {
+                str(row[1])
+                for row in db.execute("PRAGMA table_info(shadow_calibration_runs)")
+            }
+            if "baseline_config_version" not in calibration_columns:
+                db.execute(
+                    "ALTER TABLE shadow_calibration_runs ADD COLUMN "
+                    "baseline_config_version INTEGER NOT NULL DEFAULT 0"
+                )
+            if "baseline_config_digest" not in calibration_columns:
+                db.execute(
+                    "ALTER TABLE shadow_calibration_runs ADD COLUMN "
+                    "baseline_config_digest TEXT NOT NULL DEFAULT ''"
+                )
 
 
 class ShadowCalibrationService:
@@ -1159,9 +1318,15 @@ class ShadowCalibrationService:
         repository: ShadowReviewRepository,
         *,
         runner: EvaluationRunner | None = None,
+        config_repository: ConfigVersionRepository | None = None,
     ) -> None:
         self.repository = repository
         self.runner = runner or EvaluationRunner()
+        self.config_repository = config_repository or ConfigVersionRepository(
+            repository.path
+        )
+        if self.config_repository.path != repository.path:
+            raise ValueError("config repository must share the shadow database")
 
     def run(
         self,
@@ -1174,6 +1339,12 @@ class ShadowCalibrationService:
         candidate_runtime: object,
     ) -> ShadowCalibrationRun:
         normalized = self._validate_config(proposed_config, release_config)
+        baseline_config = self.config_repository.snapshot(
+            persona_id=persona_id, group_id=group_id
+        )
+        baseline_digest = hashlib.sha256(
+            _canonical(baseline_config.config).encode()
+        ).hexdigest()
         frozen = self.repository.frozen_corpus(
             persona_id=persona_id, group_id=group_id
         )
@@ -1210,6 +1381,13 @@ class ShadowCalibrationService:
                 reasons.append("safety_gate_failed")
             if candidate_summary["false_positive_rate"] > release_config.false_positive_rate_cap:
                 reasons.append(f"{split}_false_positive_rate_cap_failed")
+            self._lane_gate_reasons(
+                split,
+                baseline_summary,
+                candidate_summary,
+                release_config,
+                reasons,
+            )
         holdout_candidate = comparison["holdout"]["candidate"]
         assert isinstance(holdout_candidate, Mapping)
         for name, threshold in release_config.holdout_minimums.items():
@@ -1222,6 +1400,8 @@ class ShadowCalibrationService:
             manifest_version=frozen.manifest_version,
             proposed_config=normalized,
             comparison=comparison,
+            baseline_config_version=baseline_config.version,
+            baseline_config_digest=baseline_digest,
             status="REJECTED" if reason_codes else "PENDING_APPROVAL",
             reason_codes=reason_codes,
         )
@@ -1271,6 +1451,7 @@ class ShadowCalibrationService:
     ) -> tuple[dict[str, object], ...]:
         copied = tuple(copy.deepcopy(dict(record)) for record in records)
         scenario_digest, label_digest = ShadowReviewRepository._digests(copied)
+        artifact_digest = ShadowReviewRepository._artifact_digest(copied)
         provenance = {
             "kind": "installed_live_shadow",
             "manifest_version": int(manifest_version),
@@ -1279,6 +1460,7 @@ class ShadowCalibrationService:
             "frozen": True,
             "scenario_digest": scenario_digest,
             "label_digest": label_digest,
+            "artifact_digest": artifact_digest,
         }
         return tuple(
             {**record, "shadow_provenance": copy.deepcopy(provenance)}
@@ -1287,24 +1469,126 @@ class ShadowCalibrationService:
 
     @staticmethod
     def _report_summary(report: object) -> dict[str, object]:
-        lane = report.lanes["SOCIAL_CONVERSATION"]
-        action = lane.metrics["action"]
-        attention = lane.metrics["attention"]
-        target = lane.metrics["target"]
-        false_denominator = int(action["fp"]) + int(action["tn"])
+        social = report.lanes["SOCIAL_CONVERSATION"]
+        action = social.metrics["action"] or {}
+        attention = social.metrics["attention"] or {}
+        target = social.metrics["target"] or {}
+        false_denominator = int(action.get("fp", 0)) + int(action.get("tn", 0))
         false_positive_rate = (
-            int(action["fp"]) / false_denominator if false_denominator else 0.0
+            int(action.get("fp", 0)) / false_denominator
+            if false_denominator
+            else 0.0
         )
+        lanes: dict[str, object] = {}
+        for lane_name, lane in report.lanes.items():
+            lane_summary: dict[str, object] = {
+                "effect_count": lane.effect_count,
+                "applicable": lane.effect_count > 0,
+            }
+            if lane_name == "GROUPMATE_CAPABILITY":
+                quality = lane.metrics.get("quality")
+                lane_summary["quality"] = {
+                    name: (quality.get(name) if isinstance(quality, Mapping) else None)
+                    for name in ("task", "delivery", "recovery")
+                }
+            if lane_name == "EXTERNAL_PLUGIN_COMPATIBILITY":
+                compatibility = lane.compatibility or {}
+                lane_summary["compatibility"] = {
+                    name: (
+                        float(compatibility.get(name, 0)) / lane.effect_count
+                        if lane.effect_count
+                        else None
+                    )
+                    for name in (
+                        "no_steal", "no_duplicate", "no_self_attribution"
+                    )
+                }
+            lanes[lane_name] = lane_summary
         return {
             "worker_mode": "live",
             "report_kind": "frozen_shadow_split",
             "candidate_digest": report.candidate_digest,
             "safety_issue_count": len(report.safety.issues),
             "false_positive_rate": false_positive_rate,
-            "attention_precision": float(attention["precision"]),
-            "action_precision": float(action["precision"]),
-            "target_precision": float(target["precision"]),
+            "attention_precision": float(attention.get("precision", 0.0)),
+            "action_precision": float(action.get("precision", 0.0)),
+            "target_precision": float(target.get("precision", 0.0)),
+            "lanes": lanes,
         }
+
+    @staticmethod
+    def _lane_gate_reasons(
+        split: str,
+        baseline: Mapping[str, object],
+        candidate: Mapping[str, object],
+        release: ShadowReleaseConfig,
+        reasons: list[str],
+    ) -> None:
+        baseline_lanes = baseline.get("lanes", {})
+        candidate_lanes = candidate.get("lanes", {})
+        assert isinstance(baseline_lanes, Mapping)
+        assert isinstance(candidate_lanes, Mapping)
+        labels = {
+            "SOCIAL_CONVERSATION": "social",
+            "GROUPMATE_CAPABILITY": "capability",
+            "EXTERNAL_PLUGIN_COMPATIBILITY": "external_compatibility",
+        }
+        for lane_name, minimum in release.lane_minimums.items():
+            lane = candidate_lanes.get(lane_name, {})
+            count = int(lane.get("effect_count", 0)) if isinstance(lane, Mapping) else 0
+            if count < minimum:
+                reasons.append(f"{labels[lane_name]}_coverage_unavailable")
+
+        ShadowCalibrationService._quality_gate_reasons(
+            split,
+            "capability",
+            baseline_lanes.get("GROUPMATE_CAPABILITY", {}),
+            candidate_lanes.get("GROUPMATE_CAPABILITY", {}),
+            "quality",
+            release.capability_minimums,
+            reasons,
+        )
+        ShadowCalibrationService._quality_gate_reasons(
+            split,
+            "external",
+            baseline_lanes.get("EXTERNAL_PLUGIN_COMPATIBILITY", {}),
+            candidate_lanes.get("EXTERNAL_PLUGIN_COMPATIBILITY", {}),
+            "compatibility",
+            release.compatibility_minimums,
+            reasons,
+        )
+
+    @staticmethod
+    def _quality_gate_reasons(
+        split: str,
+        lane_label: str,
+        baseline_lane: object,
+        candidate_lane: object,
+        metric_group: str,
+        minimums: Mapping[str, float],
+        reasons: list[str],
+    ) -> None:
+        baseline_values = (
+            baseline_lane.get(metric_group, {})
+            if isinstance(baseline_lane, Mapping)
+            else {}
+        )
+        candidate_values = (
+            candidate_lane.get(metric_group, {})
+            if isinstance(candidate_lane, Mapping)
+            else {}
+        )
+        for name, threshold in minimums.items():
+            before = baseline_values.get(name) if isinstance(baseline_values, Mapping) else None
+            after = candidate_values.get(name) if isinstance(candidate_values, Mapping) else None
+            if after is None:
+                if float(threshold) > 0:
+                    reasons.append(f"{lane_label}_coverage_unavailable")
+                continue
+            if before is not None and float(after) < float(before):
+                reasons.append(f"{split}_{lane_label}_{name}_regression")
+            if float(after) < float(threshold):
+                reasons.append(f"{split}_{lane_label}_{name}_failed")
 
 
 __all__ = (

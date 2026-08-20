@@ -23,9 +23,13 @@ from groupmate.social_runtime.control.commands import (
     RestoreConfig,
     ReviewShadowDecision,
 )
-from groupmate.social_runtime.control.config_versions import ConfigStatus
+from groupmate.social_runtime.control.config_versions import (
+    ConfigStatus,
+    ConfigVersionRepository,
+)
 from groupmate.social_runtime.control.projections import ProjectionConsumer
 from groupmate.social_runtime.control.queries import ProjectionQueries
+from groupmate.social_runtime.persistence.schema import connect_database
 
 
 SCENES = (
@@ -48,8 +52,15 @@ SCENES = (
 )
 
 
-def _capture(index: int, *, category: str = "direct_interaction", installed=True):
-    action = index % 2 == 0
+def _capture(
+    index: int,
+    *,
+    category: str = "direct_interaction",
+    installed=True,
+    lane: str = "SOCIAL_CONVERSATION",
+    ownership: str = "GROUPMATE",
+):
+    action = index % 2 == 0 and lane != "EXTERNAL_PLUGIN_COMPATIBILITY"
     return ShadowDecisionCapture.create(
         persona_id="aemeath",
         group_id="group-1",
@@ -97,8 +108,8 @@ def _capture(index: int, *, category: str = "direct_interaction", installed=True
             "text": "候选回复" if action else "",
         },
         suggested_categories=(category,),
-        evaluation_lane="SOCIAL_CONVERSATION",
-        ownership="GROUPMATE",
+        evaluation_lane=lane,
+        ownership=ownership,
         installed=installed,
         runtime_mode="SHADOW",
     )
@@ -115,6 +126,21 @@ def _release(**overrides):
         },
         "attention_window_ms_bounds": (1_000, 30_000),
         "participation_weight_bounds": (0.0, 2.0),
+        "lane_minimums": {
+            "SOCIAL_CONVERSATION": 1,
+            "GROUPMATE_CAPABILITY": 0,
+            "EXTERNAL_PLUGIN_COMPATIBILITY": 0,
+        },
+        "capability_minimums": {
+            "task": 0.0,
+            "delivery": 0.0,
+            "recovery": 0.0,
+        },
+        "compatibility_minimums": {
+            "no_steal": 0.0,
+            "no_duplicate": 0.0,
+            "no_self_attribution": 0.0,
+        },
     }
     values.update(overrides)
     return ShadowReleaseConfig(**values)
@@ -209,6 +235,137 @@ def test_installed_astrbot_shadow_is_captured_projected_and_never_sent(tmp_path)
     assert "https://secret.invalid" not in encoded
     assert "chain_of_thought" not in encoded.casefold()
     assert "prompt" not in encoded.casefold()
+
+
+def test_social_runtime_group_mode_cannot_be_recorded_as_installed_live_shadow(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        reviews = ShadowReviewRepository(path)
+        bridge = AstrBotSocialRuntimeBridge(
+            context=object(),
+            settings=SocialRuntimeSettings.from_mapping(
+                {
+                    "runtime_mode": "SOCIAL_RUNTIME",
+                    "enabled_groups": ["group-1"],
+                    "social_runtime_test_groups": ["group-1"],
+                }
+            ),
+            data_dir=tmp_path,
+            shadow_reviews=reviews,
+        )
+        await bridge.start()
+        await bridge.handle_event(
+            {
+                "message_id": "social-runtime-event",
+                "group_id": "group-1",
+                "user_id": "42",
+                "time": 1_700_000_010,
+                "message": [
+                    {"type": "text", "data": {"text": "@你 看一下"}},
+                    {"type": "at", "data": {"qq": "323537051"}},
+                ],
+            }
+        )
+        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        await bridge.close()
+        return items
+
+    items = asyncio.run(scenario())
+    assert len(items) == 1
+    assert items[0].runtime_mode == "SOCIAL_RUNTIME"
+    assert items[0].source_kind != "installed_live_shadow"
+
+
+def test_unknown_owner_remains_unknown_in_runtime_capture(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        reviews = ShadowReviewRepository(path)
+        bridge = AstrBotSocialRuntimeBridge(
+            context=object(),
+            settings=SocialRuntimeSettings.from_mapping(
+                {"runtime_mode": "SHADOW", "enabled_groups": ["group-1"]}
+            ),
+            data_dir=tmp_path,
+            shadow_reviews=reviews,
+        )
+        await bridge.start()
+        await bridge.handle_event(
+            {
+                "message_id": "unknown-owner-event",
+                "group_id": "group-1",
+                "user_id": "42",
+                "time": 1_700_000_020,
+                "message": [
+                    {"type": "text", "data": {"text": "@你 普通消息"}},
+                    {"type": "at", "data": {"qq": "323537051"}},
+                ],
+            }
+        )
+        item = reviews.list_items(
+            persona_id="aemeath", group_id="group-1"
+        )[0]
+        await bridge.close()
+        return item
+
+    assert asyncio.run(scenario()).capture.ownership == "UNKNOWN"
+
+
+def test_external_plugin_trigger_projects_no_attention_compatibility_decision(tmp_path):
+    async def scenario():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        reviews = ShadowReviewRepository(path)
+        bridge = AstrBotSocialRuntimeBridge(
+            context=object(),
+            settings=SocialRuntimeSettings.from_mapping(
+                {
+                    "runtime_mode": "SHADOW",
+                    "enabled_groups": ["group-1"],
+                    "external_command_prefixes": ["xw=astrbot.waves"],
+                }
+            ),
+            data_dir=tmp_path,
+            shadow_reviews=reviews,
+        )
+        await bridge.start()
+        await bridge.handle_event(
+            {
+                "message_id": "external-command-event",
+                "group_id": "group-1",
+                "user_id": "42",
+                "time": 1_700_000_030,
+                "message": [{"type": "text", "data": {"text": "xw帮助"}}],
+            }
+        )
+        ProjectionConsumer(path, "evaluation").consume(100)
+        item = reviews.list_items(
+            persona_id="aemeath", group_id="group-1"
+        )[0]
+        projection = ProjectionQueries(path).evaluation(
+            persona_id="aemeath", group_id="group-1"
+        )
+        scene_version = (
+            await bridge.manager.group_snapshot("group-1")
+        ).scene_version
+        calls = bridge.manager.execution_port.calls
+        outbox_count = bridge.manager.event_store.outbox_count()
+        await bridge.close()
+        return item, projection, scene_version, calls, outbox_count
+
+    item, projection, scene_version, calls, outbox_count = asyncio.run(scenario())
+    assert item.capture.evaluation_lane == "EXTERNAL_PLUGIN_COMPATIBILITY"
+    assert item.capture.ownership == "EXTERNAL_PLUGIN"
+    assert item.capture.prediction["attention"] is False
+    assert item.capture.prediction["action"] is False
+    assert item.capture.attention["trigger_kind"] == "EXTERNAL_COMPATIBILITY"
+    assert item.capture.candidate_actions == ()
+    assert item.capture.governor["reason_codes"] == ["external_plugin_owned"]
+    assert any(
+        value["entity_ref"] == item.entity_ref
+        for value in projection["items"]
+    )
+    assert scene_version == 1
+    assert calls == ()
+    assert outbox_count == 0
 
 
 def test_review_primary_verdicts_require_human_labels_and_corrections(tmp_path):
@@ -346,6 +503,200 @@ class _UnsafeRuntime(_FixedRuntime):
         return result
 
 
+class _ExternalStealRuntime(_FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = dict(super().evaluate(scenario, worker_mode))
+        if scenario["evaluation_lane"] == "EXTERNAL_PLUGIN_COMPATIBILITY":
+            result["outbox"] = (
+                {
+                    "correlation_id": scenario["external_response_correlation"],
+                    "part": "stolen-response",
+                },
+            )
+        return result
+
+
+def _all_lane_repository(tmp_path):
+    repository = ShadowReviewRepository(
+        tmp_path / "groupmate-social-runtime-v2.db"
+    )
+    lanes = (
+        ("SOCIAL_CONVERSATION", "GROUPMATE"),
+        ("GROUPMATE_CAPABILITY", "GROUPMATE"),
+        ("EXTERNAL_PLUGIN_COMPATIBILITY", "EXTERNAL_PLUGIN"),
+    )
+    for index in range(120):
+        lane, ownership = lanes[index % len(lanes)]
+        item = repository.record(
+            _capture(
+                index,
+                category=SCENES[index % len(SCENES)],
+                lane=lane,
+                ownership=ownership,
+            )
+        )
+        repository.review(
+            item.entity_ref,
+            reviewer_id="admin:root",
+            decision="reasonable",
+            reviewed_at=2_000 + index,
+        )
+    return repository
+
+
+def test_calibration_fails_closed_without_required_lane_coverage_and_diffs_each_lane(tmp_path):
+    social_only = _reviewed_repository(tmp_path / "social-only")
+    required = _release(
+        lane_minimums={
+            "SOCIAL_CONVERSATION": 1,
+            "GROUPMATE_CAPABILITY": 1,
+            "EXTERNAL_PLUGIN_COMPATIBILITY": 1,
+        },
+        capability_minimums={"task": 1.0, "delivery": 1.0, "recovery": 1.0},
+        compatibility_minimums={
+            "no_steal": 1.0,
+            "no_duplicate": 1.0,
+            "no_self_attribution": 1.0,
+        },
+    )
+    social_only.freeze(
+        persona_id="aemeath", group_id="group-1", release_config=required
+    )
+    proposed = {
+        "attention_window_ms": 4_000,
+        "reply_length_tendency": "short",
+        "media_preference": "contextual",
+        "participation_weights": {"direct": 1.1},
+    }
+    unavailable = ShadowCalibrationService(social_only).run(
+        persona_id="aemeath",
+        group_id="group-1",
+        proposed_config=proposed,
+        release_config=required,
+        baseline_runtime=_FixedRuntime(),
+        candidate_runtime=_FixedRuntime(),
+    )
+    assert unavailable.status == "REJECTED"
+    assert "capability_coverage_unavailable" in unavailable.reason_codes
+    assert "external_compatibility_coverage_unavailable" in unavailable.reason_codes
+
+    mixed = _all_lane_repository(tmp_path / "mixed")
+    mixed.freeze(
+        persona_id="aemeath", group_id="group-1", release_config=required
+    )
+    degraded = ShadowCalibrationService(mixed).run(
+        persona_id="aemeath",
+        group_id="group-1",
+        proposed_config=proposed,
+        release_config=required,
+        baseline_runtime=_FixedRuntime(),
+        candidate_runtime=_ExternalStealRuntime(),
+    )
+    assert degraded.status == "REJECTED"
+    assert "holdout_external_no_steal_regression" in degraded.reason_codes
+    assert set(degraded.comparison["holdout"]["candidate"]["lanes"]) == {
+        "SOCIAL_CONVERSATION",
+        "GROUPMATE_CAPABILITY",
+        "EXTERNAL_PLUGIN_COMPATIBILITY",
+    }
+
+
+def test_frozen_manifest_detects_any_evaluation_content_mutation(tmp_path):
+    repository = _reviewed_repository(tmp_path)
+    repository.freeze(
+        persona_id="aemeath", group_id="group-1", release_config=_release()
+    )
+    with connect_database(repository.path) as db:
+        db.execute(
+            "UPDATE shadow_review_items SET categories_json='[\"care\"]' "
+            "WHERE decision_id=(SELECT decision_id FROM shadow_review_items "
+            "ORDER BY occurred_at LIMIT 1)"
+        )
+    with pytest.raises(ValueError, match="content"):
+        repository.frozen_corpus(persona_id="aemeath", group_id="group-1")
+
+
+def test_calibration_approval_rejects_stale_baseline_and_merges_full_config(tmp_path):
+    repository = _reviewed_repository(tmp_path)
+    repository.freeze(
+        persona_id="aemeath", group_id="group-1", release_config=_release()
+    )
+    configs = ConfigVersionRepository(repository.path)
+    base = {
+        "retention_days": 30,
+        "attention_window_ms": 3_000,
+        "reply_length_tendency": "balanced",
+        "media_preference": "text_only",
+        "participation_weights": {"direct": 1.0},
+    }
+    configs.create_draft(
+        "group-behavior", base,
+        persona_id="aemeath", group_id="group-1", now=1,
+    )
+    configs.validate(
+        "group-behavior", persona_id="aemeath", group_id="group-1"
+    )
+    configs.publish(
+        "group-behavior", persona_id="aemeath", group_id="group-1",
+        expected_version=0,
+    )
+    proposed = {
+        "attention_window_ms": 4_000,
+        "reply_length_tendency": "short",
+        "media_preference": "contextual",
+        "participation_weights": {"direct": 1.1},
+    }
+    service = ShadowCalibrationService(repository, config_repository=configs)
+    stale = service.run(
+        persona_id="aemeath", group_id="group-1",
+        proposed_config=proposed, release_config=_release(),
+        baseline_runtime=_FixedRuntime(), candidate_runtime=_FixedRuntime(),
+    )
+    assert stale.baseline_config_version == 1
+    assert len(stale.baseline_config_digest) == 64
+
+    changed = {**base, "retention_days": 45}
+    configs.create_draft(
+        "manual-change", changed,
+        persona_id="aemeath", group_id="group-1", now=2,
+    )
+    configs.validate(
+        "manual-change", persona_id="aemeath", group_id="group-1"
+    )
+    configs.publish(
+        "manual-change", persona_id="aemeath", group_id="group-1",
+        expected_version=1,
+    )
+    commands = CommandService(
+        repository.path,
+        persona_id="aemeath",
+        group_ids=("group-1",),
+        admin_ids=("admin:root",),
+        config_repository=configs,
+        shadow_repository=repository,
+    )
+    context = CommandContext(
+        admin_id="admin:root", persona_id="aemeath", group_id="group-1",
+        expected_version=0, reason="reviewed", confirmed=True,
+    )
+    with pytest.raises(ShadowCalibrationRejected, match="stale"):
+        commands.execute(ApproveCalibration(stale.entity_ref), context)
+
+    fresh = service.run(
+        persona_id="aemeath", group_id="group-1",
+        proposed_config=proposed, release_config=_release(),
+        baseline_runtime=_FixedRuntime(), candidate_runtime=_FixedRuntime(),
+    )
+    approved = commands.execute(ApproveCalibration(fresh.entity_ref), context)
+    published = configs.load(
+        "shadow-calibration:group-1", approved.data["config_version"]
+    )
+    assert published.config["retention_days"] == 45
+    assert {
+        name: published.config[name] for name in proposed
+    } == proposed
+
+
 def test_calibration_runs_live_both_splits_rejects_safety_and_publishes_rollback_version(tmp_path):
     repository = _reviewed_repository(tmp_path)
     repository.freeze(
@@ -406,6 +757,13 @@ def test_calibration_runs_live_both_splits_rejects_safety_and_publishes_rollback
     assert projected["summary"]["status"] == "PENDING_APPROVAL"
     assert set(projected["summary"]["comparison"]) == {
         "calibration", "holdout"
+    }
+    assert set(
+        projected["summary"]["comparison"]["holdout"]["candidate"]["lanes"]
+    ) == {
+        "SOCIAL_CONVERSATION",
+        "GROUPMATE_CAPABILITY",
+        "EXTERNAL_PLUGIN_COMPATIBILITY",
     }
     assert "candidate_digest" not in json.dumps(projected, ensure_ascii=False)
 

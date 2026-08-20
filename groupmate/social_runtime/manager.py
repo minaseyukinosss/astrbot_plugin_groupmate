@@ -42,7 +42,10 @@ class RuntimeModeUnavailable(RuntimeError):
 class ShadowEvaluation:
     persona_id: str
     request_id: str
-    frame: AttentionFrame
+    runtime_mode: RuntimeMode
+    scene_version: int
+    config_version: int
+    frame: AttentionFrame | None
     governor_result: GovernorResult
     source_event: SocialEventEnvelope
     context_events: tuple[SocialEventEnvelope, ...]
@@ -207,6 +210,11 @@ class SocialRuntimeManager:
                 requests += flushed
             evaluations = []
             for request in requests:
+                if self._is_external_compatibility_request(request):
+                    evaluations.append(
+                        await self._external_compatibility_cycle(request)
+                    )
+                    continue
                 for frame in request.attention_frames:
                     if frame.frame_id in request.evaluated_frame_ids:
                         continue
@@ -397,11 +405,56 @@ class SocialRuntimeManager:
         return ShadowEvaluation(
             persona_id=request.persona_id,
             request_id=request.request_id,
+            runtime_mode=self.group_mode(request.group_id),
+            scene_version=frame.scene_version,
+            config_version=frame.config_version,
             frame=frame,
             governor_result=governor_result,
             source_event=request.event,
             context_events=context_events,
             candidates=candidates,
+            accepted=accepted,
+            status="accepted" if accepted else "stale",
+        )
+
+    @staticmethod
+    def _is_external_compatibility_request(request: SceneWorkRequest) -> bool:
+        return bool(
+            request.event.payload.get("interaction_owner") == "EXTERNAL_PLUGIN"
+            and request.event.payload.get("social_eligible") is False
+            and not request.attention_frames
+        )
+
+    async def _external_compatibility_cycle(
+        self, request: SceneWorkRequest
+    ) -> ShadowEvaluation:
+        actor = await self.fabric.notify(request.persona_id, request.group_id)
+        accepted = await actor.discard_work(
+            request.request_id, "external_plugin_owned"
+        )
+        context_events = self.event_store.event_envelopes(
+            request.persona_id,
+            request.group_id,
+            request.world_snapshot.recent_presence.recent_event_ids[-20:],
+        )
+        return ShadowEvaluation(
+            persona_id=request.persona_id,
+            request_id=request.request_id,
+            runtime_mode=self.group_mode(request.group_id),
+            scene_version=request.scene_version,
+            config_version=request.persona_snapshot.config_version,
+            frame=None,
+            governor_result=GovernorResult(
+                outcome="SILENCE",
+                selected_intention_ids=(),
+                rejected=(),
+                reason_codes=("external_plugin_owned",),
+                reconsider_at=None,
+                constraints=("external_plugin_owns_response", "no_side_effects"),
+            ),
+            source_event=request.event,
+            context_events=context_events,
+            candidates=(),
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )

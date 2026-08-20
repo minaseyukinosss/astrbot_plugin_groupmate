@@ -404,13 +404,59 @@ class ProjectionConsumer:
                 side_value = split_value.get(side)
                 if not isinstance(side_value, Mapping):
                     continue
-                sides[side] = {
+                safe_side = {
                     field: side_value[field]
                     for field in fields
                     if isinstance(side_value.get(field), (str, int, float))
                     and not isinstance(side_value.get(field), bool)
                 }
+                lanes_value = side_value.get("lanes")
+                if isinstance(lanes_value, Mapping):
+                    safe_side["lanes"] = {
+                        lane_name: ProjectionConsumer._safe_calibration_lane(
+                            lanes_value.get(lane_name)
+                        )
+                        for lane_name in (
+                            "SOCIAL_CONVERSATION",
+                            "GROUPMATE_CAPABILITY",
+                            "EXTERNAL_PLUGIN_COMPATIBILITY",
+                        )
+                    }
+                sides[side] = safe_side
             result[split] = sides
+        return result
+
+    @staticmethod
+    def _safe_calibration_lane(value: object) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            return {"effect_count": 0, "applicable": False}
+        count = value.get("effect_count")
+        result: dict[str, object] = {
+            "effect_count": (
+                int(count)
+                if isinstance(count, (int, float)) and not isinstance(count, bool)
+                else 0
+            ),
+            "applicable": value.get("applicable") is True,
+        }
+        for group, names in (
+            ("quality", ("task", "delivery", "recovery")),
+            (
+                "compatibility",
+                ("no_steal", "no_duplicate", "no_self_attribution"),
+            ),
+        ):
+            values = value.get(group)
+            if isinstance(values, Mapping):
+                result[group] = {
+                    name: values.get(name)
+                    for name in names
+                    if values.get(name) is None
+                    or (
+                        isinstance(values.get(name), (int, float))
+                        and not isinstance(values.get(name), bool)
+                    )
+                }
         return result
 
     @staticmethod
