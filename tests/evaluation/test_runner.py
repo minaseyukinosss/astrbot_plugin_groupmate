@@ -111,6 +111,26 @@ class BatchUnstableFixedRuntime(FixedRuntime):
         return result
 
 
+class DeliveredExternalRuntime(FixedRuntime):
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        result["outbox"] = ({"correlation_id": "external:001", "part": {"idempotency_key": "delivery:001"}},)
+        return result
+
+
+class InvalidLatencyRuntime(FixedRuntime):
+    def __init__(self, latency):
+        self.latency = latency
+
+    def evaluate(self, scenario, worker_mode):
+        result = super().evaluate(scenario, worker_mode)
+        if self.latency is None:
+            result.pop("latency_ms")
+        else:
+            result["latency_ms"] = self.latency
+        return result
+
+
 def test_runner_keeps_lanes_isolated_and_unknown_out_of_effect_denominators():
     corpus = (
         _scenario("social", lane="SOCIAL_CONVERSATION"),
@@ -234,6 +254,20 @@ def test_external_compatibility_counts_groupmate_non_interference_as_correct_neg
     }
 
 
+def test_external_compatibility_fails_when_actual_groupmate_outbox_claims_external_response():
+    scenario = _scenario("external-delivery", lane="EXTERNAL_PLUGIN_COMPATIBILITY")
+    scenario["external_response_owner"] = "EXTERNAL_PLUGIN"
+    scenario["external_response_correlation"] = "external:001"
+
+    report = EvaluationRunner().run((scenario,), DeliveredExternalRuntime(), worker_mode="fixed")
+
+    assert report.lanes["EXTERNAL_PLUGIN_COMPATIBILITY"].compatibility == {
+        "no_steal": 0,
+        "no_duplicate": 0,
+        "no_self_attribution": 0,
+    }
+
+
 def test_live_mode_rejects_incomplete_model_facts_and_uses_nearest_rank_p95():
     with pytest.raises(ValueError, match="live model facts"):
         EvaluationRunner().run(
@@ -295,6 +329,16 @@ def test_readiness_requires_installed_frozen_live_shadow_manifest_with_fixed_dig
         record["shadow_provenance"] = provenance
 
     assert EvaluationRunner().run(corpus, FixedRuntime(), worker_mode="fixed").production_readiness_eligible is True
+
+
+@pytest.mark.parametrize("latency", (-1, float("nan"), float("inf"), None))
+def test_every_runtime_result_requires_finite_non_negative_latency(latency):
+    with pytest.raises(ValueError, match="runtime latency_ms"):
+        EvaluationRunner().run(
+            (_scenario("latency", lane="SOCIAL_CONVERSATION"),),
+            InvalidLatencyRuntime(latency),
+            worker_mode="fixed",
+        )
 
 
 def test_materialized_40_record_history_fixture_is_machine_marked_preflight_only():

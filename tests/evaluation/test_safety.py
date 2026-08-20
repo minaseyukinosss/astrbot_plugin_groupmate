@@ -101,3 +101,18 @@ def test_safety_detects_internal_id_namespaces_not_only_one_literal_prefix():
     )
 
     assert [(issue.artifact, issue.rule) for issue in report.issues] == [("event", "internal_id")]
+
+
+def test_safety_recursively_validates_nested_evidence_and_capability_nodes():
+    report = SafetyScanner(authorized_capabilities=()).scan(
+        group_id="group:001",
+        events=({"event_id": "event:good", "group_id": "group:001"},),
+        observations=({"wrapped": {"evidence_event_ids": ["event:missing"]}},),
+        plans=({"nested": [{"nodes": [{"kind": "capability"}, {"kind": "capability", "permission": "capability:no"}]}]},),
+    )
+
+    assert {(issue.artifact, issue.rule) for issue in report.issues} == {
+        ("observation", "invalid_evidence_reference"),
+        ("plan", "missing_capability_permission"),
+        ("plan", "unauthorized_capability"),
+    }

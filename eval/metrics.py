@@ -161,20 +161,32 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
             if text:
                 action_texts.append(text)
 
-        if bool(predicted.get("autonomous")):
+        frozen_truth = record.get("frozen_truth", {})
+        if not isinstance(frozen_truth, Mapping):
+            raise ValueError("frozen_truth must be a mapping")
+        if frozen_truth.get("autonomy") is True:
             autonomous_count += 1
-            frozen_truth = record.get("frozen_truth", {})
-            if not isinstance(frozen_truth, Mapping):
-                raise ValueError("frozen_truth must be a mapping")
             value = frozen_truth.get("autonomy_value")
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 numeric = float(value)
                 if not isfinite(numeric):
                     raise ValueError("frozen autonomy_value must be finite")
                 autonomous_values.append(numeric)
-            decision_offset = predicted.get("decision_offset_ms")
-            if type(decision_offset) is int:
-                autonomous_expiry.append(decision_offset <= truth.expires_after_ms)
+            evidence_id = frozen_truth.get("autonomy_evidence_event_id")
+            artifacts = record.get("artifacts", {})
+            if isinstance(evidence_id, str) and isinstance(artifacts, Mapping):
+                focus_id = artifacts.get("focus_event_id")
+                events = artifacts.get("events", ())
+                if isinstance(focus_id, str) and isinstance(events, (tuple, list)):
+                    timestamps = {
+                        str(event.get("event_id")): event.get("occurred_at_ms")
+                        for event in events
+                        if isinstance(event, Mapping)
+                    }
+                    focus_at = timestamps.get(focus_id)
+                    decision_at = timestamps.get(evidence_id)
+                    if type(focus_at) is int and type(decision_at) is int:
+                        autonomous_expiry.append(decision_at - focus_at <= truth.expires_after_ms)
 
         conversation = record.get("conversation", {})
         if isinstance(conversation, Mapping):
@@ -184,9 +196,6 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
                 monopoly_groupmate += groupmate_count
                 monopoly_total += groupmate_count + member_count
 
-        frozen_truth = record.get("frozen_truth", {})
-        if not isinstance(frozen_truth, Mapping):
-            raise ValueError("frozen_truth must be a mapping")
         for metric in quality_values:
             if type(frozen_truth.get(metric)) is bool:
                 quality_values[metric].append(frozen_truth[metric])

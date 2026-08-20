@@ -82,7 +82,7 @@ def test_metrics_count_social_outcomes_without_deriving_truth_from_predictions()
     assert metrics["interrupt_rate"] == 1 / 3
     assert metrics["repetition_rate"] == 1 / 3
     assert metrics["target_concentration"] == 0.5
-    assert metrics["autonomy"] == {"count": 1, "mean_value": None, "expiry_correct": 0.0}
+    assert metrics["autonomy"] == {"count": 0, "mean_value": None, "expiry_correct": None}
     assert metrics["quality"] == {
         "persona": None,
         "relationship": None,
@@ -105,7 +105,7 @@ def test_metrics_use_only_frozen_truth_and_keep_monopoly_separate_from_target_co
             "label": _label(),
             "prediction": {"attention": True, "action": True, "target": "member:001", "autonomous": True},
             "conversation": {"groupmate_action_count": 1, "member_action_count": 3},
-            "frozen_truth": {"persona": True, "autonomy_value": 0.5},
+            "frozen_truth": {"persona": True, "autonomy": True, "autonomy_value": 0.5},
         },
         {
             "label": _label(),
@@ -122,3 +122,33 @@ def test_metrics_use_only_frozen_truth_and_keep_monopoly_separate_from_target_co
     assert metrics["monopoly_rate"] == 1 / 5
     assert metrics["quality"]["persona"] == 1.0
     assert metrics["autonomy"]["mean_value"] == 0.5
+
+
+def test_autonomy_expiry_uses_frozen_truth_and_artifact_timestamps_not_candidate_claims():
+    candidate_claim = {
+        "label": _label(),
+        "prediction": {
+            "attention": True, "action": True, "target": "member:001",
+            "autonomous": True, "decision_offset_ms": 1,
+        },
+    }
+    frozen_artifact = {
+        "label": _label(),
+        "prediction": {"attention": True, "action": True, "target": "member:001"},
+        "frozen_truth": {
+            "autonomy": True,
+            "autonomy_value": 0.5,
+            "autonomy_evidence_event_id": "event:decision",
+        },
+        "artifacts": {
+            "focus_event_id": "event:focus",
+            "events": [
+                {"event_id": "event:focus", "occurred_at_ms": 1_000},
+                {"event_id": "event:decision", "occurred_at_ms": 61_001},
+            ],
+        },
+    }
+
+    metrics = collect_metrics((candidate_claim, frozen_artifact)).to_dict()
+
+    assert metrics["autonomy"] == {"count": 1, "mean_value": 0.5, "expiry_correct": 0.0}

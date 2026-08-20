@@ -125,18 +125,30 @@ class SafetyScanner:
             issues.add(SafetyIssue(artifact, "chain_of_thought", path))
 
     def _scan_capabilities(self, plans: Iterable[object], issues: set[SafetyIssue]) -> None:
-        for plan in plans:
-            value = _plain(plan)
-            if not isinstance(value, Mapping):
-                continue
-            for index, node in enumerate(value.get("nodes", ())):
-                if not isinstance(node, Mapping):
+        for plan_index, plan in enumerate(plans):
+            for path, value in self._mappings(_plain(plan), f"[{plan_index}]"):
+                nodes = value.get("nodes")
+                if not isinstance(nodes, (tuple, list)):
                     continue
-                permission = str(node.get("permission") or "")
-                if str(node.get("kind") or "") == "capability" and not permission:
-                    issues.add(SafetyIssue("plan", "missing_capability_permission", f"nodes[{index}].permission"))
-                elif str(node.get("kind") or "") == "capability" and permission not in self.authorized_capabilities:
-                    issues.add(SafetyIssue("plan", "unauthorized_capability", f"nodes[{index}].permission"))
+                for index, node in enumerate(nodes):
+                    if not isinstance(node, Mapping):
+                        continue
+                    permission = str(node.get("permission") or "")
+                    node_path = f"{path}.nodes[{index}].permission"
+                    if str(node.get("kind") or "") == "capability" and not permission:
+                        issues.add(SafetyIssue("plan", "missing_capability_permission", node_path))
+                    elif str(node.get("kind") or "") == "capability" and permission not in self.authorized_capabilities:
+                        issues.add(SafetyIssue("plan", "unauthorized_capability", node_path))
+
+    @staticmethod
+    def _mappings(value, path):
+        if isinstance(value, Mapping):
+            yield path, value
+            for name, child in value.items():
+                yield from SafetyScanner._mappings(child, f"{path}.{name}")
+        elif isinstance(value, (tuple, list)):
+            for index, child in enumerate(value):
+                yield from SafetyScanner._mappings(child, f"{path}[{index}]")
 
     @staticmethod
     def _scan_duplicates(outbox: Iterable[object], issues: set[SafetyIssue]) -> None:
@@ -162,17 +174,18 @@ class SafetyScanner:
     @staticmethod
     def _scan_evidence(observations, event_index, group_id, issues):
         for index, observation in enumerate(observations):
-            value = _plain(observation)
-            if not isinstance(value, Mapping):
-                continue
-            evidence = value.get("evidence_event_ids", ())
-            if not isinstance(evidence, (tuple, list)):
-                issues.add(SafetyIssue("observation", "invalid_evidence_reference", f"[{index}].evidence_event_ids"))
-                continue
-            for evidence_id in evidence:
-                owner = event_index.get(str(evidence_id))
-                if owner != str(group_id):
-                    issues.add(SafetyIssue("observation", "invalid_evidence_reference", f"[{index}].evidence_event_ids"))
+            for path, value in SafetyScanner._mappings(_plain(observation), f"[{index}]"):
+                if "evidence_event_ids" not in value:
+                    continue
+                evidence = value["evidence_event_ids"]
+                evidence_path = f"{path}.evidence_event_ids"
+                if not isinstance(evidence, (tuple, list)):
+                    issues.add(SafetyIssue("observation", "invalid_evidence_reference", evidence_path))
+                    continue
+                for evidence_id in evidence:
+                    owner = event_index.get(str(evidence_id))
+                    if owner != str(group_id):
+                        issues.add(SafetyIssue("observation", "invalid_evidence_reference", evidence_path))
 
 
 __all__ = ("SafetyIssue", "SafetyReport", "SafetyScanner")

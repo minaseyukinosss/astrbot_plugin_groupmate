@@ -93,7 +93,14 @@ class EvaluationRunner:
                 raise ValueError("evaluation runtime result requires a prediction mapping")
             candidates.append({"scenario_id": scenario.get("scenario_id"), "prediction": prediction})
 
-            latency = result.get("latency_ms", 0)
+            latency = result.get("latency_ms")
+            if (
+                isinstance(latency, bool)
+                or not isinstance(latency, (int, float))
+                or not math.isfinite(float(latency))
+                or latency < 0
+            ):
+                raise ValueError("runtime latency_ms must be finite and non-negative")
             latencies.append(float(latency))
             cost = result.get("cost", {})
             if not isinstance(cost, Mapping):
@@ -211,19 +218,44 @@ class EvaluationRunner:
             scene_confusions={key: confusion(value) for key, value in scenes.items()},
             metrics=metrics,
             compatibility=(
-                {
-                    "no_steal": sum(not bool(item["prediction"].get("action")) for item in records),
-                    "no_duplicate": sum(not tuple(item["result"].get("outbox", ())) for item in records),
-                    "no_self_attribution": sum(
-                        item["scenario"].get("external_response_owner") == "EXTERNAL_PLUGIN"
-                        and not bool(item["prediction"].get("action"))
-                        for item in records
-                    ),
-                }
+                EvaluationRunner._compatibility(records)
                 if lane == "EXTERNAL_PLUGIN_COMPATIBILITY"
                 else None
             ),
         )
+
+    @staticmethod
+    def _compatibility(records):
+        no_steal = no_duplicate = no_self_attribution = 0
+        for item in records:
+            scenario = item["scenario"]
+            result = item["result"]
+            correlation = scenario.get("external_response_correlation")
+            delivered = EvaluationRunner._has_groupmate_delivery(result, correlation)
+            silent = not bool(item["prediction"].get("action")) and not delivered
+            no_steal += int(silent)
+            no_duplicate += int(not delivered)
+            no_self_attribution += int(
+                scenario.get("external_response_owner") == "EXTERNAL_PLUGIN" and silent
+            )
+        return {
+            "no_steal": no_steal,
+            "no_duplicate": no_duplicate,
+            "no_self_attribution": no_self_attribution,
+        }
+
+    @staticmethod
+    def _has_groupmate_delivery(result, correlation):
+        def walk(value):
+            if isinstance(value, Mapping):
+                if "part" in value or "platform_message_id" in value or "response" in value:
+                    if correlation is None or value.get("correlation_id") == correlation:
+                        return True
+                return any(walk(child) for child in value.values())
+            if isinstance(value, (tuple, list)):
+                return any(walk(child) for child in value)
+            return False
+        return walk(result.get("outbox", ())) or walk(result.get("responses", ()))
 
     @staticmethod
     def _latency(values: list[float]) -> dict[str, float | int]:
