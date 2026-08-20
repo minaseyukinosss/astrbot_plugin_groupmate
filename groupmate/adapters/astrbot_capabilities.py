@@ -14,6 +14,7 @@ from ..social_runtime.tasks.contracts import (
     ProviderEventKind,
     TaskRun,
     TaskStatus,
+    RiskLevel,
     normalize_descriptor,
     normalize_provider_event,
     normalize_request,
@@ -40,8 +41,18 @@ class CapabilityProvider(Protocol):
 class AstrBotCapabilityAdapter:
     """Registers explicit providers and validates every event at the boundary."""
 
-    def __init__(self, providers: Iterable[CapabilityProvider] = ()) -> None:
+    def __init__(
+        self,
+        providers: Iterable[CapabilityProvider] = (),
+        *,
+        autonomous_allowlist: Iterable[tuple[str, str]] = (),
+    ) -> None:
         self._providers: dict[tuple[str, str], CapabilityProvider] = {}
+        self._autonomous_allowlist = frozenset(
+            (str(provider_id).strip(), str(capability_id).strip())
+            for provider_id, capability_id in autonomous_allowlist
+            if str(provider_id).strip() and str(capability_id).strip()
+        )
         for provider in providers:
             self.register(provider)
 
@@ -54,6 +65,21 @@ class AstrBotCapabilityAdapter:
         if not callable(getattr(provider, "start", None)):
             raise ValueError("provider must implement start")
         self._providers[key] = provider
+
+    def registered_catalog(self) -> tuple[CapabilityDescriptor, ...]:
+        return tuple(
+            self._providers[key].descriptor for key in sorted(self._providers)
+        )
+
+    def autonomous_catalog(self) -> tuple[CapabilityDescriptor, ...]:
+        allowed_risks = {RiskLevel.READ_ONLY, RiskLevel.LOW_IMPACT}
+        return tuple(
+            descriptor
+            for descriptor in self.registered_catalog()
+            if (descriptor.provider_id, descriptor.capability_id)
+            in self._autonomous_allowlist
+            and descriptor.risk_level in allowed_risks
+        )
 
     def start(self, task: TaskRun) -> ProviderEvent:
         provider = self._provider(task)

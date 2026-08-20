@@ -104,6 +104,39 @@ def test_adapter_calls_only_a_registered_provider_contract():
         adapter.start(_run())
 
 
+def test_autonomous_catalog_contains_only_installed_allowlisted_low_risk_contracts():
+    weather = _descriptor()
+    admin = _descriptor(
+        capability_id="group.mute",
+        provider_id="astrbot.admin",
+        risk_level=RiskLevel.EXTERNAL_SIDE_EFFECT,
+        confirmation_policy=ConfirmationPolicy.REQUIRED,
+    )
+    event = ProviderEvent.create(
+        event_id="provider-succeeded",
+        task_id="task-1",
+        kind=ProviderEventKind.SUCCEEDED,
+        occurred_at=102,
+        result={"summary": "晴"},
+    )
+    adapter = AstrBotCapabilityAdapter(
+        (_Provider(weather, event), _Provider(admin, event)),
+        autonomous_allowlist=(("astrbot.weather", "weather.lookup"),),
+    )
+
+    assert adapter.autonomous_catalog() == (weather,)
+    assert adapter.registered_catalog() == (admin, weather)
+
+
+def test_reference_feature_names_do_not_create_runtime_capabilities():
+    adapter = AstrBotCapabilityAdapter(
+        autonomous_allowlist=(("reference.waves", "xw"),)
+    )
+
+    assert adapter.registered_catalog() == ()
+    assert adapter.autonomous_catalog() == ()
+
+
 def test_adapter_accepts_validated_structured_result_and_media():
     descriptor = _descriptor()
     event = ProviderEvent.create(

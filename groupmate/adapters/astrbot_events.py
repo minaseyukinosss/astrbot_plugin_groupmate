@@ -8,6 +8,11 @@ import time
 from typing import Mapping
 
 from ..social_runtime.contracts import SocialEventEnvelope
+from ..social_runtime.ownership import (
+    ExternalTriggerPolicy,
+    InteractionOwner,
+    InteractionOwnership,
+)
 
 
 def _call_text(event: object, name: str) -> str:
@@ -33,10 +38,19 @@ def _json_value(value: object) -> object:
 class AstrBotEventTranslator:
     """Preserves observable platform facts without making social decisions."""
 
-    def __init__(self, persona_id: str, *, bot_qq: str = "323537051") -> None:
+    def __init__(
+        self,
+        persona_id: str,
+        *,
+        bot_qq: str = "323537051",
+        external_trigger_policy: ExternalTriggerPolicy | None = None,
+    ) -> None:
         self.persona_id = persona_id
         self.bot_qq = str(bot_qq)
         self.platform = "qq"
+        self.external_trigger_policy = (
+            external_trigger_policy or ExternalTriggerPolicy.create()
+        )
 
     def translate(self, host_event: object) -> SocialEventEnvelope:
         raw = self._raw_message(host_event)
@@ -79,8 +93,22 @@ class AstrBotEventTranslator:
                         fact[key] = _json_value(data[key])
                 media.append(fact)
 
+        message_text = "".join(text_parts) or str(
+            getattr(host_event, "message_str", "") or ""
+        )
         sender = raw.get("sender") if isinstance(raw.get("sender"), Mapping) else {}
         sender_name = str(sender.get("card") or sender.get("nickname") or _call_text(host_event, "get_sender_name"))
+        is_self = bool(actor_id and actor_id == self.bot_qq)
+        ownership = self.external_trigger_policy.classify(message_text)
+        if ownership is None:
+            ownership = InteractionOwnership(
+                owner=InteractionOwner.UNKNOWN,
+                social_eligible=not is_self,
+                owner_ref=None,
+                source=(
+                    "unattributed_self_output" if is_self else "unclassified_input"
+                ),
+            )
         event_id = f"{self.platform}:{source_id}"
         return SocialEventEnvelope.create(
             event_id=event_id,
@@ -95,14 +123,20 @@ class AstrBotEventTranslator:
             causation_id=f"qq:{reply_to}" if reply_to else None,
             payload={
                 "platform": self.platform,
-                "text": "".join(text_parts) or str(getattr(host_event, "message_str", "") or ""),
+                "text": message_text,
                 "segments": segments,
                 "reply_to": reply_to or None,
                 "mentions": mentions,
                 "mentions_bot": self.bot_qq in mentions,
                 "media": media,
                 "sender": {"id": actor_id, "name": sender_name},
-                "is_self": bool(actor_id and actor_id == self.bot_qq),
+                "is_self": is_self,
+                "interaction_owner": ownership.owner.value,
+                "social_eligible": ownership.social_eligible,
+                "owner_ref": ownership.owner_ref,
+                "ownership_source": ownership.source,
+                "external_trigger_kind": ownership.trigger_kind,
+                "external_trigger_value": ownership.trigger_value,
             },
         )
 

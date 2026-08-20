@@ -7,6 +7,7 @@ from pathlib import Path
 from ..settings import SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
 from ..social_runtime.manager import SocialRuntimeManager
+from ..social_runtime.ownership import ExternalTriggerPolicy
 from .astrbot_events import AstrBotEventTranslator
 
 
@@ -18,7 +19,12 @@ class AstrBotSocialRuntimeBridge:
         self.settings = settings
         self.data_dir = Path(data_dir)
         self.translator = AstrBotEventTranslator(
-            settings.persona_id, bot_qq=settings.bot_qq
+            settings.persona_id,
+            bot_qq=settings.bot_qq,
+            external_trigger_policy=ExternalTriggerPolicy.from_entries(
+                command_prefixes=settings.external_command_prefixes,
+                link_domains=settings.external_link_domains,
+            ),
         )
         self._manager: SocialRuntimeManager | None = None
         self._started = False

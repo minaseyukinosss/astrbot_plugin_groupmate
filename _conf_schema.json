@@ -42,6 +42,16 @@
     "type": "string",
     "default": "323537051"
   },
+  "external_command_prefixes": {
+    "description": "当前 AstrBot 实例的外置插件触发规则（rule=provider；参考群指令不会自动加入）",
+    "type": "list",
+    "default": []
+  },
+  "external_link_domains": {
+    "description": "当前 AstrBot 实例的自动链接解析域名（domain=provider；仅填写实际安装插件）",
+    "type": "list",
+    "default": []
+  },
   "database_name": {
     "description": "V2 独立数据库文件名（固定，不读取旧数据库）",
     "type": "string",

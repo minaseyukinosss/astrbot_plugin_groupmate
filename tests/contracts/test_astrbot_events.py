@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from groupmate.adapters.astrbot_events import AstrBotEventTranslator
+from groupmate.social_runtime.ownership import ExternalTriggerPolicy
 
 
 def test_translator_preserves_platform_facts_without_social_inference():
@@ -87,3 +88,41 @@ def test_translator_reads_astrbot_event_accessors_and_raw_message():
     assert translated.group_id == "885617919"
     assert translated.actor_id == "42"
     assert translated.payload["sender"]["name"] == "小夏"
+
+
+def test_translator_marks_only_configured_deployment_triggers_as_external():
+    policy = ExternalTriggerPolicy.create(
+        command_prefixes={"xw": "astrbot.waves"},
+        link_domains={"v.douyin.com": "astrbot.video_parser"},
+    )
+    translator = AstrBotEventTranslator(
+        "aemeath", external_trigger_policy=policy
+    )
+
+    command = translator.translate(
+        {
+            "message_id": "command",
+            "group_id": "885617919",
+            "user_id": "42",
+            "time": 10,
+            "message": [{"type": "text", "data": {"text": " xw帮助"}}],
+        }
+    )
+    ordinary = translator.translate(
+        {
+            "message_id": "ordinary",
+            "group_id": "885617919",
+            "user_id": "42",
+            "time": 11,
+            "message": [
+                {"type": "text", "data": {"text": "xwindow 怎么配置"}}
+            ],
+        }
+    )
+
+    assert command.payload["interaction_owner"] == "EXTERNAL_PLUGIN"
+    assert command.payload["social_eligible"] is False
+    assert command.payload["owner_ref"] == "astrbot.waves"
+    assert command.payload["ownership_source"] == "configured_trigger"
+    assert ordinary.payload["interaction_owner"] == "UNKNOWN"
+    assert ordinary.payload["social_eligible"] is True

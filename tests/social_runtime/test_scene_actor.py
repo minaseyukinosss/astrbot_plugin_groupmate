@@ -63,6 +63,46 @@ def test_scene_actor_projects_event_and_freezes_work_request_context(tmp_path):
     assert state.topic_for_message("m1").root_event_id == "m1"
 
 
+def test_external_plugin_trigger_updates_scene_without_social_attention(tmp_path):
+    async def scenario():
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            SQLiteSocialEventStore(tmp_path / "groupmate-social-runtime-v2.db"),
+            _persona_snapshot,
+        )
+        await actor.start()
+        request = await actor.submit(
+            SocialEventEnvelope.create(
+                **social_event_values(
+                    event_id="qq:external",
+                    source_message_id="external",
+                    correlation_id="corr:external",
+                    actor_id="member-1",
+                    payload={
+                        "text": "xw帮助",
+                        "mentions_bot": True,
+                        "interaction_owner": "EXTERNAL_PLUGIN",
+                        "owner_ref": "astrbot.waves",
+                        "ownership_source": "configured_trigger",
+                        "social_eligible": False,
+                    },
+                )
+            )
+        )
+        state = await actor.snapshot()
+        flushed = await actor.flush_attention(10_000)
+        await actor.close()
+        return request, state, flushed
+
+    request, state, flushed = asyncio.run(scenario())
+
+    assert state.topic_for_message("external").root_event_id == "external"
+    assert request.attention_frames == ()
+    assert request.attention_window is None
+    assert flushed == ()
+
+
 def test_stale_external_result_is_rejected_without_changing_scene(tmp_path):
     async def scenario():
         actor = GroupSceneActor(

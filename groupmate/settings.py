@@ -17,6 +17,8 @@ class SocialRuntimeSettings:
     persona_id: str
     bot_qq: str
     control_admin_ids: tuple[str, ...] = ()
+    external_command_prefixes: tuple[str, ...] = ()
+    external_link_domains: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -41,6 +43,16 @@ class SocialRuntimeSettings:
             control_admin_ids=tuple(
                 str(value).strip()
                 for value in source.get("control_admin_ids", ())
+                if str(value).strip()
+            ),
+            external_command_prefixes=tuple(
+                str(value).strip()
+                for value in source.get("external_command_prefixes", ())
+                if str(value).strip()
+            ),
+            external_link_domains=tuple(
+                str(value).strip()
+                for value in source.get("external_link_domains", ())
                 if str(value).strip()
             ),
         )

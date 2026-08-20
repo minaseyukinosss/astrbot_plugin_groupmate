@@ -61,7 +61,9 @@ class GroupmatePlugin(Star):
             )
             self._refresh_projections()
 
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    # Run after ordinary command handlers so a correctly implemented external
+    # plugin can stop propagation before Groupmate sees its functional request.
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-100)
     async def observe_group_message(self, event: AstrMessageEvent):
         await self.bridge.handle_event(event)
         self._refresh_projections()

@@ -61,6 +61,11 @@ class AttentionScheduler:
         now = int(now)
         self._refresh_pending_scene(event.group_id, world, persona)
 
+        # External commands remain observable scene facts, but their owning
+        # plugin—not Groupmate—holds the response obligation.
+        if event.payload.get("social_eligible") is False:
+            return ()
+
         if event.event_type == "temporal.opportunity_due":
             return self._autonomous_frames(event, world, persona, now)
 
