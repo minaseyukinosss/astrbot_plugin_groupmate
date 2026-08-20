@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import hashlib
 from collections import defaultdict
 from typing import Iterable, Mapping
 
@@ -52,9 +54,24 @@ class EvaluationRunner:
         runtime: object,
         worker_mode: str,
     ) -> EvaluationReport:
+        scenarios = tuple(corpus)
+        if worker_mode == "fixed":
+            first = self._run_once(scenarios, runtime, worker_mode)
+            second = self._run_once(scenarios, runtime, worker_mode)
+            if first.to_json() != second.to_json():
+                raise ValueError("fixed worker report is not deterministic")
+            return first
+        return self._run_once(scenarios, runtime, worker_mode)
+
+    def _run_once(
+        self,
+        corpus: tuple[Mapping[str, object], ...],
+        runtime: object,
+        worker_mode: str,
+    ) -> EvaluationReport:
         if worker_mode not in {"fixed", "live"}:
             raise ValueError("worker_mode must be fixed or live")
-        scenarios = tuple(corpus)
+        scenarios = corpus
         lane_records: dict[str, list[dict[str, object]]] = {lane: [] for lane in LANES}
         safety_issues: list[SafetyIssue] = []
         excluded_unknown_count = 0
@@ -62,6 +79,7 @@ class EvaluationRunner:
         tokens = 0
         usd = 0.0
         model_facts: list[Mapping[str, object]] = []
+        candidates: list[Mapping[str, object]] = []
 
         for scenario in scenarios:
             if not isinstance(scenario, Mapping):
@@ -70,13 +88,10 @@ class EvaluationRunner:
             if lane not in LANES:
                 raise ValueError("evaluation lane is unsupported")
             result = _runtime_result(runtime, scenario, worker_mode)
-            if worker_mode == "fixed":
-                replay = _runtime_result(runtime, scenario, worker_mode)
-                if _canonical(result) != _canonical(replay):
-                    raise ValueError("fixed worker output is not deterministic")
             prediction = result.get("prediction")
             if not isinstance(prediction, Mapping):
                 raise ValueError("evaluation runtime result requires a prediction mapping")
+            candidates.append({"scenario_id": scenario.get("scenario_id"), "prediction": prediction})
 
             latency = result.get("latency_ms", 0)
             latencies.append(float(latency))
@@ -89,6 +104,19 @@ class EvaluationRunner:
                 model = result.get("model", {})
                 if not isinstance(model, Mapping):
                     raise ValueError("live evaluation runtime model facts must be a mapping")
+                required = {"provider", "model", "config", "input_tokens", "output_tokens", "latency_ms"}
+                if set(model) & required != required:
+                    raise ValueError("live model facts are incomplete")
+                if not isinstance(model["provider"], str) or not model["provider"].strip() or not isinstance(model["model"], str) or not model["model"].strip() or not isinstance(model["config"], Mapping):
+                    raise ValueError("live model facts are invalid")
+                try:
+                    json.dumps(model["config"], allow_nan=False, sort_keys=True)
+                except (TypeError, ValueError):
+                    raise ValueError("live model facts are invalid")
+                for name in ("input_tokens", "output_tokens", "latency_ms"):
+                    value = model[name]
+                    if type(value) is not int or value < 0:
+                        raise ValueError("live model facts are invalid")
                 model_facts.append(
                     {field: model[field] for field in _MODEL_FACT_FIELDS if field in model}
                 )
@@ -102,10 +130,25 @@ class EvaluationRunner:
                 projections=result.get("projections", ()),
             )
             safety_issues.extend(safety.issues)
-            if str(scenario.get("ownership", "GROUPMATE")) == "UNKNOWN":
+            ownership = scenario.get("ownership")
+            if ownership not in {"GROUPMATE", "EXTERNAL_PLUGIN", "UNKNOWN"}:
+                ownership = "UNKNOWN"
+            candidate_owner = result.get("candidate_owner")
+            if candidate_owner not in {"GROUPMATE", "EXTERNAL_PLUGIN", "UNKNOWN"}:
+                candidate_owner = "UNKNOWN"
+            producer = scenario.get("candidate_producer")
+            if producer != "GROUPMATE":
+                producer = "UNKNOWN"
+            if ownership == "UNKNOWN" or producer == "UNKNOWN" or candidate_owner != "GROUPMATE":
                 excluded_unknown_count += 1
                 continue
-            lane_records[lane].append({"label": scenario.get("label"), "prediction": prediction, "scenario": scenario})
+            provenance = scenario.get("context_provenance", {})
+            complete_context = (
+                isinstance(provenance, Mapping)
+                and type(provenance.get("complete_member_context")) is bool
+                and provenance["complete_member_context"]
+            )
+            lane_records[lane].append({"label": scenario.get("label"), "prediction": prediction, "scenario": scenario, "social_applicable": complete_context, "result": result})
 
         lanes = {
             lane: self._lane_report(lane, records)
@@ -122,6 +165,7 @@ class EvaluationRunner:
             kind=readiness[0],
             production_readiness_eligible=readiness[1],
             readiness_reason=readiness[2],
+            candidate_digest=hashlib.sha256(_canonical(candidates).encode()).hexdigest(),
         )
 
     @staticmethod
@@ -129,17 +173,28 @@ class EvaluationRunner:
         metric_records = [
             {"label": item["label"], "prediction": item["prediction"]}
             for item in records
+            if item["social_applicable"]
         ]
-        metrics = collect_metrics(metric_records).to_dict() if records else collect_metrics(()).to_dict()
+        metrics = collect_metrics(metric_records).to_dict() if metric_records else collect_metrics(()).to_dict()
+        if not metric_records:
+            for name in ("attention", "action", "target", "open_participation"):
+                metrics[name] = None
+        metrics["style_applicable"] = any(
+            isinstance(item["scenario"].get("context_provenance"), Mapping)
+            and bool(item["scenario"]["context_provenance"].get("bot_only"))
+            for item in records
+        )
         groups: dict[str, list[dict[str, object]]] = defaultdict(list)
         scenes: dict[str, list[dict[str, object]]] = defaultdict(list)
         for record in records:
             scenario = record["scenario"]
             assert isinstance(scenario, Mapping)
-            groups[str(scenario.get("group_id") or "unknown")].append(record)
+            if record["social_applicable"]:
+                groups[str(scenario.get("group_id") or "unknown")].append(record)
             categories = scenario.get("categories", ())
-            for category in categories if isinstance(categories, (tuple, list)) else ():
-                scenes[str(category)].append(record)
+            if record["social_applicable"]:
+                for category in categories if isinstance(categories, (tuple, list)) else ():
+                    scenes[str(category)].append(record)
 
         def confusion(values):
             return {
@@ -155,6 +210,19 @@ class EvaluationRunner:
             group_confusions={key: confusion(value) for key, value in groups.items()},
             scene_confusions={key: confusion(value) for key, value in scenes.items()},
             metrics=metrics,
+            compatibility=(
+                {
+                    "no_steal": sum(not bool(item["prediction"].get("action")) for item in records),
+                    "no_duplicate": sum(not tuple(item["result"].get("outbox", ())) for item in records),
+                    "no_self_attribution": sum(
+                        item["scenario"].get("external_response_owner") == "EXTERNAL_PLUGIN"
+                        and not bool(item["prediction"].get("action"))
+                        for item in records
+                    ),
+                }
+                if lane == "EXTERNAL_PLUGIN_COMPATIBILITY"
+                else None
+            ),
         )
 
     @staticmethod
@@ -162,7 +230,7 @@ class EvaluationRunner:
         if not values:
             return {"count": 0, "mean": 0.0, "p95": 0.0}
         ordered = sorted(values)
-        position = max(0, int((len(ordered) - 1) * 0.95))
+        position = max(0, math.ceil(len(ordered) * 0.95) - 1)
         return {
             "count": len(values),
             "mean": sum(values) / len(values),
@@ -171,10 +239,28 @@ class EvaluationRunner:
 
     @staticmethod
     def _readiness(scenarios: tuple[Mapping[str, object], ...]) -> tuple[str, bool, str]:
-        frozen_shadow = bool(scenarios) and all(
+        splits = {item.get("split") for item in scenarios}
+        scenario_digest = hashlib.sha256(json.dumps(
+            [
+                {"scenario_id": item.get("scenario_id"), "split": item.get("split"), "evaluation_lane": item.get("evaluation_lane")}
+                for item in scenarios
+            ], ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()).hexdigest()
+        label_digest = hashlib.sha256(json.dumps(
+            [{"scenario_id": item.get("scenario_id"), "label": item.get("label")} for item in scenarios],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()).hexdigest()
+        frozen_shadow = bool(scenarios) and splits == {"calibration", "holdout"} and all(
             item.get("corpus_kind") == "shadow"
-            and bool(item.get("labels_frozen"))
-            and item.get("split") in {"calibration", "holdout"}
+            and type(item.get("labels_frozen")) is bool and item["labels_frozen"]
+            and isinstance(item.get("shadow_provenance"), Mapping)
+            and item["shadow_provenance"].get("kind") == "installed_live_shadow"
+            and type(item["shadow_provenance"].get("manifest_version")) is int
+            and item["shadow_provenance"].get("installed") is True
+            and item["shadow_provenance"].get("runtime_mode") == "SHADOW"
+            and item["shadow_provenance"].get("frozen") is True
+            and item["shadow_provenance"].get("scenario_digest") == scenario_digest
+            and item["shadow_provenance"].get("label_digest") == label_digest
             for item in scenarios
         )
         if frozen_shadow:

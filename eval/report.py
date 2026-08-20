@@ -16,6 +16,7 @@ class LaneReport:
     group_confusions: Mapping[str, Mapping[str, object]]
     scene_confusions: Mapping[str, Mapping[str, object]]
     metrics: Mapping[str, object]
+    compatibility: Mapping[str, int] | None = None
     label_source: str = "human_fixture"
 
     def to_dict(self) -> dict[str, object]:
@@ -29,6 +30,7 @@ class LaneReport:
                 key: dict(value) for key, value in sorted(self.scene_confusions.items())
             },
             "metrics": dict(self.metrics),
+            "compatibility": None if self.compatibility is None else dict(self.compatibility),
             "label_source": self.label_source,
         }
 
@@ -44,6 +46,7 @@ class EvaluationReport:
     kind: str
     production_readiness_eligible: bool
     readiness_reason: str
+    candidate_digest: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -56,6 +59,7 @@ class EvaluationReport:
             "kind": self.kind,
             "production_readiness_eligible": self.production_readiness_eligible,
             "readiness_reason": self.readiness_reason,
+            "candidate_digest": self.candidate_digest,
         }
 
     def to_json(self) -> str:

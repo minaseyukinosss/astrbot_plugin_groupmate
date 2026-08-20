@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Iterable, Mapping
 
 from .schema import EvaluationLabel
@@ -17,12 +18,14 @@ class ConfusionMatrix:
     tp: int = 0
     fp: int = 0
     fn: int = 0
+    tn: int = 0
 
     def add(self, *, actual: bool, predicted: bool) -> "ConfusionMatrix":
         return ConfusionMatrix(
             tp=self.tp + int(actual and predicted),
             fp=self.fp + int(not actual and predicted),
             fn=self.fn + int(actual and not predicted),
+            tn=self.tn + int(not actual and not predicted),
         )
 
     def to_dict(self) -> dict[str, float | int]:
@@ -30,6 +33,8 @@ class ConfusionMatrix:
             "tp": self.tp,
             "fp": self.fp,
             "fn": self.fn,
+            "tn": self.tn,
+            "support": self.tp + self.fp + self.fn + self.tn,
             "precision": _ratio(self.tp, self.tp + self.fp),
             "recall": _ratio(self.tp, self.tp + self.fn),
         }
@@ -47,7 +52,7 @@ class MetricSummary:
     repetition_rate: float
     target_concentration: float
     autonomy: Mapping[str, float | int]
-    quality: Mapping[str, float]
+    quality: Mapping[str, float | None]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -69,6 +74,11 @@ def _prediction(record: Mapping[str, object]) -> Mapping[str, object]:
     value = record.get("prediction", {})
     if not isinstance(value, Mapping):
         raise ValueError("evaluation prediction must be a mapping")
+    for name in ("attention", "action"):
+        if type(value.get(name)) is not bool:
+            raise ValueError(f"prediction {name} must be a boolean")
+    if value.get("target") is not None and not isinstance(value["target"], str):
+        raise ValueError("prediction target must be a string or null")
     return value
 
 
@@ -99,6 +109,9 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
     predicted_targets: list[str] = []
     autonomous_values: list[float] = []
     autonomous_expiry: list[bool] = []
+    autonomous_count = 0
+    monopoly_groupmate = 0
+    monopoly_total = 0
     quality_values: dict[str, list[bool]] = {
         "persona": [],
         "relationship": [],
@@ -123,7 +136,7 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
             if predicted_target == truth.target:
                 target = target.add(actual=True, predicted=True)
             else:
-                target = ConfusionMatrix(target.tp, target.fp + 1, target.fn + 1)
+                target = ConfusionMatrix(target.tp, target.fp + 1, target.fn + 1, target.tn)
         else:
             target = target.add(
                 actual=truth.target is not None,
@@ -131,7 +144,7 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
             )
 
         actual_open = truth.action and truth.target is None
-        predicted_open = bool(predicted.get("open_participation"))
+        predicted_open = predicted_action and predicted_target is None
         open_participation = open_participation.add(
             actual=actual_open, predicted=predicted_open
         )
@@ -149,32 +162,45 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
                 action_texts.append(text)
 
         if bool(predicted.get("autonomous")):
-            autonomous_values.append(float(predicted.get("autonomy_value", 0.0)))
-            autonomous_expiry.append(not bool(predicted.get("expired")))
+            autonomous_count += 1
+            frozen_truth = record.get("frozen_truth", {})
+            if not isinstance(frozen_truth, Mapping):
+                raise ValueError("frozen_truth must be a mapping")
+            value = frozen_truth.get("autonomy_value")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if not isfinite(numeric):
+                    raise ValueError("frozen autonomy_value must be finite")
+                autonomous_values.append(numeric)
+            decision_offset = predicted.get("decision_offset_ms")
+            if type(decision_offset) is int:
+                autonomous_expiry.append(decision_offset <= truth.expires_after_ms)
 
-        for metric, field in (
-            ("persona", "persona_ok"),
-            ("relationship", "relationship_ok"),
-            ("culture", "culture_ok"),
-            ("task", "task_ok"),
-            ("delivery", "delivery_ok"),
-            ("recovery", "recovery_ok"),
-            ("style", "style_ok"),
-            ("media", "media_ok"),
-        ):
-            if field in predicted:
-                quality_values[metric].append(bool(predicted[field]))
+        conversation = record.get("conversation", {})
+        if isinstance(conversation, Mapping):
+            groupmate_count = conversation.get("groupmate_action_count")
+            member_count = conversation.get("member_action_count")
+            if type(groupmate_count) is int and type(member_count) is int:
+                monopoly_groupmate += groupmate_count
+                monopoly_total += groupmate_count + member_count
+
+        frozen_truth = record.get("frozen_truth", {})
+        if not isinstance(frozen_truth, Mapping):
+            raise ValueError("frozen_truth must be a mapping")
+        for metric in quality_values:
+            if type(frozen_truth.get(metric)) is bool:
+                quality_values[metric].append(frozen_truth[metric])
 
     target_counts = {value: predicted_targets.count(value) for value in set(predicted_targets)}
     repeated = len(action_texts) - len(set(action_texts))
     quality = {
-        name: _ratio(sum(values), len(values)) if values else 0.0
+        name: _ratio(sum(values), len(values)) if values else None
         for name, values in quality_values.items()
     }
     autonomy = {
-        "count": len(autonomous_values),
-        "mean_value": _ratio(sum(autonomous_values), len(autonomous_values)),
-        "expiry_correct": _ratio(sum(autonomous_expiry), len(autonomous_expiry)),
+        "count": autonomous_count,
+        "mean_value": _ratio(sum(autonomous_values), len(autonomous_values)) if autonomous_values else None,
+        "expiry_correct": _ratio(sum(autonomous_expiry), len(autonomous_expiry)) if autonomous_expiry else None,
     }
     concentration = _ratio(max(target_counts.values()) if target_counts else 0, len(predicted_targets))
     return MetricSummary(
@@ -184,7 +210,7 @@ def collect_metrics(records: Iterable[Mapping[str, object]]) -> MetricSummary:
         open_participation=open_participation,
         miss_rate=_ratio(missed_actions, actual_actions),
         interrupt_rate=_ratio(interrupts, predicted_actions),
-        monopoly_rate=concentration,
+        monopoly_rate=_ratio(monopoly_groupmate, monopoly_total),
         repetition_rate=_ratio(repeated, len(action_texts)),
         target_concentration=concentration,
         autonomy=autonomy,

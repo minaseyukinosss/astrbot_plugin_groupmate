@@ -31,6 +31,7 @@ def test_metrics_count_social_outcomes_without_deriving_truth_from_predictions()
                 "autonomous": True,
                 "autonomy_value": 0.75,
                 "expired": False,
+                "decision_offset_ms": 75_000,
                 "persona_ok": True,
                 "relationship_ok": True,
                 "culture_ok": True,
@@ -73,22 +74,51 @@ def test_metrics_count_social_outcomes_without_deriving_truth_from_predictions()
 
     metrics = collect_metrics(records).to_dict()
 
-    assert metrics["attention"] == {"tp": 4, "fp": 0, "fn": 0, "precision": 1.0, "recall": 1.0}
-    assert metrics["action"] == {"tp": 2, "fp": 1, "fn": 1, "precision": 2 / 3, "recall": 2 / 3}
-    assert metrics["target"] == {"tp": 1, "fp": 1, "fn": 1, "precision": 0.5, "recall": 0.5}
+    assert metrics["attention"] == {"tp": 4, "fp": 0, "fn": 0, "tn": 0, "support": 4, "precision": 1.0, "recall": 1.0}
+    assert metrics["action"] == {"tp": 2, "fp": 1, "fn": 1, "tn": 0, "support": 4, "precision": 2 / 3, "recall": 2 / 3}
+    assert metrics["target"] == {"tp": 1, "fp": 1, "fn": 1, "tn": 1, "support": 4, "precision": 0.5, "recall": 0.5}
     assert metrics["open_participation"]["precision"] == 1.0
     assert metrics["miss_rate"] == 1 / 3
     assert metrics["interrupt_rate"] == 1 / 3
     assert metrics["repetition_rate"] == 1 / 3
     assert metrics["target_concentration"] == 0.5
-    assert metrics["autonomy"] == {"count": 1, "mean_value": 0.75, "expiry_correct": 1.0}
+    assert metrics["autonomy"] == {"count": 1, "mean_value": None, "expiry_correct": 0.0}
     assert metrics["quality"] == {
-        "persona": 1.0,
-        "relationship": 1.0,
-        "culture": 1.0,
-        "task": 1.0,
-        "delivery": 1.0,
-        "recovery": 1.0,
-        "style": 1.0,
-        "media": 1.0,
+        "persona": None,
+        "relationship": None,
+        "culture": None,
+        "task": None,
+        "delivery": None,
+        "recovery": None,
+        "style": None,
+        "media": None,
     }
+
+
+def test_metrics_use_only_frozen_truth_and_keep_monopoly_separate_from_target_concentration():
+    records = (
+        {
+            "label": _label(attention=False, action=False, target=None),
+            "prediction": {"attention": False, "action": False, "target": None},
+        },
+        {
+            "label": _label(),
+            "prediction": {"attention": True, "action": True, "target": "member:001", "autonomous": True},
+            "conversation": {"groupmate_action_count": 1, "member_action_count": 3},
+            "frozen_truth": {"persona": True, "autonomy_value": 0.5},
+        },
+        {
+            "label": _label(),
+            "prediction": {"attention": True, "action": True, "target": "member:001"},
+            "conversation": {"groupmate_action_count": 0, "member_action_count": 1},
+        },
+    )
+
+    metrics = collect_metrics(records).to_dict()
+
+    assert metrics["attention"]["tn"] == 1
+    assert metrics["attention"]["support"] == 3
+    assert metrics["target_concentration"] == 1.0
+    assert metrics["monopoly_rate"] == 1 / 5
+    assert metrics["quality"]["persona"] == 1.0
+    assert metrics["autonomy"]["mean_value"] == 0.5

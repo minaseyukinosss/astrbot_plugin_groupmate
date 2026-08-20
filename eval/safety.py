@@ -59,6 +59,11 @@ class SafetyScanner:
         outbox = tuple(outbox)
         projections = tuple(projections)
         issues: set[SafetyIssue] = set()
+        event_index = {
+            str(value.get("event_id")): str(value.get("group_id"))
+            for value in (_plain(event) for event in events)
+            if isinstance(value, Mapping) and str(value.get("event_id") or "").strip()
+        }
         for artifact, values in (
             ("event", events),
             ("observation", observations),
@@ -76,6 +81,7 @@ class SafetyScanner:
                 )
         self._scan_capabilities(plans, issues)
         self._scan_duplicates(outbox, issues)
+        self._scan_evidence(observations, event_index, group_id, issues)
         return SafetyReport(tuple(sorted(issues)))
 
     def _scan_value(self, value, *, artifact, group_id, path, issues) -> None:
@@ -113,9 +119,9 @@ class SafetyScanner:
                 )
             return
         text = str(value or "").lower()
-        if "internal:" in text or "internal_id=" in text:
+        if "internal:" in text or "internal_id=" in text or "groupmate.internal." in text:
             issues.add(SafetyIssue(artifact, "internal_id", path))
-        if "<analysis>" in text or "chain-of-thought" in text:
+        if "<analysis>" in text or "<think>" in text or "chain-of-thought" in text or "system prompt" in text or "developer prompt" in text:
             issues.add(SafetyIssue(artifact, "chain_of_thought", path))
 
     def _scan_capabilities(self, plans: Iterable[object], issues: set[SafetyIssue]) -> None:
@@ -127,22 +133,46 @@ class SafetyScanner:
                 if not isinstance(node, Mapping):
                     continue
                 permission = str(node.get("permission") or "")
-                if permission.startswith("capability:") and permission not in self.authorized_capabilities:
+                if str(node.get("kind") or "") == "capability" and not permission:
+                    issues.add(SafetyIssue("plan", "missing_capability_permission", f"nodes[{index}].permission"))
+                elif str(node.get("kind") or "") == "capability" and permission not in self.authorized_capabilities:
                     issues.add(SafetyIssue("plan", "unauthorized_capability", f"nodes[{index}].permission"))
 
     @staticmethod
     def _scan_duplicates(outbox: Iterable[object], issues: set[SafetyIssue]) -> None:
         seen: set[str] = set()
         for index, part in enumerate(outbox):
-            value = _plain(part)
+            for path, key in SafetyScanner._idempotency_keys(_plain(part), f"[{index}]"):
+                if key in seen:
+                    issues.add(SafetyIssue("outbox", "duplicate_delivery", path))
+                seen.add(key)
+
+    @staticmethod
+    def _idempotency_keys(value, path):
+        if isinstance(value, Mapping):
+            key = str(value.get("idempotency_key") or "").strip()
+            if key:
+                yield (f"{path}.idempotency_key", key)
+            for name, child in value.items():
+                yield from SafetyScanner._idempotency_keys(child, f"{path}.{name}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from SafetyScanner._idempotency_keys(child, f"{path}[{index}]")
+
+    @staticmethod
+    def _scan_evidence(observations, event_index, group_id, issues):
+        for index, observation in enumerate(observations):
+            value = _plain(observation)
             if not isinstance(value, Mapping):
                 continue
-            nested = value.get("part")
-            source = nested if isinstance(nested, Mapping) else value
-            key = str(source.get("idempotency_key") or "").strip()
-            if key and key in seen:
-                issues.add(SafetyIssue("outbox", "duplicate_delivery", f"[{index}].idempotency_key"))
-            seen.add(key)
+            evidence = value.get("evidence_event_ids", ())
+            if not isinstance(evidence, (tuple, list)):
+                issues.add(SafetyIssue("observation", "invalid_evidence_reference", f"[{index}].evidence_event_ids"))
+                continue
+            for evidence_id in evidence:
+                owner = event_index.get(str(evidence_id))
+                if owner != str(group_id):
+                    issues.add(SafetyIssue("observation", "invalid_evidence_reference", f"[{index}].evidence_event_ids"))
 
 
 __all__ = ("SafetyIssue", "SafetyReport", "SafetyScanner")
