@@ -323,6 +323,7 @@ def test_flushed_ambient_frame_survives_crash_before_cognition(tmp_path):
             mode=RuntimeMode.SHADOW,
             enabled_groups=("885617919",),
             cognition_workers={worker.name: worker},
+            clock=lambda: 103,
         )
         await recovered.start()
         evaluations = await recovered.drain()

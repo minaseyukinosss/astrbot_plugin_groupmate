@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .attention import AttentionFrame, ambient_deadline_expired
 from .actions.contracts import ActionPlan, DeliveryBundle, PlanValidation
@@ -178,6 +179,7 @@ class SocialRuntimeManager:
         cognition_budget: CognitionBudget | None = None,
         worker_concurrency_limit: int = 12,
         governance_state: RuntimeGovernanceState | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         resolved_mode = RuntimeMode(mode)
         enabled = frozenset(
@@ -206,6 +208,10 @@ class SocialRuntimeManager:
         self.enabled_groups = enabled
         self.social_runtime_test_groups = test_groups
         self.config_version = config_version
+        resolved_clock = time.time if clock is None else clock
+        if not callable(resolved_clock):
+            raise ValueError("runtime clock must be callable")
+        self._clock = resolved_clock
         self.event_store = event_store or SQLiteSocialEventStore(database_path)
         self.supervisor = PersonaSupervisor(
             persona_id, SQLitePersonaStateRepository(database_path)
@@ -306,9 +312,8 @@ class SocialRuntimeManager:
             recovered = self._startup_requests
             self._startup_requests = ()
             requests = recovered + await self.fabric.drain()
-            if now is not None:
-                flushed = await self.fabric.flush_attention(now)
-                requests += flushed
+            flushed = await self.fabric.flush_attention(self._resolve_now(now))
+            requests += flushed
             evaluations = []
             for request in requests:
                 if self._is_external_compatibility_request(request):
@@ -319,11 +324,7 @@ class SocialRuntimeManager:
                 for frame in request.attention_frames:
                     if frame.frame_id in request.evaluated_frame_ids:
                         continue
-                    cycle_now = (
-                        max(frame.deadline, request.event.received_at)
-                        if now is None
-                        else int(now)
-                    )
+                    cycle_now = self._resolve_now(now)
                     if ambient_deadline_expired(frame, cycle_now):
                         actor = await self.fabric.notify(
                             request.persona_id, request.group_id
@@ -339,6 +340,7 @@ class SocialRuntimeManager:
                             request,
                             frame,
                             now=cycle_now,
+                            explicit_now=now is not None,
                         )
                     )
             return tuple(evaluations)
@@ -480,6 +482,7 @@ class SocialRuntimeManager:
         frame: AttentionFrame,
         *,
         now: int,
+        explicit_now: bool,
     ) -> ShadowEvaluation:
         focus_events = self.event_store.event_envelopes(
             request.persona_id,
@@ -498,11 +501,12 @@ class SocialRuntimeManager:
             token_budget=1024,
         )
         blackboard = await self.cognition.evaluate(frame, context)
-        candidates = self.intentions.propose(blackboard, now)
+        decision_now = now if explicit_now else self._resolve_now(None)
+        candidates = self.intentions.propose(blackboard, decision_now)
         governor_result = self.governor.decide(
             candidates,
             GovernorContext(
-                now=now,
+                now=decision_now,
                 scene_version=frame.scene_version,
                 allowed_target_ids=frame.candidate_audiences,
                 allowed_topic_ids=frame.focus_topic_ids,
@@ -550,12 +554,22 @@ class SocialRuntimeManager:
             capture_evidence=evaluation.to_capture_evidence(),
         )
         actor = await self.fabric.notify(request.persona_id, request.group_id)
+        if ambient_deadline_expired(frame, decision_now):
+            discarded = await actor.discard_work(
+                request.request_id,
+                "attention_deadline_expired_after_cognition",
+            )
+            self._expired_attention_count += int(discarded)
+            return replace(evaluation, accepted=False, status="stale")
         accepted = await actor.accept_result(result)
         return replace(
             evaluation,
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
+
+    def _resolve_now(self, explicit: int | None) -> int:
+        return int(self._clock()) if explicit is None else int(explicit)
 
     @staticmethod
     def _is_external_compatibility_request(request: SceneWorkRequest) -> bool:

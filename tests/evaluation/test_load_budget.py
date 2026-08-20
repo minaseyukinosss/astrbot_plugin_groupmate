@@ -79,19 +79,26 @@ def test_fake_load_report_is_exact_machine_readable_and_bitwise_deterministic():
         "virtual_seconds": 1_800,
         "messages": 450_000,
         "concurrent_long_tasks": 10,
+        "fake_delivery_attempts": 1_000,
     }
     assert payload["event_accounting"] == {
         "ingested": 450_000,
         "committed": 450_000,
         "dropped": 0,
     }
+    assert payload["delivery_accounting"] == {
+        "attempted": 1_000,
+        "sent": 1_000,
+        "unknown": 0,
+    }
     assert payload["percentile_algorithm"] == "nearest-rank-ceiling"
     assert payload["denominators"] == {
+        "event_loss_rate": 450_000,
         "fast_decision_latency_ms": 3_000,
         "ambient_decision_latency_ms": 18_000,
         "ambient_expiry": 18_000,
         "projection_lag_ms": 21_000,
-        "unknown_delivery_rate": 0,
+        "unknown_delivery_rate": 1_000,
     }
     assert payload["source_evaluation_facts"] == {
         "reports": 1,
@@ -108,6 +115,7 @@ def test_every_public_budget_exposes_observed_budget_applicability_and_verdict()
     payload = run_fake_load().to_dict()
     assert set(payload["budgets"]) == {
         "actor_backlog",
+        "event_loss_rate",
         "worker_concurrency",
         "worker_cost_units_per_virtual_second",
         "fast_decision_latency_ms_p95",
@@ -119,16 +127,8 @@ def test_every_public_budget_exposes_observed_budget_applicability_and_verdict()
     }
     for name, result in payload["budgets"].items():
         assert set(result) == {"observed", "budget", "applicable", "pass"}, name
-        if name == "unknown_delivery_rate":
-            assert result == {
-                "observed": 0.0,
-                "budget": 0.001,
-                "applicable": False,
-                "pass": None,
-            }
-        else:
-            assert result["applicable"] is True
-            assert result["pass"] is True
+        assert result["applicable"] is True
+        assert result["pass"] is True
 
     fast = payload["latency_ms"]["fast_decision"]
     assert fast["p50"] <= fast["p95"] <= fast["p99"]
@@ -247,6 +247,47 @@ def test_streaming_faults_drive_accounting_backlog_and_projection_verdicts():
     assert payload["budgets"]["actor_backlog"]["pass"] is False
     assert payload["budgets"]["projection_lag_ms_p95"]["observed"] > 5_000
     assert payload["budgets"]["projection_lag_ms_p95"]["pass"] is False
+
+
+def test_drop_only_fault_fails_machine_readable_zero_loss_budget():
+    from eval.load_runner import run_fake_load
+
+    payload = run_fake_load(faults={"drop_every": 100_000}).to_dict()
+
+    assert payload["event_accounting"] == {
+        "ingested": 450_000,
+        "committed": 449_996,
+        "dropped": 4,
+    }
+    assert payload["denominators"]["event_loss_rate"] == 450_000
+    assert payload["budgets"]["event_loss_rate"] == {
+        "observed": 0.000008888889,
+        "budget": 0.0,
+        "applicable": True,
+        "pass": False,
+    }
+    assert payload["budgets"]["actor_backlog"]["pass"] is True
+    assert payload["budgets"]["projection_lag_ms_p95"]["pass"] is True
+
+
+def test_fake_onebot_unknown_at_strict_rate_boundary_fails_delivery_budget():
+    from eval.load_runner import run_fake_load
+
+    payload = run_fake_load(faults={"unknown_every": 1_000}).to_dict()
+
+    assert payload["delivery_accounting"] == {
+        "attempted": 1_000,
+        "sent": 999,
+        "unknown": 1,
+    }
+    assert payload["denominators"]["unknown_delivery_rate"] == 1_000
+    assert payload["budgets"]["unknown_delivery_rate"] == {
+        "observed": 0.001,
+        "budget": 0.001,
+        "applicable": True,
+        "pass": False,
+    }
+    assert payload["budgets"]["event_loss_rate"]["pass"] is True
 
 
 def test_long_tasks_are_real_durable_taskruntime_runs(tmp_path):

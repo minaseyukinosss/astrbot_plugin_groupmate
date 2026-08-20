@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from groupmate.social_runtime.actions.contracts import (
     OutboxStatus,
 )
 from groupmate.social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
+from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.cognition.service import CognitionBudget
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
 from groupmate.social_runtime.control.projections import ProjectionConsumer
@@ -494,3 +496,183 @@ def test_expired_ambient_frame_is_durably_discarded_without_cognition_or_capture
     assert captures == ()
     assert outbox_count == 0
     assert calls == ()
+
+
+def test_bridge_default_clock_flushes_and_discards_expired_ambient_work(
+    tmp_path, monkeypatch
+):
+    class MutableClock:
+        now = 100
+
+        def __call__(self):
+            return self.now
+
+    async def scenario():
+        clock = MutableClock()
+        monkeypatch.setattr(time, "time", clock)
+        bridge = AstrBotSocialRuntimeBridge(
+            object(),
+            SocialRuntimeSettings.from_mapping(
+                {"runtime_mode": "SHADOW", "enabled_groups": [GROUP]}
+            ),
+            tmp_path,
+        )
+        await bridge.start()
+        event = bridge.translator.translate(
+            {
+                "message_id": "default-clock-ambient",
+                "group_id": GROUP,
+                "user_id": "fake-user",
+                "time": 100,
+                "message": [{"type": "text", "data": {"text": "ambient"}}],
+            }
+        )
+        await bridge.manager.ingest(event)
+        clock.now = 200
+        await bridge.manager.drain()
+        actor = await bridge.manager.fabric.notify("aemeath", GROUP)
+        stored = bridge.manager.event_store.scene_work_request(
+            actor.actor_key,
+            f"scene:aemeath:{GROUP}:qq:default-clock-ambient:1",
+        )
+        result = (
+            bridge.manager.expired_attention_count,
+            stored,
+            bridge.manager.pending_shadow_review_evidence(),
+            bridge.manager.event_store.outbox_count(),
+            bridge.manager.execution_port.calls,
+        )
+        await bridge.close()
+        return result
+
+    expired, stored, captures, outbox_count, calls = asyncio.run(scenario())
+
+    assert expired == 1
+    assert stored.status == "stale"
+    assert stored.resolution == {
+        "kind": "explicit_discard",
+        "reason_code": "attention_deadline_expired",
+    }
+    assert captures == ()
+    assert outbox_count == 0
+    assert calls == ()
+
+
+def test_ambient_result_crossing_deadline_in_worker_gate_is_discarded(tmp_path):
+    class MutableClock:
+        now = 103
+
+        def __call__(self):
+            return self.now
+
+    class SlowAmbientWorker:
+        name = "scene_interpreter"
+
+        def __init__(self):
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def observe(self, frame, context):
+            self.entered.set()
+            await self.release.wait()
+            return (
+                CognitiveObservation.create(
+                    worker=self.name,
+                    kind="load.fact",
+                    proposition={"value": "late"},
+                    confidence=1.0,
+                    evidence_event_ids=(frame.focus_event_ids[0],),
+                    scene_version=context.scene_version,
+                    expires_at=context.now + 30,
+                    uncertainty=(),
+                ),
+            )
+
+    async def scenario():
+        clock = MutableClock()
+        worker = SlowAmbientWorker()
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "slow-ambient.db",
+            persona_id=PERSONA,
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=(GROUP,),
+            cognition_workers={worker.name: worker},
+            clock=clock,
+        )
+        await manager.start()
+        await manager.ingest(
+            _message("slow-ambient", received_at=100, direct=False)
+        )
+        draining = asyncio.create_task(manager.drain())
+        await asyncio.wait_for(worker.entered.wait(), timeout=1)
+        clock.now = 111
+        worker.release.set()
+        evaluations = await draining
+        actor = await manager.fabric.notify(PERSONA, GROUP)
+        stored = manager.event_store.scene_work_request(
+            actor.actor_key,
+            f"scene:{PERSONA}:{GROUP}:qq:slow-ambient:1",
+        )
+        result = (
+            evaluations,
+            stored,
+            manager.expired_attention_count,
+            manager.pending_shadow_review_evidence(),
+            manager.event_store.outbox_count(),
+            manager.execution_port.calls,
+        )
+        await manager.close()
+        return result
+
+    evaluations, stored, expired, captures, outbox_count, calls = asyncio.run(
+        scenario()
+    )
+
+    assert len(evaluations) == 1
+    assert evaluations[0].accepted is False
+    assert evaluations[0].status == "stale"
+    assert stored.status == "stale"
+    assert stored.resolution == {
+        "kind": "explicit_discard",
+        "reason_code": "attention_deadline_expired_after_cognition",
+    }
+    assert expired == 1
+    assert captures == ()
+    assert outbox_count == 0
+    assert calls == ()
+
+
+def test_explicit_drain_now_pins_ambient_deadline_checks_for_determinism(tmp_path):
+    async def scenario():
+        worker_calls = []
+
+        class ImmediateAmbientWorker:
+            name = "scene_interpreter"
+
+            async def observe(self, frame, context):
+                worker_calls.append(context.now)
+                return ()
+
+        worker = ImmediateAmbientWorker()
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "explicit-now.db",
+            persona_id=PERSONA,
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=(GROUP,),
+            cognition_workers={worker.name: worker},
+            clock=lambda: 1_900_000_000,
+        )
+        await manager.start()
+        await manager.ingest(
+            _message("explicit-now", received_at=100, direct=False)
+        )
+        evaluations = await manager.drain(now=103)
+        captures = manager.pending_shadow_review_evidence()
+        await manager.close()
+        return evaluations, captures, worker_calls
+
+    evaluations, captures, worker_calls = asyncio.run(scenario())
+
+    assert len(evaluations) == len(captures) == 1
+    assert evaluations[0].accepted is True
+    assert worker_calls == [103]

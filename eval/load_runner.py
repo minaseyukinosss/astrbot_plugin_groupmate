@@ -12,6 +12,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterable, Mapping
 
+from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
+from groupmate.social_runtime.actions.contracts import (
+    DeliveryBundle,
+    DeliveryPart,
+    DeliveryPartKind,
+    DeliveryReceiptStatus,
+    OutboxStatus,
+)
 from groupmate.social_runtime.attention import (
     AMBIENT_DECISION_BUDGET_SECONDS,
     AttentionFrame,
@@ -19,6 +27,7 @@ from groupmate.social_runtime.attention import (
 from groupmate.social_runtime.cognition.contracts import CognitiveContext
 from groupmate.social_runtime.cognition.scheduling import WorkerAdmissionQueue
 from groupmate.social_runtime.cognition.service import CognitionBudget, CognitionService
+from groupmate.social_runtime.delivery.outbox import OutboxService
 from groupmate.social_runtime.tasks.contracts import (
     CapabilityDescriptor,
     CapabilityField,
@@ -52,6 +61,7 @@ class BudgetResult:
 class LoadReport:
     workload: Mapping[str, int]
     event_accounting: Mapping[str, int]
+    delivery_accounting: Mapping[str, int]
     percentile_algorithm: str
     denominators: Mapping[str, int]
     source_evaluation_facts: Mapping[str, object]
@@ -65,6 +75,7 @@ class LoadReport:
         return {
             "workload": dict(self.workload),
             "event_accounting": dict(self.event_accounting),
+            "delivery_accounting": dict(self.delivery_accounting),
             "percentile_algorithm": self.percentile_algorithm,
             "denominators": dict(self.denominators),
             "source_evaluation_facts": dict(self.source_evaluation_facts),
@@ -135,6 +146,7 @@ def run_fake_load(
         "virtual_seconds": 1_800,
         "messages": 450_000,
         "concurrent_long_tasks": 10,
+        "fake_delivery_attempts": 1_000,
     }
     fault_profile = _fault_profile(faults)
     streaming = _stream_workload(workload, fault_profile)
@@ -144,6 +156,12 @@ def run_fake_load(
     else:
         task_accounting = _run_long_tasks(Path(runtime_path))
     gate_evidence = asyncio.run(_exercise_production_gate(limit))
+    delivery_accounting = asyncio.run(
+        _run_fake_deliveries(
+            workload["fake_delivery_attempts"],
+            unknown_every=fault_profile["unknown_every"],
+        )
+    )
     jobs = _workload_jobs()
     simulation = _simulate(jobs, limit)
     fast_latency = simulation["fast_latency"]
@@ -159,16 +177,18 @@ def run_fake_load(
     worker_cost = simulation["worker_cost_units"]
     cost_rate = round(worker_cost / workload["virtual_seconds"], 6)
     source_facts = _source_evaluation_facts(evaluation_reports)
-    unknown_attempts = 0
-    unknown_count = 0
-    unknown_rate = 0.0
+    unknown_attempts = delivery_accounting["attempted"]
+    unknown_count = delivery_accounting["unknown"]
+    unknown_rate = round(unknown_count / unknown_attempts, 12)
     ambient_total = len(ambient_latency) + simulation["ambient_expired_count"]
     ambient_expired_rate = round(
         simulation["ambient_expired_count"] / ambient_total,
         12,
     )
+    event_loss_rate = round(streaming.dropped / streaming.ingested, 12)
     budgets = {
         "actor_backlog": _budget(streaming.peak_actor_backlog, 100),
+        "event_loss_rate": _budget(event_loss_rate, 0.0),
         "worker_concurrency": _budget(simulation["peak_concurrency"], limit),
         "worker_cost_units_per_virtual_second": _budget(cost_rate, 50.0),
         "fast_decision_latency_ms_p95": _budget(fast_percentiles["p95"], 2_500),
@@ -196,8 +216,10 @@ def run_fake_load(
             "committed": streaming.committed,
             "dropped": streaming.dropped,
         },
+        delivery_accounting=delivery_accounting,
         percentile_algorithm="nearest-rank-ceiling",
         denominators={
+            "event_loss_rate": streaming.ingested,
             "fast_decision_latency_ms": len(fast_latency),
             "ambient_decision_latency_ms": len(ambient_latency),
             "ambient_expiry": ambient_total,
@@ -239,6 +261,7 @@ def _fault_profile(faults: Mapping[str, int] | None) -> dict[str, int]:
         "drop_every": 0,
         "actor_capacity_per_second": 250,
         "projection_capacity_per_second": 20,
+        "unknown_every": 0,
     }
     unknown = sorted(set(supplied) - set(defaults))
     if unknown:
@@ -249,6 +272,8 @@ def _fault_profile(faults: Mapping[str, int] | None) -> dict[str, int]:
     }
     if profile["drop_every"] < 0:
         raise ValueError("drop_every must not be negative")
+    if profile["unknown_every"] < 0:
+        raise ValueError("unknown_every must not be negative")
     for name in ("actor_capacity_per_second", "projection_capacity_per_second"):
         if profile[name] < 1:
             raise ValueError(f"{name} must be positive")
@@ -284,6 +309,47 @@ def _stream_workload(
                 actor_backlog[group] -= 1
     peak = max(peak, max(actor_backlog, default=0))
     return _StreamingState(ingested, committed, dropped, peak)
+
+
+async def _run_fake_deliveries(
+    attempts: int, *, unknown_every: int
+) -> dict[str, int]:
+    call_count = 0
+
+    async def fake_send_group_message(**_request):
+        nonlocal call_count
+        call_count += 1
+        if unknown_every and call_count % unknown_every == 0:
+            raise TimeoutError("injected fake OneBot receipt loss")
+        return {"message_id": f"fake-message-{call_count}"}
+
+    adapter = OneBotDeliveryAdapter(fake_send_group_message, clock=lambda: 0)
+    sent = unknown = 0
+    for index in range(int(attempts)):
+        part = DeliveryPart.create(
+            part_id=f"load-delivery-part-{index}",
+            kind=DeliveryPartKind.TEXT,
+            payload={"text": "fake no-send delivery"},
+            order=0,
+            idempotency_key=f"load-delivery-key-{index}",
+            expires_at=1_800,
+        )
+        bundle = DeliveryBundle.create(
+            bundle_id=f"load-delivery-bundle-{index}",
+            correlation_id=f"load-delivery:{index}",
+            persona_id="load-persona",
+            group_id=f"load-group-{index % 50}",
+            topic_id=None,
+            parts=(part,),
+            created_at=0,
+            expires_at=1_800,
+        )
+        receipt = await adapter.send(
+            OutboxService.in_memory_part(bundle, part, OutboxStatus.SENDING)
+        )
+        sent += int(receipt.status is DeliveryReceiptStatus.SUCCESS)
+        unknown += int(receipt.status is DeliveryReceiptStatus.UNKNOWN)
+    return {"attempted": call_count, "sent": sent, "unknown": unknown}
 
 
 def _workload_jobs() -> tuple[_VirtualJob, ...]:

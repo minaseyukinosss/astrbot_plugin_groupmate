@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from typing import Callable
 
 from ..settings import SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
@@ -19,6 +21,7 @@ class AstrBotSocialRuntimeBridge:
         data_dir: Path,
         *,
         shadow_reviews: object | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
@@ -33,6 +36,7 @@ class AstrBotSocialRuntimeBridge:
         )
         self._manager: SocialRuntimeManager | None = None
         self.shadow_reviews = shadow_reviews
+        self.clock = time.time if clock is None else clock
         self.shadow_review_error: str | None = None
         self._started = False
 
@@ -54,6 +58,7 @@ class AstrBotSocialRuntimeBridge:
                 enabled_groups=self.settings.enabled_groups,
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
+                clock=self.clock,
             )
             await self._manager.start()
         self._started = True

@@ -327,6 +327,7 @@ def test_fast_evaluation_does_not_consume_pending_ambient_window(tmp_path):
                 ambient_worker.name: ambient_worker,
                 direct_worker.name: direct_worker,
             },
+            clock=lambda: 101,
         )
         await manager.start()
         await manager.ingest(_event("ambient", direct=False, occurred_at=100))
@@ -398,6 +399,7 @@ def test_concurrent_flush_does_not_invalidate_running_fast_frame(tmp_path):
                 ambient_worker.name: ambient_worker,
                 direct_worker.name: direct_worker,
             },
+            clock=lambda: 101,
         )
         await manager.start()
         await manager.ingest(_event("ambient", direct=False, occurred_at=100))
