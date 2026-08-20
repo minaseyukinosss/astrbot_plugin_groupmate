@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from groupmate.social_runtime.ownership import ExternalTriggerPolicy
+if "." in (__package__ or ""):
+    from ..groupmate.social_runtime.ownership import ExternalTriggerPolicy
+else:  # Repository-local offline evaluation entry point.
+    from groupmate.social_runtime.ownership import ExternalTriggerPolicy
 
 
 @dataclass(frozen=True)

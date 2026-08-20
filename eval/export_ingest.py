@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Iterator, Mapping
 
-from groupmate.social_runtime.contracts import SocialEventEnvelope
+if "." in (__package__ or ""):
+    from ..groupmate.social_runtime.contracts import SocialEventEnvelope
+else:  # Repository-local offline evaluation entry point.
+    from groupmate.social_runtime.contracts import SocialEventEnvelope
 
 
 TARGET_BOT_QQ = "323537051"

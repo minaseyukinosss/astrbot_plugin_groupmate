@@ -6,6 +6,7 @@ from pathlib import Path
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from .groupmate.adapters.web_api import (
@@ -24,7 +25,7 @@ class GroupmatePlugin(Star):
     def __init__(self, context: Context, config) -> None:
         super().__init__(context)
         settings = SocialRuntimeSettings.from_mapping(config)
-        data_dir = Path.cwd() / "data" / "plugin_data" / "astrbot_plugin_groupmate"
+        data_dir = Path(get_astrbot_plugin_data_path()) / "astrbot_plugin_groupmate"
         self.settings = settings
         self.data_dir = data_dir
         self.bridge = AstrBotSocialRuntimeBridge(context, settings, data_dir)

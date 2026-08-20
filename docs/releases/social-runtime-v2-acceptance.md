@@ -8,7 +8,7 @@
 
 ## 标识
 
-- 候选版本：`1.0.0-rc.1`
+- 候选版本：`1.0.0-rc.2`
 - 实施基线 commit：`8643f1edb5ade6c6961fcc476915a59e6975669f`
 - 环境：本地隔离 worktree，Python 3.13；未连接 AstrBot/QQ
 - 数据：仅临时 V2 SQLite 数据库和 fake group

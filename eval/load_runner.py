@@ -12,31 +12,64 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterable, Mapping
 
-from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
-from groupmate.social_runtime.actions.contracts import (
-    DeliveryBundle,
-    DeliveryPart,
-    DeliveryPartKind,
-    DeliveryReceiptStatus,
-    OutboxStatus,
-)
-from groupmate.social_runtime.attention import (
-    AMBIENT_DECISION_BUDGET_SECONDS,
-    AttentionFrame,
-)
-from groupmate.social_runtime.cognition.contracts import CognitiveContext
-from groupmate.social_runtime.cognition.scheduling import WorkerAdmissionQueue
-from groupmate.social_runtime.cognition.service import CognitionBudget, CognitionService
-from groupmate.social_runtime.delivery.outbox import OutboxService
-from groupmate.social_runtime.tasks.contracts import (
-    CapabilityDescriptor,
-    CapabilityField,
-    CapabilityRequest,
-    ConfirmationPolicy,
-    RiskLevel,
-    TaskStatus,
-)
-from groupmate.social_runtime.tasks.runtime import TaskRuntime
+if "." in (__package__ or ""):
+    from ..groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
+    from ..groupmate.social_runtime.actions.contracts import (
+        DeliveryBundle,
+        DeliveryPart,
+        DeliveryPartKind,
+        DeliveryReceiptStatus,
+        OutboxStatus,
+    )
+    from ..groupmate.social_runtime.attention import (
+        AMBIENT_DECISION_BUDGET_SECONDS,
+        AttentionFrame,
+    )
+    from ..groupmate.social_runtime.cognition.contracts import CognitiveContext
+    from ..groupmate.social_runtime.cognition.scheduling import WorkerAdmissionQueue
+    from ..groupmate.social_runtime.cognition.service import (
+        CognitionBudget,
+        CognitionService,
+    )
+    from ..groupmate.social_runtime.delivery.outbox import OutboxService
+    from ..groupmate.social_runtime.tasks.contracts import (
+        CapabilityDescriptor,
+        CapabilityField,
+        CapabilityRequest,
+        ConfirmationPolicy,
+        RiskLevel,
+        TaskStatus,
+    )
+    from ..groupmate.social_runtime.tasks.runtime import TaskRuntime
+else:  # Repository-local offline evaluation entry point.
+    from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
+    from groupmate.social_runtime.actions.contracts import (
+        DeliveryBundle,
+        DeliveryPart,
+        DeliveryPartKind,
+        DeliveryReceiptStatus,
+        OutboxStatus,
+    )
+    from groupmate.social_runtime.attention import (
+        AMBIENT_DECISION_BUDGET_SECONDS,
+        AttentionFrame,
+    )
+    from groupmate.social_runtime.cognition.contracts import CognitiveContext
+    from groupmate.social_runtime.cognition.scheduling import WorkerAdmissionQueue
+    from groupmate.social_runtime.cognition.service import (
+        CognitionBudget,
+        CognitionService,
+    )
+    from groupmate.social_runtime.delivery.outbox import OutboxService
+    from groupmate.social_runtime.tasks.contracts import (
+        CapabilityDescriptor,
+        CapabilityField,
+        CapabilityRequest,
+        ConfirmationPolicy,
+        RiskLevel,
+        TaskStatus,
+    )
+    from groupmate.social_runtime.tasks.runtime import TaskRuntime
 
 from .report import EvaluationReport
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from groupmate.social_runtime.persona.modes import PersonaModeState
-from groupmate.social_runtime.society.relationships import RelationshipProjection
+from ..persona.modes import PersonaModeState
+from ..society.relationships import RelationshipProjection
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from groupmate.social_runtime.contracts import SocialEventEnvelope
+if "." in (__package__ or ""):
+    from ..groupmate.social_runtime.contracts import SocialEventEnvelope
+else:  # Repository-local offline evaluation entry point.
+    from groupmate.social_runtime.contracts import SocialEventEnvelope
 
 from .export_ingest import TARGET_BOT_QQ
 from .ownership import ReferenceTriggerMatch, ReferenceTriggerPolicy

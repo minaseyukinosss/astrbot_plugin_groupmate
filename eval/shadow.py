@@ -17,12 +17,24 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping
 
-from groupmate.social_runtime.contracts import SocialEventEnvelope
-from groupmate.social_runtime.control.config_versions import ConfigVersionRepository
-from groupmate.social_runtime.persistence.schema import (
-    connect_database,
-    initialize_database,
-)
+if "." in (__package__ or ""):
+    from ..groupmate.social_runtime.contracts import SocialEventEnvelope
+    from ..groupmate.social_runtime.control.config_versions import (
+        ConfigVersionRepository,
+    )
+    from ..groupmate.social_runtime.persistence.schema import (
+        connect_database,
+        initialize_database,
+    )
+else:  # Repository-local offline evaluation entry point.
+    from groupmate.social_runtime.contracts import SocialEventEnvelope
+    from groupmate.social_runtime.control.config_versions import (
+        ConfigVersionRepository,
+    )
+    from groupmate.social_runtime.persistence.schema import (
+        connect_database,
+        initialize_database,
+    )
 
 from .runner import EvaluationRunner, frozen_artifact_digest
 from .schema import EvaluationLabel
