@@ -39,6 +39,10 @@ class _WorkerConcurrencyGate:
         self._condition = asyncio.Condition()
         self._queue: WorkerAdmissionQueue[object] = WorkerAdmissionQueue()
 
+    @property
+    def waiting(self) -> int:
+        return len(self._queue)
+
     async def run(self, lane: str, operation: Callable[[], Awaitable[T]]) -> T:
         token = object()
         async with self._condition:
@@ -120,6 +124,14 @@ class CognitionService:
     @property
     def peak_worker_concurrency(self) -> int:
         return self._worker_gate.peak
+
+    @property
+    def active_worker_count(self) -> int:
+        return self._worker_gate.active
+
+    @property
+    def waiting_worker_count(self) -> int:
+        return self._worker_gate.waiting
 
     async def evaluate(self, frame: AttentionFrame, context: CognitiveContext):
         self._validate_context(frame, context)

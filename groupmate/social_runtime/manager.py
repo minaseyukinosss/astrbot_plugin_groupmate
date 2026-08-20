@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
-from .attention import AttentionFrame
+from .attention import AttentionFrame, ambient_deadline_expired
 from .actions.contracts import ActionPlan, DeliveryBundle, PlanValidation
 from .actions.coordinator import ExecutionCoordinator
 from .cognition.contracts import CognitiveContext, CognitiveWorker
@@ -249,6 +249,7 @@ class SocialRuntimeManager:
         self._closed = asyncio.Event()
         self._closed.set()
         self._startup_requests = ()
+        self._expired_attention_count = 0
 
     async def start(self) -> None:
         while True:
@@ -318,13 +319,26 @@ class SocialRuntimeManager:
                 for frame in request.attention_frames:
                     if frame.frame_id in request.evaluated_frame_ids:
                         continue
+                    cycle_now = (
+                        max(frame.deadline, request.event.received_at)
+                        if now is None
+                        else int(now)
+                    )
+                    if ambient_deadline_expired(frame, cycle_now):
+                        actor = await self.fabric.notify(
+                            request.persona_id, request.group_id
+                        )
+                        discarded = await actor.discard_work(
+                            request.request_id,
+                            "attention_deadline_expired",
+                        )
+                        self._expired_attention_count += int(discarded)
+                        continue
                     evaluations.append(
                         await self._evaluate_cycle(
                             request,
                             frame,
-                            now=max(frame.deadline, request.event.received_at)
-                            if now is None
-                            else int(now),
+                            now=cycle_now,
                         )
                     )
             return tuple(evaluations)
@@ -342,6 +356,10 @@ class SocialRuntimeManager:
     @property
     def governance_state(self) -> RuntimeGovernanceState:
         return self._governance_state
+
+    @property
+    def expired_attention_count(self) -> int:
+        return self._expired_attention_count
 
     def group_mode(self, group_id: str) -> RuntimeMode:
         normalized = str(group_id).strip()

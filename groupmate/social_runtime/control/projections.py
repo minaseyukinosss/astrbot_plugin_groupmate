@@ -216,6 +216,10 @@ class ProjectionConsumer:
                 (projection_name,),
             )
             db.execute(
+                "DELETE FROM control_projection_events WHERE projection_name=?",
+                (projection_name,),
+            )
+            db.execute(
                 "DELETE FROM projection_cursors WHERE projection_name=?",
                 (projection_name,),
             )

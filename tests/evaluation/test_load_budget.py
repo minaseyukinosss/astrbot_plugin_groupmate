@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from eval.report import EvaluationReport
 from eval.safety import SafetyReport
 from groupmate.settings import SocialRuntimeSettings
@@ -14,6 +16,7 @@ from groupmate.social_runtime.cognition.service import (
     CognitionBudget,
     CognitionService,
 )
+from groupmate.social_runtime.persistence.schema import connect_database
 
 
 def _frame(index: int, *, trigger_kind: str = "FAST") -> AttentionFrame:
@@ -86,6 +89,7 @@ def test_fake_load_report_is_exact_machine_readable_and_bitwise_deterministic():
     assert payload["denominators"] == {
         "fast_decision_latency_ms": 3_000,
         "ambient_decision_latency_ms": 18_000,
+        "ambient_expiry": 18_000,
         "projection_lag_ms": 21_000,
         "unknown_delivery_rate": 0,
     }
@@ -108,6 +112,8 @@ def test_every_public_budget_exposes_observed_budget_applicability_and_verdict()
         "worker_cost_units_per_virtual_second",
         "fast_decision_latency_ms_p95",
         "ambient_decision_latency_ms_p95",
+        "ambient_decision_latency_ms_p99",
+        "ambient_expired_rate",
         "projection_lag_ms_p95",
         "unknown_delivery_rate",
     }
@@ -215,3 +221,88 @@ def test_nearest_rank_percentiles_have_a_fixed_small_sample_definition():
         "p95": 4,
         "p99": 4,
     }
+
+
+def test_streaming_faults_drive_accounting_backlog_and_projection_verdicts():
+    from eval.load_runner import run_fake_load
+
+    try:
+        report = run_fake_load(
+            faults={
+                "drop_every": 100_000,
+                "actor_capacity_per_second": 200,
+                "projection_capacity_per_second": 1,
+            }
+        )
+    except TypeError as exc:
+        pytest.fail(f"run_fake_load requires a streaming fault seam: {exc}")
+    payload = report.to_dict()
+
+    assert payload["event_accounting"] == {
+        "ingested": 450_000,
+        "committed": 449_996,
+        "dropped": 4,
+    }
+    assert payload["budgets"]["actor_backlog"]["observed"] > 100
+    assert payload["budgets"]["actor_backlog"]["pass"] is False
+    assert payload["budgets"]["projection_lag_ms_p95"]["observed"] > 5_000
+    assert payload["budgets"]["projection_lag_ms_p95"]["pass"] is False
+
+
+def test_long_tasks_are_real_durable_taskruntime_runs(tmp_path):
+    from eval.load_runner import run_fake_load
+
+    runtime_path = tmp_path / "load-task-runtime.db"
+    try:
+        payload = run_fake_load(runtime_path=runtime_path).to_dict()
+    except TypeError as exc:
+        pytest.fail(f"load runner must accept a real TaskRuntime path: {exc}")
+
+    assert payload["task_accounting"] == {
+        "proposed": 10,
+        "running": 10,
+        "peak_concurrent": 10,
+    }
+    with connect_database(runtime_path) as db:
+        statuses = db.execute(
+            "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+        ).fetchall()
+        event_count = db.execute("SELECT COUNT(*) FROM task_events").fetchone()[0]
+    assert [tuple(row) for row in statuses] == [("running", 10)]
+    assert event_count == 30
+
+
+def test_load_direct_priority_is_measured_through_production_cognition_gate(
+    tmp_path,
+):
+    from eval.load_runner import run_fake_load
+
+    try:
+        payload = run_fake_load(
+            runtime_path=tmp_path / "gate-probe.db",
+            worker_concurrency_limit=12,
+        ).to_dict()
+    except TypeError as exc:
+        pytest.fail(f"load runner must expose production gate evidence: {exc}")
+
+    assert payload["scheduling"]["production_gate"] == {
+        "submitted": 15,
+        "peak_worker_concurrency": 12,
+        "direct_started_before_queued_ambient": True,
+    }
+
+
+def test_ambient_tail_expires_fail_closed_instead_of_hiding_behind_p95():
+    from eval.load_runner import run_fake_load
+
+    payload = run_fake_load(worker_concurrency_limit=1).to_dict()
+
+    assert payload["denominators"]["ambient_expiry"] == 18_000
+    assert payload["scheduling"]["ambient_expired_count"] >= 498
+    assert payload["budgets"]["ambient_expired_rate"]["observed"] > 0
+    assert payload["budgets"]["ambient_expired_rate"]["pass"] is False
+    assert payload["budgets"]["ambient_decision_latency_ms_p99"]["pass"] is True
+    assert payload["worker_cost_units"] == (
+        payload["denominators"]["fast_decision_latency_ms"]
+        + payload["denominators"]["ambient_decision_latency_ms"] * 2
+    )

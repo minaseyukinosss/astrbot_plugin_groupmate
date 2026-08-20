@@ -12,6 +12,9 @@ from .contracts import PersonaSnapshot, SocialEventEnvelope
 from .world import GroupWorldState
 
 
+AMBIENT_DECISION_BUDGET_SECONDS = 8
+
+
 @dataclass(frozen=True)
 class AttentionFrame:
     frame_id: str
@@ -358,4 +361,18 @@ class AttentionScheduler:
         return normalized if normalized >= 0 else None
 
 
-__all__ = ("AttentionFrame", "AttentionScheduler", "PendingAttentionWindow")
+def ambient_deadline_expired(frame: AttentionFrame, decision_at: int) -> bool:
+    return bool(
+        frame.trigger_kind == "AMBIENT"
+        and int(decision_at)
+        > frame.deadline + AMBIENT_DECISION_BUDGET_SECONDS
+    )
+
+
+__all__ = (
+    "AMBIENT_DECISION_BUDGET_SECONDS",
+    "AttentionFrame",
+    "AttentionScheduler",
+    "PendingAttentionWindow",
+    "ambient_deadline_expired",
+)

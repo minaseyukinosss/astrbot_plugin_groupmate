@@ -3,10 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
+from eval.shadow import ShadowReviewRepository
+from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
+from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import (
     DeliveryBundle,
     DeliveryPart,
@@ -275,9 +281,7 @@ def test_provider_duplicate_out_of_order_and_clock_jump_preserve_monotonic_state
     assert runtime.event_count(running.task_id) == 5
 
 
-def test_onebot_timeout_and_process_restart_never_replay_unknown_or_shadow(
-    tmp_path,
-):
+def test_onebot_timeout_restart_never_replays_unknown_delivery(tmp_path):
     async def scenario():
         outbox_path = tmp_path / "onebot-unknown.db"
         outbox = OutboxService(outbox_path)
@@ -297,76 +301,74 @@ def test_onebot_timeout_and_process_restart_never_replay_unknown_or_shadow(
         recovered = restarted_outbox.recover_inflight(now=120)
         replay = restarted_outbox.claim_ready(now=121)
 
-        runtime_path = tmp_path / "shadow-crash.db"
-        first = SocialRuntimeManager(
-            database_path=runtime_path,
-            persona_id=PERSONA,
-            mode=RuntimeMode.SHADOW,
-            enabled_groups=(GROUP,),
-        )
-        await first.start()
-        event = _message("crash-pending-capture")
-        await first.ingest(event)
-        await first.drain(now=100)
-        pending_before = first.pending_shadow_review_evidence()
-        await first.close()
+        return bundle, unknown, recovered, replay, fake_calls
 
-        restarted = SocialRuntimeManager(
-            database_path=runtime_path,
-            persona_id=PERSONA,
-            mode=RuntimeMode.SHADOW,
-            enabled_groups=(GROUP,),
-        )
-        await restarted.start()
-        pending_after = restarted.pending_shadow_review_evidence()
-        duplicate = await restarted.ingest(event)
-        duplicate_evaluations = await restarted.drain(now=100)
-        shadow_state = (
-            restarted.event_store.event_ids(),
-            restarted.event_store.outbox_count(),
-            restarted.execution_port.calls,
-        )
-        await restarted.close()
-        return (
-            bundle,
-            unknown,
-            recovered,
-            replay,
-            fake_calls,
-            pending_before,
-            pending_after,
-            duplicate,
-            duplicate_evaluations,
-            shadow_state,
-        )
-
-    (
-        bundle,
-        unknown,
-        recovered,
-        replay,
-        fake_calls,
-        pending_before,
-        pending_after,
-        duplicate,
-        duplicate_evaluations,
-        shadow_state,
-    ) = asyncio.run(scenario())
+    bundle, unknown, recovered, replay, fake_calls = asyncio.run(scenario())
 
     assert unknown.status is OutboxStatus.UNKNOWN
     assert recovered == replay == ()
     assert [call["idempotency_key"] for call in fake_calls] == [
         bundle.parts[0].idempotency_key
     ]
-    assert pending_after == pending_before
-    assert len(pending_after) == 1
+
+
+def test_abrupt_process_crash_reconciles_committed_shadow_capture_once(tmp_path):
+    crash_worker = Path(__file__).parents[1] / "shadow_capture_crash.py"
+    crashed = subprocess.run(
+        [sys.executable, str(crash_worker), str(tmp_path)],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert crashed.returncode == 23, crashed.stderr
+
+    raw_event = {
+        "message_id": "abrupt-shadow-capture",
+        "group_id": GROUP,
+        "user_id": "fake-user",
+        "time": 100,
+        "message": [
+            {"type": "text", "data": {"text": "@你 crash window"}},
+            {"type": "at", "data": {"qq": "323537051"}},
+        ],
+    }
+
+    async def restart():
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        reviews = ShadowReviewRepository(path)
+        bridge = AstrBotSocialRuntimeBridge(
+            object(),
+            SocialRuntimeSettings.from_mapping(
+                {"runtime_mode": "SHADOW", "enabled_groups": [GROUP]}
+            ),
+            tmp_path,
+            shadow_reviews=reviews,
+        )
+        await bridge.start()
+        pending_after_reconcile = bridge.manager.pending_shadow_review_evidence()
+        duplicate = await bridge.handle_event(raw_event)
+        items = reviews.list_items(persona_id="aemeath", group_id=GROUP)
+        snapshot = await bridge.manager.group_snapshot(GROUP)
+        no_send = (
+            bridge.manager.event_store.outbox_count(),
+            bridge.manager.execution_port.calls,
+        )
+        await bridge.close()
+        return pending_after_reconcile, duplicate, items, snapshot, no_send
+
+    pending, duplicate, items, snapshot, no_send = asyncio.run(restart())
+
+    assert pending == ()
     assert duplicate.inserted is False
-    assert duplicate_evaluations == ()
-    assert shadow_state == (("qq:crash-pending-capture",), 0, ())
+    assert len(items) == 1
+    assert snapshot.scene_version == 1
+    assert no_send == (0, ())
 
 
 def test_sse_outage_and_projection_corruption_do_not_block_runtime_and_rebuild(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     async def scenario():
         path = tmp_path / "projection-outage.db"
@@ -386,17 +388,16 @@ def test_sse_outage_and_projection_corruption_do_not_block_runtime_and_rebuild(
                 "UPDATE control_projection_items SET summary_json='{' "
                 "WHERE projection_name='activity'"
             )
+            db.execute(
+                "UPDATE control_projection_events SET summary_json='{' "
+                "WHERE projection_name='activity'"
+            )
 
         with pytest.raises(json.JSONDecodeError):
             ProjectionQueries(path).activity(persona_id=PERSONA, group_id=GROUP)
 
         stream = ProjectionStream(path)
-
-        def sse_unavailable(**_kwargs):
-            raise ConnectionError("injected SSE outage")
-
-        monkeypatch.setattr(stream, "read", sse_unavailable)
-        with pytest.raises(ConnectionError, match="SSE outage"):
+        with pytest.raises(json.JSONDecodeError):
             stream.read(last_event_id=None, persona_id=PERSONA, group_id=GROUP)
 
         task = manager.task_runtime.propose(
@@ -421,20 +422,75 @@ def test_sse_outage_and_projection_corruption_do_not_block_runtime_and_rebuild(
         repaired = ProjectionQueries(path).activity(
             persona_id=PERSONA, group_id=GROUP
         )
+        recovered_stream = stream.read(
+            last_event_id=None,
+            persona_id=PERSONA,
+            group_id=GROUP,
+        )
         result = (
             snapshot,
             manager.task_runtime.load(task.task_id),
             repaired,
+            recovered_stream,
             manager.event_store.outbox_count(),
             manager.execution_port.calls,
         )
         await manager.close()
         return result
 
-    snapshot, task, repaired, outbox_count, calls = asyncio.run(scenario())
+    snapshot, task, repaired, recovered_stream, outbox_count, calls = asyncio.run(
+        scenario()
+    )
 
     assert snapshot.scene_version == 2
     assert task.status is TaskStatus.PROPOSED
     assert repaired["items"]
+    assert recovered_stream.events
+    assert outbox_count == 0
+    assert calls == ()
+
+
+def test_expired_ambient_frame_is_durably_discarded_without_cognition_or_capture(
+    tmp_path,
+):
+    async def scenario():
+        path = tmp_path / "expired-ambient.db"
+        manager = SocialRuntimeManager(
+            database_path=path,
+            persona_id=PERSONA,
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=(GROUP,),
+        )
+        await manager.start()
+        await manager.ingest(
+            _message("expired-ambient", received_at=100, direct=False)
+        )
+        evaluations = await manager.drain(now=200)
+        actor = await manager.fabric.notify(PERSONA, GROUP)
+        request_id = f"scene:{PERSONA}:{GROUP}:qq:expired-ambient:1"
+        stored = manager.event_store.scene_work_request(actor.actor_key, request_id)
+        result = (
+            evaluations,
+            manager.expired_attention_count,
+            stored,
+            manager.pending_shadow_review_evidence(),
+            manager.event_store.outbox_count(),
+            manager.execution_port.calls,
+        )
+        await manager.close()
+        return result
+
+    evaluations, expired, stored, captures, outbox_count, calls = asyncio.run(
+        scenario()
+    )
+
+    assert evaluations == ()
+    assert expired == 1
+    assert stored.status == "stale"
+    assert stored.resolution == {
+        "kind": "explicit_discard",
+        "reason_code": "attention_deadline_expired",
+    }
+    assert captures == ()
     assert outbox_count == 0
     assert calls == ()
