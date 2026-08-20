@@ -68,6 +68,20 @@ class PauseRuntime:
 
 
 @dataclass(frozen=True)
+class SetRuntimeMode:
+    runtime_mode: str
+    readiness_report_hash: str
+    old_instance_confirmation_token: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AdvanceRollout:
+    readiness_report_hash: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ResetState:
     target: str
     command_id: str | None = None
@@ -158,6 +172,8 @@ class ApproveCalibration:
 
 ControlCommand = (
     PauseRuntime
+    | SetRuntimeMode
+    | AdvanceRollout
     | ResetState
     | CreateConfigDraft
     | ValidateConfig
@@ -184,6 +200,8 @@ class CommandResult:
 
 
 _HIGH_IMPACT = (
+    SetRuntimeMode,
+    AdvanceRollout,
     ResetState,
     PublishConfig,
     RestoreConfig,
@@ -225,6 +243,8 @@ class CommandService:
         admin_ids: tuple[str, ...],
         config_repository: ConfigVersionRepository | None = None,
         shadow_repository: object | None = None,
+        readiness_gate: object | None = None,
+        clock: object | None = None,
     ) -> None:
         self.path = Path(path)
         initialize_database(self.path)
@@ -241,8 +261,14 @@ class CommandService:
             self.path
         )
         self.shadow_repository = shadow_repository
+        self.readiness_gate = readiness_gate
+        self._clock = time.time if clock is None else clock
+        if not callable(self._clock):
+            raise ValueError("command clock must be callable")
         if self.config_repository.path != self.path:
             raise ValueError("config repository must share the command database")
+        if readiness_gate is not None and Path(getattr(readiness_gate, "path", "")) != self.path:
+            raise ValueError("readiness gate must share the command database")
 
     def execute(
         self, command: ControlCommand, context: CommandContext
@@ -251,7 +277,7 @@ class CommandService:
         payload = self._command_payload(command)
         fingerprint = self._fingerprint(command, context, payload)
         command_id = self._resolve_command_id(command, context, fingerprint)
-        now = int(time.time())
+        now = int(self._clock())
         db = connect_database(self.path)
         try:
             db.execute("BEGIN IMMEDIATE")
@@ -298,6 +324,9 @@ class CommandService:
                     "decision",
                     "entity_ref",
                     "categories",
+                    "runtime_mode",
+                    "rollout_phase",
+                    "readiness_report_hash",
                 )
                 if key in data
             }
@@ -375,6 +404,51 @@ class CommandService:
                 if command.paused
                 else "control.runtime_resumed"
             )
+        if isinstance(command, SetRuntimeMode):
+            if self._required_text(command.runtime_mode, "runtime mode") != "SOCIAL_RUNTIME":
+                raise CommandValidationError(
+                    "SetRuntimeMode only publishes SOCIAL_RUNTIME ownership"
+                )
+            if self.readiness_gate is None:
+                raise CommandValidationError("production readiness gate is unavailable")
+            authorize = getattr(self.readiness_gate, "authorize_social_runtime_on", None)
+            if not callable(authorize):
+                raise CommandValidationError("production readiness gate contract is invalid")
+            try:
+                data = authorize(
+                    db,
+                    persona_id=context.persona_id,
+                    group_id=context.group_id,
+                    operator_id=context.admin_id,
+                    reason=context.reason,
+                    expected_version=context.expected_version,
+                    report_hash=command.readiness_report_hash,
+                    confirmation_token=command.old_instance_confirmation_token,
+                    now=now,
+                )
+            except (LookupError, ValueError) as exc:
+                raise CommandValidationError(str(exc)) from exc
+            return data, "control.runtime_mode_set"
+        if isinstance(command, AdvanceRollout):
+            if self.readiness_gate is None:
+                raise CommandValidationError("production readiness gate is unavailable")
+            advance = getattr(self.readiness_gate, "advance_rollout_on", None)
+            if not callable(advance):
+                raise CommandValidationError("rollout gate contract is invalid")
+            try:
+                data = advance(
+                    db,
+                    persona_id=context.persona_id,
+                    group_id=context.group_id,
+                    operator_id=context.admin_id,
+                    reason=context.reason,
+                    expected_version=context.expected_version,
+                    report_hash=command.readiness_report_hash,
+                    now=now,
+                )
+            except (LookupError, ValueError) as exc:
+                raise CommandValidationError(str(exc)) from exc
+            return data, "control.rollout_advanced"
         if isinstance(command, ResetState):
             return {
                 "target": self._required_text(command.target, "reset target")

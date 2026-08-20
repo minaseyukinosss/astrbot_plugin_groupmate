@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
 from ..social_runtime.control.commands import (
+    AdvanceRollout,
     ApproveCalibration,
     CancelTask,
     CommandContext,
@@ -25,6 +26,7 @@ from ..social_runtime.control.commands import (
     RestoreConfig,
     ReviewEvidence,
     ReviewShadowDecision,
+    SetRuntimeMode,
     ValidateConfig,
 )
 from ..social_runtime.control.queries import ProjectionQueries
@@ -277,6 +279,16 @@ class ControlPlaneWebAPI:
         if not isinstance(payload, Mapping):
             payload = {}
         constructors = {
+            "runtime_mode_set": lambda: SetRuntimeMode(
+                str(payload.get("runtime_mode") or ""),
+                str(payload.get("readiness_report_hash") or ""),
+                str(payload.get("old_instance_confirmation_token") or ""),
+                command_id=command_id,
+            ),
+            "rollout_advance": lambda: AdvanceRollout(
+                str(payload.get("readiness_report_hash") or ""),
+                command_id=command_id,
+            ),
             "pause": lambda: PauseRuntime(
                 paused=cls._boolean(payload.get("paused"), "paused"),
                 command_id=command_id,

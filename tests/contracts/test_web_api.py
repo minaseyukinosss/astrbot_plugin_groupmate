@@ -10,7 +10,11 @@ from groupmate.adapters.web_api import (
     WebRequest,
 )
 from groupmate.social_runtime.contracts import SocialEventEnvelope
-from groupmate.social_runtime.control.commands import CommandService
+from groupmate.social_runtime.control.commands import (
+    AdvanceRollout,
+    CommandService,
+    SetRuntimeMode,
+)
 from groupmate.social_runtime.control.projections import ProjectionConsumer
 from groupmate.social_runtime.control.queries import ProjectionQueries
 from groupmate.social_runtime.control.stream import ProjectionStream
@@ -279,6 +283,38 @@ def test_command_uses_server_username_publishes_event_and_preserves_409(tmp_path
     assert stale.status == 409
     assert stale.body["error"] == "expected_version_conflict"
     assert stale.body["current_version"] == 1
+
+
+def test_runtime_ownership_commands_parse_only_structured_gate_evidence():
+    handoff = ControlPlaneWebAPI._parse_command(
+        {
+            "type": "runtime_mode_set",
+            "command_id": "handoff:web",
+            "payload": {
+                "runtime_mode": "SOCIAL_RUNTIME",
+                "readiness_report_hash": "report:sha256",
+                "old_instance_confirmation_token": "stopped:one-time",
+            },
+        }
+    )
+    advance = ControlPlaneWebAPI._parse_command(
+        {
+            "type": "rollout_advance",
+            "command_id": "advance:web",
+            "payload": {"readiness_report_hash": "report:sha256"},
+        }
+    )
+
+    assert handoff == SetRuntimeMode(
+        "SOCIAL_RUNTIME",
+        "report:sha256",
+        "stopped:one-time",
+        command_id="handoff:web",
+    )
+    assert advance == AdvanceRollout(
+        "report:sha256",
+        command_id="advance:web",
+    )
 
 
 def test_command_accepts_bridge_body_scope_but_still_validates_server_allowlist(tmp_path):
