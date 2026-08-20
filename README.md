@@ -1,36 +1,31 @@
 # AstrBot Groupmate Social Runtime v2
 
-Groupmate 正在以 clean-slate 方式重建为持续存在的群聊社会智能体。新主线以 Durable Event Fabric、PersonaSupervisor、GroupSceneActor、Social Governor、ActionPlan、Task Runtime 和 Transactional Outbox 为核心，不兼容旧插件的内部架构、配置和数据库。
+Groupmate v2 是 clean-slate 的持久群聊社会运行时。事实事件进入 Durable Inbox/Journal，由唯一 Persona Supervisor 与每群唯一 Group Scene Actor 更新状态；Attention/Cognition、Social Governor、ActionPlan/Task、Transactional Outbox 与 Dispatcher 分离认知、授权和交付。独立 Projection Cursor 从 Journal 构建控制面读模型。
 
-当前开发阶段：Phase A / Clean-slate 基础运行时（Gate A 已实现）。
+## 配置与数据
 
-- 当前允许模式：`OFF`、`SHADOW`
-- 新数据库：`groupmate-social-runtime-v2.db`
-- 旧 `groupmate.db`：不会读取或迁移
-- 权威规格：`docs/superpowers/specs/2026-08-18-groupmate-social-runtime-v2-design.md`
-- 实施路线图：`docs/superpowers/plans/2026-08-18-social-runtime-v2-roadmap.md`
+配置契约见 `_conf_schema.json`。主要字段包括 `runtime_mode`、`enabled_groups`、`social_runtime_test_groups`、`control_admin_ids`、Provider、Persona、Worker 并发上限和已安装外置插件触发规则。
 
-Phase A 已接通 AstrBot 纯事实事件翻译、Durable Inbox/Journal、PersonaSupervisor、GroupSceneActor、Snapshot/Cursor 恢复和 Shadow Manager。它仍然 fail closed：不会发送群消息或执行外部副作用。`SOCIAL_RUNTIME` 正式发送模式尚未开放。
-
-## 当前运行路径
+权威 V2 数据库固定为：
 
 ```text
-AstrBot/QQ 原始事件
-  -> AstrBotEventTranslator（仅事实）
-  -> Durable Inbox
-  -> SocialEventFabric
-  -> PersonaSupervisor + 每群 GroupSceneActor
-  -> Journal / Cursor / Snapshot
-  -> NoSideEffectExecutionPort
+data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db
 ```
 
-故障恢复手册：`docs/operations/social-runtime-v2-recovery.md`。
+V2 不读取、升级或迁移旧 `groupmate.db`。旧数据库、旧配置和旧内部 API 均不兼容；请按 V2 schema 重新配置，社会状态从空状态开始。
 
-## 开发验证
+## 模式与治理
 
-最低 Python 版本：3.11。先在项目根目录创建虚拟环境并安装测试依赖，然后使用相对路径执行门禁：
+- `OFF`：不处理群事件。
+- `SHADOW`：运行认知和评估，但不发送或执行外部副作用。
+- `SOCIAL_RUNTIME`：V2 拥有决策与交付；只有 installed-live SHADOW、冻结 holdout、24h 观察、页面/容量/安全、旧实例停止和 rollout gates 全部通过才可启用。
 
-```bash
-.venv/bin/python -m pytest -q -p no:cacheprovider
-.venv/bin/python -m tests.architecture_guard
-```
+高影响命令必须通过服务端管理员作用域、原因、确认和 Expected Version 校验。Outbox `UNKNOWN` 禁止盲重试。当前候选只有离线证据，生产接管保持 fail closed。
+
+## 运维与验收
+
+- [灾难恢复](docs/operations/social-runtime-disaster-recovery.md)
+- [生产放量](docs/operations/social-runtime-rollout.md)
+- [发布候选验收](docs/releases/social-runtime-v2-acceptance.md)
+
+离线恢复使用 SQLite online backup、临时恢复、Event/Journal/Snapshot/Outbox 核对和 Projection rebuild。`SENT`/`UNKNOWN` 不重发。离线 `PASS_OFFLINE` 不等于真实 SHADOW、supervised、canary 或平台交付通过。
