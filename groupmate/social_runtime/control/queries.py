@@ -8,6 +8,7 @@ from pathlib import Path
 from ..persona.profile import GroupmatePersonaProfile
 from ..persistence.schema import connect_database
 from .config_versions import ConfigVersionRepository
+from .message_traces import MessageTraceRepository
 from .projections import ProjectionConsumer
 
 
@@ -45,6 +46,12 @@ class ProjectionQueries:
 
     def runtime(self, *, persona_id: str, group_id: str) -> dict[str, object]:
         return self._query("runtime", persona_id=persona_id, group_id=group_id)
+
+    def traces(self, *, persona_id: str, group_id: str) -> dict[str, object]:
+        return MessageTraceRepository(self.path).query(
+            persona_id=persona_id,
+            group_id=group_id,
+        )
 
     def activity(self, *, persona_id: str, group_id: str) -> dict[str, object]:
         return self._query("activity", persona_id=persona_id, group_id=group_id)

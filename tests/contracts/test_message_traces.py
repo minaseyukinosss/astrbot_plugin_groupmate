@@ -1,0 +1,136 @@
+from types import SimpleNamespace
+
+from groupmate.social_runtime.attention import AttentionFrame
+from groupmate.social_runtime.contracts import SocialEventEnvelope
+from groupmate.social_runtime.control.message_traces import MessageTraceRepository
+from groupmate.social_runtime.governor import GovernorResult
+
+
+def _platform_event(
+    message_id: str,
+    *,
+    card: str = "",
+    nickname: str = "小夏",
+    owner: str = "UNKNOWN",
+) -> SocialEventEnvelope:
+    display_name = card or nickname
+    return SocialEventEnvelope.create(
+        event_id=f"qq:{message_id}",
+        event_type="platform.message",
+        occurred_at=10,
+        received_at=10,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="42",
+        source_message_id=message_id,
+        correlation_id=f"qq:{message_id}",
+        causation_id=None,
+        payload={
+            "text": "今晚一起打游戏吗？",
+            "sender": {"id": "42", "name": display_name},
+            "interaction_owner": owner,
+            "external_trigger_kind": "command" if owner == "EXTERNAL_PLUGIN" else None,
+            "media": [],
+        },
+    )
+
+
+def _evaluation(event: SocialEventEnvelope, outcome: str):
+    frame = AttentionFrame(
+        frame_id="frame-1",
+        group_id="g-1",
+        scene_version=1,
+        trigger_kind="AMBIENT",
+        focus_topic_ids=(),
+        focus_event_ids=(event.event_id,),
+        candidate_audiences=("42",),
+        urgency="normal",
+        deadline=20,
+        requested_workers=(),
+        persona_state_version=1,
+        config_version=1,
+    )
+    result = GovernorResult(
+        outcome=outcome,
+        selected_intention_ids=("intent-1",) if outcome == "ACT" else (),
+        rejected=(),
+        reason_codes=("no_eligible_intention",) if outcome == "SILENCE" else (),
+        reconsider_at=30 if outcome == "DEFER" else None,
+        constraints=(),
+    )
+    return SimpleNamespace(
+        source_event=event,
+        runtime_mode=SimpleNamespace(value="SHADOW"),
+        frame=frame,
+        governor_result=result,
+        accepted=True,
+        status="evaluated",
+    )
+
+
+def test_trace_updates_one_message_instead_of_appending_projection_rows(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("m-1", card="夏夏", nickname="小夏")
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.mark_entered(event.event_id, now=11)
+    repo.record_evaluation(_evaluation(event, outcome="SILENCE"), now=12)
+
+    view = repo.query(persona_id="groupmate:default", group_id="g-1")
+    assert len(view["items"]) == 1
+    summary = view["items"][0]["summary"]
+    assert set(summary) == {
+        "actor",
+        "message",
+        "route",
+        "understanding",
+        "decision",
+        "delivery",
+        "timing",
+        "stages",
+    }
+    assert summary["actor"]["display_name"] == "夏夏"
+    assert summary["route"]["owner"] == "GROUPMATE"
+    assert summary["decision"]["outcome"] == "SILENCE"
+    assert summary["delivery"]["status"] == "SILENT"
+    assert "42" not in str(view["items"][0])
+
+    detail = repo.detail(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        trace_ref=view["items"][0]["entity_ref"],
+    )
+    assert [stage["kind"] for stage in detail["summary"]["stages"]] == [
+        "RECEIVED",
+        "ROUTED",
+        "ATTENDED",
+        "UNDERSTOOD",
+        "DECIDED",
+    ]
+
+
+def test_external_trigger_is_visible_without_claiming_plugin_success(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("m-2", owner="EXTERNAL_PLUGIN")
+
+    repo.record_received(event, runtime_mode="SOCIAL_RUNTIME", now=20)
+
+    item = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]
+    assert item["summary"]["route"] == {
+        "owner": "EXTERNAL_PLUGIN",
+        "label": "交给外部能力",
+        "reason": "匹配已配置的外部触发规则",
+    }
+    assert item["summary"]["delivery"]["status"] == "HANDED_OFF"
+    assert item["summary"]["delivery"]["label"] == "结果由外部插件负责"
+
+
+def test_query_orders_newest_message_first(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    repo.record_received(_platform_event("old"), runtime_mode="SHADOW", now=10)
+    repo.record_received(_platform_event("new"), runtime_mode="SHADOW", now=20)
+
+    items = repo.query(persona_id="groupmate:default", group_id="g-1")["items"]
+    assert [item["summary"]["timing"]["received_at"] for item in items] == [20, 10]
