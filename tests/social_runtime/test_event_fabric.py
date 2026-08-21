@@ -58,3 +58,55 @@ def test_manager_ignores_groups_outside_explicit_allowlist(tmp_path):
 
     assert result is None
     assert event_ids == ()
+
+
+def test_manager_resolves_reply_target_before_scene_projection(tmp_path):
+    async def scenario():
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await manager.start()
+        original = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:m1",
+                source_message_id="m1",
+                actor_id="bot-1",
+                correlation_id="corr:m1",
+                payload={"text": "上一句", "bot_id": "bot-1", "is_self": True},
+            )
+        )
+        reply = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:m2",
+                source_message_id="m2",
+                actor_id="u1",
+                correlation_id="corr:m2",
+                payload={
+                    "text": "接着说",
+                    "bot_id": "bot-1",
+                    "reply_to": "m1",
+                    "reply_to_actor_id": None,
+                    "reply_to_bot": False,
+                },
+            )
+        )
+        await manager.ingest(original)
+        await manager.ingest(reply)
+        stored = manager.event_store.event_by_source_message(
+            "aemeath", "885617919", "qq", "m2"
+        )
+        await manager.drain()
+        state = await manager.group_snapshot("885617919")
+        await manager.close()
+        return stored, state
+
+    stored, state = asyncio.run(scenario())
+
+    assert stored is not None
+    assert stored.payload["reply_to_actor_id"] == "bot-1"
+    assert stored.payload["reply_to_bot"] is True
+    assert state.interaction_edges[-1].target_actor_id == "bot-1"
+    assert state.recent_presence.last_bot_event_at is not None

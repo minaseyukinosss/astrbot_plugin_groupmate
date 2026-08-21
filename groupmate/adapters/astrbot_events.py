@@ -25,6 +25,16 @@ def _call_text(event: object, name: str) -> str:
         return ""
 
 
+def _attribute_text(event: object, name: str) -> str:
+    value = getattr(event, name, None)
+    if callable(value) or value is None:
+        return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
 def _json_value(value: object) -> object:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -98,8 +108,13 @@ class AstrBotEventTranslator:
         sender_name = str(sender.get("card") or sender.get("nickname") or _call_text(host_event, "get_sender_name"))
         message_obj = getattr(host_event, "message_obj", None)
         bot_id = str(
-            getattr(message_obj, "self_id", "") or raw.get("self_id") or ""
+            getattr(message_obj, "self_id", "")
+            or raw.get("self_id")
+            or _call_text(host_event, "get_self_id")
+            or ""
         ).strip()
+        platform_id = _call_text(host_event, "get_platform_id") or self.platform
+        session = _attribute_text(host_event, "unified_msg_origin") or None
         is_self = bool(bot_id and actor_id and actor_id == bot_id)
         ownership = self.external_trigger_policy.classify(message_text)
         if ownership is None:
@@ -125,9 +140,14 @@ class AstrBotEventTranslator:
             causation_id=f"qq:{reply_to}" if reply_to else None,
             payload={
                 "platform": self.platform,
+                "platform_id": platform_id,
+                "session": session,
+                "bot_id": bot_id,
                 "text": message_text,
                 "segments": segments,
                 "reply_to": reply_to or None,
+                "reply_to_actor_id": None,
+                "reply_to_bot": False,
                 "mentions": mentions,
                 "mentions_bot": bool(bot_id and bot_id in mentions),
                 "media": media,

@@ -99,6 +99,10 @@ class GroupWorldState:
 class GroupWorldProjector:
     """Projects platform facts before optional model observations are considered."""
 
+    TOPIC_TTL_SECONDS = 300
+    TOPIC_MERGE_SECONDS = 30
+    MAX_ACTIVE_TOPICS = 12
+
     def empty(self, group_id: str) -> GroupWorldState:
         if not group_id.strip():
             raise ValueError("group_id must not be empty")
@@ -146,7 +150,12 @@ class GroupWorldProjector:
             recent_event_ids=(state.recent_presence.recent_event_ids + (event.event_id,))[
                 -50:
             ],
-            last_bot_event_at=state.recent_presence.last_bot_event_at,
+            last_bot_event_at=(
+                event.occurred_at
+                if event.event_type == "delivery.sent"
+                or bool(event.payload.get("is_self"))
+                else state.recent_presence.last_bot_event_at
+            ),
         )
         return replace(
             state,
@@ -164,6 +173,12 @@ class GroupWorldProjector:
         event: SocialEventEnvelope,
         message_id: str,
     ) -> tuple[TopicState, ...]:
+        topics = tuple(
+            topic
+            for topic in topics
+            if event.occurred_at - topic.last_event_at
+            <= GroupWorldProjector.TOPIC_TTL_SECONDS
+        )
         reply_to = str(event.payload.get("reply_to") or "").strip()
         suggested = str(event.payload.get("suggested_topic_id") or "").strip()
         target_index = None
@@ -179,10 +194,20 @@ class GroupWorldProjector:
                 if suggested == topic.topic_id:
                     target_index = index
                     break
+        elif event.actor_id:
+            for index in range(len(topics) - 1, -1, -1):
+                topic = topics[index]
+                if (
+                    event.actor_id in topic.participant_ids
+                    and event.occurred_at - topic.last_event_at
+                    <= GroupWorldProjector.TOPIC_MERGE_SECONDS
+                ):
+                    target_index = index
+                    break
 
         if target_index is None:
             actor_ids = (event.actor_id,) if event.actor_id else ()
-            return topics + (
+            return (topics + (
                 TopicState(
                     topic_id=message_id,
                     root_event_id=message_id,
@@ -190,7 +215,7 @@ class GroupWorldProjector:
                     participant_ids=actor_ids,
                     last_event_at=event.occurred_at,
                 ),
-            )
+            ))[-GroupWorldProjector.MAX_ACTIVE_TOPICS :]
 
         topic = topics[target_index]
         participant_ids = topic.participant_ids
@@ -202,7 +227,8 @@ class GroupWorldProjector:
             participant_ids=participant_ids,
             last_event_at=event.occurred_at,
         )
-        return topics[:target_index] + (updated,) + topics[target_index + 1 :]
+        projected = topics[:target_index] + (updated,) + topics[target_index + 1 :]
+        return projected[-GroupWorldProjector.MAX_ACTIVE_TOPICS :]
 
     @staticmethod
     def _project_participant(

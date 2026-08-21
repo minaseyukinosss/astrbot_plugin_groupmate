@@ -763,6 +763,39 @@ class SQLiteSocialEventStore:
         }
         return tuple(by_id[event_id] for event_id in event_ids if event_id in by_id)
 
+    def event_by_source_message(
+        self,
+        persona_id: str,
+        group_id: str,
+        platform: str,
+        source_message_id: str,
+    ) -> SocialEventEnvelope | None:
+        """Return the latest durable event for one platform message identity."""
+
+        persona = str(persona_id).strip()
+        group = str(group_id).strip()
+        source_id = str(source_message_id).strip()
+        platform_name = str(platform).strip()
+        if not persona or not group or not source_id:
+            raise ValueError("source message lookup requires persona, group, and id")
+        if platform_name:
+            events = self.event_envelopes(
+                persona, group, (f"{platform_name}:{source_id}",)
+            )
+            if events:
+                return events[0]
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT envelope_json FROM inbox "
+                "WHERE persona_id=? AND group_id=? ORDER BY sequence DESC",
+                (persona, group),
+            ).fetchall()
+        for row in rows:
+            event = SocialEventEnvelope.from_dict(json.loads(row[0]))
+            if event.source_message_id == source_id:
+                return event
+        return None
+
     def shadow_evaluations(
         self, persona_id: str, group_id: str
     ) -> tuple[dict[str, object], ...]:

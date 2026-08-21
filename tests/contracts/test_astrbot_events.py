@@ -91,6 +91,37 @@ def test_translator_reads_astrbot_event_accessors_and_raw_message():
     assert translated.payload["sender"]["name"] == "小夏"
 
 
+def test_translator_preserves_astrbot_route_and_reply_defaults():
+    class MessageObject:
+        self_id = "bot-1"
+        raw_message = {
+            "message_id": "52",
+            "group_id": "885617919",
+            "user_id": "42",
+            "time": 10,
+            "message": [
+                {"type": "reply", "data": {"id": "51"}},
+                {"type": "text", "data": {"text": "接着说"}},
+            ],
+        }
+
+    class Event:
+        message_obj = MessageObject()
+        unified_msg_origin = "aiocqhttp:GroupMessage:885617919"
+
+        @staticmethod
+        def get_platform_id():
+            return "onebot-main"
+
+    translated = AstrBotEventTranslator("aemeath").translate(Event())
+
+    assert translated.payload["bot_id"] == "bot-1"
+    assert translated.payload["platform_id"] == "onebot-main"
+    assert translated.payload["session"] == "aiocqhttp:GroupMessage:885617919"
+    assert translated.payload["reply_to_actor_id"] is None
+    assert translated.payload["reply_to_bot"] is False
+
+
 def test_translator_derives_bot_identity_from_astrbot_message_object():
     class MessageObject:
         self_id = "bot-native-id"

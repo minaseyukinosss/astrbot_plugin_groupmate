@@ -305,7 +305,34 @@ class SocialRuntimeManager:
                 raise ValueError("event persona does not match manager")
             if not envelope.group_id or envelope.group_id not in self.enabled_groups:
                 return None
+            envelope = self._resolve_platform_reply(envelope)
             return await self.fabric.publish(envelope)
+
+    def _resolve_platform_reply(
+        self, envelope: SocialEventEnvelope
+    ) -> SocialEventEnvelope:
+        if envelope.event_type != "platform.message" or not envelope.group_id:
+            return envelope
+        reply_to = str(envelope.payload.get("reply_to") or "").strip()
+        if not reply_to:
+            return envelope
+        platform = str(envelope.payload.get("platform") or "qq").strip()
+        replied = self.event_store.event_by_source_message(
+            envelope.persona_id,
+            envelope.group_id,
+            platform,
+            reply_to,
+        )
+        if replied is None or not replied.actor_id:
+            return envelope
+        values = envelope.to_dict()
+        payload = dict(envelope.payload)
+        reply_actor_id = str(replied.actor_id)
+        bot_id = str(payload.get("bot_id") or "").strip()
+        payload["reply_to_actor_id"] = reply_actor_id
+        payload["reply_to_bot"] = bool(bot_id and reply_actor_id == bot_id)
+        values["payload"] = payload
+        return SocialEventEnvelope.create(**values)
 
     async def _publish_execution_event(
         self, envelope: SocialEventEnvelope
