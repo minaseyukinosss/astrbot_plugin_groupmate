@@ -123,6 +123,7 @@ def test_astrbot_model_port_uses_provider_and_worker_identity():
     assert result == ()
     assert context.calls[0]["chat_provider_id"] == "provider:text"
     assert '"worker": "scene_interpreter"' in context.calls[0]["prompt"]
+    assert "判断当前话题的社交信号" in context.calls[0]["prompt"]
 
 
 def test_missing_requested_worker_marks_cognition_degraded():
