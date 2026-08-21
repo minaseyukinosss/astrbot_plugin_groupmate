@@ -1,0 +1,77 @@
+import asyncio
+
+from groupmate.adapters.participants import ParticipantDirectory
+from groupmate.social_runtime.contracts import SocialEventEnvelope
+
+
+def _event(*, card: str = "", nickname: str = "小夏"):
+    return SocialEventEnvelope.create(
+        event_id="qq:1",
+        event_type="platform.message",
+        occurred_at=10,
+        received_at=10,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="42",
+        source_message_id="1",
+        correlation_id="qq:1",
+        causation_id=None,
+        payload={
+            "sender": {"id": "42", "name": card or nickname},
+            "text": "你好",
+        },
+    )
+
+
+def test_participant_prefers_card_and_hides_raw_qq_id(tmp_path):
+    directory = ParticipantDirectory(tmp_path / "runtime.db", tmp_path / "avatars")
+
+    participant = directory.remember(_event(card="夏夏", nickname="小夏"))
+
+    assert participant["display_name"] == "夏夏"
+    assert participant["avatar_ref"].startswith("participant:")
+    assert "42" not in participant["avatar_ref"]
+    assert "42" not in participant["member_ref"]
+
+
+def test_avatar_failure_returns_stable_generated_svg(tmp_path):
+    async def failing_fetcher(_url):
+        raise OSError("offline")
+
+    directory = ParticipantDirectory(
+        tmp_path / "runtime.db",
+        tmp_path / "avatars",
+        fetcher=failing_fetcher,
+    )
+    participant = directory.remember(_event(card="夏夏"))
+
+    first = asyncio.run(directory.avatar_data(participant["avatar_ref"]))
+    second = asyncio.run(directory.avatar_data(participant["avatar_ref"]))
+
+    assert first == second
+    assert first["source"] == "fallback"
+    assert first["data_uri"].startswith("data:image/svg+xml;base64,")
+    assert "42" not in first["data_uri"]
+
+
+def test_avatar_success_is_cached_as_a_data_uri(tmp_path):
+    calls = []
+
+    async def fetcher(url):
+        calls.append(url)
+        return b"\x89PNG\r\n\x1a\nimage", "image/png"
+
+    directory = ParticipantDirectory(
+        tmp_path / "runtime.db",
+        tmp_path / "avatars",
+        fetcher=fetcher,
+    )
+    participant = directory.remember(_event())
+
+    first = asyncio.run(directory.avatar_data(participant["avatar_ref"]))
+    second = asyncio.run(directory.avatar_data(participant["avatar_ref"]))
+
+    assert first["source"] == "qq"
+    assert first["data_uri"].startswith("data:image/png;base64,")
+    assert second == first
+    assert len(calls) == 1

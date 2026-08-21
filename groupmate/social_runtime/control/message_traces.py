@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from ...adapters.participants import ParticipantDirectory
 from ..contracts import SocialEventEnvelope
 from ..persistence.schema import connect_database, initialize_database
 
@@ -54,6 +55,10 @@ class MessageTraceRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         initialize_database(self.path)
+        self.participants = ParticipantDirectory(
+            self.path,
+            self.path.parent / "avatars",
+        )
         self._ensure_tables()
 
     def record_received(
@@ -66,11 +71,7 @@ class MessageTraceRepository:
             return
         now = int(now)
         mode = self._mode_value(runtime_mode)
-        sender = event.payload.get("sender")
-        sender_map = sender if isinstance(sender, Mapping) else {}
-        display_name = self._safe_text(sender_map.get("name"), 48) or "群成员"
-        member_ref = self._opaque_ref("member", event.group_id, event.actor_id or "")
-        avatar_ref = self._opaque_ref("participant", event.group_id, event.actor_id or "")
+        participant = self.participants.remember(event)
         owner = str(event.payload.get("interaction_owner") or "UNKNOWN").upper()
         external = owner == "EXTERNAL_PLUGIN"
         route = (
@@ -97,9 +98,9 @@ class MessageTraceRepository:
         )
         summary = {
             "actor": {
-                "member_ref": member_ref,
-                "display_name": display_name,
-                "avatar_ref": avatar_ref,
+                "member_ref": participant["member_ref"],
+                "display_name": participant["display_name"],
+                "avatar_ref": participant["avatar_ref"],
             },
             "message": {
                 "summary": self._message_summary(event.payload.get("text")),
