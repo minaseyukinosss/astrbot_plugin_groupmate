@@ -1,26 +1,43 @@
 import { element, textValue } from "./dom.js";
-import { fieldLabel, formatTimestamp, kindLabel, valueLabel, visibleFacts } from "./presenters.js";
+import { formatTimestamp } from "./presenters.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
-  ["evidence_refs", "证据"],
-  ["observation", "结构化 Observation"],
-  ["candidate_intentions", "候选意图"],
-  ["utility_contributions", "效用贡献"],
-  ["constraints", "安全约束"],
-  ["plan", "Plan"],
-  ["projection_version", "版本"],
-  ["result", "结果"],
+  ["actor", "参与者"],
+  ["message", "收到的消息"],
+  ["route", "处理路径"],
+  ["understanding", "Groupmate 的理解"],
+  ["decision", "决定"],
+  ["delivery", "最终结果"],
+  ["stages", "处理阶段"],
 ]);
 
-function icon(name) {
-  return element("img", { className: "ui-icon", attrs: { src: `./assets/icons/${name}.svg`, alt: "" } });
+function initials(name) {
+  const normalized = String(name || "群成员").trim();
+  return normalized ? [...normalized][0] : "群";
 }
 
-function inspectorSection(title, iconName, children, className = "") {
+function avatar(actor = {}) {
+  return element("span", {
+    className: "participant-avatar participant-avatar-large",
+    text: initials(actor.display_name),
+    dataset: { avatarRef: actor.avatar_ref },
+    attrs: { "aria-hidden": "true" },
+  });
+}
+
+function section(title, children, className = "") {
   return element("section", { className: `inspector-section ${className}`.trim() }, [
-    element("h3", {}, [icon(iconName), element("span", { text: title })]),
+    element("h3", { text: title }),
     ...children,
   ]);
+}
+
+function stateLabel(value) {
+  return ({
+    READY: "已完成",
+    PENDING: "等待处理",
+    FAILED: "失败",
+  })[String(value || "").toUpperCase()] || value;
 }
 
 function definitionRows(rows) {
@@ -32,83 +49,63 @@ function definitionRows(rows) {
     ])));
 }
 
-function renderShadowDecision(summary, item) {
-  const nodes = [];
-  if (summary.focus || summary.history) {
-    const contextRows = [];
-    if (summary.focus) contextRows.push(["关注消息", summary.focus.summary || summary.focus.content || summary.focus]);
-    if (summary.history?.length) contextRows.push(["安全上下文", summary.history.map((entry) => entry.summary || entry.content || entry)]);
-    nodes.push(inspectorSection("上下文", "message-circle", [definitionRows(contextRows)]));
-  }
-  if (summary.attention || summary.target) {
-    nodes.push(inspectorSection("动机识别", "target-arrow", [definitionRows([
-      ["触发方式", summary.attention?.trigger_kind],
-      ["紧急程度", summary.attention?.urgency],
-      ["处理期限", summary.attention?.deadline],
-      ["参与对象", summary.target],
-    ])]));
-  }
-  if (summary.candidate_response || summary.candidate_actions?.length || summary.outcome || summary.disposition) {
-    nodes.push(inspectorSection("决策 / 行动", "brain", [definitionRows([
-      ["参与判断", valueLabel("outcome", summary.outcome || summary.disposition)],
-      ["候选回复", summary.candidate_response],
-      ["候选动作", summary.candidate_actions],
-      ["建议类别", summary.suggested_categories],
-    ])], "decision-section"));
-  }
-  const governanceRows = [
-    ["判断依据", summary.reason_codes ? valueLabel("reason_codes", summary.reason_codes) : undefined],
-    ["安全约束", summary.constraints ? valueLabel("constraints", summary.constraints) : undefined],
-    ["有效期", summary.expires_at],
-    ["投影版本", item?.projection_version],
-  ];
-  if (governanceRows.some(([, value]) => value !== undefined)) {
-    nodes.push(inspectorSection("治理信息", "shield-check", [definitionRows(governanceRows)]));
-  }
-  return nodes;
+function stageTimeline(stages = []) {
+  if (!stages.length) return element("p", { className: "inspector-empty", text: "尚未产生后续处理阶段。" });
+  return element("ol", { className: "stage-timeline" }, stages.map((stage) => element("li", {
+    attrs: { "data-status": String(stage.status || "DONE").toLowerCase() },
+  }, [
+    element("i", { className: "stage-marker", attrs: { "aria-hidden": "true" } }),
+    element("div", {}, [
+      element("strong", { text: stage.label || "阶段已完成" }),
+      element("time", { text: formatTimestamp(stage.at) }),
+    ]),
+  ])));
 }
 
 export function renderInspector(item) {
   const summary = item?.summary || {};
-  const content = element("div", { className: "inspector-fields" }, [
+  const actor = summary.actor || {};
+  const message = summary.message || {};
+  const route = summary.route || {};
+  const understanding = summary.understanding || {};
+  const decision = summary.decision || {};
+  const delivery = summary.delivery || {};
+  const timing = summary.timing || {};
+
+  return element("div", { className: "inspector-fields trace-inspector" }, [
     element("div", { className: "inspector-event-heading" }, [
-      element("span", { className: "inspector-kind-icon" }, [icon(item?.kind?.includes("evaluation") ? "eye" : "activity")]),
+      avatar(actor),
       element("div", {}, [
-        element("strong", { text: kindLabel(item?.kind) }),
-        element("time", { text: formatTimestamp(item?.as_of) }),
+        element("span", { text: actor.display_name || "群成员" }),
+        element("strong", { text: message.summary || "[非文本消息]" }),
+        element("time", { text: formatTimestamp(timing.received_at || item?.as_of) }),
+      ]),
+    ]),
+    section("处理路径", [definitionRows([
+      ["当前归属", route.label || "等待路由"],
+      ["原因", route.reason],
+    ])]),
+    section("处理阶段", [stageTimeline(summary.stages)]),
+    section("Groupmate 的理解", [definitionRows([
+      ["状态", stateLabel(understanding.status)],
+      ["理解摘要", understanding.summary],
+    ])]),
+    section("决定", [definitionRows([
+      ["参与判断", decision.label],
+      ["判断依据", decision.reasons],
+    ])]),
+    section("最终结果", [definitionRows([
+      ["运行模式", delivery.mode],
+      ["状态", delivery.label],
+      ["错误", delivery.error],
+    ])], "delivery-section"),
+    element("details", { className: "technical-details" }, [
+      element("summary", { text: "技术信息" }),
+      definitionRows([
+        ["追踪引用", item?.entity_ref],
+        ["总耗时", `${timing.total_ms || 0} ms`],
+        ["更新时间", formatTimestamp(timing.updated_at || item?.as_of)],
       ]),
     ]),
   ]);
-
-  const shadowNodes = renderShadowDecision(summary, item);
-  if (shadowNodes.length) content.append(...shadowNodes);
-
-  const facts = visibleFacts(summary).filter((fact) => !["outcome", "constraints", "expires_at"].includes(fact.key));
-  if (facts.length) {
-    content.append(inspectorSection("事件事实", "list-details", [definitionRows(facts.map((fact) => [fact.label, fact.value]))]));
-  }
-
-  if (item?.evidence_refs?.length) {
-    content.append(inspectorSection("证据", "notes", [
-      element("ul", { className: "evidence-list" }, item.evidence_refs.map((reference) => element("li", { text: reference }))),
-    ]));
-  } else {
-    content.append(inspectorSection("证据", "notes", [
-      element("p", { className: "inspector-empty", text: "此安全投影没有公开证据引用。" }),
-    ]));
-  }
-
-  const legacySafe = {
-    observation: summary.observation,
-    candidate_intentions: summary.candidate_intentions,
-    utility_contributions: summary.utility_contributions,
-    plan: summary.plan,
-    result: summary.result_status || summary.task_status,
-  };
-  const legacyRows = Object.entries(legacySafe)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([field, value]) => [fieldLabel(field), textValue(value)]);
-  if (legacyRows.length) content.append(inspectorSection("补充信息", "adjustments-horizontal", [definitionRows(legacyRows)]));
-
-  return content;
 }

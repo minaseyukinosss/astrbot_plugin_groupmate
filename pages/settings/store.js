@@ -51,6 +51,7 @@ export class ProjectionStore {
     for (const metadata of bootstrap.items || []) {
       this.merge({ ...metadata, scope: bootstrap.scope, items: [] });
     }
+    this.views.set("bootstrap", clone(bootstrap));
     this.emit();
   }
 

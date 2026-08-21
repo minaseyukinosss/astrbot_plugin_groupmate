@@ -30,19 +30,17 @@ def test_runtime_is_the_only_product_workspace():
     assert "renderWorkspace(activeRoute" in app
 
 
-def test_runtime_workspace_uses_real_runtime_task_activity_and_health_projections():
+def test_runtime_workspace_uses_message_trace_and_readiness_projections():
     source = _source(WORKSPACES / "runtime.js")
 
-    for projection in ("runtime", "activity", "tasks", "health"):
+    for projection in ("bootstrap", "runtime", "traces", "health", "governance"):
         assert f'select("{projection}")' in source
-    for label in ("运行概览", "近期活动", "任务义务", "健康状态", "暂停", "恢复"):
+    for label in ("运行概览", "消息链路", "收到的消息", "暂停", "恢复"):
         assert label in source
     assert 'type: "pause"' in source
     assert "controlVersion" in source
-    assert "degraded_reasons" in source
-    assert "fallback_poll_seconds" in source
+    assert "runtime_blockers" in source
     assert "setTimeout" not in source
-    assert "处理中" not in source
 
 
 def test_inspector_is_allowlisted_and_renders_only_text_nodes():
@@ -51,13 +49,13 @@ def test_inspector_is_allowlisted_and_renders_only_text_nodes():
     all_page_js = "\n".join(_source(path) for path in PAGE.rglob("*.js"))
 
     for label in (
-        "证据",
-        "结构化 Observation",
-        "候选意图",
-        "效用贡献",
-        "Plan",
-        "版本",
-        "结果",
+        "参与者",
+        "收到的消息",
+        "处理路径",
+        "Groupmate 的理解",
+        "决定",
+        "最终结果",
+        "处理阶段",
     ):
         assert label in inspector
     assert "INSPECTOR_FIELDS" in inspector

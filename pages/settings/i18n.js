@@ -1,6 +1,6 @@
 const COPY = Object.freeze({
   zh: {
-    runtime: ["运行中心", "观察消息如何进入注意、理解、参与判断与行动链路。"],
+    runtime: ["运行中心", "查看每条群消息经过 NapCat、AstrBot 与 Groupmate 后发生了什么。"],
   },
   en: {
     runtime: ["Runtime", "Inspect actual runtime, task, and delivery health."],

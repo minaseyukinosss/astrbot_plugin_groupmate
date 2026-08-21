@@ -54,22 +54,17 @@ def test_shell_uses_approved_product_hierarchy_instead_of_projection_console():
     assert "所有状态来自版本化 Projection" not in html
 
 
-def test_layout_reflows_before_astrbot_iframe_reaches_broken_toolbar_width():
+def test_layout_preserves_product_navigation_at_normal_iframe_width():
     layout = (PAGE / "styles" / "layout.css").read_text(encoding="utf-8")
 
-    assert "max-width: 80rem" in layout
-    assert "grid-template-columns: 4.5rem" in layout
+    assert "max-width: 60rem" in layout
     assert ".nav-label" in layout
 
 
-def test_runtime_and_activity_have_distinct_product_views():
+def test_runtime_is_the_single_message_trace_product_view():
     runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
-    activity = (PAGE / "workspaces" / "activity.js").read_text(encoding="utf-8")
-    projection = (PAGE / "components" / "projection.js").read_text(encoding="utf-8")
 
-    for label in ("运行概览", "近期活动", "健康状态"):
+    for label in ("运行概览", "消息链路", "最终结果"):
         assert label in runtime
-    for label in ("筛选事件", "事件", "参与者", "结果"):
-        assert label in activity + projection
+    assert not (PAGE / "workspaces" / "activity.js").exists()
     assert "projectionList(runtime)" not in runtime
-    assert "projectionList(activity" not in activity

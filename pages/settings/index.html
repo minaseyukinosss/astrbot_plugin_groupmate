@@ -59,8 +59,8 @@
 
         <div class="runtime-summary" aria-label="运行摘要">
           <div><span>运行模式</span><strong id="runtime-mode">—</strong></div>
-          <div><span>可见事件</span><strong id="visible-events">0</strong></div>
-          <div><span>待处理任务</span><strong id="pending-tasks">0</strong></div>
+          <div><span>近期消息</span><strong id="visible-events">0</strong></div>
+          <div><span>处理中</span><strong id="pending-tasks">0</strong></div>
           <span id="connection-state" class="connection-state" aria-live="polite">
             <span class="status-dot" aria-hidden="true"></span>
             正在连接
@@ -74,10 +74,10 @@
       <main id="main-content" tabindex="-1">
         <header class="workspace-heading">
           <div>
-            <p id="workspace-context">此刻 · 当前群组实时投影</p>
+          <p id="workspace-context">此刻 · 当前群组实时消息链路</p>
             <h1 id="workspace-title">运行中心</h1>
           </div>
-          <p id="workspace-description">观察消息如何进入注意、理解、参与判断与行动链路。</p>
+          <p id="workspace-description">查看每条群消息经过 NapCat、AstrBot 与 Groupmate 后发生了什么。</p>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
         <section id="workspace" class="workspace" aria-live="polite" aria-busy="true">
@@ -87,9 +87,9 @@
         </section>
       </main>
 
-      <aside id="inspector" class="inspector" aria-label="证据检查器" hidden>
+      <aside id="inspector" class="inspector" aria-label="消息链路详情" hidden>
         <header>
-          <div><span>安全投影详情</span><h2 id="inspector-title">证据与决策</h2></div>
+          <div><span>当前消息</span><h2 id="inspector-title">完整处理链路</h2></div>
           <button id="close-inspector" class="icon-button" type="button" aria-label="关闭检查器">
             <img src="./assets/icons/x.svg" alt="">
           </button>

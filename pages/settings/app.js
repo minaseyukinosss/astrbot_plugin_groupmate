@@ -10,6 +10,8 @@ const store = new ProjectionStore();
 const router = createRouter();
 let locale = "zh-CN";
 let activeRoute = router.current();
+const avatarCache = new Map();
+const avatarRequests = new Map();
 
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
@@ -77,6 +79,43 @@ function renderWorkspace(route = activeRoute) {
     (projection) => store.selectView(projection),
     submitWorkspaceCommand,
   ));
+  hydrateAvatars(elements.workspace);
+}
+
+async function avatarSource(avatarRef) {
+  const key = String(avatarRef || "");
+  if (!key.startsWith("participant:")) return null;
+  if (avatarCache.has(key)) return avatarCache.get(key);
+  if (avatarRequests.has(key)) return avatarRequests.get(key);
+  const pending = bridge.query("avatar", { ...scopeParams(), avatar_ref: key })
+    .then((result) => {
+      const source = String(result?.data_uri || "");
+      const safe = source.startsWith("data:image/") ? source : null;
+      avatarCache.set(key, safe);
+      avatarRequests.delete(key);
+      return safe;
+    })
+    .catch(() => {
+      avatarCache.set(key, null);
+      avatarRequests.delete(key);
+      return null;
+    });
+  avatarRequests.set(key, pending);
+  return pending;
+}
+
+function hydrateAvatars(root) {
+  root.querySelectorAll("[data-avatar-ref]").forEach(async (node) => {
+    if (node.dataset.avatarLoaded === "true") return;
+    const source = await avatarSource(node.dataset.avatarRef);
+    if (!source || !node.isConnected) return;
+    const image = document.createElement("img");
+    image.src = source;
+    image.alt = "";
+    image.decoding = "async";
+    node.replaceChildren(image);
+    node.dataset.avatarLoaded = "true";
+  });
 }
 
 function render(snapshot) {
@@ -89,31 +128,21 @@ function render(snapshot) {
     .filter((item) => item.summary?.status === "PUBLISHED")
     .map((item) => Number(item.summary?.config_version || 0))));
   elements.version.textContent = `v${version}`;
+  const bootstrap = snapshot.views.bootstrap || {};
   const runtimeItems = snapshot.views.runtime?.items || [];
   const runtimeSummary = [...runtimeItems].reverse().find((item) => item.summary?.runtime_mode)?.summary || {};
-  const mode = runtimeSummary.runtime_mode || "OFF";
-  const pendingTasks = (snapshot.views.tasks?.items || []).filter((item) =>
-    ["pending", "queued", "running"].includes(String(item.summary?.task_status || "").toLowerCase()),
+  const mode = bootstrap.configured_runtime_mode || runtimeSummary.runtime_mode || "OFF";
+  const traceItems = snapshot.views.traces?.items || [];
+  const waiting = traceItems.filter((item) =>
+    ["RECEIVED", "PLANNING", "READY", "DEFERRED"].includes(String(item.summary?.delivery?.status || "").toUpperCase()),
   ).length;
-  const visibleEvents = ["activity", "scenes", "evaluation"]
-    .reduce((count, projection) => count + (snapshot.views[projection]?.items?.length || 0), 0);
   elements.runtimeMode.textContent = mode === "SHADOW" ? "SHADOW" : mode;
   elements.runtimeMode.dataset.mode = mode;
-  elements.sidebarMode.textContent = mode === "SHADOW" ? "观察" : mode;
+  elements.sidebarMode.textContent = mode === "SHADOW" ? "仅观察" : mode;
   elements.sidebarGroup.textContent = snapshot.scope.group_id || "—";
-  elements.visibleEvents.textContent = String(visibleEvents);
-  elements.pendingTasks.textContent = String(pendingTasks);
+  elements.visibleEvents.textContent = String(traceItems.length);
+  elements.pendingTasks.textContent = String(waiting);
   renderWorkspace(activeRoute);
-}
-
-async function loadView(route = activeRoute) {
-  try {
-    const view = await bridge.query(route.endpoint, scopeParams());
-    store.merge(view);
-    store.setError(null);
-  } catch (error) {
-    store.setError(ApiBridge.describeError(error));
-  }
 }
 
 async function loadWorkspace(route = activeRoute) {
@@ -151,6 +180,7 @@ async function openInspector(projection, entityRef) {
     const view = await bridge.query(projection, { ...scopeParams(), entity_ref: entityRef });
     const item = (view.items || []).find((candidate) => candidate.entity_ref === entityRef);
     elements.inspectorContent.append(renderInspector(item || { entity_ref: entityRef }));
+    hydrateAvatars(elements.inspectorContent);
   } catch (error) {
     elements.inspectorContent.textContent = ApiBridge.describeError(error).impact;
   }
@@ -174,8 +204,6 @@ async function initialize() {
   locale = context?.locale || "zh-CN";
   if (context?.theme === "dark" || context?.theme === "light") {
     document.documentElement.dataset.theme = context.theme;
-    const icon = elements.themeToggle.querySelector("img");
-    icon.src = context.theme === "dark" ? "./assets/icons/sun.svg" : "./assets/icons/moon.svg";
     elements.themeToggle.setAttribute("aria-label", context.theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
   }
   const bootstrap = await bridge.query("bootstrap");
@@ -209,8 +237,6 @@ elements.closeInspector.addEventListener("click", () => {
 elements.themeToggle.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
-  const icon = elements.themeToggle.querySelector("img");
-  icon.src = next === "dark" ? "./assets/icons/sun.svg" : "./assets/icons/moon.svg";
   elements.themeToggle.setAttribute("aria-label", next === "dark" ? "切换到浅色主题" : "切换到深色主题");
 });
 initialize().catch((error) => {
