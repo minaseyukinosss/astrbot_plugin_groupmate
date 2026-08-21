@@ -16,7 +16,7 @@ from eval.shadow import (
     ShadowReviewRepository,
 )
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
-from groupmate.settings import SocialRuntimeSettings
+from groupmate.settings import DEFAULT_GROUPMATE_PERSONA_ID, SocialRuntimeSettings
 from groupmate.social_runtime.control.commands import (
     ApproveCalibration,
     CommandContext,
@@ -195,9 +195,11 @@ def test_installed_astrbot_shadow_is_captured_projected_and_never_sent(tmp_path)
         )
         ProjectionConsumer(path, "evaluation").consume(100)
         projection = ProjectionQueries(path).evaluation(
-            persona_id="aemeath", group_id="group-1"
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
         )
-        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        items = reviews.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+        )
         scene_version = (await bridge.manager.group_snapshot("group-1")).scene_version
         outbox_count = bridge.manager.event_store.outbox_count()
         calls = bridge.manager.execution_port.calls
@@ -269,7 +271,9 @@ def test_social_runtime_group_mode_cannot_be_recorded_as_installed_live_shadow(t
                 ],
             }
         )
-        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        items = reviews.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+        )
         await bridge.close()
         return items
 
@@ -306,7 +310,7 @@ def test_unknown_owner_remains_unknown_in_runtime_capture(tmp_path):
             }
         )
         item = reviews.list_items(
-            persona_id="aemeath", group_id="group-1"
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
         )[0]
         await bridge.close()
         return item
@@ -343,10 +347,10 @@ def test_external_plugin_trigger_projects_no_attention_compatibility_decision(tm
         )
         ProjectionConsumer(path, "evaluation").consume(100)
         item = reviews.list_items(
-            persona_id="aemeath", group_id="group-1"
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
         )[0]
         projection = ProjectionQueries(path).evaluation(
-            persona_id="aemeath", group_id="group-1"
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
         )
         scene_version = (
             await bridge.manager.group_snapshot("group-1")
@@ -430,7 +434,9 @@ def test_restart_recovers_durable_shadow_capture_without_replaying_runtime(
         )
         await first.start()
         await first.handle_event(event)
-        assert failing.list_items(persona_id="aemeath", group_id="group-1") == ()
+        assert failing.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+        ) == ()
         assert first.shadow_review_error == "RuntimeError: injected capture outage"
         assert (await first.manager.group_snapshot("group-1")).scene_version == 1
         await first.close()
@@ -441,10 +447,12 @@ def test_restart_recovers_durable_shadow_capture_without_replaying_runtime(
         )
         await restarted.start()
         recovered_without_new_chat = reviews.list_items(
-            persona_id="aemeath", group_id="group-1"
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
         )
         duplicate = await restarted.handle_event(event)
-        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        items = reviews.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+        )
         scene_version = (
             await restarted.manager.group_snapshot("group-1")
         ).scene_version
@@ -523,7 +531,11 @@ def test_restart_repairs_projection_after_shadow_record_was_committed(tmp_path):
         )
         await first.start()
         await first.handle_event(event)
-        assert len(failing.list_items(persona_id="aemeath", group_id="group-1")) == 1
+        assert len(
+            failing.list_items(
+                persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+            )
+        ) == 1
         await first.close()
 
         with connect_database(path) as db:
@@ -537,7 +549,9 @@ def test_restart_repairs_projection_after_shadow_record_was_committed(tmp_path):
             object(), settings, tmp_path, shadow_reviews=reviews
         )
         await restarted.start()
-        items = reviews.list_items(persona_id="aemeath", group_id="group-1")
+        items = reviews.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id="group-1"
+        )
         await restarted.close()
         with connect_database(path) as db:
             capture_effects = db.execute(

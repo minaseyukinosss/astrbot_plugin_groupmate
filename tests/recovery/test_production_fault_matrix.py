@@ -13,7 +13,7 @@ import pytest
 from eval.shadow import ShadowReviewRepository
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
-from groupmate.settings import SocialRuntimeSettings
+from groupmate.settings import DEFAULT_GROUPMATE_PERSONA_ID, SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import (
     DeliveryBundle,
     DeliveryPart,
@@ -357,7 +357,9 @@ def test_abrupt_process_crash_reconciles_committed_shadow_capture_once(tmp_path)
         await bridge.start()
         pending_after_reconcile = bridge.manager.pending_shadow_review_evidence()
         duplicate = await bridge.handle_event(raw_event)
-        items = reviews.list_items(persona_id="aemeath", group_id=GROUP)
+        items = reviews.list_items(
+            persona_id=DEFAULT_GROUPMATE_PERSONA_ID, group_id=GROUP
+        )
         snapshot = await bridge.manager.group_snapshot(GROUP)
         no_send = (
             bridge.manager.event_store.outbox_count(),
@@ -541,10 +543,15 @@ def test_bridge_default_clock_flushes_and_discards_expired_ambient_work(
         await bridge.manager.ingest(event)
         clock.now = 200
         await bridge.manager.drain()
-        actor = await bridge.manager.fabric.notify("aemeath", GROUP)
+        actor = await bridge.manager.fabric.notify(
+            DEFAULT_GROUPMATE_PERSONA_ID, GROUP
+        )
         stored = bridge.manager.event_store.scene_work_request(
             actor.actor_key,
-            f"scene:aemeath:{GROUP}:qq:default-clock-ambient:1",
+            (
+                f"scene:{DEFAULT_GROUPMATE_PERSONA_ID}:{GROUP}:"
+                "qq:default-clock-ambient:1"
+            ),
         )
         result = (
             bridge.manager.expired_attention_count,
