@@ -3,10 +3,6 @@ import { renderInspector } from "./components/inspector.js";
 import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
 import { ProjectionStore } from "./store.js";
-import { renderActivity } from "./workspaces/activity.js";
-import { renderGovernance } from "./workspaces/governance.js";
-import { renderPeople } from "./workspaces/people.js";
-import { renderPersona } from "./workspaces/persona.js";
 import { renderRuntime } from "./workspaces/runtime.js";
 
 const bridge = new ApiBridge();
@@ -17,18 +13,10 @@ let activeRoute = router.current();
 
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
-  "/persona": renderPersona,
-  "/people": renderPeople,
-  "/activity": renderActivity,
-  "/governance": renderGovernance,
 });
 
 const WORKSPACE_PROJECTIONS = Object.freeze({
-  "/runtime": ["runtime", "activity", "scenes", "tasks", "health", "persona", "governance", "evaluation"],
-  "/persona": ["persona", "governance", "activity"],
-  "/people": ["people", "culture", "governance"],
-  "/activity": ["activity", "scenes", "tasks", "governance"],
-  "/governance": ["governance", "evaluation"],
+  "/runtime": ["runtime", "traces", "health", "persona", "governance"],
 });
 
 const elements = {
