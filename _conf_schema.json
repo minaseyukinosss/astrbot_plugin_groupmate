@@ -3,7 +3,15 @@
     "description": "启用 Groupmate 的群",
     "type": "list",
     "default": [],
-    "hint": "填写 AstrBot 已接入平台中的群 ID。保存后先进入无发送的 SHADOW 观察模式。"
+    "hint": "填写 AstrBot 已接入平台中的群 ID。运行模式会应用到这里列出的群。"
+  },
+  "runtime_mode": {
+    "description": "Groupmate 运行模式",
+    "type": "string",
+    "options": ["SHADOW", "SOCIAL_RUNTIME"],
+    "labels": ["SHADOW 观察（不发送）", "正式运行（允许发送）"],
+    "default": "SHADOW",
+    "hint": "SHADOW 只观察并记录决策，不发送消息；正式运行允许 Groupmate 在已启用的群中参与对话。"
   },
   "generation_provider": {
     "description": "Groupmate 文本模型",

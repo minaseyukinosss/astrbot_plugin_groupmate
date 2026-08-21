@@ -4,7 +4,7 @@ Groupmate v2 是 clean-slate 的持久群聊社会运行时。事实事件进入
 
 ## 配置与数据
 
-普通安装配置只包含启用群、Groupmate 独立文本模型、可选视觉模型和 AstrBot Persona。模型与人格使用 AstrBot 原生选择器；Bot 身份从消息事件的 `self_id` 自动取得。运行模式、管理员授权、外置插件兼容规则和 Worker 并发属于治理状态，不在首次安装配置中展示。
+普通安装配置只包含启用群、运行模式、Groupmate 独立文本模型、可选视觉模型和 AstrBot Persona。模型与人格使用 AstrBot 原生选择器；Bot 身份从消息事件的 `self_id` 自动取得。管理员授权、外置插件兼容规则和 Worker 并发属于内部治理状态，不在首次安装配置中展示。
 
 权威 V2 数据库固定为：
 
@@ -14,15 +14,15 @@ data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db
 
 V2 不读取、升级或迁移旧 `groupmate.db`。旧数据库、旧配置和旧内部 API 均不兼容；请按 V2 schema 重新配置，社会状态从空状态开始。
 
-数据库文件名和路径由插件内部固定管理，不能在配置页选择或覆盖。完整填写启用群、文本模型和 Persona 后，插件只进入无发送的 `SHADOW`；视觉模型可以留空。
+数据库文件名和路径由插件内部固定管理，不能在配置页选择或覆盖。首次配置默认进入无发送的 `SHADOW`；需要正常参与群聊时，可在 AstrBot 插件配置中明确切换为“正式运行”。视觉模型可以留空。
 
 ## 模式与治理
 
 - `OFF`：不处理群事件。
 - `SHADOW`：运行认知和评估，但不发送或执行外部副作用。
-- `SOCIAL_RUNTIME`：V2 拥有决策与交付；只有 installed-live SHADOW、冻结 holdout、24h 观察、页面/容量/安全、旧实例停止和 rollout gates 全部通过才可启用。
+- `SOCIAL_RUNTIME`：V2 在配置中所列的启用群内拥有决策与交付；由管理员在 AstrBot 原生插件配置中明确选择。
 
-高影响命令必须通过服务端管理员作用域、原因、确认和 Expected Version 校验。Outbox `UNKNOWN` 禁止盲重试。当前候选只有离线证据，生产接管保持 fail closed。
+高影响命令仍必须通过服务端管理员作用域、原因、确认和 Expected Version 校验。Outbox `UNKNOWN` 禁止盲重试，外置插件拥有的请求不会被 Groupmate 抢答。
 
 ## 运维与验收
 

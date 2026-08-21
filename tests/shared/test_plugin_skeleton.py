@@ -33,10 +33,16 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
 
     assert visible == {
         "enabled_groups",
+        "runtime_mode",
         "generation_provider",
         "vision_provider",
         "persona_id",
     }
+    assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
+    assert schema["runtime_mode"]["labels"] == [
+        "SHADOW 观察（不发送）",
+        "正式运行（允许发送）",
+    ]
     assert schema["generation_provider"]["_special"] == "select_provider"
     assert schema["vision_provider"]["_special"] == "select_provider"
     assert schema["persona_id"]["_special"] == "select_persona"
@@ -59,6 +65,20 @@ def test_complete_native_configuration_enters_no_send_shadow_automatically():
     assert settings.vision_provider == "provider:vision"
     assert settings.persona_id == "persona:groupmate"
     assert settings.runtime_mode == "SHADOW"
+
+
+def test_native_production_mode_applies_to_every_enabled_group():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": [" group-1 ", "group-2"],
+            "runtime_mode": "SOCIAL_RUNTIME",
+            "generation_provider": "provider:text",
+            "persona_id": "persona:groupmate",
+        }
+    )
+
+    assert settings.runtime_mode == "SOCIAL_RUNTIME"
+    assert settings.social_runtime_test_groups == ("group-1", "group-2")
 
 
 def test_control_administrators_are_internal_governance_state():

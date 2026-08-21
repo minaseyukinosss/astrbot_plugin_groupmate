@@ -35,17 +35,21 @@ class SocialRuntimeSettings:
         ).strip()
         persona_id = str(source.get("persona_id", "") or "").strip()
         configured = bool(enabled_groups and generation_provider and persona_id)
+        runtime_mode = str(
+            source.get("runtime_mode", "SHADOW" if configured else "OFF") or "OFF"
+        ).upper()
+        explicit_social_runtime_groups = tuple(
+            str(value).strip()
+            for value in source.get("social_runtime_test_groups", ())
+            if str(value).strip()
+        )
+        social_runtime_groups = explicit_social_runtime_groups
+        if runtime_mode == "SOCIAL_RUNTIME" and not social_runtime_groups:
+            social_runtime_groups = enabled_groups
         return cls(
             enabled_groups=enabled_groups,
-            social_runtime_test_groups=tuple(
-                str(value).strip()
-                for value in source.get("social_runtime_test_groups", ())
-                if str(value).strip()
-            ),
-            runtime_mode=str(
-                source.get("runtime_mode", "SHADOW" if configured else "OFF")
-                or "OFF"
-            ).upper(),
+            social_runtime_test_groups=social_runtime_groups,
+            runtime_mode=runtime_mode,
             generation_provider=generation_provider,
             vision_provider=str(source.get("vision_provider", "") or "").strip(),
             persona_id=persona_id,

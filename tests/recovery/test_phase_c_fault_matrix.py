@@ -258,7 +258,7 @@ def test_gate_c_only_promotes_explicit_fake_groups_and_keeps_other_groups_safe(
     schema = json.loads(
         (Path(__file__).parents[2] / "_conf_schema.json").read_text(encoding="utf-8")
     )
-    assert "runtime_mode" not in schema
+    assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
 
     settings = SocialRuntimeSettings.from_mapping(
         {

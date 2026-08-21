@@ -85,7 +85,7 @@ def test_off_mode_does_not_create_database_or_translate_event(tmp_path):
     assert not (tmp_path / "groupmate-social-runtime-v2.db").exists()
 
 
-def test_release_gate_rejects_social_runtime_before_creating_database(tmp_path):
+def test_native_social_runtime_configuration_enables_selected_group(tmp_path):
     async def bridge_scenario():
         bridge = AstrBotSocialRuntimeBridge(
             context=object(),
@@ -93,15 +93,19 @@ def test_release_gate_rejects_social_runtime_before_creating_database(tmp_path):
                 {
                     "runtime_mode": "SOCIAL_RUNTIME",
                     "enabled_groups": ["885617919"],
+                    "generation_provider": "provider:test",
+                    "persona_id": "aemeath",
                 }
             ),
             data_dir=tmp_path,
         )
-        with pytest.raises(RuntimeModeUnavailable, match="only supports SHADOW"):
-            await bridge.start()
+        await bridge.start()
+        mode = bridge.manager.group_mode("885617919")
+        await bridge.close()
+        return mode
 
-    asyncio.run(bridge_scenario())
-    assert not (tmp_path / "groupmate-social-runtime-v2.db").exists()
+    assert asyncio.run(bridge_scenario()) is RuntimeMode.SOCIAL_RUNTIME
+    assert (tmp_path / "groupmate-social-runtime-v2.db").exists()
 
 
 def test_direct_off_manager_construction_is_rejected_without_io(tmp_path):
