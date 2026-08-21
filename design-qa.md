@@ -5,6 +5,8 @@
 - Full-view comparison: `docs/qa/2026-08-21/design-comparison-dark.png`
 - Focused table/inspector comparison: `docs/qa/2026-08-21/design-comparison-focus.png`
 - Narrow-state evidence: `docs/qa/2026-08-21/design-implementation-narrow.png`
+- Supplemental non-text source: `/var/folders/2h/qwsmbj8x7ts6d5hykdppnvvw0000gn/T/codex-clipboard-1e532f57-2d50-4544-a9c7-66133c41159b.png`
+- Supplemental implementation evidence: in-app Browser capture at 1280 × 720 CSS px, image-message inspector open, verified in both dark and light themes.
 - Viewport: 1536 × 1024 CSS px for the reference-aligned dark state; 680 × 900 CSS px for the narrow state.
 - Pixel dimensions: source and desktop implementation are both 1536 × 1024 at device scale factor 1. The combined comparison is 3072 × 1064. No density normalization was required.
 - State: SHADOW enabled, five recent messages, first message inspector open, dark theme.
@@ -22,7 +24,7 @@ The focused comparison shows that the message table and inspector use the same c
 - Fonts and typography: system Chinese UI stack, compact 11–14 px operational text, clear weight hierarchy, two-line truncation for long messages, and tabular timestamps. Passed.
 - Spacing and layout rhythm: sidebar and inspector proportions align with the reference; context cards, table rows, borders, and 6–14 px spacing create the same dense control-center rhythm. Passed.
 - Colors and visual tokens: near-black green-neutral surfaces, low-contrast borders, restrained green/blue/amber/red statuses, and matching light-theme semantic surfaces. Passed.
-- Image quality and assets: supplied Groupmate brand asset is used directly; participant images resolve from the server and fall back to stable initials without broken image elements. No mock asset replaces required product imagery. Passed.
+- Image quality and assets: supplied Groupmate brand asset is used directly; participant images resolve from the server and fall back to stable initials without broken image elements. Incoming image messages now resolve through an opaque, scoped server reference and render as a contained thumbnail in the list and a larger preview in the inspector. Audio, video, file, QQ expression, forward and card segments retain readable typed fallbacks when no safe preview is available. Passed.
 - Copy and content: internal values are translated to clear Chinese; OFF, SHADOW, external handoff, silence, send success, and unknown delivery are unambiguous. Passed.
 
 ## Comparison history
@@ -43,11 +45,17 @@ Fixes:
 
 Post-fix evidence in the desktop and focused comparison shows a stable full-width topbar, unclipped group/persona cards, a reference-proportioned inspector, and readable Chinese state labels. No actionable P0/P1/P2 differences remain. The smaller navigation and reduced dashboard module count are intentional product-scope decisions.
 
+### Pass 3 — non-text message extension passed
+
+The supplemental source exposed two rows collapsed to the generic `[非文本消息]` placeholder. The revised implementation preserves ordered message parts, shows a real image thumbnail in the table, expands the image with name and size in the inspector, and renders compact `语音` / `文件` labels for non-previewable parts. The additional content increases only affected row height and does not change the established table, inspector, typography, token or spacing system. No actionable P0/P1/P2 issue remains.
+
 ## Interactions and runtime checks
 
 - Tested all/external filters: external filter reduced the fixture from five rows to two.
 - Opened a trace and verified the stage inspector.
 - Switched between dark and light themes.
+- Loaded an image message in the list and opened its full inspector preview.
+- Verified typed fallbacks for voice and file message parts.
 - Checked the 680 px message-card layout.
 - Browser console: no warnings or errors.
 

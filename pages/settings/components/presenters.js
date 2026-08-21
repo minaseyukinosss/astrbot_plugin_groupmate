@@ -150,3 +150,22 @@ export function formatTimestamp(value) {
     hour12: false,
   }).format(new Date(timestamp * 1000));
 }
+
+export function messageSummary(message = {}) {
+  const explicit = String(message?.summary || "").trim();
+  if (explicit && explicit !== "[非文本消息]") return explicit;
+  const labels = (Array.isArray(message?.parts) ? message.parts : [])
+    .map((part) => String(part?.kind === "text" ? part?.text : part?.label || "").trim())
+    .filter(Boolean);
+  return labels.join(" · ") || "[非文本消息]";
+}
+
+export function formatBytes(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}

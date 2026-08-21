@@ -58,6 +58,28 @@ console.log(JSON.stringify(values));
     ]
 
 
+def test_media_preview_policy_accepts_only_matching_safe_data_types():
+    body = """
+const values = [
+  module.safeMediaPreview({kind:'image',data_uri:'data:image/png;base64,AAAA'}, 'image'),
+  module.safeMediaPreview({kind:'audio',data_uri:'data:audio/mpeg;base64,AAAA'}, 'audio'),
+  module.safeMediaPreview({kind:'video',data_uri:'data:video/mp4;base64,AAAA'}, 'video'),
+  module.safeMediaPreview({kind:'video',data_uri:'data:image/png;base64,AAAA'}, 'video'),
+  module.safeMediaPreview({kind:'image',data_uri:'data:image/svg+xml;base64,AAAA'}, 'image'),
+];
+console.log(JSON.stringify(values));
+"""
+    result = _run_module(PAGE / "components" / "security.js", body)
+
+    assert result == [
+        "data:image/png;base64,AAAA",
+        "data:audio/mpeg;base64,AAAA",
+        "data:video/mp4;base64,AAAA",
+        None,
+        None,
+    ]
+
+
 def test_frontend_has_no_html_execution_sink_or_protected_runtime_material():
     source = "\n".join(path.read_text(encoding="utf-8") for path in PAGE.rglob("*.js"))
     folded = source.casefold()

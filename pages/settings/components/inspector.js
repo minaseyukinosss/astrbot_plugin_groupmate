@@ -1,5 +1,6 @@
 import { element, textValue } from "./dom.js";
-import { formatTimestamp } from "./presenters.js";
+import { formatTimestamp, messageSummary } from "./presenters.js";
+import { renderMessageContent } from "./message.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
   ["actor", "参与者"],
@@ -77,10 +78,11 @@ export function renderInspector(item) {
       avatar(actor),
       element("div", {}, [
         element("span", { text: actor.display_name || "群成员" }),
-        element("strong", { text: message.summary || "[非文本消息]" }),
+        element("strong", { text: messageSummary(message) }),
         element("time", { text: formatTimestamp(timing.received_at || item?.as_of) }),
       ]),
     ]),
+    section("收到的消息", [renderMessageContent(message)]),
     section("处理路径", [definitionRows([
       ["当前归属", route.label || "等待路由"],
       ["原因", route.reason],

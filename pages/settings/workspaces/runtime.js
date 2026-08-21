@@ -2,6 +2,7 @@ import { governedAction } from "../components/command-dialog.js";
 import { button, element } from "../components/dom.js";
 import { formatTimestamp } from "../components/presenters.js";
 import { controlVersion } from "../components/projection.js";
+import { renderMessageContent } from "../components/message.js";
 
 const FILTERS = Object.freeze([
   ["all", "全部消息"],
@@ -89,7 +90,7 @@ function traceRow(item) {
       participantAvatar(actor),
       element("span", { className: "trace-message-copy" }, [
         element("strong", { text: actor.display_name || "群成员" }),
-        element("small", { className: "two-line", text: summary.message?.summary || "[非文本消息]" }),
+        renderMessageContent(summary.message, { compact: true }),
       ]),
     ]),
     element("td", { attrs: { "data-label": "处理路径" } }, [

@@ -434,6 +434,7 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
             "evaluation",
             "health",
             "avatar",
+            "media",
             "commands",
             "events",
         )

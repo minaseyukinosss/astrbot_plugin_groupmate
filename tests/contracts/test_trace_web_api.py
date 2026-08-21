@@ -108,3 +108,71 @@ def test_bootstrap_reports_configured_runtime_instead_of_historic_projection(tmp
     assert response.body["configured_runtime_mode"] == "SHADOW"
     assert response.body["runtime_ready"] is True
     assert response.body["runtime_blockers"] == []
+
+
+def test_media_endpoint_resolves_only_registered_scoped_preview(tmp_path):
+    path = tmp_path / "runtime.db"
+    repository = MessageTraceRepository(path)
+    event = SocialEventEnvelope.create(
+        event_id="qq:image-1",
+        event_type="platform.message",
+        occurred_at=10,
+        received_at=10,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="42",
+        source_message_id="image-1",
+        correlation_id="qq:image-1",
+        causation_id=None,
+        payload={
+            "text": "",
+            "sender": {"id": "42", "name": "夏夏"},
+            "interaction_owner": "UNKNOWN",
+            "segments": [
+                {
+                    "type": "image",
+                    "data": {"url": "https://multimedia.nt.qq.com.cn/demo.jpg"},
+                }
+            ],
+        },
+    )
+    repository.record_received(event, runtime_mode="SHADOW", now=10)
+
+    async def fetch_media(url, max_bytes):
+        assert url == "https://multimedia.nt.qq.com.cn/demo.jpg"
+        assert max_bytes == 4 * 1024 * 1024
+        return b"\x89PNG\r\n\x1a\npreview", "image/png"
+
+    repository.media.fetcher = fetch_media
+    service = CommandService(
+        path,
+        persona_id="groupmate:default",
+        group_ids=("g-1",),
+        admin_ids=("admin:root",),
+    )
+    api = ControlPlaneWebAPI(
+        queries=ProjectionQueries(path),
+        stream=ProjectionStream(path),
+        command_service_for=lambda _username: service,
+        event_publisher=lambda _event: None,
+        persona_id="groupmate:default",
+        group_ids=("g-1",),
+        admin_ids=("admin:root",),
+        participants=repository.participants,
+        message_media=repository.media,
+        runtime_mode="SHADOW",
+    )
+    traces = asyncio.run(api.handle(_get("/traces")))
+    media_ref = traces.body["items"][0]["summary"]["message"]["parts"][0]["media_ref"]
+
+    preview = asyncio.run(api.handle(_get("/media", media_ref=media_ref)))
+    unknown = asyncio.run(api.handle(_get("/media", media_ref="media:unknown")))
+
+    assert preview.status == 200
+    assert preview.body == {
+        "data_uri": "data:image/png;base64,iVBORw0KGgpwcmV2aWV3",
+        "kind": "image",
+        "mime_type": "image/png",
+        "name": "",
+    }
+    assert unknown.status == 404

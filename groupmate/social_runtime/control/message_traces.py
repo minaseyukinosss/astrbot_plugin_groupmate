@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ...adapters.participants import ParticipantDirectory
+from ...adapters.message_media import MessageMediaDirectory
 from ..contracts import SocialEventEnvelope
 from ..persistence.schema import connect_database, initialize_database
 
@@ -59,6 +60,10 @@ class MessageTraceRepository:
             self.path,
             self.path.parent / "avatars",
         )
+        self.media = MessageMediaDirectory(
+            self.path,
+            self.path.parent / "message-media",
+        )
         self._ensure_tables()
 
     def record_received(
@@ -96,6 +101,7 @@ class MessageTraceRepository:
             if external
             else {"mode": mode, "status": "RECEIVED", "label": "等待处理"}
         )
+        message_parts = self.media.remember(event)
         summary = {
             "actor": {
                 "member_ref": participant["member_ref"],
@@ -103,8 +109,13 @@ class MessageTraceRepository:
                 "avatar_ref": participant["avatar_ref"],
             },
             "message": {
-                "summary": self._message_summary(event.payload.get("text")),
-                "media_types": self._media_types(event.payload.get("media")),
+                "summary": self.media.summary(message_parts),
+                "media_types": [
+                    str(part.get("kind"))
+                    for part in message_parts
+                    if part.get("kind") != "text"
+                ][:8],
+                "parts": message_parts,
             },
             "route": route,
             "understanding": {"status": "PENDING", "summary": "尚未进入理解链路"},

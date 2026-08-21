@@ -30,3 +30,19 @@ export function validateUpload(file) {
   }
   return { accepted: true, reason: null };
 }
+
+const PREVIEW_MIME_PREFIXES = Object.freeze({
+  image: ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,", "data:image/gif;base64,", "data:image/avif;base64,"],
+  audio: ["data:audio/mpeg;base64,", "data:audio/ogg;base64,", "data:audio/wav;base64,", "data:audio/x-wav;base64,", "data:audio/aac;base64,", "data:audio/mp4;base64,", "data:audio/amr;base64,"],
+  video: ["data:video/mp4;base64,", "data:video/webm;base64,", "data:video/quicktime;base64,"],
+});
+
+export function safeMediaPreview(payload, expectedKind) {
+  const kind = String(payload?.kind || "").toLowerCase();
+  const expected = String(expectedKind || "").toLowerCase();
+  const source = String(payload?.data_uri || "");
+  if (!expected || kind !== expected) return null;
+  return (PREVIEW_MIME_PREFIXES[expected] || []).some((prefix) => source.startsWith(prefix))
+    ? source
+    : null;
+}

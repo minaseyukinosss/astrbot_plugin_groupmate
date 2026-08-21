@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
 from .participants import ParticipantDirectory
+from .message_media import MessageMediaDirectory
 from ..social_runtime.control.commands import (
     AdvanceRollout,
     ApproveCalibration,
@@ -81,6 +82,7 @@ class ControlPlaneWebAPI:
         group_ids: tuple[str, ...],
         admin_ids: tuple[str, ...],
         participants: ParticipantDirectory | None = None,
+        message_media: MessageMediaDirectory | None = None,
         runtime_mode: str = "OFF",
         runtime_ready: bool | None = None,
         runtime_blockers: tuple[str, ...] = (),
@@ -98,6 +100,7 @@ class ControlPlaneWebAPI:
             str(value).strip() for value in admin_ids if str(value).strip()
         )
         self.participants = participants
+        self.message_media = message_media
         self.runtime_mode = str(runtime_mode or "OFF").upper()
         self.runtime_ready = (
             self.runtime_mode != "OFF"
@@ -194,6 +197,31 @@ class ControlPlaneWebAPI:
                 return self._error(404, "avatar_not_found")
             except Exception as exc:
                 return self._error(503, "avatar_unavailable", detail=str(exc))
+            return WebResponse(200, body, {"Content-Type": "application/json"})
+
+        if endpoint == "media":
+            if str(request.method).upper() != "GET":
+                return self._error(405, "method_not_allowed")
+            try:
+                persona_id, group_id = self._scope(request)
+                media_ref = str(request.query.get("media_ref") or "").strip()
+                if (
+                    self.message_media is None
+                    or not media_ref.startswith("media:")
+                    or not self.message_media.contains(
+                        media_ref,
+                        persona_id=persona_id,
+                        group_id=group_id,
+                    )
+                ):
+                    raise LookupError("media not found")
+                body = await self.message_media.media_data(media_ref)
+            except LookupError:
+                return self._error(404, "media_not_found")
+            except (TypeError, ValueError) as exc:
+                return self._error(415, "media_preview_rejected", detail=str(exc))
+            except Exception as exc:
+                return self._error(503, "media_unavailable", detail=str(exc))
             return WebResponse(200, body, {"Content-Type": "application/json"})
 
         if endpoint == "commands":
@@ -456,7 +484,7 @@ class AstrBotControlPlaneRoutes:
     """Registers official AstrBot plugin routes without leaking its web framework."""
 
     PLUGIN_NAME = "astrbot_plugin_groupmate"
-    ENDPOINTS = ControlPlaneWebAPI.QUERY_ENDPOINTS + ("avatar", "commands", "events")
+    ENDPOINTS = ControlPlaneWebAPI.QUERY_ENDPOINTS + ("avatar", "media", "commands", "events")
 
     def __init__(self, context: object, *, api_factory: Callable[[], object]) -> None:
         self.context = context
@@ -493,6 +521,7 @@ class AstrBotControlPlaneRoutes:
                 "group_id": request.query.get("group_id"),
                 "entity_ref": request.query.get("entity_ref"),
                 "avatar_ref": request.query.get("avatar_ref"),
+                "media_ref": request.query.get("media_ref"),
             }
             response = await api.handle(
                 WebRequest(

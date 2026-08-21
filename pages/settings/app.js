@@ -4,6 +4,7 @@ import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
 import { ProjectionStore } from "./store.js";
 import { renderRuntime } from "./workspaces/runtime.js";
+import { safeMediaPreview } from "./components/security.js";
 
 const bridge = new ApiBridge();
 const store = new ProjectionStore();
@@ -12,6 +13,8 @@ let locale = "zh-CN";
 let activeRoute = router.current();
 const avatarCache = new Map();
 const avatarRequests = new Map();
+const mediaCache = new Map();
+const mediaRequests = new Map();
 
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
@@ -80,6 +83,7 @@ function renderWorkspace(route = activeRoute) {
     submitWorkspaceCommand,
   ));
   hydrateAvatars(elements.workspace);
+  hydrateMedia(elements.workspace);
 }
 
 async function avatarSource(avatarRef) {
@@ -115,6 +119,65 @@ function hydrateAvatars(root) {
     image.decoding = "async";
     node.replaceChildren(image);
     node.dataset.avatarLoaded = "true";
+  });
+}
+
+async function mediaSource(mediaRef, mediaKind) {
+  const ref = String(mediaRef || "");
+  const kind = String(mediaKind || "").toLowerCase();
+  const key = `${ref}:${kind}`;
+  if (!ref.startsWith("media:") || !["image", "audio", "video"].includes(kind)) return null;
+  if (mediaCache.has(key)) return mediaCache.get(key);
+  if (mediaRequests.has(key)) return mediaRequests.get(key);
+  const pending = bridge.query("media", { ...scopeParams(), media_ref: ref })
+    .then((result) => {
+      const source = safeMediaPreview(result, kind);
+      mediaCache.set(key, source);
+      mediaRequests.delete(key);
+      return source;
+    })
+    .catch(() => {
+      mediaCache.set(key, null);
+      mediaRequests.delete(key);
+      return null;
+    });
+  mediaRequests.set(key, pending);
+  return pending;
+}
+
+function mediaElement(kind, source, label) {
+  if (kind === "image") {
+    const image = document.createElement("img");
+    image.src = source;
+    image.alt = label;
+    image.decoding = "async";
+    image.loading = "lazy";
+    return image;
+  }
+  const media = document.createElement(kind);
+  media.src = source;
+  media.controls = true;
+  media.preload = kind === "video" ? "metadata" : "none";
+  media.setAttribute("aria-label", label);
+  return media;
+}
+
+function hydrateMedia(root) {
+  root.querySelectorAll("[data-media-ref]").forEach(async (node) => {
+    if (node.dataset.mediaLoaded === "true" || node.dataset.mediaLoading === "true") return;
+    node.dataset.mediaLoading = "true";
+    const kind = String(node.dataset.mediaKind || "").toLowerCase();
+    const source = await mediaSource(node.dataset.mediaRef, kind);
+    delete node.dataset.mediaLoading;
+    if (!source || !node.isConnected) {
+      node.dataset.mediaLoaded = "true";
+      node.classList.add("is-unavailable");
+      return;
+    }
+    const label = node.querySelector(".message-part-label")?.textContent || "媒体内容";
+    node.prepend(mediaElement(kind, source, label));
+    node.dataset.mediaLoaded = "true";
+    node.classList.add("is-loaded");
   });
 }
 
@@ -181,6 +244,7 @@ async function openInspector(projection, entityRef) {
     const item = (view.items || []).find((candidate) => candidate.entity_ref === entityRef);
     elements.inspectorContent.append(renderInspector(item || { entity_ref: entityRef }));
     hydrateAvatars(elements.inspectorContent);
+    hydrateMedia(elements.inspectorContent);
   } catch (error) {
     elements.inspectorContent.textContent = ApiBridge.describeError(error).impact;
   }

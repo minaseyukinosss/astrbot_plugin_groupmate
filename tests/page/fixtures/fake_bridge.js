@@ -20,7 +20,11 @@
     evidence_refs: [],
     summary: {
       actor: actor(options.name, id),
-      message: { summary: options.message, media_types: options.media || [] },
+      message: {
+        summary: options.message,
+        media_types: options.media || [],
+        parts: options.parts || [{ kind: "text", text: options.message }],
+      },
       route: {
         owner: options.owner || "GROUPMATE",
         label: options.route,
@@ -55,6 +59,36 @@
       evidence_refs: [],
     }],
     traces: [
+      trace("media-image", 4, {
+        name: "大大方方",
+        message: "图片",
+        media: ["image"],
+        parts: [{
+          kind: "image",
+          label: "图片",
+          name: "群聊图片",
+          size: 184320,
+          preview: "image",
+          media_ref: "media:fixture-image",
+        }],
+        route: "进入 Groupmate",
+        status: "RECEIVED",
+        result: "等待处理",
+        stages: ["NapCat 消息已到达 AstrBot", "AstrBot 已路由至 Groupmate"],
+      }),
+      trace("media-audio", 8, {
+        name: "大大方方",
+        message: "语音 · 文件",
+        media: ["record", "file"],
+        parts: [
+          { kind: "record", label: "语音", size: 35840 },
+          { kind: "file", label: "文件", name: "发布清单.pdf", size: 245760 },
+        ],
+        route: "进入 Groupmate",
+        status: "RECEIVED",
+        result: "等待处理",
+        stages: ["NapCat 消息已到达 AstrBot", "AstrBot 已路由至 Groupmate"],
+      }),
       trace("a1", 12, {
         name: "阿杰",
         message: "产品今晚能上线吗？如果有风险也一起说下。",
@@ -147,6 +181,20 @@
   });
 
   window.__fakeCommands = [];
+  let fixtureImagePromise;
+  const fixtureImageData = async () => {
+    if (!fixtureImagePromise) {
+      fixtureImagePromise = fetch("/pages/settings/assets/groupmate-bot.png")
+        .then((response) => response.blob())
+        .then((blob) => new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        }));
+    }
+    return fixtureImagePromise;
+  };
   window.AstrBotPluginPage = {
     ready: async () => ({ locale: "zh-CN", theme: "dark" }),
     apiGet: async (endpoint, params = {}) => {
@@ -163,6 +211,15 @@
         };
       }
       if (endpoint === "avatar") throw new Error("preview uses initials fallback");
+      if (endpoint === "media" && params.media_ref === "media:fixture-image") {
+        return {
+          data_uri: await fixtureImageData(),
+          kind: "image",
+          mime_type: "image/png",
+          name: "群聊图片",
+        };
+      }
+      if (endpoint === "media") throw new Error("preview unavailable");
       const value = response(endpoint);
       if (!params.entity_ref) return value;
       return { ...value, items: value.items.filter((item) => item.entity_ref === params.entity_ref) };

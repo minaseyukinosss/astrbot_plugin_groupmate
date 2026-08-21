@@ -65,6 +65,7 @@ class GroupmatePlugin(Star):
                 group_ids=self.settings.enabled_groups,
                 admin_ids=self.settings.control_admin_ids,
                 participants=self.bridge.trace_repository.participants,
+                message_media=self.bridge.trace_repository.media,
                 runtime_mode=self.settings.runtime_mode,
                 runtime_ready=(
                     self.settings.runtime_mode != "OFF"

@@ -68,3 +68,32 @@ def test_runtime_is_the_single_message_trace_product_view():
         assert label in runtime
     assert not (PAGE / "workspaces" / "activity.js").exists()
     assert "projectionList(runtime)" not in runtime
+
+
+def test_message_presenter_uses_non_text_parts_instead_of_generic_placeholder():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "onlyMedia: presenter.messageSummary({summary:'',parts:["
+        "{kind:'image',label:'图片'},{kind:'record',label:'语音'}]}),"
+        "mixed: presenter.messageSummary({summary:'看看 · 图片',parts:["
+        "{kind:'text',text:'看看'},{kind:'image',label:'图片'}]})"
+        "}));"
+    )
+
+    assert result == {
+        "onlyMedia": "图片 · 语音",
+        "mixed": "看看 · 图片",
+    }
+
+
+def test_message_presenter_formats_media_sizes_for_people():
+    result = _run_presenter(
+        "console.log(JSON.stringify(["
+        "presenter.formatBytes(800),"
+        "presenter.formatBytes(2048),"
+        "presenter.formatBytes(1572864),"
+        "presenter.formatBytes(null)"
+        "]));"
+    )
+
+    assert result == ["800 B", "2 KB", "1.5 MB", ""]

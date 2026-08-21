@@ -134,3 +134,74 @@ def test_query_orders_newest_message_first(tmp_path):
 
     items = repo.query(persona_id="groupmate:default", group_id="g-1")["items"]
     assert [item["summary"]["timing"]["received_at"] for item in items] == [20, 10]
+
+
+def test_non_text_segments_keep_order_without_exposing_platform_sources(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = SocialEventEnvelope.create(
+        event_id="qq:media-1",
+        event_type="platform.message",
+        occurred_at=10,
+        received_at=10,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="42",
+        source_message_id="media-1",
+        correlation_id="qq:media-1",
+        causation_id=None,
+        payload={
+            "text": "看看",
+            "sender": {"id": "42", "name": "夏夏"},
+            "interaction_owner": "UNKNOWN",
+            "segments": [
+                {"type": "text", "data": {"text": "看看"}},
+                {
+                    "type": "image",
+                    "data": {
+                        "url": "https://multimedia.nt.qq.com.cn/demo.jpg",
+                        "summary": "猫猫照片",
+                        "file_size": 2048,
+                    },
+                },
+                {"type": "record", "data": {"file": "voice.amr", "file_size": 4096}},
+                {"type": "video", "data": {"url": "https://example.com/demo.mp4"}},
+                {"type": "file", "data": {"file": "发布清单.pdf", "file_size": 8192}},
+                {"type": "face", "data": {"id": "14"}},
+            ],
+            "media": [
+                {"type": "image", "url": "https://multimedia.nt.qq.com.cn/demo.jpg"},
+                {"type": "record", "file": "voice.amr"},
+                {"type": "video", "url": "https://example.com/demo.mp4"},
+                {"type": "file", "file": "发布清单.pdf"},
+            ],
+        },
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+
+    message = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["message"]
+    assert message["summary"] == "看看 · 图片 · 语音 · 视频 · 文件 · QQ 表情"
+    assert [part["kind"] for part in message["parts"]] == [
+        "text",
+        "image",
+        "record",
+        "video",
+        "file",
+        "face",
+    ]
+    assert message["parts"][1] == {
+        "kind": "image",
+        "label": "图片",
+        "media_ref": message["parts"][1]["media_ref"],
+        "name": "猫猫照片",
+        "size": 2048,
+        "preview": "image",
+    }
+    assert message["parts"][4]["name"] == "发布清单.pdf"
+    public_text = str(message)
+    assert "multimedia.nt.qq.com.cn" not in public_text
+    assert "example.com" not in public_text
+    assert "voice.amr" not in public_text
+    assert '"14"' not in public_text
