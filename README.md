@@ -4,7 +4,7 @@ Groupmate v2 是 clean-slate 的持久群聊社会运行时。事实事件进入
 
 ## 配置与数据
 
-普通安装配置只包含启用群、运行模式、Groupmate 独立文本模型和可选视觉模型。模型使用 AstrBot 原生 Provider 选择器；Bot 身份从消息事件的 `self_id` 自动取得。Groupmate 不复用 AstrBot 普通会话 Persona，而是在插件“人格工作室”中维护自己的身份、在场状态、参与方式、表达、社交印象、媒体和工具边界。管理员授权、外置插件兼容规则和 Worker 并发属于内部治理状态，不在首次安装配置中展示。
+普通安装配置只包含启用群、运行模式、Groupmate 独立文本模型和可选视觉模型。模型使用 AstrBot 原生 Provider 选择器；Bot 身份从消息事件的 `self_id` 自动取得。Groupmate 不复用 AstrBot 普通会话 Persona，而是使用自己独立、版本化的群聊人格配置。插件页面现阶段只保留“运行中心”，用于查看 NapCat → AstrBot → Groupmate 的逐消息链路、SHADOW 判断、外部插件移交和最终发送结果；人格编辑等尚未完成的页面不对外展示。
 
 权威 V2 数据库固定为：
 

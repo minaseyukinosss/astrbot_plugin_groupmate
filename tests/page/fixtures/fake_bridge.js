@@ -1,5 +1,6 @@
 (() => {
   const now = 1787126400;
+  const previewMode = new URLSearchParams(window.location.search).get("mode") === "OFF" ? "OFF" : "SHADOW";
   const actor = (name, id) => ({
     member_ref: `member:${id}`,
     display_name: name,
@@ -50,7 +51,7 @@
       kind: "runtime.mode",
       projection_version: 3,
       as_of: now,
-      summary: { runtime_mode: "SHADOW", paused: false },
+      summary: { runtime_mode: previewMode, paused: false },
       evidence_refs: [],
     }],
     traces: [
@@ -155,9 +156,9 @@
           persona_id: "groupmate:default",
           available_groups: ["72819823"],
           selected_group_id: "72819823",
-          configured_runtime_mode: "SHADOW",
-          runtime_ready: true,
-          runtime_blockers: [],
+          configured_runtime_mode: previewMode,
+          runtime_ready: previewMode !== "OFF",
+          runtime_blockers: previewMode === "OFF" ? ["运行模式为 OFF"] : [],
           items: Object.keys(views).map((projection) => response(projection)),
         };
       }
