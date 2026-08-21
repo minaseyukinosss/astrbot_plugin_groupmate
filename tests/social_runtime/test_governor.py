@@ -82,15 +82,15 @@ def test_hard_constraints_override_arbitrarily_high_utility(context, candidate, 
     assert result.rejected[0].reason_codes == (reason,)
 
 
-def test_compatible_care_and_help_combine_for_same_target_and_topic():
+def test_governor_selects_only_one_primary_intention():
     care = _candidate("care", kind="CARE", positive=2)
     help_intention = _candidate("help", kind="HELP", positive=3)
 
     result = SocialGovernor().decide((care, help_intention), _context())
 
     assert result.outcome == "ACT"
-    assert result.selected_intention_ids == ("help", "care")
-    assert result.rejected == ()
+    assert result.selected_intention_ids == ("help",)
+    assert result.rejected[0].intention_id == "care"
 
 
 def test_low_value_open_participation_returns_silence():

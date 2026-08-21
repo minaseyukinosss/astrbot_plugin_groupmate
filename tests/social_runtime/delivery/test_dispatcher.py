@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from groupmate.adapters.onebot_delivery import OneBotDeliveryAdapter
+from groupmate.adapters.astrbot_delivery import AstrBotOneBotSender
 from groupmate.social_runtime.actions.contracts import (
     DeliveryBundle,
     DeliveryPart,
@@ -114,4 +115,49 @@ def test_onebot_adapter_translates_structured_part_without_free_text_parsing():
             [{"type": "at", "data": {"qq": "user-8"}}],
             "delivery-key-1",
         )
+    ]
+
+
+def test_astrbot_sender_uses_the_selected_platform_instance():
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def send_group_msg(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"message_id": 77}
+
+    class Platform:
+        def __init__(self, client):
+            self.client = client
+
+        def get_client(self):
+            return self.client
+
+    class Context:
+        def __init__(self):
+            self.client = Client()
+
+        def get_platform_inst(self, platform_id):
+            assert platform_id == "onebot-main"
+            return Platform(self.client)
+
+    context = Context()
+    result = asyncio.run(
+        AstrBotOneBotSender(context)(
+            group_id="885617919",
+            segments=[{"type": "text", "data": {"text": "在"}}],
+            idempotency_key="reply:1",
+            platform_id="onebot-main",
+            self_id="bot-1",
+        )
+    )
+
+    assert result == {"message_id": 77}
+    assert context.client.calls == [
+        {
+            "group_id": 885617919,
+            "message": [{"type": "text", "data": {"text": "在"}}],
+            "self_id": "bot-1",
+        }
     ]

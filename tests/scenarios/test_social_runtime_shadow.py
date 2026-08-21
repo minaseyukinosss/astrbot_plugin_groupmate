@@ -66,6 +66,27 @@ class CountingFixedWorker(FixedWorker):
         return await super().observe(frame, context)
 
 
+class ParticipationWorker:
+    name = "participation_assessor"
+
+    def __init__(self, decision):
+        self.decision = decision
+
+    async def observe(self, frame, context):
+        return (
+            CognitiveObservation.create(
+                worker=self.name,
+                kind="participation_assessment",
+                proposition={"decision": self.decision},
+                confidence=0.95,
+                evidence_event_ids=(frame.focus_event_ids[0],),
+                scene_version=context.scene_version,
+                expires_at=context.now + 30,
+                uncertainty=(),
+            ),
+        )
+
+
 def _event(
     message_id: str,
     *,
@@ -189,12 +210,16 @@ def test_direct_social_scenarios_are_governed_in_shadow(
 def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     async def scenario():
         worker = FixedWorker("scene_interpreter", "help_request")
+        participation = ParticipationWorker("speak")
         manager = SocialRuntimeManager(
             database_path=tmp_path / "groupmate-social-runtime-v2.db",
             persona_id="aemeath",
             mode=RuntimeMode.SHADOW,
             enabled_groups=("885617919",),
-            cognition_workers={worker.name: worker},
+            cognition_workers={
+                worker.name: worker,
+                participation.name: participation,
+            },
         )
         await manager.start()
         await manager.ingest(
@@ -215,6 +240,33 @@ def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     assert after_quiet[0].frame.trigger_kind == "AMBIENT"
     assert set(after_quiet[0].frame.focus_topic_ids) == {"topic-a", "topic-b"}
     assert after_quiet[0].governor_result.outcome == "ACT"
+
+
+def test_ambient_chat_requires_explicit_high_confidence_participation(tmp_path):
+    async def scenario():
+        scene = FixedWorker("scene_interpreter", "help_request")
+        participation = ParticipationWorker("silence")
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={
+                scene.name: scene,
+                participation.name: participation,
+            },
+        )
+        await manager.start()
+        await manager.ingest(_event("ambient-gated", direct=False, occurred_at=100))
+        evaluations = await manager.drain(now=102)
+        await manager.close()
+        return evaluations
+
+    evaluations = asyncio.run(scenario())
+
+    assert len(evaluations) == 1
+    assert evaluations[0].governor_result.outcome == "OBSERVE"
+    assert evaluations[0].governor_result.reason_codes == ("forced_observe",)
 
 
 @pytest.mark.parametrize(

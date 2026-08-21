@@ -72,3 +72,29 @@ def test_degraded_blackboard_only_proposes_observe_intention():
 
     assert [candidate.kind for candidate in candidates] == ["OBSERVE"]
     assert candidates[0].proposed_act == "observe_without_action"
+
+
+def test_participation_assessment_can_veto_an_actionable_signal():
+    blackboard = BlackboardSnapshot(
+        frame_id="attention:1",
+        scene_version=3,
+        cost_level=1,
+        entries=(
+            _entry("humor_signal", {"subject_id": "u1", "topic_id": "m1"}),
+            _entry(
+                "participation_assessment",
+                {
+                    "should_participate": False,
+                    "target_confidence": 0.9,
+                    "topic_confidence": 0.9,
+                    "disruption_cost": 0.8,
+                },
+            ),
+        ),
+        conflict_count=0,
+        degraded=False,
+        recommended_outcome=None,
+        diagnostics=(),
+    )
+
+    assert IntentionEngine().propose(blackboard, now=100) == ()

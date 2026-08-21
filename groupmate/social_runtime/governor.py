@@ -126,11 +126,7 @@ class SocialGovernor:
                 constraints,
             )
 
-        selected = [top]
         for candidate in ranked[1:]:
-            if self._compatible(top, candidate):
-                selected.append(candidate)
-                continue
             reason = (
                 "different_target"
                 if candidate.target_id != top.target_id
@@ -141,7 +137,7 @@ class SocialGovernor:
             rejected.append(RejectedIntention(candidate.intention_id, (reason,)))
         return GovernorResult(
             "ACT",
-            tuple(item.intention_id for item in selected),
+            (top.intention_id,),
             tuple(rejected),
             ("selected_by_social_utility",),
             None,

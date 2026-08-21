@@ -41,6 +41,8 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "runtime_mode",
         "generation_provider",
         "vision_provider",
+        "external_command_prefixes",
+        "external_link_domains",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
@@ -98,7 +100,7 @@ def test_control_administrators_are_internal_governance_state():
     assert "EventMessageType.GROUP_MESSAGE, priority=-100" in composition
 
 
-def test_external_trigger_rules_are_not_first_run_configuration():
+def test_external_trigger_rules_are_native_deployment_configuration():
     settings = SocialRuntimeSettings.from_mapping(
         {
             "external_command_prefixes": [" xw=astrbot.waves ", ""],
@@ -116,8 +118,8 @@ def test_external_trigger_rules_are_not_first_run_configuration():
 
     root = Path(__file__).parents[2]
     schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
-    assert "external_command_prefixes" not in schema
-    assert "external_link_domains" not in schema
+    assert schema["external_command_prefixes"]["type"] == "list"
+    assert schema["external_link_domains"]["type"] == "list"
 
 
 def test_off_bridge_starts_and_stops_without_creating_runtime_data(tmp_path: Path):

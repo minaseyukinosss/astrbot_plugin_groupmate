@@ -39,10 +39,18 @@ class OneBotDeliveryAdapter:
             raise ValueError("OneBot adapter accepts only sending Outbox parts")
         occurred_at = int(self._clock())
         try:
+            route = {}
+            platform_id = str(part.part.payload.get("platform_id") or "").strip()
+            self_id = str(part.part.payload.get("self_id") or "").strip()
+            if platform_id:
+                route["platform_id"] = platform_id
+            if self_id:
+                route["self_id"] = self_id
             response = await self._send_group_message(
                 group_id=part.group_id,
                 segments=[self._segment(part)],
                 idempotency_key=part.idempotency_key,
+                **route,
             )
         except RetryableOneBotError as exc:
             return self._failure(

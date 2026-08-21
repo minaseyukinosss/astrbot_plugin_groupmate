@@ -398,7 +398,7 @@ class OutboxService:
             )
         if self._bundle_authorizer is not None and not self._bundle_authorizer(bundle):
             raise OutboxAuthorizationError(
-                "DeliveryBundle requires a matching validated ActionPlan"
+                "DeliveryBundle requires a matching validated action or reply plan"
             )
 
     def _is_authorized(self, bundle: DeliveryBundle) -> bool:

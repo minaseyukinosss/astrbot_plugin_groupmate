@@ -14,8 +14,13 @@ from ..social_runtime.control.config_versions import ConfigVersionRepository
 from ..social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
+from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
+from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
+from ..social_runtime.actions.contracts import OutboxStatus
+from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
+from .onebot_delivery import OneBotDeliveryAdapter
 
 
 class AstrBotSocialRuntimeBridge:
@@ -44,6 +49,11 @@ class AstrBotSocialRuntimeBridge:
         self.shadow_review_error: str | None = None
         self.attention_wakeup_error: str | None = None
         self.cognition_diagnostics: list[str] = []
+        self.reply_error: str | None = None
+        self._reply_planner = ReplyPlanner()
+        self._reply_executor: ReplyExecutor | None = None
+        self._dispatcher: DeliveryDispatcher | None = None
+        self._reply_lock = asyncio.Lock()
         self._attention_changed = asyncio.Event()
         self._attention_task: asyncio.Task[None] | None = None
         self._started = False
@@ -97,6 +107,18 @@ class AstrBotSocialRuntimeBridge:
                 clock=self.clock,
             )
             await self._manager.start()
+            self._reply_executor = ReplyExecutor(
+                self._manager.reply_plans,
+                self._manager.outbox,
+                model,
+            )
+            self._dispatcher = DeliveryDispatcher(
+                self._manager.outbox,
+                OneBotDeliveryAdapter(
+                    AstrBotOneBotSender(self.context), clock=self.clock
+                ),
+                receipt_handler=self._manager.coordinator.apply_delivery_receipt,
+            )
             self._attention_task = asyncio.create_task(
                 self._attention_wakeup_loop(self._manager),
                 name=f"groupmate-attention:{self.settings.persona_id}",
@@ -111,7 +133,8 @@ class AstrBotSocialRuntimeBridge:
             return None
         result = await self._manager.ingest(self.translator.translate(event))
         if result is not None and result.inserted:
-            await self._manager.drain()
+            evaluations = await self._manager.drain()
+            await self._handle_evaluations(evaluations)
             self._attention_changed.set()
         self._reconcile_shadow_reviews()
         return result
@@ -132,7 +155,8 @@ class AstrBotSocialRuntimeBridge:
                         self._attention_changed.wait(), timeout=delay
                     )
                 except TimeoutError:
-                    await manager.drain(now=deadline)
+                    evaluations = await manager.drain(now=deadline)
+                    await self._handle_evaluations(evaluations)
                     self._reconcile_shadow_reviews()
                 self.attention_wakeup_error = None
             except asyncio.CancelledError:
@@ -140,6 +164,69 @@ class AstrBotSocialRuntimeBridge:
             except Exception as exc:
                 self.attention_wakeup_error = f"{type(exc).__name__}: {exc}"
                 await self._attention_changed.wait()
+
+    async def _handle_evaluations(self, evaluations: tuple[object, ...]) -> None:
+        if self._manager is None:
+            return
+        async with self._reply_lock:
+            handled_groups: set[str] = set()
+            ordered = sorted(
+                evaluations,
+                key=lambda item: (
+                    0
+                    if getattr(getattr(item, "frame", None), "trigger_kind", "")
+                    == "FAST"
+                    else 1
+                ),
+            )
+            for evaluation in ordered:
+                group_id = str(
+                    getattr(getattr(evaluation, "source_event", None), "group_id", "")
+                    or ""
+                )
+                if not group_id or group_id in handled_groups:
+                    continue
+                plan = self._reply_planner.plan(
+                    evaluation, now=int(self.clock())
+                )
+                if plan is None:
+                    continue
+                handled_groups.add(group_id)
+                try:
+                    if self._manager.group_mode(group_id) is RuntimeMode.SHADOW:
+                        self._manager.reply_plans.save(plan)
+                        continue
+                    if self._reply_executor is None:
+                        raise RuntimeError("reply executor is unavailable")
+                    await self._reply_executor.execute(
+                        plan,
+                        context_events=tuple(
+                            getattr(evaluation, "context_events", ())
+                        ),
+                        persona_profile={"persona_id": self.settings.persona_id},
+                        recent_outputs=(),
+                    )
+                    await self._dispatch_ready()
+                    self.reply_error = None
+                except Exception as exc:
+                    self.reply_error = f"{type(exc).__name__}: {exc}"
+
+    async def _dispatch_ready(self) -> None:
+        if self._manager is None or self._dispatcher is None:
+            return
+        while True:
+            part = await self._dispatcher.dispatch_next(now=int(self.clock()))
+            if part is None:
+                return
+            try:
+                plan = self._manager.reply_plans.by_correlation(
+                    part.correlation_id
+                )
+                status = "sent" if part.status is OutboxStatus.SENT else part.status.value
+                self._manager.reply_plans.mark(plan.plan_id, status)
+            except LookupError:
+                pass
+            await self._manager.drain()
 
     def _reconcile_shadow_reviews(self) -> None:
         if self._manager is None or self.shadow_reviews is None:
@@ -174,4 +261,6 @@ class AstrBotSocialRuntimeBridge:
         if self._manager is not None:
             await self._manager.close()
             self._manager = None
+        self._reply_executor = None
+        self._dispatcher = None
         self._started = False

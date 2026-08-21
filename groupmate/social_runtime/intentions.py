@@ -86,6 +86,50 @@ class IntentionEngine:
                 ),
             )
 
+        assessment = next(
+            (
+                entry
+                for entry in reversed(blackboard.entries)
+                if entry.observation.kind == "participation_assessment"
+            ),
+            None,
+        )
+        assessment_features: dict[str, float] = {}
+        if assessment is not None:
+            proposition = assessment.observation.proposition
+            decision = str(proposition.get("decision") or "").lower()
+            should_participate = proposition.get("should_participate")
+            if should_participate is None:
+                should_participate = decision == "speak"
+            target_confidence = self._bounded(
+                proposition.get(
+                    "target_confidence", assessment.observation.confidence
+                )
+            )
+            topic_confidence = self._bounded(
+                proposition.get(
+                    "topic_confidence", assessment.observation.confidence
+                )
+            )
+            if (
+                assessment.conflict
+                or should_participate is not True
+                or target_confidence < 0.75
+                or topic_confidence < 0.75
+            ):
+                return ()
+            assessment_features = {
+                "disruption_cost": self._bounded(
+                    proposition.get("disruption_cost", 0.0)
+                ),
+                "novelty": self._bounded(proposition.get("novelty", 0.0)),
+                "repetition_cost": self._bounded(
+                    proposition.get("repetition_cost", 0.0)
+                ),
+                "uncertainty_cost": 1.0
+                - min(target_confidence, topic_confidence),
+            }
+
         candidates = []
         for entry in blackboard.entries:
             mapping = _OBSERVATION_MAP.get(entry.observation.kind)
@@ -94,6 +138,8 @@ class IntentionEngine:
             kind, proposed_act = mapping
             proposition = entry.observation.proposition
             confidence = entry.observation.confidence
+            features = self._features(kind, confidence, entry)
+            features.update(assessment_features)
             candidates.append(
                 self._candidate(
                     kind=kind,
@@ -102,7 +148,7 @@ class IntentionEngine:
                     evidence=entry.observation.evidence_event_ids,
                     proposed_act=proposed_act,
                     expires_at=entry.observation.expires_at,
-                    features=self._features(kind, confidence, entry),
+                    features=features,
                 )
             )
         return tuple(sorted(candidates, key=lambda item: item.intention_id))
@@ -175,6 +221,13 @@ class IntentionEngine:
     def _optional_text(value: object) -> str | None:
         text = str(value or "").strip()
         return text or None
+
+    @staticmethod
+    def _bounded(value: object) -> float:
+        try:
+            return min(1.0, max(0.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.0
 
 
 __all__ = ("CandidateIntention", "IntentionEngine", "PersonaGoal", "STABLE_GOALS")

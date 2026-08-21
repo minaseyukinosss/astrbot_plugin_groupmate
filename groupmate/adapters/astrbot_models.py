@@ -29,6 +29,7 @@ class AstrBotModelPort:
                 "schema 的 JSON，不输出推理过程、Markdown 或额外说明。"
             ),
             prompt=prompt,
+            temperature=0.1,
         )
         return json.loads(self._response_text(response))
 
@@ -37,6 +38,7 @@ class AstrBotModelPort:
             chat_provider_id=self.provider_id,
             system_prompt=str(system_prompt),
             prompt=str(prompt),
+            temperature=0.7,
         )
         return self._response_text(response)
 

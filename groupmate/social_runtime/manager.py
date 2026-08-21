@@ -31,6 +31,7 @@ from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
 from .persona.profile import GroupmatePersonaProfile
+from .replying import ReplyPlanRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import GroupSceneActor, SceneWorkRequest, SceneWorkResult
 from .supervisor import PersonaSupervisor
@@ -243,6 +244,7 @@ class SocialRuntimeManager:
         self._governance_state = governance_state or RuntimeGovernanceState()
         self.fabric = SocialEventFabric(self._new_actor, self.event_store)
         self.task_runtime = TaskRuntime(database_path)
+        self.reply_plans = ReplyPlanRepository(database_path)
         self.outbox = OutboxService(
             database_path,
             group_authorizer=lambda group_id: self.group_mode(group_id)
@@ -451,6 +453,8 @@ class SocialRuntimeManager:
         return self.coordinator.submit(plan, validation, now=now)
 
     def _bundle_has_matching_plan(self, bundle: DeliveryBundle) -> bool:
+        if self.reply_plans.authorizes_bundle(bundle):
+            return True
         if not hasattr(self, "coordinator"):
             return False
         with closing(connect_database(self.outbox.path)) as db:
@@ -574,7 +578,10 @@ class SocialRuntimeManager:
                 ),
                 platform_available=request.governance_snapshot.platform_available,
                 capability_allowed=request.governance_snapshot.capability_allowed,
-                force_observe=blackboard.degraded,
+                force_observe=(
+                    blackboard.degraded
+                    or not self._participation_allows(frame, blackboard)
+                ),
                 rate_limited_until=request.governance_snapshot.rate_limited_until,
                 minimum_utility=request.governance_snapshot.minimum_utility,
             ),
@@ -622,6 +629,22 @@ class SocialRuntimeManager:
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
+
+    @staticmethod
+    def _participation_allows(frame: AttentionFrame, blackboard: object) -> bool:
+        if frame.trigger_kind != "AMBIENT":
+            return True
+        for entry in getattr(blackboard, "entries", ()):
+            observation = entry.observation
+            if (
+                observation.kind == "participation_assessment"
+                and not entry.conflict
+                and observation.confidence >= 0.75
+                and str(observation.proposition.get("decision") or "").lower()
+                == "speak"
+            ):
+                return True
+        return False
 
     def _load_persona_profile(self, group_id: str) -> _PersonaProfileSnapshot:
         if self._persona_profile_loader is None:

@@ -154,8 +154,6 @@ class CognitionService:
                 selected.append((worker, 1))
             else:
                 missing_workers.append(name)
-            if cost_level == 1 and selected:
-                break
         if cost_level >= 3 and self.critic_worker is not None:
             selected.append((self.critic_worker, 2))
 

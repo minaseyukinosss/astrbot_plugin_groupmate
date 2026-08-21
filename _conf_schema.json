@@ -26,5 +26,17 @@
     "_special": "select_provider",
     "default": "",
     "hint": "不需要理解图片时可以留空。"
+  },
+  "external_command_prefixes": {
+    "description": "外部插件指令归属",
+    "type": "list",
+    "default": [],
+    "hint": "每行填写 指令前缀=插件标识，例如 bq=astrbot.meme。匹配后 Groupmate 只观察，不抢答。"
+  },
+  "external_link_domains": {
+    "description": "外部插件链接归属",
+    "type": "list",
+    "default": [],
+    "hint": "每行填写 域名=插件标识，例如 v.douyin.com=astrbot.video。匹配后交给对应插件处理。"
   }
 }
