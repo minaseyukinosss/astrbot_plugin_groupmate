@@ -91,6 +91,11 @@ class _FlushAttentionCommand:
 
 
 @dataclass(frozen=True)
+class _AttentionDeadlineCommand:
+    future: asyncio.Future[int | None]
+
+
+@dataclass(frozen=True)
 class _DiscardCommand:
     request_id: str
     reason_code: str
@@ -108,6 +113,7 @@ _Command = Union[
     _SnapshotCommand,
     _AcceptCommand,
     _FlushAttentionCommand,
+    _AttentionDeadlineCommand,
     _DiscardCommand,
     _StopCommand,
 ]
@@ -239,6 +245,12 @@ class GroupSceneActor:
         await self._mailbox.put(_FlushAttentionCommand(int(now), future))
         return await future
 
+    async def pending_attention_deadline(self) -> int | None:
+        self._ensure_running()
+        future = asyncio.get_running_loop().create_future()
+        await self._mailbox.put(_AttentionDeadlineCommand(future))
+        return await future
+
     async def discard_work(
         self,
         request_id: str,
@@ -315,6 +327,12 @@ class GroupSceneActor:
                     continue
                 if isinstance(command, _FlushAttentionCommand):
                     command.future.set_result(self._flush_attention(command.now))
+                    continue
+                if isinstance(command, _AttentionDeadlineCommand):
+                    window = self._attention.pending_window(self.group_id)
+                    command.future.set_result(
+                        None if window is None else window.deadline
+                    )
                     continue
                 if isinstance(command, _DiscardCommand):
                     discarded = self._store.resolve_scene_evaluation(

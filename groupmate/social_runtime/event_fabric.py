@@ -68,6 +68,13 @@ class SocialEventFabric:
         )
         return tuple(item for batch in batches for item in batch)
 
+    async def next_attention_deadline(self) -> int | None:
+        deadlines = await asyncio.gather(
+            *(actor.pending_attention_deadline() for actor in self.actors)
+        )
+        pending = tuple(value for value in deadlines if value is not None)
+        return min(pending) if pending else None
+
     async def close(self) -> None:
         async with self._lock:
             self._closed = True

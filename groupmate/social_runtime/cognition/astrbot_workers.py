@@ -32,6 +32,7 @@ class AstrBotStructuredWorker:
             raw = await self._model.complete_json(
                 schema=self._schema(),
                 payload={
+                    "worker": self.name,
                     "frame": asdict(frame),
                     "context": self._context_payload(context),
                 },

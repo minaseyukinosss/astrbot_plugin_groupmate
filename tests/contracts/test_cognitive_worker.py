@@ -4,12 +4,14 @@ import asyncio
 
 import pytest
 
+from groupmate.adapters.astrbot_models import AstrBotModelPort
 from groupmate.social_runtime.attention import AttentionFrame
 from groupmate.social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
 from groupmate.social_runtime.cognition.contracts import (
     CognitiveContext,
     CognitiveObservation,
 )
+from groupmate.social_runtime.cognition.service import CognitionBudget, CognitionService
 
 
 def _context():
@@ -95,3 +97,40 @@ def test_astrbot_worker_invalid_structured_output_returns_empty_with_error_code(
 
     assert result == ()
     assert diagnostics == ["invalid_worker_output"]
+
+
+def test_astrbot_model_port_uses_provider_and_worker_identity():
+    class Response:
+        completion_text = "```json\n{\"observations\": []}\n```"
+
+    class Context:
+        def __init__(self):
+            self.calls = []
+
+        async def llm_generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return Response()
+
+    async def scenario():
+        context = Context()
+        model = AstrBotModelPort(context, "provider:text")
+        worker = AstrBotStructuredWorker("scene_interpreter", model)
+        result = await worker.observe(_frame(), _context())
+        return context, result
+
+    context, result = asyncio.run(scenario())
+
+    assert result == ()
+    assert context.calls[0]["chat_provider_id"] == "provider:text"
+    assert '"worker": "scene_interpreter"' in context.calls[0]["prompt"]
+
+
+def test_missing_requested_worker_marks_cognition_degraded():
+    service = CognitionService(
+        workers={}, budget=CognitionBudget(max_worker_calls=2, max_cost_units=2)
+    )
+
+    snapshot = asyncio.run(service.evaluate(_frame(), _context()))
+
+    assert snapshot.degraded is True
+    assert "worker_missing:scene_interpreter" in snapshot.diagnostics

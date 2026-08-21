@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 import time
 from pathlib import Path
 from typing import Callable
@@ -9,9 +11,11 @@ from typing import Callable
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
 from ..social_runtime.control.config_versions import ConfigVersionRepository
+from ..social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from .astrbot_events import AstrBotEventTranslator
+from .astrbot_models import AstrBotModelPort
 
 
 class AstrBotSocialRuntimeBridge:
@@ -38,6 +42,10 @@ class AstrBotSocialRuntimeBridge:
         self.shadow_reviews = shadow_reviews
         self.clock = time.time if clock is None else clock
         self.shadow_review_error: str | None = None
+        self.attention_wakeup_error: str | None = None
+        self.cognition_diagnostics: list[str] = []
+        self._attention_changed = asyncio.Event()
+        self._attention_task: asyncio.Task[None] | None = None
         self._started = False
 
     @property
@@ -57,12 +65,30 @@ class AstrBotSocialRuntimeBridge:
             config_repository = ConfigVersionRepository(
                 self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             )
+            model = AstrBotModelPort(
+                self.context, self.settings.generation_provider
+            )
+            cognition_workers = {
+                name: AstrBotStructuredWorker(
+                    name,
+                    model,
+                    diagnostic_sink=lambda code, worker=name: (
+                        self.cognition_diagnostics.append(f"{worker}:{code}")
+                    ),
+                )
+                for name in (
+                    "direct_interaction",
+                    "scene_interpreter",
+                    "participation_assessor",
+                )
+            }
             self._manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,
                 mode=mode,
                 enabled_groups=self.settings.enabled_groups,
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
+                cognition_workers=cognition_workers,
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
                 persona_profile_loader=lambda group_id: config_repository.snapshot(
                     persona_id=self.settings.persona_id,
@@ -71,6 +97,10 @@ class AstrBotSocialRuntimeBridge:
                 clock=self.clock,
             )
             await self._manager.start()
+            self._attention_task = asyncio.create_task(
+                self._attention_wakeup_loop(self._manager),
+                name=f"groupmate-attention:{self.settings.persona_id}",
+            )
         self._started = True
         self._reconcile_shadow_reviews()
 
@@ -82,8 +112,34 @@ class AstrBotSocialRuntimeBridge:
         result = await self._manager.ingest(self.translator.translate(event))
         if result is not None and result.inserted:
             await self._manager.drain()
+            self._attention_changed.set()
         self._reconcile_shadow_reviews()
         return result
+
+    async def _attention_wakeup_loop(
+        self, manager: SocialRuntimeManager
+    ) -> None:
+        while self._manager is manager:
+            self._attention_changed.clear()
+            try:
+                deadline = await manager.next_attention_deadline()
+                if deadline is None:
+                    await self._attention_changed.wait()
+                    continue
+                delay = max(0.0, float(deadline) - float(self.clock()))
+                try:
+                    await asyncio.wait_for(
+                        self._attention_changed.wait(), timeout=delay
+                    )
+                except TimeoutError:
+                    await manager.drain(now=deadline)
+                    self._reconcile_shadow_reviews()
+                self.attention_wakeup_error = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.attention_wakeup_error = f"{type(exc).__name__}: {exc}"
+                await self._attention_changed.wait()
 
     def _reconcile_shadow_reviews(self) -> None:
         if self._manager is None or self.shadow_reviews is None:
@@ -109,6 +165,12 @@ class AstrBotSocialRuntimeBridge:
                 self.shadow_review_error = f"{type(exc).__name__}: {exc}"
 
     async def close(self) -> None:
+        task = self._attention_task
+        self._attention_task = None
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         if self._manager is not None:
             await self._manager.close()
             self._manager = None

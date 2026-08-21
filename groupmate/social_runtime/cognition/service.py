@@ -147,10 +147,13 @@ class CognitionService:
 
         cost_level = self._cost_level(frame)
         selected: list[tuple[CognitiveWorker, int]] = []
+        missing_workers: list[str] = []
         for name in frame.requested_workers:
             worker = self.workers.get(name)
             if worker is not None:
                 selected.append((worker, 1))
+            else:
+                missing_workers.append(name)
             if cost_level == 1 and selected:
                 break
         if cost_level >= 3 and self.critic_worker is not None:
@@ -158,7 +161,10 @@ class CognitionService:
 
         used_calls = 0
         used_cost = 0
-        degraded = not rule_completed
+        diagnostics.extend(
+            f"worker_missing:{name}" for name in missing_workers
+        )
+        degraded = not rule_completed or bool(missing_workers)
         for worker, cost in selected:
             if (
                 used_calls + 1 > self.budget.max_worker_calls

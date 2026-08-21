@@ -110,3 +110,31 @@ def test_manager_resolves_reply_target_before_scene_projection(tmp_path):
     assert stored.payload["reply_to_bot"] is True
     assert state.interaction_edges[-1].target_actor_id == "bot-1"
     assert state.recent_presence.last_bot_event_at is not None
+
+
+def test_manager_exposes_pending_ambient_deadline(tmp_path):
+    async def scenario():
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await manager.start()
+        event = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:ambient",
+                source_message_id="ambient",
+                occurred_at=100,
+                received_at=100,
+                correlation_id="corr:ambient",
+                payload={"text": "路过说一句"},
+            )
+        )
+        await manager.ingest(event)
+        await manager.drain(now=100)
+        deadline = await manager.next_attention_deadline()
+        await manager.close()
+        return deadline
+
+    assert asyncio.run(scenario()) == 102

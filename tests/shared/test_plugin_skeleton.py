@@ -134,3 +134,30 @@ def test_off_bridge_starts_and_stops_without_creating_runtime_data(tmp_path: Pat
     asyncio.run(scenario())
 
     assert not (tmp_path / "groupmate-social-runtime-v2.db").exists()
+
+
+def test_bridge_wakes_due_ambient_attention_without_another_message(tmp_path):
+    class FakeManager:
+        def __init__(self):
+            self.drained_at = []
+
+        async def next_attention_deadline(self):
+            return 100
+
+        async def drain(self, *, now=None):
+            self.drained_at.append(now)
+            bridge._manager = None
+            return ()
+
+    bridge = AstrBotSocialRuntimeBridge(
+        context=object(),
+        settings=SocialRuntimeSettings.from_mapping({}),
+        data_dir=tmp_path,
+        clock=lambda: 100,
+    )
+    manager = FakeManager()
+    bridge._manager = manager
+
+    asyncio.run(bridge._attention_wakeup_loop(manager))
+
+    assert manager.drained_at == [100]

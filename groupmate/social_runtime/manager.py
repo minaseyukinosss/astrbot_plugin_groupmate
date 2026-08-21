@@ -394,6 +394,11 @@ class SocialRuntimeManager:
         finally:
             await self._end_drain()
 
+    async def next_attention_deadline(self) -> int | None:
+        async with self._lifecycle_lock:
+            self._ensure_available()
+            return await self.fabric.next_attention_deadline()
+
     @property
     def governance_state(self) -> RuntimeGovernanceState:
         return self._governance_state
