@@ -8,8 +8,8 @@ body {
   background: var(--color-canvas);
   color: var(--color-ink);
   font-family: var(--font-ui);
-  font-size: 0.9375rem;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -18,8 +18,8 @@ body {
   grid-template-areas:
     "sidebar topbar inspector"
     "sidebar main inspector";
-  grid-template-columns: 13rem minmax(0, 1fr) auto;
-  grid-template-rows: 4.5rem minmax(calc(100vh - 4.5rem), auto);
+  grid-template-columns: 15.5rem minmax(0, 1fr) auto;
+  grid-template-rows: 5.75rem minmax(calc(100vh - 5.75rem), auto);
   min-height: 100vh;
 }
 
@@ -30,7 +30,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: var(--space-4) var(--space-3);
+  padding: 0.875rem 0.75rem;
   background: var(--color-surface);
   border-inline-end: 1px solid var(--color-border);
 }
@@ -45,30 +45,29 @@ body {
   justify-content: space-between;
   gap: var(--space-4);
   min-width: 0;
-  min-height: 4.5rem;
-  padding: var(--space-2) var(--space-5);
-  background: color-mix(in oklch, var(--color-bg) 94%, transparent);
+  padding: 0.625rem 0.875rem;
+  background: var(--color-canvas);
   border-block-end: 1px solid var(--color-border);
 }
 
 .topbar-context {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  align-items: stretch;
+  gap: 0.625rem;
   min-width: 0;
 }
 
 main {
   grid-area: main;
   min-width: 0;
-  padding: var(--space-5) clamp(1rem, 3vw, 2.5rem) 4rem;
+  padding: 0.75rem;
   background: var(--color-bg);
 }
 
 .workspace-heading,
 .workspace,
 .error-banner {
-  width: min(100%, 88rem);
+  width: min(100%, 96rem);
   margin-inline: auto;
 }
 
@@ -76,26 +75,35 @@ main {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: var(--space-6);
-  padding-block-end: var(--space-4);
+  gap: var(--space-5);
+  min-height: 3.5rem;
+  padding: 0.25rem 0.125rem 0.75rem;
 }
 
-.workspace { padding-block: var(--space-2); }
+.workspace { padding: 0; }
 
 .inspector {
+  position: sticky;
+  top: 0;
   grid-area: inspector;
-  width: min(24rem, 34vw);
+  width: min(22rem, 30vw);
+  height: 100vh;
   min-height: 100vh;
-  padding: var(--space-5);
+  padding: 1rem;
+  overflow-y: auto;
   background: var(--color-surface-raised);
   border-inline-start: 1px solid var(--color-border);
 }
 
 .inspector header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding-block-end: var(--space-4);
+  padding-block-end: 0.875rem;
+  background: var(--color-surface-raised);
   border-block-end: 1px solid var(--color-border);
 }
 
@@ -103,16 +111,17 @@ main {
   .app-shell { grid-template-columns: 4.5rem minmax(0, 1fr) auto; }
   .sidebar { align-items: center; padding-inline: var(--space-2); }
   .brand-copy,
-  .nav-label { display: none; }
+  .nav-label,
+  .sidebar-quick { display: none; }
   .sidebar nav a { justify-content: center; width: 3rem; padding-inline: 0; }
-  .sidebar-footer { justify-content: center; }
-  .persona-context small { display: none; }
-  .topbar { padding-inline: var(--space-4); }
+  .topbar { padding-inline: var(--space-3); }
+  .runtime-summary > div:nth-child(2) { display: none; }
   .inspector {
     position: fixed;
     inset: 0 0 0 auto;
     z-index: var(--z-modal);
-    width: min(26rem, 88vw);
+    width: min(26rem, 90vw);
+    box-shadow: -1rem 0 2.5rem oklch(0.05 0 0 / 0.3);
   }
 }
 
@@ -131,21 +140,17 @@ main {
   }
   .brand-block { margin: 0 var(--space-3) 0 0; padding: 0; }
   .sidebar nav { flex: 1; display: flex; justify-content: center; overflow-x: auto; }
-  .sidebar-footer { display: none; }
-  .topbar { top: 3.75rem; }
-  .workspace-heading { align-items: flex-start; }
+  .topbar { position: static; }
+  .context-card { min-width: 0; }
+  .runtime-summary > div { display: none; }
 }
 
 @media (max-width: 44rem) {
-  .topbar {
-    position: static;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    padding: var(--space-3) var(--space-4);
-  }
-  .persona-context { display: none; }
-  .runtime-controls { width: 100%; }
+  .topbar { align-items: stretch; flex-direction: column; }
+  .topbar-context { display: grid; grid-template-columns: 1fr 1fr; }
+  .persona-context .version-chip { display: none; }
+  .runtime-summary { justify-content: space-between; }
   .workspace-heading { display: block; }
-  .workspace-heading > p { margin-block-start: var(--space-2); }
-  main { padding: var(--space-4); }
+  .workspace-heading > p { margin-block-start: var(--space-1); }
+  main { padding: var(--space-2); }
 }

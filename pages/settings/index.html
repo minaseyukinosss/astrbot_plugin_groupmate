@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>群聊伙伴 · 管理台</title>
+    <title>Groupmate · 运行中心</title>
     <link rel="stylesheet" href="./styles/tokens.css">
     <link rel="stylesheet" href="./styles/layout.css">
     <link rel="stylesheet" href="./styles/components.css">
@@ -12,56 +12,88 @@
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="app-shell" id="app-shell">
-      <aside class="sidebar" aria-label="群聊伙伴导航">
+      <aside class="sidebar" aria-label="Groupmate 群聊伙伴导航">
         <div class="brand-block">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img"><path d="M7 9h10v7H7zM9 6h6M12 4v2M9.5 12h.01M14.5 12h.01M5 11H3v3h2M19 11h2v3h-2"/></svg>
-          </span>
+          <img class="brand-mark" src="./assets/groupmate-bot.png" alt="">
           <div class="brand-copy">
-            <strong>群聊伙伴</strong>
-            <span>AstrBot 插件</span>
+            <strong>Groupmate</strong>
+            <span><i class="system-indicator" aria-hidden="true"></i><b id="system-status">正在连接</b></span>
           </div>
         </div>
+
         <nav aria-label="主要工作区">
-          <a href="#/runtime" data-route="/runtime"><span class="nav-icon" aria-hidden="true">⌂</span><span class="nav-label">此刻</span></a>
-          <a href="#/persona" data-route="/persona"><span class="nav-icon" aria-hidden="true">♙</span><span class="nav-label">人格工作室</span></a>
-          <a href="#/people" data-route="/people"><span class="nav-icon" aria-hidden="true">◎</span><span class="nav-label">人与记忆</span></a>
-          <a href="#/activity" data-route="/activity"><span class="nav-icon" aria-hidden="true">≡</span><span class="nav-label">活动与任务</span></a>
-          <a href="#/governance" data-route="/governance"><span class="nav-icon" aria-hidden="true">◇</span><span class="nav-label">治理与评估</span></a>
+          <a href="#/runtime" data-route="/runtime">
+            <img class="nav-icon" src="./assets/icons/layout-dashboard.svg" alt="">
+            <span class="nav-label">运行中心</span>
+          </a>
+          <a href="#/persona" data-route="/persona">
+            <img class="nav-icon" src="./assets/icons/user-cog.svg" alt="">
+            <span class="nav-label">人格工作室</span>
+          </a>
+          <a href="#/people" data-route="/people">
+            <img class="nav-icon" src="./assets/icons/users-group.svg" alt="">
+            <span class="nav-label">成员与关系</span>
+          </a>
+          <a href="#/activity" data-route="/activity">
+            <img class="nav-icon" src="./assets/icons/list-details.svg" alt="">
+            <span class="nav-label">活动与任务</span>
+          </a>
+          <a href="#/governance" data-route="/governance">
+            <img class="nav-icon" src="./assets/icons/shield-check.svg" alt="">
+            <span class="nav-label">治理与评估</span>
+          </a>
         </nav>
-        <div class="sidebar-footer">
-          <span class="system-indicator" aria-hidden="true"></span>
-          <span id="system-status" class="nav-label">正在连接</span>
+
+        <div class="sidebar-quick">
+          <span>运行状态</span>
+          <dl>
+            <div><dt>模式</dt><dd id="sidebar-mode">—</dd></div>
+            <div><dt>群组</dt><dd id="sidebar-group">—</dd></div>
+            <div><dt>数据</dt><dd id="sidebar-sync">等待同步</dd></div>
+          </dl>
         </div>
       </aside>
 
       <header class="topbar">
         <div class="topbar-context">
-          <label class="scope-picker" for="group-select">
+          <label class="context-card scope-picker" for="group-select">
             <span>当前群组</span>
-            <select id="group-select" aria-label="选择群"></select>
+            <span class="context-row">
+              <span class="context-avatar context-avatar-group" aria-hidden="true">群</span>
+              <select id="group-select" aria-label="选择群"></select>
+            </span>
           </label>
-          <div class="persona-context">
-            <span class="context-avatar" aria-hidden="true">G</span>
-            <span><small>当前人格</small><strong id="persona-name">—</strong></span>
-            <span id="config-version" class="version-chip">—</span>
+          <div class="context-card persona-context">
+            <span>当前人格</span>
+            <span class="context-row">
+              <span class="context-avatar" aria-hidden="true">G</span>
+              <strong id="persona-name">—</strong>
+              <span id="config-version" class="version-chip">—</span>
+            </span>
           </div>
         </div>
-        <div class="runtime-controls">
+
+        <div class="runtime-summary" aria-label="运行摘要">
+          <div><span>运行模式</span><strong id="runtime-mode">—</strong></div>
+          <div><span>可见事件</span><strong id="visible-events">0</strong></div>
+          <div><span>待处理任务</span><strong id="pending-tasks">0</strong></div>
           <span id="connection-state" class="connection-state" aria-live="polite">
             <span class="status-dot" aria-hidden="true"></span>
             正在连接
           </span>
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="切换明暗主题">
+            <img src="./assets/icons/moon.svg" alt="">
+          </button>
         </div>
       </header>
 
       <main id="main-content" tabindex="-1">
         <header class="workspace-heading">
           <div>
-            <p id="workspace-context">群组管理</p>
+            <p id="workspace-context">此刻 · 当前群组实时投影</p>
             <h1 id="workspace-title">运行中心</h1>
           </div>
-          <p id="workspace-description">读取实际运行状态、任务和交付健康。</p>
+          <p id="workspace-description">观察消息如何进入注意、理解、参与判断与行动链路。</p>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
         <section id="workspace" class="workspace" aria-live="polite" aria-busy="true">
@@ -71,10 +103,12 @@
         </section>
       </main>
 
-      <aside id="inspector" class="inspector" aria-label="详细检查器" hidden>
+      <aside id="inspector" class="inspector" aria-label="证据检查器" hidden>
         <header>
-          <div><span>详情</span><h2>事件检查器</h2></div>
-          <button id="close-inspector" class="icon-button" type="button" aria-label="关闭检查器">×</button>
+          <div><span>安全投影详情</span><h2 id="inspector-title">证据与决策</h2></div>
+          <button id="close-inspector" class="icon-button" type="button" aria-label="关闭检查器">
+            <img src="./assets/icons/x.svg" alt="">
+          </button>
         </header>
         <div id="inspector-content"></div>
       </aside>

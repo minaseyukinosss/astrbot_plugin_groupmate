@@ -13,7 +13,13 @@ class FakeAstrBotHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def do_GET(self):
+        if self.path.split("?", 1)[0].startswith("/fake/settings/assets/"):
+            self.path = self.path.replace("/fake/settings/assets/", "/pages/settings/assets/", 1)
         if self.path.split("?", 1)[0] == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
@@ -26,7 +32,7 @@ class FakeAstrBotHandler(SimpleHTTPRequestHandler):
             ).replace(
                 '<script type="module" src="./app.js"></script>',
                 '<script src="/tests/page/fixtures/fake_bridge.js?gate-d=2"></script>\n'
-                '    <script type="module" src="/pages/settings/app.js"></script>',
+                '    <script type="module" src="/pages/settings/app.js?ui=2"></script>',
                 1,
             )
             payload = source.encode("utf-8")

@@ -24,7 +24,7 @@ const WORKSPACE_RENDERERS = Object.freeze({
 });
 
 const WORKSPACE_PROJECTIONS = Object.freeze({
-  "/runtime": ["runtime", "activity", "tasks", "health", "governance"],
+  "/runtime": ["runtime", "activity", "scenes", "tasks", "health", "persona", "governance", "evaluation"],
   "/persona": ["persona", "governance", "activity"],
   "/people": ["people", "culture", "governance"],
   "/activity": ["activity", "scenes", "tasks", "governance"],
@@ -37,6 +37,13 @@ const elements = {
   version: document.getElementById("config-version"),
   connection: document.getElementById("connection-state"),
   system: document.getElementById("system-status"),
+  sidebarMode: document.getElementById("sidebar-mode"),
+  sidebarGroup: document.getElementById("sidebar-group"),
+  sidebarSync: document.getElementById("sidebar-sync"),
+  runtimeMode: document.getElementById("runtime-mode"),
+  visibleEvents: document.getElementById("visible-events"),
+  pendingTasks: document.getElementById("pending-tasks"),
+  themeToggle: document.getElementById("theme-toggle"),
   title: document.getElementById("workspace-title"),
   description: document.getElementById("workspace-description"),
   workspace: document.getElementById("workspace"),
@@ -66,6 +73,7 @@ function renderConnection(connection) {
   elements.connection.lastChild.textContent = ` ${connection.impact}`;
   elements.system.textContent = connection.state === "connected" ? "系统运行正常" : connection.impact;
   elements.system.parentElement.dataset.state = connection.state;
+  elements.sidebarSync.textContent = connection.state === "connected" ? "已同步" : connection.impact;
 }
 
 function renderError(error) {
@@ -93,6 +101,20 @@ function render(snapshot) {
     .filter((item) => item.summary?.status === "PUBLISHED")
     .map((item) => Number(item.summary?.config_version || 0))));
   elements.version.textContent = `v${version}`;
+  const runtimeItems = snapshot.views.runtime?.items || [];
+  const runtimeSummary = [...runtimeItems].reverse().find((item) => item.summary?.runtime_mode)?.summary || {};
+  const mode = runtimeSummary.runtime_mode || "OFF";
+  const pendingTasks = (snapshot.views.tasks?.items || []).filter((item) =>
+    ["pending", "queued", "running"].includes(String(item.summary?.task_status || "").toLowerCase()),
+  ).length;
+  const visibleEvents = ["activity", "scenes", "evaluation"]
+    .reduce((count, projection) => count + (snapshot.views[projection]?.items?.length || 0), 0);
+  elements.runtimeMode.textContent = mode === "SHADOW" ? "SHADOW" : mode;
+  elements.runtimeMode.dataset.mode = mode;
+  elements.sidebarMode.textContent = mode === "SHADOW" ? "观察" : mode;
+  elements.sidebarGroup.textContent = snapshot.scope.group_id || "—";
+  elements.visibleEvents.textContent = String(visibleEvents);
+  elements.pendingTasks.textContent = String(pendingTasks);
   renderWorkspace(activeRoute);
 }
 
@@ -164,6 +186,9 @@ async function initialize() {
   locale = context?.locale || "zh-CN";
   if (context?.theme === "dark" || context?.theme === "light") {
     document.documentElement.dataset.theme = context.theme;
+    const icon = elements.themeToggle.querySelector("img");
+    icon.src = context.theme === "dark" ? "./assets/icons/sun.svg" : "./assets/icons/moon.svg";
+    elements.themeToggle.setAttribute("aria-label", context.theme === "dark" ? "切换到浅色主题" : "切换到深色主题");
   }
   const bootstrap = await bridge.query("bootstrap");
   store.mergeBootstrap(bootstrap);
@@ -192,6 +217,13 @@ elements.workspace.addEventListener("click", (event) => {
 });
 elements.closeInspector.addEventListener("click", () => {
   elements.inspector.hidden = true;
+});
+elements.themeToggle.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  const icon = elements.themeToggle.querySelector("img");
+  icon.src = next === "dark" ? "./assets/icons/sun.svg" : "./assets/icons/moon.svg";
+  elements.themeToggle.setAttribute("aria-label", next === "dark" ? "切换到浅色主题" : "切换到深色主题");
 });
 initialize().catch((error) => {
   store.setConnection({ state: "disconnected", impact: "控制面初始化失败" });
