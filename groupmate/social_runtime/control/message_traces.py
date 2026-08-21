@@ -326,42 +326,27 @@ class MessageTraceRepository:
                 "SELECT state_json, revision, received_at FROM message_traces WHERE event_id=?",
                 (event.event_id,),
             ).fetchone()
-            if row is None:
-                revision = 1
-                received_at = int(now)
-                db.execute(
-                    "INSERT INTO message_traces(event_id, correlation_id, entity_ref, persona_id, "
-                    "group_id, state_json, revision, received_at, updated_at) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        event.event_id,
-                        event.correlation_id,
-                        entity_ref,
-                        event.persona_id,
-                        event.group_id,
-                        json.dumps(summary, ensure_ascii=False, sort_keys=True),
-                        revision,
-                        received_at,
-                        int(now),
-                    ),
-                )
-            else:
-                revision = int(row["revision"]) + 1
-                received_at = int(row["received_at"])
-                entity_ref = str(
-                    db.execute(
-                        "SELECT entity_ref FROM message_traces WHERE event_id=?", (event.event_id,)
-                    ).fetchone()[0]
-                )
-                db.execute(
-                    "UPDATE message_traces SET state_json=?, revision=?, updated_at=? WHERE event_id=?",
-                    (
-                        json.dumps(summary, ensure_ascii=False, sort_keys=True),
-                        revision,
-                        int(now),
-                        event.event_id,
-                    ),
-                )
+            if row is not None:
+                db.commit()
+                return
+            revision = 1
+            received_at = int(now)
+            db.execute(
+                "INSERT INTO message_traces(event_id, correlation_id, entity_ref, persona_id, "
+                "group_id, state_json, revision, received_at, updated_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    event.event_id,
+                    event.correlation_id,
+                    entity_ref,
+                    event.persona_id,
+                    event.group_id,
+                    json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                    revision,
+                    received_at,
+                    int(now),
+                ),
+            )
             self._upsert_stage(db, event.event_id, stage)
             summary["stages"] = self._load_stages(db, event.event_id)
             self._update_timing(summary, received_at, now)

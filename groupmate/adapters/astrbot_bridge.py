@@ -11,6 +11,7 @@ from typing import Callable
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
 from ..social_runtime.control.config_versions import ConfigVersionRepository
+from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
@@ -44,12 +45,16 @@ class AstrBotSocialRuntimeBridge:
             ),
         )
         self._manager: SocialRuntimeManager | None = None
+        self.trace_repository = MessageTraceRepository(
+            self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+        )
         self.shadow_reviews = shadow_reviews
         self.clock = time.time if clock is None else clock
         self.shadow_review_error: str | None = None
         self.attention_wakeup_error: str | None = None
         self.cognition_diagnostics: list[str] = []
         self.reply_error: str | None = None
+        self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._reply_executor: ReplyExecutor | None = None
         self._dispatcher: DeliveryDispatcher | None = None
@@ -131,13 +136,37 @@ class AstrBotSocialRuntimeBridge:
             await self.start()
         if self._manager is None:
             return None
-        result = await self._manager.ingest(self.translator.translate(event))
+        translated = self.translator.translate(event)
+        self._record_trace(
+            self.trace_repository.record_received,
+            translated,
+            self.settings.runtime_mode,
+            int(self.clock()),
+        )
+        if translated.payload.get("social_eligible") is not False:
+            self._record_trace(
+                self.trace_repository.mark_entered,
+                translated.event_id,
+                int(self.clock()),
+            )
+        result = await self._manager.ingest(translated)
         if result is not None and result.inserted:
             evaluations = await self._manager.drain()
             await self._handle_evaluations(evaluations)
             self._attention_changed.set()
         self._reconcile_shadow_reviews()
         return result
+
+    async def observe_event(self, event: object) -> None:
+        """Record arrival and route facts without entering Social Runtime."""
+
+        translated = self.translator.translate(event)
+        self._record_trace(
+            self.trace_repository.record_received,
+            translated,
+            self.settings.runtime_mode,
+            int(self.clock()),
+        )
 
     async def _attention_wakeup_loop(
         self, manager: SocialRuntimeManager
@@ -180,6 +209,11 @@ class AstrBotSocialRuntimeBridge:
                 ),
             )
             for evaluation in ordered:
+                self._record_trace(
+                    self.trace_repository.record_evaluation,
+                    evaluation,
+                    int(self.clock()),
+                )
                 group_id = str(
                     getattr(getattr(evaluation, "source_event", None), "group_id", "")
                     or ""
@@ -191,6 +225,14 @@ class AstrBotSocialRuntimeBridge:
                 )
                 if plan is None:
                     continue
+                source_event = getattr(evaluation, "source_event", None)
+                if source_event is not None:
+                    self._record_trace(
+                        self.trace_repository.record_plan,
+                        str(getattr(source_event, "event_id", "")),
+                        plan,
+                        int(self.clock()),
+                    )
                 handled_groups.add(group_id)
                 try:
                     if self._manager.group_mode(group_id) is RuntimeMode.SHADOW:
@@ -226,7 +268,28 @@ class AstrBotSocialRuntimeBridge:
                 self._manager.reply_plans.mark(plan.plan_id, status)
             except LookupError:
                 pass
+            if part.receipt is not None:
+                delivery_status = {
+                    OutboxStatus.SENT: "SENT",
+                    OutboxStatus.FAILED: "FAILED",
+                    OutboxStatus.UNKNOWN: "UNKNOWN",
+                }.get(part.status, "UNKNOWN")
+                self._record_trace(
+                    self.trace_repository.record_delivery,
+                    part.correlation_id,
+                    delivery_status,
+                    part.receipt.platform_message_id,
+                    part.receipt.error_code,
+                    int(self.clock()),
+                )
             await self._manager.drain()
+
+    def _record_trace(self, operation, *args) -> None:
+        try:
+            operation(*args)
+            self.trace_error = None
+        except Exception as exc:
+            self.trace_error = f"{type(exc).__name__}: {exc}"
 
     def _reconcile_shadow_reviews(self) -> None:
         if self._manager is None or self.shadow_reviews is None:
