@@ -1,4 +1,5 @@
 import { element, textValue } from "./dom.js";
+import { fieldLabel, formatTimestamp, kindLabel, visibleFacts } from "./presenters.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
   ["evidence_refs", "证据"],
@@ -12,8 +13,19 @@ export const INSPECTOR_FIELDS = Object.freeze([
 ]);
 
 export function renderInspector(item) {
-  const content = element("div", { className: "inspector-fields" });
   const summary = item?.summary || {};
+  const content = element("div", { className: "inspector-fields" }, [
+    element("div", { className: "inspector-event-heading" }, [
+      element("strong", { text: kindLabel(item?.kind) }),
+      element("time", { text: formatTimestamp(item?.as_of) }),
+    ]),
+  ]);
+  const facts = visibleFacts(summary);
+  if (facts.length) {
+    content.append(element("dl", { className: "inspector-facts" }, facts.map((fact) => element("div", {}, [
+      element("dt", { text: fact.label }), element("dd", { text: fact.value }),
+    ]))));
+  }
   const safe = {
     evidence_refs: item?.evidence_refs,
     observation: summary.observation,
@@ -24,13 +36,10 @@ export function renderInspector(item) {
     projection_version: item?.projection_version,
     result: summary.outcome || summary.result_status || summary.task_status,
   };
-  content.append(element("p", {
-    className: "entity-reference",
-    text: `Entity ref: ${textValue(item?.entity_ref)}`,
-  }));
   for (const [field, label] of INSPECTOR_FIELDS) {
+    if (safe[field] === undefined || safe[field] === null || safe[field] === "") continue;
     content.append(element("section", {}, [
-      element("h3", { text: label }),
+      element("h3", { text: label || fieldLabel(field) }),
       element("p", { text: textValue(safe[field]) }),
     ]));
   }

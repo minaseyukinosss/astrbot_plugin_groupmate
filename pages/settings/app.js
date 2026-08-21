@@ -1,6 +1,5 @@
 import { ApiBridge } from "./bridge.js";
 import { renderInspector } from "./components/inspector.js";
-import { controlVersion } from "./components/projection.js";
 import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
 import { ProjectionStore } from "./store.js";
@@ -26,7 +25,7 @@ const WORKSPACE_RENDERERS = Object.freeze({
 
 const WORKSPACE_PROJECTIONS = Object.freeze({
   "/runtime": ["runtime", "activity", "tasks", "health", "governance"],
-  "/persona": ["persona", "governance"],
+  "/persona": ["persona", "governance", "activity"],
   "/people": ["people", "culture", "governance"],
   "/activity": ["activity", "scenes", "tasks", "governance"],
   "/governance": ["governance", "evaluation"],
@@ -37,11 +36,11 @@ const elements = {
   persona: document.getElementById("persona-name"),
   version: document.getElementById("config-version"),
   connection: document.getElementById("connection-state"),
+  system: document.getElementById("system-status"),
   title: document.getElementById("workspace-title"),
   description: document.getElementById("workspace-description"),
   workspace: document.getElementById("workspace"),
   error: document.getElementById("error-banner"),
-  pause: document.getElementById("pause-runtime"),
   inspector: document.getElementById("inspector"),
   inspectorContent: document.getElementById("inspector-content"),
   closeInspector: document.getElementById("close-inspector"),
@@ -65,6 +64,8 @@ function renderNavigation(route) {
 function renderConnection(connection) {
   elements.connection.dataset.state = connection.state;
   elements.connection.lastChild.textContent = ` ${connection.impact}`;
+  elements.system.textContent = connection.state === "connected" ? "系统运行正常" : connection.impact;
+  elements.system.parentElement.dataset.state = connection.state;
 }
 
 function renderError(error) {
@@ -120,7 +121,7 @@ async function submitWorkspaceCommand(spec) {
   });
   try {
     const result = await bridge.command({ ...spec, command_id: commandId, ...scopeParams() });
-    store.setConnection({ state: "connected", impact: "命令已接受，等待 Projection 确认" });
+    store.setConnection({ state: "connected", impact: "命令已接受，等待运行状态更新" });
     return result;
   } catch (error) {
     store.rejectCommand(commandId);
@@ -157,6 +158,9 @@ async function selectGroup(groupId) {
 async function initialize() {
   const context = await bridge.ready();
   locale = context?.locale || "zh-CN";
+  if (context?.theme === "dark" || context?.theme === "light") {
+    document.documentElement.dataset.theme = context.theme;
+  }
   const bootstrap = await bridge.query("bootstrap");
   store.mergeBootstrap(bootstrap);
   elements.group.replaceChildren();
@@ -185,27 +189,6 @@ elements.workspace.addEventListener("click", (event) => {
 elements.closeInspector.addEventListener("click", () => {
   elements.inspector.hidden = true;
 });
-elements.pause.addEventListener("click", async () => {
-  const expectedVersion = controlVersion(store.selectView("governance"));
-  const commandId = crypto.randomUUID();
-  store.trackCommand({ command_id: commandId, expected_version: expectedVersion });
-  try {
-    await bridge.command({
-      type: "pause",
-      command_id: commandId,
-      expected_version: expectedVersion,
-      reason: "管理员从运行工具栏请求暂停",
-      confirmed: false,
-      payload: { paused: true },
-      ...scopeParams(),
-    });
-    store.setConnection({ state: "connected", impact: "命令已接受，等待 Projection 确认" });
-  } catch (error) {
-    store.rejectCommand(commandId);
-    store.setError(ApiBridge.describeError(error));
-  }
-});
-
 initialize().catch((error) => {
   store.setConnection({ state: "disconnected", impact: "控制面初始化失败" });
   store.setError(ApiBridge.describeError(error));

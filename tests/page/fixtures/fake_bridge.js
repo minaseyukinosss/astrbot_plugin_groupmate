@@ -1,12 +1,12 @@
 (() => {
   const views = {
-    runtime: [{ entity_ref: "runtime:fake", kind: "runtime.mode", projection_version: 1, summary: { runtime_mode: "SHADOW", paused: false }, evidence_refs: [] }],
-    activity: [{ entity_ref: "activity:fake", kind: "governor.decided", projection_version: 1, summary: { disposition: "SILENCE", constraints: ["shadow_only"] }, evidence_refs: ["evidence:fake"] }],
-    scenes: [{ entity_ref: "scenes:fake", kind: "cognition.observed", projection_version: 1, summary: { scene_version: 4 }, evidence_refs: [] }],
-    people: [{ entity_ref: "people:fake", kind: "memory.fact_recorded", projection_version: 1, summary: { status: "active" }, evidence_refs: ["evidence:fake"] }],
+    runtime: [{ entity_ref: "runtime:fake", kind: "runtime.mode", projection_version: 1, as_of: 1787126400, summary: { runtime_mode: "SHADOW", paused: false }, evidence_refs: [] }],
+    activity: [{ entity_ref: "activity:fake", kind: "governor.decided", projection_version: 1, as_of: 1787126340, summary: { disposition: "SILENCE", constraints: ["shadow_only"] }, evidence_refs: ["evidence:fake"] }],
+    scenes: [{ entity_ref: "scenes:fake", kind: "cognition.observed", projection_version: 1, as_of: 1787126280, summary: { scene_version: 4 }, evidence_refs: [] }],
+    people: [{ entity_ref: "people:fake", kind: "memory.fact_recorded", projection_version: 1, as_of: 1787126200, summary: { status: "active" }, evidence_refs: ["evidence:fake"] }],
     culture: [],
-    tasks: [{ entity_ref: "tasks:fake", kind: "capability.result", projection_version: 1, summary: { task_status: "succeeded", delivery_relevant: true }, evidence_refs: [] }],
-    persona: [{ entity_ref: "persona:fake", kind: "persona.mode", projection_version: 1, summary: { runtime_mode: "SHADOW" }, evidence_refs: [] }],
+    tasks: [{ entity_ref: "tasks:fake", kind: "capability.result", projection_version: 1, as_of: 1787126220, summary: { task_status: "succeeded", delivery_relevant: true }, evidence_refs: [] }],
+    persona: [{ entity_ref: "persona:fake", kind: "persona.mode", projection_version: 1, as_of: 1787126160, summary: { runtime_mode: "SHADOW" }, evidence_refs: [] }],
     governance: [],
     evaluation: [],
     health: [],

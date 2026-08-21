@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>群聊伙伴 · 页面预览</title>
+    <link rel="stylesheet" href="../../../pages/settings/styles/tokens.css?v=ui3">
+    <link rel="stylesheet" href="../../../pages/settings/styles/layout.css?v=ui3">
+    <link rel="stylesheet" href="../../../pages/settings/styles/components.css?v=ui3">
+  </head>
+  <body>
+    <script src="./fake_bridge.js"></script>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <div class="app-shell" id="app-shell">
+      <aside class="sidebar" aria-label="群聊伙伴导航">
+        <div class="brand-block"><span class="brand-mark" aria-hidden="true">伴</span><div class="brand-copy"><strong>群聊伙伴</strong><span>AstrBot 插件</span></div></div>
+        <nav aria-label="主要工作区">
+          <a href="#/runtime" data-route="/runtime"><span class="nav-icon">⌂</span><span class="nav-label">此刻</span></a>
+          <a href="#/persona" data-route="/persona"><span class="nav-icon">♙</span><span class="nav-label">人格工作室</span></a>
+          <a href="#/people" data-route="/people"><span class="nav-icon">◎</span><span class="nav-label">人与记忆</span></a>
+          <a href="#/activity" data-route="/activity"><span class="nav-icon">≡</span><span class="nav-label">活动与任务</span></a>
+          <a href="#/governance" data-route="/governance"><span class="nav-icon">◇</span><span class="nav-label">治理与评估</span></a>
+        </nav>
+        <div class="sidebar-footer"><span class="system-indicator"></span><span id="system-status" class="nav-label">正在连接</span></div>
+      </aside>
+      <header class="topbar">
+        <div class="topbar-context">
+          <label class="scope-picker" for="group-select"><span>当前群组</span><select id="group-select" aria-label="选择群"></select></label>
+          <div class="persona-context"><span class="context-avatar">A</span><span><small>当前人格</small><strong id="persona-name">—</strong></span><span id="config-version" class="version-chip">—</span></div>
+        </div>
+        <div class="runtime-controls"><span id="connection-state" class="connection-state" aria-live="polite"><span class="status-dot"></span>正在连接</span></div>
+      </header>
+      <main id="main-content" tabindex="-1">
+        <header class="workspace-heading"><div><p id="workspace-context">群组管理</p><h1 id="workspace-title">运行中心</h1></div><p id="workspace-description">读取实际运行状态、任务和交付健康。</p></header>
+        <div id="error-banner" class="error-banner" role="alert" hidden></div>
+        <section id="workspace" class="workspace" aria-live="polite" aria-busy="true"></section>
+      </main>
+      <aside id="inspector" class="inspector" aria-label="详细检查器" hidden><header><div><span>详情</span><h2>事件检查器</h2></div><button id="close-inspector" class="icon-button" type="button" aria-label="关闭检查器">×</button></header><div id="inspector-content"></div></aside>
+    </div>
+    <script type="module" src="../../../pages/settings/app.js"></script>
+  </body>
+</html>

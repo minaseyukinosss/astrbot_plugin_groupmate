@@ -29,7 +29,7 @@ export class ApiBridge {
         {
           onOpen: () => {
             this.stopPolling();
-            onState({ state: "connected", impact: "Projection 实时更新正常" });
+            onState({ state: "connected", impact: "实时数据已连接" });
           },
           onMessage: (event) => {
             if (event.parsed && typeof event.parsed === "object") {

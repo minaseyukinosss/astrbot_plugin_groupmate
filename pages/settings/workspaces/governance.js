@@ -40,7 +40,7 @@ export function renderGovernance(select, command) {
     workspaceSection("治理范围", "高影响动作必须有 Expected Version、原因和二次确认。", element("p", { text: GOVERNANCE_AREAS.join(" · ") }), [reset]),
     workspaceSection("实群 SHADOW 复核", "逐条判断一个真实决策点；分类建议仅在缺失或错误时补充。页面没有发送或立即执行入口。", shadowReviews),
     workspaceSection("待复核与版本", "治理事件、配置版本、校准和保留策略的审计摘要。", projectionList(governance, { actions: governanceActions })),
-    workspaceSection("目标效果评估", "只展示标注与效果 Projection，不展示模型思维链。", projectionList(evaluation)),
+    workspaceSection("目标效果评估", "只展示标注与效果摘要，不展示模型思维链。", projectionList(evaluation)),
   ]);
 }
 

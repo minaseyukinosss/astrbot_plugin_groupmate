@@ -43,8 +43,8 @@ export function renderPeople(select, command) {
     expected_version: expectedVersion,
     payload: {},
   }, command, { danger: true, fields: [
-    { name: "source_ref", label: "源身份 Entity ref" },
-    { name: "target_ref", label: "目标身份 Entity ref" },
+    { name: "source_ref", label: "需要关联的成员记录" },
+    { name: "target_ref", label: "确认保留的成员记录" },
     { name: "allowed_data_types", label: "允许传递的数据类型（逗号分隔）", format: "csv" },
   ] });
 

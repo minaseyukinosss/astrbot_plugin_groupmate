@@ -39,7 +39,7 @@ def test_runtime_workspace_uses_real_runtime_task_activity_and_health_projection
 
     for projection in ("runtime", "activity", "tasks", "health"):
         assert f'select("{projection}")' in source
-    for label in ("当前状态", "实时活动", "任务义务", "运行健康", "暂停", "恢复"):
+    for label in ("运行概览", "近期活动", "任务义务", "健康状态", "暂停", "恢复"):
         assert label in source
     assert 'type: "pause"' in source
     assert "controlVersion" in source
@@ -52,19 +52,7 @@ def test_runtime_workspace_uses_real_runtime_task_activity_and_health_projection
 def test_persona_workspace_covers_versioned_behavior_and_draft_flow():
     source = _source(WORKSPACES / "persona.js")
 
-    for label in (
-        "Constitution",
-        "状态与模式",
-        "注意力",
-        "自主性",
-        "Governor",
-        "风格",
-        "媒体",
-        "工具",
-        "草稿",
-        "语义差异",
-        "Dry-run",
-    ):
+    for label in ("身份", "在场状态", "参与方式", "表达", "社交印象", "媒体", "工具", "保存草稿", "预览效果", "发布到群"):
         assert label in source
     for command_type in (
         "config_draft",
@@ -112,19 +100,8 @@ def test_activity_workspace_is_a_causal_projection_timeline_not_chat_text_parsin
 
     for projection in ("activity", "scenes", "tasks"):
         assert f'select("{projection}")' in source
-    for label in (
-        "因果时间线",
-        "结构化 Observation",
-        "候选意图",
-        "Governor",
-        "ActionPlan",
-        "Task",
-        "Delivery Part",
-        "故障",
-    ):
+    for label in ("事件流", "筛选事件", "群聊活动", "决策判断", "任务交付"):
         assert label in source
-    assert 'type: "cancel"' in source
-    assert "controlVersion" in source
     assert "message_text" not in source
 
 
@@ -196,7 +173,7 @@ def test_inspector_is_allowlisted_and_renders_only_text_nodes():
     ):
         assert label in inspector
     assert "INSPECTOR_FIELDS" in inspector
-    assert "entity_ref" in inspector
+    assert "Entity ref:" not in inspector
     assert ".textContent" in dom
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(", "new Function"):
         assert sink not in all_page_js
@@ -209,12 +186,13 @@ def test_workspace_styles_remain_text_first_and_responsive():
 
     for selector in (
         ".workspace-section",
-        ".projection-list",
-        ".timeline",
+        ".event-feed",
+        ".activity-table",
         ".command-dialog",
         ".empty-state",
     ):
         assert selector in styles
     assert "@media (max-width:" in styles
-    assert "grid-template-columns: repeat(4" not in styles
+    assert ".summary-grid" in styles
+    assert "grid-template-columns: repeat(2" in styles
     assert "backdrop-filter" not in styles

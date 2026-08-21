@@ -91,7 +91,8 @@ def test_shell_has_accessible_navigation_status_and_control_landmarks():
     assert any(attrs.get("id") == "group-select" for _, attrs in elements)
     assert any(attrs.get("id") == "persona-name" for _, attrs in elements)
     assert any(attrs.get("id") == "config-version" for _, attrs in elements)
-    assert any(attrs.get("id") == "pause-runtime" for _, attrs in elements)
+    assert not any(attrs.get("id") == "pause-runtime" for _, attrs in elements)
+    assert any(attrs.get("id") == "system-status" for _, attrs in elements)
     assert any(attrs.get("id") == "inspector" for _, attrs in elements)
 
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>Groupmate 控制面</title>
+    <title>群聊伙伴 · 管理台</title>
     <link rel="stylesheet" href="./styles/tokens.css">
     <link rel="stylesheet" href="./styles/layout.css">
     <link rel="stylesheet" href="./styles/components.css">
@@ -12,49 +12,53 @@
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="app-shell" id="app-shell">
-      <aside class="sidebar">
+      <aside class="sidebar" aria-label="群聊伙伴导航">
         <div class="brand-block">
-          <span class="brand-mark" aria-hidden="true">G</span>
-          <div>
-            <strong>Groupmate</strong>
-            <span>Social Runtime</span>
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img"><path d="M7 9h10v7H7zM9 6h6M12 4v2M9.5 12h.01M14.5 12h.01M5 11H3v3h2M19 11h2v3h-2"/></svg>
+          </span>
+          <div class="brand-copy">
+            <strong>群聊伙伴</strong>
+            <span>AstrBot 插件</span>
           </div>
         </div>
         <nav aria-label="主要工作区">
-          <a href="#/runtime" data-route="/runtime">运行中心</a>
-          <a href="#/persona" data-route="/persona">人格工作室</a>
-          <a href="#/people" data-route="/people">人与记忆</a>
-          <a href="#/activity" data-route="/activity">活动与任务</a>
-          <a href="#/governance" data-route="/governance">治理与评估</a>
+          <a href="#/runtime" data-route="/runtime"><span class="nav-icon" aria-hidden="true">⌂</span><span class="nav-label">此刻</span></a>
+          <a href="#/persona" data-route="/persona"><span class="nav-icon" aria-hidden="true">♙</span><span class="nav-label">人格工作室</span></a>
+          <a href="#/people" data-route="/people"><span class="nav-icon" aria-hidden="true">◎</span><span class="nav-label">人与记忆</span></a>
+          <a href="#/activity" data-route="/activity"><span class="nav-icon" aria-hidden="true">≡</span><span class="nav-label">活动与任务</span></a>
+          <a href="#/governance" data-route="/governance"><span class="nav-icon" aria-hidden="true">◇</span><span class="nav-label">治理与评估</span></a>
         </nav>
-        <p class="sidebar-note">所有状态来自版本化 Projection。</p>
+        <div class="sidebar-footer">
+          <span class="system-indicator" aria-hidden="true"></span>
+          <span id="system-status" class="nav-label">正在连接</span>
+        </div>
       </aside>
 
       <header class="topbar">
-        <div class="scope-controls">
-          <label for="group-select">群</label>
-          <select id="group-select" aria-label="选择群"></select>
-          <span class="scope-divider" aria-hidden="true"></span>
-          <span class="meta-label">人格</span>
-          <strong id="persona-name">—</strong>
-          <span class="meta-label">版本</span>
-          <strong id="config-version">—</strong>
+        <div class="topbar-context">
+          <label class="scope-picker" for="group-select">
+            <span>当前群组</span>
+            <select id="group-select" aria-label="选择群"></select>
+          </label>
+          <div class="persona-context">
+            <span class="context-avatar" aria-hidden="true">A</span>
+            <span><small>当前人格</small><strong id="persona-name">—</strong></span>
+            <span id="config-version" class="version-chip">—</span>
+          </div>
         </div>
         <div class="runtime-controls">
           <span id="connection-state" class="connection-state" aria-live="polite">
             <span class="status-dot" aria-hidden="true"></span>
             正在连接
           </span>
-          <button id="pause-runtime" class="button button-danger" type="button">
-            暂停运行
-          </button>
         </div>
       </header>
 
       <main id="main-content" tabindex="-1">
         <header class="workspace-heading">
           <div>
-            <p id="workspace-context">控制面</p>
+            <p id="workspace-context">群组管理</p>
             <h1 id="workspace-title">运行中心</h1>
           </div>
           <p id="workspace-description">读取实际运行状态、任务和交付健康。</p>
@@ -69,7 +73,7 @@
 
       <aside id="inspector" class="inspector" aria-label="详细检查器" hidden>
         <header>
-          <h2>检查器</h2>
+          <div><span>详情</span><h2>事件检查器</h2></div>
           <button id="close-inspector" class="icon-button" type="button" aria-label="关闭检查器">×</button>
         </header>
         <div id="inspector-content"></div>
