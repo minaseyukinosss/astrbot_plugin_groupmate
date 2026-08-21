@@ -423,6 +423,7 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
         for endpoint in (
             "bootstrap",
             "runtime",
+            "traces",
             "activity",
             "scenes",
             "people",
@@ -432,6 +433,7 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
             "governance",
             "evaluation",
             "health",
+            "avatar",
             "commands",
             "events",
         )

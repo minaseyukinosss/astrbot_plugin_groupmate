@@ -33,7 +33,7 @@ class GroupmatePlugin(Star):
         self._projection_consumers: tuple[ProjectionConsumer, ...] = ()
         self._control_routes: AstrBotControlPlaneRoutes | None = None
         self._shadow_reviews: ShadowReviewRepository | None = None
-        if settings.runtime_mode != "OFF" and settings.enabled_groups:
+        if settings.enabled_groups:
             self._control_routes = AstrBotControlPlaneRoutes(
                 context,
                 api_factory=self._require_control_api,
@@ -42,7 +42,7 @@ class GroupmatePlugin(Star):
 
     async def initialize(self) -> None:
         await self.bridge.start()
-        if self.settings.runtime_mode != "OFF" and self.settings.enabled_groups:
+        if self.settings.enabled_groups:
             path = self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             self._shadow_reviews = ShadowReviewRepository(path)
             self.bridge.shadow_reviews = self._shadow_reviews
@@ -64,6 +64,20 @@ class GroupmatePlugin(Star):
                 persona_id=self.settings.persona_id,
                 group_ids=self.settings.enabled_groups,
                 admin_ids=self.settings.control_admin_ids,
+                participants=self.bridge.trace_repository.participants,
+                runtime_mode=self.settings.runtime_mode,
+                runtime_ready=(
+                    self.settings.runtime_mode != "OFF"
+                    and bool(self.settings.generation_provider)
+                ),
+                runtime_blockers=tuple(
+                    reason
+                    for blocked, reason in (
+                        (self.settings.runtime_mode == "OFF", "运行模式为 OFF"),
+                        (not self.settings.generation_provider, "未选择文本模型"),
+                    )
+                    if blocked
+                ),
             )
             self._refresh_projections()
 
@@ -79,8 +93,13 @@ class GroupmatePlugin(Star):
         self._refresh_projections()
 
     async def _publish_control_event(self, event) -> None:
-        await self.bridge.manager.ingest(event)
-        await self.bridge.manager.drain()
+        try:
+            manager = self.bridge.manager
+        except RuntimeError:
+            manager = None
+        if manager is not None:
+            await manager.ingest(event)
+            await manager.drain()
         self._refresh_projections()
 
     def _refresh_projections(self) -> None:

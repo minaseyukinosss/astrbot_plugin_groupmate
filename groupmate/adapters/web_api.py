@@ -6,6 +6,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
+from .participants import ParticipantDirectory
 from ..social_runtime.control.commands import (
     AdvanceRollout,
     ApproveCalibration,
@@ -55,6 +56,7 @@ class ControlPlaneWebAPI:
     QUERY_ENDPOINTS = (
         "bootstrap",
         "runtime",
+        "traces",
         "activity",
         "scenes",
         "people",
@@ -78,6 +80,10 @@ class ControlPlaneWebAPI:
         persona_id: str,
         group_ids: tuple[str, ...],
         admin_ids: tuple[str, ...],
+        participants: ParticipantDirectory | None = None,
+        runtime_mode: str = "OFF",
+        runtime_ready: bool | None = None,
+        runtime_blockers: tuple[str, ...] = (),
     ) -> None:
         self.queries = queries
         self.stream = stream
@@ -90,6 +96,16 @@ class ControlPlaneWebAPI:
         self.group_ids = frozenset(self._group_order)
         self.admin_ids = frozenset(
             str(value).strip() for value in admin_ids if str(value).strip()
+        )
+        self.participants = participants
+        self.runtime_mode = str(runtime_mode or "OFF").upper()
+        self.runtime_ready = (
+            self.runtime_mode != "OFF"
+            if runtime_ready is None
+            else bool(runtime_ready)
+        )
+        self.runtime_blockers = tuple(
+            str(item).strip() for item in runtime_blockers if str(item).strip()
         )
         if not self.persona_id or not self.group_ids:
             raise ValueError("control API requires persona and group scope")
@@ -144,6 +160,9 @@ class ControlPlaneWebAPI:
                     "persona_id": persona_id,
                     "available_groups": list(self._group_order),
                     "selected_group_id": group_id,
+                    "configured_runtime_mode": self.runtime_mode,
+                    "runtime_ready": self.runtime_ready,
+                    "runtime_blockers": list(self.runtime_blockers),
                 }
             if endpoint == "health":
                 body = {
@@ -152,6 +171,29 @@ class ControlPlaneWebAPI:
                     "degraded_reasons": list(self._degraded.values()),
                     "fallback_poll_seconds": 15,
                 }
+            return WebResponse(200, body, {"Content-Type": "application/json"})
+
+        if endpoint == "avatar":
+            if str(request.method).upper() != "GET":
+                return self._error(405, "method_not_allowed")
+            try:
+                persona_id, group_id = self._scope(request)
+                avatar_ref = str(request.query.get("avatar_ref") or "").strip()
+                if (
+                    self.participants is None
+                    or not avatar_ref.startswith("participant:")
+                    or not self.participants.contains(
+                        avatar_ref,
+                        persona_id=persona_id,
+                        group_id=group_id,
+                    )
+                ):
+                    raise LookupError("avatar not found")
+                body = await self.participants.avatar_data(avatar_ref)
+            except LookupError:
+                return self._error(404, "avatar_not_found")
+            except Exception as exc:
+                return self._error(503, "avatar_unavailable", detail=str(exc))
             return WebResponse(200, body, {"Content-Type": "application/json"})
 
         if endpoint == "commands":
@@ -414,7 +456,7 @@ class AstrBotControlPlaneRoutes:
     """Registers official AstrBot plugin routes without leaking its web framework."""
 
     PLUGIN_NAME = "astrbot_plugin_groupmate"
-    ENDPOINTS = ControlPlaneWebAPI.QUERY_ENDPOINTS + ("commands", "events")
+    ENDPOINTS = ControlPlaneWebAPI.QUERY_ENDPOINTS + ("avatar", "commands", "events")
 
     def __init__(self, context: object, *, api_factory: Callable[[], object]) -> None:
         self.context = context
@@ -450,6 +492,7 @@ class AstrBotControlPlaneRoutes:
                 "persona_id": request.query.get("persona_id"),
                 "group_id": request.query.get("group_id"),
                 "entity_ref": request.query.get("entity_ref"),
+                "avatar_ref": request.query.get("avatar_ref"),
             }
             response = await api.handle(
                 WebRequest(

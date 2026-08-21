@@ -113,6 +113,15 @@ class ParticipantDirectory:
         self._write_cache(normalized, result)
         return result
 
+    def contains(self, avatar_ref: str, *, persona_id: str, group_id: str) -> bool:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT 1 FROM participant_directory WHERE avatar_ref=? "
+                "AND persona_id=? AND group_id=?",
+                (str(avatar_ref), str(persona_id), str(group_id)),
+            ).fetchone()
+        return row is not None
+
     async def _fetch_url(self, url: str) -> tuple[bytes, str]:
         def read() -> tuple[bytes, str]:
             request = urllib.request.Request(
