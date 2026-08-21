@@ -102,8 +102,14 @@ export function openCommandDialog(commandSpec, command, options = {}) {
       confirmation.focus();
       return;
     }
-    const payload = { ...(commandSpec.payload || {}) };
     try {
+      const dynamicPayload = typeof options.payloadFactory === "function"
+        ? options.payloadFactory()
+        : {};
+      if (!dynamicPayload || typeof dynamicPayload !== "object" || Array.isArray(dynamicPayload)) {
+        throw new Error("命令载荷必须是对象。");
+      }
+      const payload = { ...(commandSpec.payload || {}), ...dynamicPayload };
       for (const [name, { control, field }] of fieldNodes) {
         const raw = control.value.trim();
         if (!raw && field.required !== false) {
@@ -115,22 +121,22 @@ export function openCommandDialog(commandSpec, command, options = {}) {
         } else if (field.format === "number") payload[name] = Number(raw);
         else payload[name] = raw;
       }
+      submit.disabled = true;
+      try {
+        await command({
+          ...commandSpec,
+          payload,
+          expected_version: Number(commandSpec.expected_version || 0),
+          reason: reason.value.trim(),
+          confirmed: mustConfirm ? confirmation.checked : false,
+        });
+        dialog.close();
+      } finally {
+        submit.disabled = false;
+      }
     } catch (parseError) {
       error.textContent = parseError.message || "命令字段格式无效。";
       return;
-    }
-    submit.disabled = true;
-    try {
-      await command({
-        ...commandSpec,
-        payload,
-        expected_version: Number(commandSpec.expected_version || 0),
-        reason: reason.value.trim(),
-        confirmed: mustConfirm ? confirmation.checked : false,
-      });
-      dialog.close();
-    } finally {
-      submit.disabled = false;
     }
   });
   dialog.addEventListener("close", () => dialog.remove(), { once: true });

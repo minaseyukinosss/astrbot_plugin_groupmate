@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..persona.profile import GroupmatePersonaProfile
 from ..persistence.schema import connect_database
+from .config_versions import ConfigVersionRepository
 from .projections import ProjectionConsumer
 
 
@@ -60,7 +62,26 @@ class ProjectionQueries:
         return self._query("tasks", persona_id=persona_id, group_id=group_id)
 
     def persona(self, *, persona_id: str, group_id: str) -> dict[str, object]:
-        return self._query("persona", persona_id=persona_id, group_id=group_id)
+        view = self._query("persona", persona_id=persona_id, group_id=group_id)
+        snapshot = ConfigVersionRepository(self.path).snapshot(
+            persona_id=persona_id,
+            group_id=group_id,
+        )
+        profile = GroupmatePersonaProfile.from_behavior_config(snapshot.config)
+        view["items"].append(
+            {
+                "entity_ref": "persona:profile",
+                "kind": "persona.profile",
+                "projection_version": snapshot.version,
+                "summary": {
+                    "config_version": snapshot.version,
+                    "profile": profile.to_mapping(),
+                },
+                "evidence_refs": [],
+                "as_of": view["as_of"],
+            }
+        )
+        return view
 
     def governance(self, *, persona_id: str, group_id: str) -> dict[str, object]:
         return self._query("governance", persona_id=persona_id, group_id=group_id)

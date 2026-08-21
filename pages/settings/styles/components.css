@@ -314,9 +314,29 @@ h3 { font-size: 0.9375rem; }
 .persona-preview { background: var(--color-surface); border-inline-start: 1px solid var(--color-border); }
 .persona-editor-heading,
 .preview-heading { margin-block-end: var(--space-4); }
+.persona-editor-heading { display: grid; gap: var(--space-1); }
 .preview-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .status-chip { background: var(--color-primary-soft); color: var(--color-primary); }
+.persona-version { color: var(--color-primary); font-size: 0.75rem; font-weight: 650; }
+.persona-form,
+.persona-panel { display: grid; gap: var(--space-4); }
+.persona-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.persona-field { display: grid; align-content: start; gap: var(--space-1); }
+.persona-field-wide { grid-column: 1 / -1; }
+.persona-field label { font-weight: 650; }
+.persona-field small { min-height: 1.25rem; color: var(--color-muted); font-size: 0.75rem; }
+.persona-field input,
+.persona-field select,
+.persona-field textarea { width: 100%; }
+.persona-field textarea { min-height: 6.75rem; padding-block: var(--space-3); line-height: 1.55; resize: vertical; }
 .persona-editor-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-4); border-block-start: 1px solid var(--color-border); }
+.persona-profile-summary { display: grid; gap: 0; margin: 0; }
+.persona-profile-summary > div { display: grid; gap: var(--space-1); padding-block: var(--space-3); border-block-end: 1px solid var(--color-border); }
+.persona-profile-summary dt { color: var(--color-muted); font-size: 0.75rem; }
+.persona-profile-summary dd { margin: 0; color: var(--color-ink-soft); }
+.persona-live-heading { margin-block: var(--space-5) var(--space-2); }
+.persona-live-heading h4 { margin: 0; }
+.persona-live-heading p { margin: var(--space-1) 0 0; color: var(--color-muted); font-size: 0.8125rem; }
 
 .definition-list { display: grid; gap: 0; }
 .definition-list > li { display: flex; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) 0; border-block-end: 1px solid var(--color-border); }
@@ -387,6 +407,8 @@ h3 { font-size: 0.9375rem; }
   .result-count { margin-inline-start: 0; }
   .persona-editor,
   .persona-preview { padding: var(--space-4); }
+  .persona-field-grid { grid-template-columns: 1fr; }
+  .persona-field-wide { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

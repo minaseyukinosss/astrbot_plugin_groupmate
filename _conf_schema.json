@@ -26,12 +26,5 @@
     "_special": "select_provider",
     "default": "",
     "hint": "不需要理解图片时可以留空。"
-  },
-  "persona_id": {
-    "description": "Groupmate 人格",
-    "type": "string",
-    "_special": "select_persona",
-    "default": "",
-    "hint": "从 AstrBot 已创建的人格中选择，作为 Groupmate 的独立身份。"
   }
 }

@@ -7,6 +7,7 @@ from typing import Mapping
 
 
 SOCIAL_RUNTIME_DATABASE_NAME = "groupmate-social-runtime-v2.db"
+DEFAULT_GROUPMATE_PERSONA_ID = "groupmate:default"
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,8 @@ class SocialRuntimeSettings:
         generation_provider = str(
             source.get("generation_provider", "") or ""
         ).strip()
-        persona_id = str(source.get("persona_id", "") or "").strip()
-        configured = bool(enabled_groups and generation_provider and persona_id)
+        persona_id = DEFAULT_GROUPMATE_PERSONA_ID
+        configured = bool(enabled_groups and generation_provider)
         runtime_mode = str(
             source.get("runtime_mode", "SHADOW" if configured else "OFF") or "OFF"
         ).upper()

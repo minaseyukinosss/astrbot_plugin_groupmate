@@ -51,8 +51,24 @@ def test_runtime_workspace_uses_real_runtime_task_activity_and_health_projection
 
 def test_persona_workspace_covers_versioned_behavior_and_draft_flow():
     source = _source(WORKSPACES / "persona.js")
+    dialog = _source(COMPONENTS / "command-dialog.js")
 
-    for label in ("身份", "在场状态", "参与方式", "表达", "社交印象", "媒体", "工具", "保存草稿", "预览效果", "发布到群"):
+    for label in (
+        "身份",
+        "在场状态",
+        "参与方式",
+        "表达",
+        "社交印象",
+        "媒体",
+        "工具",
+        "角色名称",
+        "角色定位",
+        "参与主动性",
+        "回复长度",
+        "保存草稿",
+        "预览效果",
+        "发布到群",
+    ):
         assert label in source
     for command_type in (
         "config_draft",
@@ -62,11 +78,12 @@ def test_persona_workspace_covers_versioned_behavior_and_draft_flow():
         "config_restore",
     ):
         assert f'"{command_type}"' in source
-    assert 'name: "config_id"' in source
-    assert 'name: "config"' in source
-    assert 'format: "json"' in source
+    assert "collectProfile" in source
+    assert "payloadFactory" in source
+    assert "payloadFactory" in dialog
+    assert 'format: "json"' not in source
     assert "publishedConfigVersion" in source
-    assert '{ name: "config_id", label: "已发布配置 ID", defaultValue: "" }' in source
+    assert "persona-profile:" in source
 
 
 def test_people_workspace_exposes_social_evidence_without_sensitive_payloads():

@@ -4,7 +4,7 @@ Groupmate v2 让同一个 Persona 以克制、连续、可纠正的方式参与�
 
 平台事实事件写入 Durable Inbox/Journal。Persona Supervisor 维护全局自我，每群 Group Scene Actor 维护 Group World；Attention/Cognition 产生观察，Social Governor 执行硬约束，ActionPlan/Task 管理工作，Transactional Outbox 与单一 Dispatcher 管理交付。Projection Consumer 构建隐私裁剪控制面，页面不直接写领域表或显示 Chain-of-Thought。
 
-AstrBot 原生配置只声明群 allowlist、运行模式、Provider 和 Persona；控制权限、Worker 上限和外置插件规则由运行时内部治理。数据仅存于 `data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db`。V2 不读取或迁移旧 `groupmate.db`，旧数据库、旧配置及旧内部 API 不兼容。
+AstrBot 原生配置只声明群 allowlist、运行模式和 Provider；Groupmate 人格由插件自身管理，不套用 AstrBot 普通会话 Persona。管理员在人格工作室中按群编辑七个结构化分区，经草稿、校验、预览和版本化发布后进入运行时冻结快照。控制权限、Worker 上限和外置插件规则由运行时内部治理。数据仅存于 `data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db`。V2 不读取或迁移旧 `groupmate.db`，旧数据库、旧配置及旧内部 API 不兼容。
 
 运行模式为 `OFF`、no-send `SHADOW` 和 `SOCIAL_RUNTIME`。首次配置默认使用 SHADOW；管理员可在 AstrBot 原生插件配置中明确选择正式运行，选择结果只应用于群 allowlist。治理命令仍要求服务端权限、作用域、Expected Version、原因与确认；安全、双发送或 UNKNOWN spike 必须暂停。
 

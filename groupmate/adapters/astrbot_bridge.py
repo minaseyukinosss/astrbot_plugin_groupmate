@@ -8,6 +8,7 @@ from typing import Callable
 
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
+from ..social_runtime.control.config_versions import ConfigVersionRepository
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from .astrbot_events import AstrBotEventTranslator
@@ -53,6 +54,9 @@ class AstrBotSocialRuntimeBridge:
             mode in {RuntimeMode.SHADOW, RuntimeMode.SOCIAL_RUNTIME}
             and self.settings.enabled_groups
         ):
+            config_repository = ConfigVersionRepository(
+                self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+            )
             self._manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,
@@ -60,6 +64,10 @@ class AstrBotSocialRuntimeBridge:
                 enabled_groups=self.settings.enabled_groups,
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
+                persona_profile_loader=lambda group_id: config_repository.snapshot(
+                    persona_id=self.settings.persona_id,
+                    group_id=group_id,
+                ),
                 clock=self.clock,
             )
             await self._manager.start()

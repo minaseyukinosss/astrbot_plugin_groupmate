@@ -86,8 +86,12 @@ function renderWorkspace(route = activeRoute) {
 function render(snapshot) {
   renderConnection(snapshot.connection);
   renderError(snapshot.error);
-  elements.persona.textContent = snapshot.scope.persona_id || "—";
-  const version = snapshot.views.governance?.projection_version ?? 0;
+  const profile = (snapshot.views.persona?.items || [])
+    .find((item) => item.kind === "persona.profile")?.summary;
+  elements.persona.textContent = profile?.profile?.identity?.name || "Groupmate";
+  const version = Number(profile?.config_version ?? Math.max(0, ...(snapshot.views.governance?.items || [])
+    .filter((item) => item.summary?.status === "PUBLISHED")
+    .map((item) => Number(item.summary?.config_version || 0))));
   elements.version.textContent = `v${version}`;
   renderWorkspace(activeRoute);
 }

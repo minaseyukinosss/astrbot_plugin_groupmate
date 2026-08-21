@@ -30,6 +30,7 @@ from .intentions import CandidateIntention, IntentionEngine
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
+from .persona.profile import GroupmatePersonaProfile
 from .delivery.outbox import OutboxService
 from .scene_actor import GroupSceneActor, SceneWorkRequest, SceneWorkResult
 from .supervisor import PersonaSupervisor
@@ -42,6 +43,12 @@ class ShadowSideEffectForbidden(RuntimeError):
 
 class RuntimeModeUnavailable(RuntimeError):
     """Raised before I/O when a runtime mode has not passed its release gate."""
+
+
+@dataclass(frozen=True)
+class _PersonaProfileSnapshot:
+    version: int
+    profile: GroupmatePersonaProfile
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,7 @@ class SocialRuntimeManager:
         cognition_budget: CognitionBudget | None = None,
         worker_concurrency_limit: int = 12,
         governance_state: RuntimeGovernanceState | None = None,
+        persona_profile_loader: Callable[[str], object] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         resolved_mode = RuntimeMode(mode)
@@ -208,6 +216,10 @@ class SocialRuntimeManager:
         self.enabled_groups = enabled
         self.social_runtime_test_groups = test_groups
         self.config_version = config_version
+        self._persona_profile_loader = persona_profile_loader
+        self._persona_profiles: dict[
+            tuple[str, int], GroupmatePersonaProfile
+        ] = {}
         resolved_clock = time.time if clock is None else clock
         if not callable(resolved_clock):
             raise ValueError("runtime clock must be callable")
@@ -466,7 +478,8 @@ class SocialRuntimeManager:
 
     def _new_actor(self, persona_id: str, group_id: str) -> GroupSceneActor:
         async def snapshot_provider():
-            return await self.supervisor.snapshot(self.config_version)
+            profile = self._load_persona_profile(group_id)
+            return await self.supervisor.snapshot(profile.version)
 
         return GroupSceneActor(
             persona_id,
@@ -489,6 +502,16 @@ class SocialRuntimeManager:
             request.group_id,
             frame.focus_event_ids,
         )
+        profile = self._persona_profiles.get(
+            (request.group_id, frame.config_version)
+        )
+        if profile is None:
+            loaded = self._load_persona_profile(request.group_id)
+            if loaded.version != frame.config_version:
+                raise RuntimeError("persona profile changed during frozen cognition")
+            profile = loaded.profile
+        world_summary = asdict(request.world_snapshot)
+        world_summary["persona_profile"] = profile.to_mapping()
         context = CognitiveContext.create(
             group_id=request.group_id,
             scene_version=frame.scene_version,
@@ -496,7 +519,7 @@ class SocialRuntimeManager:
             config_version=frame.config_version,
             now=now,
             focus_events=tuple(event.to_dict() for event in focus_events),
-            world_summary=asdict(request.world_snapshot),
+            world_summary=world_summary,
             constraints=("shadow_only", "no_side_effects", "evidence_required"),
             token_budget=1024,
         )
@@ -567,6 +590,27 @@ class SocialRuntimeManager:
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
+
+    def _load_persona_profile(self, group_id: str) -> _PersonaProfileSnapshot:
+        if self._persona_profile_loader is None:
+            snapshot = _PersonaProfileSnapshot(
+                self.config_version,
+                GroupmatePersonaProfile.default(),
+            )
+        else:
+            raw = self._persona_profile_loader(group_id)
+            version = int(getattr(raw, "version", -1))
+            config = getattr(raw, "config", None)
+            if version < 0 or not isinstance(config, Mapping):
+                raise ValueError("persona profile loader returned an invalid snapshot")
+            snapshot = _PersonaProfileSnapshot(
+                version,
+                (
+                    GroupmatePersonaProfile.from_behavior_config(config)
+                ),
+            )
+        self._persona_profiles[(str(group_id), snapshot.version)] = snapshot.profile
+        return snapshot
 
     def _resolve_now(self, explicit: int | None) -> int:
         return int(self._clock()) if explicit is None else int(explicit)

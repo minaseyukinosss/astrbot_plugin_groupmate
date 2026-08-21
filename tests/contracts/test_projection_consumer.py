@@ -5,6 +5,8 @@ import json
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.control.projections import ProjectionConsumer
 from groupmate.social_runtime.control.queries import ProjectionQueries
+from groupmate.social_runtime.control.config_versions import ConfigVersionRepository
+from groupmate.social_runtime.persona.profile import GroupmatePersonaProfile
 from groupmate.social_runtime.persistence.event_store import SQLiteSocialEventStore
 from groupmate.social_runtime.persistence.schema import connect_database
 
@@ -112,6 +114,40 @@ def test_projection_consumers_have_independent_cursors_and_idempotent_effects(
 
     assert replay.applied == 0
     assert tuple(after) == tuple(before) == (2, 2)
+
+
+def test_persona_query_includes_current_internal_profile(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    ProjectionConsumer(path, "persona")
+    repository = ConfigVersionRepository(path)
+    profile = GroupmatePersonaProfile.default().to_mapping()
+    draft = repository.create_draft(
+        "persona-profile:group-1",
+        {"persona_profile": profile},
+        persona_id="groupmate:default",
+        group_id="group-1",
+        now=10,
+    )
+    repository.validate(
+        draft.config_id,
+        persona_id="groupmate:default",
+        group_id="group-1",
+    )
+    repository.publish(
+        draft.config_id,
+        persona_id="groupmate:default",
+        group_id="group-1",
+        expected_version=0,
+    )
+
+    view = ProjectionQueries(path).persona(
+        persona_id="groupmate:default",
+        group_id="group-1",
+    )
+
+    item = next(item for item in view["items"] if item["kind"] == "persona.profile")
+    assert item["summary"]["config_version"] == 1
+    assert item["summary"]["profile"] == profile
 
 
 def test_projection_queries_return_freshness_and_only_admin_safe_fact_summary(

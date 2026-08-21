@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Mapping
 
 from ..contracts import SocialEventEnvelope
+from ..persona.profile import GroupmatePersonaProfile, PERSONA_PROFILE_CONFIG_KEY
 from ..persistence.schema import connect_database, initialize_database
 from .config_versions import ConfigNotFound, ConfigVersionRepository
 
@@ -454,10 +455,20 @@ class CommandService:
                 "target": self._required_text(command.target, "reset target")
             }, "control.state_reset"
         if isinstance(command, CreateConfigDraft):
+            config = command.config
+            if str(command.config_id).startswith("persona-profile:"):
+                profile = GroupmatePersonaProfile.from_mapping(command.config)
+                current = self.config_repository._published_on(
+                    db,
+                    persona_id=context.persona_id,
+                    group_id=context.group_id,
+                )
+                config = {} if current is None else dict(current.config)
+                config[PERSONA_PROFILE_CONFIG_KEY] = profile.to_mapping()
             draft = self.config_repository._create_draft_on(
                 db,
                 command.config_id,
-                command.config,
+                config,
                 persona_id=context.persona_id,
                 group_id=context.group_id,
                 now=now,

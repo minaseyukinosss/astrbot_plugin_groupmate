@@ -7,13 +7,18 @@ import json
 from pathlib import Path
 
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
-from groupmate.settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
+from groupmate.settings import (
+    DEFAULT_GROUPMATE_PERSONA_ID,
+    SOCIAL_RUNTIME_DATABASE_NAME,
+    SocialRuntimeSettings,
+)
 
 
 def test_default_settings_are_off_and_database_is_plugin_owned():
     settings = SocialRuntimeSettings.from_mapping({})
 
     assert settings.runtime_mode == "OFF"
+    assert settings.persona_id == DEFAULT_GROUPMATE_PERSONA_ID
     assert SOCIAL_RUNTIME_DATABASE_NAME == "groupmate-social-runtime-v2.db"
     assert not hasattr(settings, "database_name")
     assert settings.control_admin_ids == ()
@@ -36,7 +41,6 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "runtime_mode",
         "generation_provider",
         "vision_provider",
-        "persona_id",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
@@ -45,7 +49,7 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     ]
     assert schema["generation_provider"]["_special"] == "select_provider"
     assert schema["vision_provider"]["_special"] == "select_provider"
-    assert schema["persona_id"]["_special"] == "select_persona"
+    assert "persona_id" not in schema
     assert "bot_qq" not in schema
     assert "database_name" not in schema
 
@@ -56,14 +60,13 @@ def test_complete_native_configuration_enters_no_send_shadow_automatically():
             "enabled_groups": [" group-1 "],
             "generation_provider": "provider:text",
             "vision_provider": "provider:vision",
-            "persona_id": "persona:groupmate",
         }
     )
 
     assert settings.enabled_groups == ("group-1",)
     assert settings.generation_provider == "provider:text"
     assert settings.vision_provider == "provider:vision"
-    assert settings.persona_id == "persona:groupmate"
+    assert settings.persona_id == DEFAULT_GROUPMATE_PERSONA_ID
     assert settings.runtime_mode == "SHADOW"
 
 
@@ -73,7 +76,6 @@ def test_native_production_mode_applies_to_every_enabled_group():
             "enabled_groups": [" group-1 ", "group-2"],
             "runtime_mode": "SOCIAL_RUNTIME",
             "generation_provider": "provider:text",
-            "persona_id": "persona:groupmate",
         }
     )
 
