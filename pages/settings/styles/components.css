@@ -83,7 +83,6 @@
   padding-inline-start: var(--space-3);
   border-inline-start: 1px solid var(--color-border);
 }
-.persona-context > span:nth-child(2) { display: grid; }
 .persona-context small { color: var(--color-muted); font-size: 0.7rem; }
 .context-avatar {
   display: grid;
@@ -475,10 +474,12 @@ h3 { font-size: 0.9375rem; }
 
 .context-card {
   display: grid;
+  flex: 1 1 0;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 0.25rem;
   align-self: center;
-  min-width: 16rem;
+  min-width: 0;
+  max-width: 16rem;
   height: 4rem;
   padding: 0.45rem 0.625rem;
   background: var(--color-surface);

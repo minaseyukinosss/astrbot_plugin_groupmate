@@ -49,6 +49,10 @@ Post-fix evidence in the desktop and focused comparison shows a stable full-widt
 
 The supplemental source exposed two rows collapsed to the generic `[非文本消息]` placeholder. The revised implementation preserves ordered message parts, shows a real image thumbnail in the table, expands the image with name and size in the inspector, and renders compact `语音` / `文件` labels for non-previewable parts. The additional content increases only affected row height and does not change the established table, inspector, typography, token or spacing system. No actionable P0/P1/P2 issue remains.
 
+### Pass 4 — responsive topbar regression passed
+
+The supplied dark-theme crop exposed two cascade conflicts at intermediate widths: fixed context-card minimums overlapped the runtime summary, while an obsolete persona row rule pushed the version chip below its card. The context group now owns the available flexible width, both cards shrink safely up to their existing 256 px maximum, the persona row remains horizontal, and compact widths reliably hide summary metrics before they can overflow. Browser geometry checks at 354, 800, 1080, and 1280 CSS px confirmed zero overlap and zero horizontal page overflow.
+
 ## Interactions and runtime checks
 
 - Tested all/external filters: external filter reduced the fixture from five rows to two.
@@ -57,6 +61,7 @@ The supplemental source exposed two rows collapsed to the generic `[非文本消
 - Loaded an image message in the list and opened its full inspector preview.
 - Verified typed fallbacks for voice and file message parts.
 - Checked the 680 px message-card layout.
+- Checked topbar geometry at 354, 800, 1080, and 1280 px; the version chip stays inside the persona card whenever visible.
 - Browser console: no warnings or errors.
 
 ## Follow-up polish

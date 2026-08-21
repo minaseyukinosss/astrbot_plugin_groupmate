@@ -52,6 +52,7 @@ body {
 
 .topbar-context {
   display: flex;
+  flex: 1 1 auto;
   align-items: stretch;
   gap: 0.625rem;
   min-width: 0;
@@ -138,7 +139,7 @@ main {
   .sidebar nav { flex: 1; display: flex; justify-content: center; overflow-x: auto; }
   .topbar { position: static; }
   .context-card { min-width: 0; }
-  .runtime-summary > div { display: none; }
+  .topbar .runtime-summary > div { display: none; }
 }
 
 @media (max-width: 44rem) {
