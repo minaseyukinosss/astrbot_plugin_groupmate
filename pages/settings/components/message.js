@@ -9,6 +9,14 @@ function mediaPart(part = {}, compact = false) {
   const kind = String(part.kind || "unknown");
   const label = String(part.label || "非文本内容");
   const previewable = Boolean(part.media_ref && part.preview);
+  const mentionAvatar = kind === "at" && part.avatar_ref && !compact
+    ? element("span", {
+      className: "mention-avatar",
+      text: [...String(part.display_name || "群")][0] || "群",
+      dataset: { avatarRef: part.avatar_ref },
+      attrs: { "aria-hidden": "true" },
+    })
+    : null;
   const node = element("span", {
     className: `message-part message-part-${kind}${compact ? " is-compact" : ""}`,
     dataset: previewable && (!compact || part.preview === "image") ? {
@@ -17,6 +25,7 @@ function mediaPart(part = {}, compact = false) {
       mediaExpanded: String(!compact),
     } : {},
   }, [
+    mentionAvatar,
     element("span", { className: "message-part-label", text: label }),
     ...(!compact && mediaMeta(part)
       ? [element("small", { className: "message-part-meta", text: mediaMeta(part) })]

@@ -101,7 +101,14 @@ class MessageTraceRepository:
             if external
             else {"mode": mode, "status": "RECEIVED", "label": "等待处理"}
         )
-        message_parts = self.media.remember(event)
+        message_parts = self.media.remember(
+            event,
+            mention_resolver=lambda actor_id: self.participants.resolve_actor(
+                persona_id=event.persona_id,
+                group_id=event.group_id or "",
+                actor_id=actor_id,
+            ),
+        )
         summary = {
             "actor": {
                 "member_ref": participant["member_ref"],

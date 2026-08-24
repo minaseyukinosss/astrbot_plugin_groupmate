@@ -90,6 +90,15 @@ def test_frontend_has_no_html_execution_sink_or_protected_runtime_material():
         assert protected not in folded
 
 
+def test_failed_media_preview_is_retryable_instead_of_cached_forever():
+    source = (PAGE / "app.js").read_text(encoding="utf-8")
+
+    assert 'mediaCache.set(key, null)' not in source
+    assert 'mediaCache.delete(key)' in source
+    assert "重新加载" in source
+    assert "预览加载失败" in source
+
+
 def test_operations_doc_records_failure_isolation_and_send_gate():
     document = (
         ROOT / "docs" / "operations" / "social-runtime-control-plane.md"

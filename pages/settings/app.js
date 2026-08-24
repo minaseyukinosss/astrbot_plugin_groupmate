@@ -122,24 +122,33 @@ function hydrateAvatars(root) {
   });
 }
 
-async function mediaSource(mediaRef, mediaKind) {
+function mediaCacheKey(mediaRef, mediaKind) {
   const ref = String(mediaRef || "");
   const kind = String(mediaKind || "").toLowerCase();
-  const key = `${ref}:${kind}`;
+  return `${ref}:${kind}`;
+}
+
+async function mediaSource(mediaRef, mediaKind, { force = false } = {}) {
+  const ref = String(mediaRef || "");
+  const kind = String(mediaKind || "").toLowerCase();
+  const key = mediaCacheKey(ref, kind);
   if (!ref.startsWith("media:") || !["image", "audio", "video"].includes(kind)) return null;
+  if (force) mediaCache.delete(key);
   if (mediaCache.has(key)) return mediaCache.get(key);
   if (mediaRequests.has(key)) return mediaRequests.get(key);
   const pending = bridge.query("media", { ...scopeParams(), media_ref: ref })
     .then((result) => {
       const source = safeMediaPreview(result, kind);
+      if (!source) throw new Error("媒体预览格式不受支持");
       mediaCache.set(key, source);
-      mediaRequests.delete(key);
       return source;
     })
-    .catch(() => {
-      mediaCache.set(key, null);
+    .catch((error) => {
+      mediaCache.delete(key);
+      throw error;
+    })
+    .finally(() => {
       mediaRequests.delete(key);
-      return null;
     });
   mediaRequests.set(key, pending);
   return pending;
@@ -162,22 +171,60 @@ function mediaElement(kind, source, label) {
   return media;
 }
 
-function hydrateMedia(root) {
-  root.querySelectorAll("[data-media-ref]").forEach(async (node) => {
+function showMediaFailure(node, error) {
+  node.querySelector(".media-load-error")?.remove();
+  node.classList.remove("is-loaded");
+  node.classList.add("is-unavailable");
+  const status = document.createElement("span");
+  status.className = "media-load-error";
+  const message = document.createElement("span");
+  message.textContent = "预览加载失败";
+  message.title = String(error?.message || "媒体地址可能已过期");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "media-retry";
+  retry.textContent = "重新加载";
+  retry.addEventListener("click", (event) => {
+    event.stopPropagation();
+    hydrateMediaNode(node, { force: true });
+  });
+  status.append(message, retry);
+  node.append(status);
+}
+
+async function hydrateMediaNode(node, { force = false } = {}) {
     if (node.dataset.mediaLoaded === "true" || node.dataset.mediaLoading === "true") return;
     node.dataset.mediaLoading = "true";
+    node.querySelector(".media-load-error")?.remove();
     const kind = String(node.dataset.mediaKind || "").toLowerCase();
-    const source = await mediaSource(node.dataset.mediaRef, kind);
-    delete node.dataset.mediaLoading;
-    if (!source || !node.isConnected) {
+    try {
+      const source = await mediaSource(node.dataset.mediaRef, kind, { force });
+      if (!source || !node.isConnected) return;
+      const label = node.querySelector(".message-part-label")?.textContent || "媒体内容";
+      const media = mediaElement(kind, source, label);
+      media.addEventListener("error", () => {
+        media.remove();
+        mediaCache.delete(mediaCacheKey(node.dataset.mediaRef, kind));
+        delete node.dataset.mediaLoaded;
+        showMediaFailure(node, new Error("媒体内容无法解码"));
+      }, { once: true });
+      node.prepend(media);
       node.dataset.mediaLoaded = "true";
-      node.classList.add("is-unavailable");
+      node.classList.remove("is-unavailable");
+      node.classList.add("is-loaded");
+    } catch (error) {
+      if (node.isConnected) showMediaFailure(node, error);
+    } finally {
+      delete node.dataset.mediaLoading;
+    }
+}
+
+function hydrateMedia(root) {
+  root.querySelectorAll("[data-media-ref]").forEach((node) => {
+    if (node.dataset.mediaLoaded === "true" || node.dataset.mediaLoading === "true") {
       return;
     }
-    const label = node.querySelector(".message-part-label")?.textContent || "媒体内容";
-    node.prepend(mediaElement(kind, source, label));
-    node.dataset.mediaLoaded = "true";
-    node.classList.add("is-loaded");
+    hydrateMediaNode(node);
   });
 }
 

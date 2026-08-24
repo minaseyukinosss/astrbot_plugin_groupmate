@@ -233,3 +233,79 @@ def test_non_text_segments_keep_order_without_exposing_platform_sources(tmp_path
     assert "example.com" not in public_text
     assert "voice.amr" not in public_text
     assert '"14"' not in public_text
+
+
+def test_at_segment_uses_known_member_name_without_exposing_qq_id(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    mentioned = _platform_event("known-member", card="夏夏")
+    repo.record_received(mentioned, runtime_mode="SHADOW", now=10)
+    event = SocialEventEnvelope.create(
+        event_id="qq:mention-1",
+        event_type="platform.message",
+        occurred_at=11,
+        received_at=11,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="84",
+        source_message_id="mention-1",
+        correlation_id="qq:mention-1",
+        causation_id=None,
+        payload={
+            "text": "@夏夏 看这里",
+            "sender": {"id": "84", "name": "小林"},
+            "interaction_owner": "UNKNOWN",
+            "segments": [
+                {"type": "at", "data": {"qq": "42"}},
+                {"type": "text", "data": {"text": " 看这里"}},
+            ],
+        },
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=11)
+
+    message = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["message"]
+    mention = message["parts"][0]
+    assert mention["kind"] == "at"
+    assert mention["label"] == "@夏夏"
+    assert mention["display_name"] == "夏夏"
+    assert mention["member_ref"].startswith("member:")
+    assert mention["avatar_ref"].startswith("participant:")
+    assert "42" not in str(message)
+
+
+def test_at_all_and_unknown_member_have_safe_labels(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = SocialEventEnvelope.create(
+        event_id="qq:mention-2",
+        event_type="platform.message",
+        occurred_at=10,
+        received_at=10,
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="84",
+        source_message_id="mention-2",
+        correlation_id="qq:mention-2",
+        causation_id=None,
+        payload={
+            "text": "",
+            "sender": {"id": "84", "name": "小林"},
+            "interaction_owner": "UNKNOWN",
+            "segments": [
+                {"type": "at", "data": {"qq": "all"}},
+                {"type": "at", "data": {"qq": "99887766"}},
+            ],
+        },
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+
+    parts = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["message"]["parts"]
+    assert parts == [
+        {"kind": "at", "label": "@全体成员", "display_name": "全体成员"},
+        {"kind": "at", "label": "@未知成员", "display_name": "未知成员"},
+    ]
+    assert "99887766" not in str(parts)

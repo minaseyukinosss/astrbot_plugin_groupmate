@@ -56,6 +56,7 @@ MediaFetcher = Callable[
     [str, int],
     Awaitable[tuple[bytes, str]] | tuple[bytes, str],
 ]
+MentionResolver = Callable[[str], Mapping[str, str] | None]
 
 
 class MessageMediaDirectory:
@@ -124,7 +125,12 @@ class MessageMediaDirectory:
         self._write_cache(normalized, result)
         return result
 
-    def remember(self, event: SocialEventEnvelope) -> list[dict[str, object]]:
+    def remember(
+        self,
+        event: SocialEventEnvelope,
+        *,
+        mention_resolver: MentionResolver | None = None,
+    ) -> list[dict[str, object]]:
         segments = event.payload.get("segments")
         if not isinstance(segments, (list, tuple)):
             text = self._safe_text(event.payload.get("text"), 240)
@@ -141,6 +147,30 @@ class MessageMediaDirectory:
                 text = self._safe_text(data_map.get("text"), 240)
                 if text:
                     public_parts.append({"kind": "text", "text": text})
+                continue
+            if kind == "at":
+                actor_id = str(data_map.get("qq") or "").strip()
+                if actor_id.lower() == "all":
+                    public_parts.append(
+                        {"kind": "at", "label": "@全体成员", "display_name": "全体成员"}
+                    )
+                    continue
+                participant = mention_resolver(actor_id) if mention_resolver and actor_id else None
+                if participant:
+                    display_name = self._safe_text(participant.get("display_name"), 48) or "群成员"
+                    public_parts.append(
+                        {
+                            "kind": "at",
+                            "label": f"@{display_name}",
+                            "display_name": display_name,
+                            "member_ref": str(participant.get("member_ref") or ""),
+                            "avatar_ref": str(participant.get("avatar_ref") or ""),
+                        }
+                    )
+                else:
+                    public_parts.append(
+                        {"kind": "at", "label": "@未知成员", "display_name": "未知成员"}
+                    )
                 continue
             label = _LABELS.get(kind)
             if not label:

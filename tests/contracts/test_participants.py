@@ -34,6 +34,24 @@ def test_participant_prefers_card_and_hides_raw_qq_id(tmp_path):
     assert "42" not in participant["member_ref"]
 
 
+def test_participant_can_be_resolved_inside_the_same_group(tmp_path):
+    directory = ParticipantDirectory(tmp_path / "runtime.db", tmp_path / "avatars")
+    remembered = directory.remember(_event(card="夏夏"))
+
+    resolved = directory.resolve_actor(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        actor_id="42",
+    )
+
+    assert resolved == remembered
+    assert directory.resolve_actor(
+        persona_id="groupmate:default",
+        group_id="another-group",
+        actor_id="42",
+    ) is None
+
+
 def test_avatar_failure_returns_stable_generated_svg(tmp_path):
     async def failing_fetcher(_url):
         raise OSError("offline")

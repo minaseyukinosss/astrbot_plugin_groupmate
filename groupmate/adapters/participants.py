@@ -70,6 +70,31 @@ class ParticipantDirectory:
             "avatar_ref": avatar_ref,
         }
 
+    def resolve_actor(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        actor_id: str,
+    ) -> dict[str, str] | None:
+        """Resolve a private platform id to scoped, page-safe participant data."""
+        normalized = str(actor_id or "").strip()
+        if not normalized:
+            return None
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT member_ref, display_name, avatar_ref FROM participant_directory "
+                "WHERE persona_id=? AND group_id=? AND actor_id=?",
+                (str(persona_id), str(group_id), normalized),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "member_ref": str(row["member_ref"]),
+            "display_name": str(row["display_name"]),
+            "avatar_ref": str(row["avatar_ref"]),
+        }
+
     async def avatar_data(self, avatar_ref: str) -> dict[str, str]:
         normalized = str(avatar_ref or "").strip()
         cached = self._read_cache(normalized)
