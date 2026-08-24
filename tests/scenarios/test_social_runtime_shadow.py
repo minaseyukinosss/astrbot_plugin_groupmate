@@ -198,10 +198,16 @@ def test_direct_social_scenarios_are_governed_in_shadow(
     assert len(evaluations) == 1
     assert evaluations[0].accepted is True
     assert evaluations[0].governor_result.outcome == expected_outcome
+    assert evaluations[0].cognition_diagnostics
+    assert all(
+        item.status == "SUCCEEDED"
+        for item in evaluations[0].cognition_diagnostics
+    )
     assert any(item.effect_type == "shadow.governor_evaluated" for item in journal)
     assert all("chain_of_thought" not in str(item.payload) for item in journal)
     assert projection[0]["governor_result"]["reason_codes"]
     assert "rejected" in projection[0]["governor_result"]
+    assert projection[0]["cognition_diagnostics"]
     assert "chain_of_thought" not in str(projection)
     assert manager.execution_port.calls == ()
     assert outbox_count == 0

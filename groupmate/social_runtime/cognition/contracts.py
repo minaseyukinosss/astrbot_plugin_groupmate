@@ -99,6 +99,41 @@ class CognitiveObservation:
         return cls(**normalized)
 
 
+@dataclass(frozen=True)
+class CognitiveWorkerDiagnostic:
+    worker: str
+    status: str
+    started_at: int
+    completed_at: int
+    latency_ms: int
+    diagnostic_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.worker:
+            raise ValueError("worker diagnostic requires a worker")
+        if self.status not in {
+            "SUCCEEDED",
+            "TIMED_OUT",
+            "MODEL_FAILED",
+            "INVALID_OUTPUT",
+            "REJECTED",
+            "FAILED",
+            "MISSING",
+            "BUDGET_EXHAUSTED",
+        }:
+            raise ValueError("unknown worker diagnostic status")
+        if self.started_at < 0 or self.completed_at < self.started_at:
+            raise ValueError("worker diagnostic timestamps are invalid")
+        if self.latency_ms < 0:
+            raise ValueError("worker diagnostic latency is invalid")
+
+
+@dataclass(frozen=True)
+class CognitiveWorkerResult:
+    observations: tuple[CognitiveObservation, ...]
+    diagnostic_code: str | None = None
+
+
 class CognitiveWorker(Protocol):
     name: str
 
@@ -107,4 +142,10 @@ class CognitiveWorker(Protocol):
     ) -> tuple[CognitiveObservation, ...]: ...
 
 
-__all__ = ("CognitiveContext", "CognitiveObservation", "CognitiveWorker")
+__all__ = (
+    "CognitiveContext",
+    "CognitiveObservation",
+    "CognitiveWorker",
+    "CognitiveWorkerDiagnostic",
+    "CognitiveWorkerResult",
+)

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import Callable, Protocol
 
 from ..attention import AttentionFrame
-from .contracts import CognitiveContext, CognitiveObservation
+from .contracts import CognitiveContext, CognitiveObservation, CognitiveWorkerResult
 
 
 class StructuredModelPort(Protocol):
@@ -28,6 +28,11 @@ class AstrBotStructuredWorker:
     async def observe(
         self, frame: AttentionFrame, context: CognitiveContext
     ) -> tuple[CognitiveObservation, ...]:
+        return (await self.observe_with_result(frame, context)).observations
+
+    async def observe_with_result(
+        self, frame: AttentionFrame, context: CognitiveContext
+    ) -> CognitiveWorkerResult:
         try:
             raw = await self._model.complete_json(
                 schema=self._schema(),
@@ -39,16 +44,13 @@ class AstrBotStructuredWorker:
                 },
             )
         except Exception:
-            self._diagnostic_sink("model_call_failed")
-            return ()
+            return self._result((), "model_call_failed")
         if not isinstance(raw, dict) or not isinstance(raw.get("observations"), list):
-            self._diagnostic_sink("invalid_worker_output")
-            return ()
+            return self._result((), "invalid_worker_output")
         if any(not isinstance(item, dict) for item in raw["observations"]):
-            self._diagnostic_sink("invalid_worker_output")
-            return ()
+            return self._result((), "invalid_worker_output")
         try:
-            return tuple(
+            observations = tuple(
                 CognitiveObservation.create(
                     worker=self.name,
                     kind=item["kind"],
@@ -62,8 +64,16 @@ class AstrBotStructuredWorker:
                 for item in raw["observations"]
             )
         except (KeyError, TypeError, ValueError):
-            self._diagnostic_sink("invalid_worker_output")
-            return ()
+            return self._result((), "invalid_worker_output")
+        return CognitiveWorkerResult(observations)
+
+    def _result(
+        self,
+        observations: tuple[CognitiveObservation, ...],
+        diagnostic_code: str,
+    ) -> CognitiveWorkerResult:
+        self._diagnostic_sink(diagnostic_code)
+        return CognitiveWorkerResult(observations, diagnostic_code)
 
     def _worker_instruction(self) -> str:
         instructions = {

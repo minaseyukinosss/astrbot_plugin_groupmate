@@ -12,7 +12,11 @@ from typing import Callable, Mapping
 from .attention import AttentionFrame, ambient_deadline_expired
 from .actions.contracts import ActionPlan, DeliveryBundle, PlanValidation
 from .actions.coordinator import ExecutionCoordinator
-from .cognition.contracts import CognitiveContext, CognitiveWorker
+from .cognition.contracts import (
+    CognitiveContext,
+    CognitiveWorker,
+    CognitiveWorkerDiagnostic,
+)
 from .cognition.service import CognitionBudget, CognitionService
 from .contracts import (
     RuntimeGovernanceState,
@@ -66,6 +70,7 @@ class ShadowEvaluation:
     candidates: tuple[CandidateIntention, ...]
     accepted: bool
     status: str
+    cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
 
     def to_capture_evidence(self) -> dict[str, object]:
         frame_id = (
@@ -88,6 +93,9 @@ class ShadowEvaluation:
                     event.to_dict() for event in self.context_events
                 ],
                 "candidates": [asdict(candidate) for candidate in self.candidates],
+                "cognition_diagnostics": [
+                    asdict(item) for item in self.cognition_diagnostics
+                ],
                 "accepted": self.accepted,
                 "status": self.status,
             },
@@ -132,6 +140,10 @@ class ShadowEvaluation:
                 candidate.get("evidence_event_ids", ())
             )
             candidates.append(CandidateIntention(**candidate))
+        cognition_diagnostics = tuple(
+            CognitiveWorkerDiagnostic(**dict(item))
+            for item in values.get("cognition_diagnostics", ())
+        )
         return cls(
             persona_id=str(values["persona_id"]),
             request_id=str(values["request_id"]),
@@ -148,6 +160,7 @@ class ShadowEvaluation:
             candidates=tuple(candidates),
             accepted=bool(values["accepted"]),
             status=str(values["status"]),
+            cognition_diagnostics=cognition_diagnostics,
         )
 
 
@@ -604,6 +617,7 @@ class SocialRuntimeManager:
             candidates=candidates,
             accepted=True,
             status="accepted",
+            cognition_diagnostics=blackboard.worker_diagnostics,
         )
         result = SceneWorkResult(
             request_id=request.request_id,
@@ -613,6 +627,7 @@ class SocialRuntimeManager:
             persona_state_version=frame.persona_state_version,
             frame_id=frame.frame_id,
             governor_result=governor_result,
+            cognition_diagnostics=blackboard.worker_diagnostics,
             capture_evidence=evaluation.to_capture_evidence(),
         )
         actor = await self.fabric.notify(request.persona_id, request.group_id)
@@ -707,6 +722,7 @@ class SocialRuntimeManager:
             candidates=(),
             accepted=True,
             status="accepted",
+            cognition_diagnostics=(),
         )
         accepted = await actor.discard_work(
             request.request_id,

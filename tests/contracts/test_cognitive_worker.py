@@ -99,6 +99,26 @@ def test_astrbot_worker_invalid_structured_output_returns_empty_with_error_code(
     assert diagnostics == ["invalid_worker_output"]
 
 
+def test_cognition_service_preserves_structured_model_failure_code():
+    class InvalidModel:
+        async def complete_json(self, *, schema, payload):
+            return {"observations": "not-a-list"}
+
+    worker = AstrBotStructuredWorker("scene_interpreter", InvalidModel())
+    service = CognitionService(
+        workers={"scene_interpreter": worker},
+        budget=CognitionBudget(max_worker_calls=1, max_cost_units=1),
+    )
+
+    snapshot = asyncio.run(service.evaluate(_frame(), _context()))
+
+    diagnostic = snapshot.worker_diagnostics[-1]
+    assert diagnostic.worker == "scene_interpreter"
+    assert diagnostic.status == "INVALID_OUTPUT"
+    assert diagnostic.diagnostic_code == "invalid_worker_output"
+    assert snapshot.degraded is True
+
+
 def test_astrbot_model_port_uses_provider_and_worker_identity():
     class Response:
         completion_text = "```json\n{\"observations\": []}\n```"

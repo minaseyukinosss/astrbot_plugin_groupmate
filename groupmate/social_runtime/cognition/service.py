@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, TypeVar
 
 from ..attention import AttentionFrame
 from .blackboard import CognitionBlackboard, ObservationRejected
-from .contracts import CognitiveContext, CognitiveObservation, CognitiveWorker
+from .contracts import (
+    CognitiveContext,
+    CognitiveObservation,
+    CognitiveWorker,
+    CognitiveWorkerDiagnostic,
+    CognitiveWorkerResult,
+)
 from .scheduling import WorkerAdmissionQueue
 
 
@@ -137,13 +144,15 @@ class CognitionService:
         self._validate_context(frame, context)
         board = CognitionBlackboard(frame, now=context.now)
         diagnostics: list[str] = []
-        rule_completed = await self._run_worker(
+        worker_diagnostics: list[CognitiveWorkerDiagnostic] = []
+        rule_completed, rule_diagnostic = await self._run_worker(
             self.rule_worker,
             frame,
             context,
             board,
             diagnostics,
         )
+        worker_diagnostics.append(rule_diagnostic)
 
         cost_level = self._cost_level(frame)
         selected: list[tuple[CognitiveWorker, int]] = []
@@ -162,6 +171,10 @@ class CognitionService:
         diagnostics.extend(
             f"worker_missing:{name}" for name in missing_workers
         )
+        worker_diagnostics.extend(
+            self._instant_diagnostic(name, "MISSING", "worker_missing")
+            for name in missing_workers
+        )
         degraded = not rule_completed or bool(missing_workers)
         for worker, cost in selected:
             if (
@@ -170,14 +183,22 @@ class CognitionService:
             ):
                 degraded = True
                 diagnostics.append("cognition_budget_exhausted")
+                worker_diagnostics.append(
+                    self._instant_diagnostic(
+                        worker.name,
+                        "BUDGET_EXHAUSTED",
+                        "cognition_budget_exhausted",
+                    )
+                )
                 break
-            completed = await self._run_worker(
+            completed, worker_diagnostic = await self._run_worker(
                 worker,
                 frame,
                 context,
                 board,
                 diagnostics,
             )
+            worker_diagnostics.append(worker_diagnostic)
             degraded = degraded or not completed
             used_calls += 1
             used_cost += cost
@@ -187,31 +208,90 @@ class CognitionService:
             cost_level=cost_level,
             degraded=degraded,
             diagnostics=tuple(diagnostics),
+            worker_diagnostics=tuple(worker_diagnostics),
         )
 
     async def _run_worker(
         self, worker, frame, context, board, diagnostics
-    ) -> bool:
+    ) -> tuple[bool, CognitiveWorkerDiagnostic]:
+        started_at = int(time.time() * 1000)
+        started = time.monotonic_ns()
         try:
-            observations = await self._worker_gate.run(
+            result = await self._worker_gate.run(
                 frame.trigger_kind,
                 lambda: asyncio.wait_for(
-                    worker.observe(frame, context),
+                    self._observe(worker, frame, context),
                     timeout=self.budget.worker_timeout_seconds,
                 ),
             )
         except TimeoutError:
             diagnostics.append(f"worker_timeout:{worker.name}")
-            return False
+            return False, self._diagnostic(
+                worker.name, "TIMED_OUT", "worker_timeout", started_at, started
+            )
         except Exception as exc:
             diagnostics.append(f"worker_error:{worker.name}:{type(exc).__name__}")
-            return False
+            return False, self._diagnostic(
+                worker.name,
+                "FAILED",
+                f"worker_error:{type(exc).__name__}",
+                started_at,
+                started,
+            )
+        observations = result.observations
+        if result.diagnostic_code:
+            code = str(result.diagnostic_code)
+            diagnostics.append(f"{code}:{worker.name}")
+            status = "MODEL_FAILED" if code == "model_call_failed" else "INVALID_OUTPUT"
+            return False, self._diagnostic(worker.name, status, code, started_at, started)
+        rejected = False
         for observation in observations:
             try:
                 board.add(observation)
             except ObservationRejected as exc:
+                rejected = True
                 diagnostics.append(f"observation_rejected:{worker.name}:{exc}")
-        return True
+        if rejected:
+            return False, self._diagnostic(
+                worker.name, "REJECTED", "observation_rejected", started_at, started
+            )
+        return True, self._diagnostic(
+            worker.name, "SUCCEEDED", None, started_at, started
+        )
+
+    @staticmethod
+    async def _observe(worker, frame, context) -> CognitiveWorkerResult:
+        operation = getattr(worker, "observe_with_result", None)
+        if callable(operation):
+            result = await operation(frame, context)
+            if isinstance(result, CognitiveWorkerResult):
+                return result
+        return CognitiveWorkerResult(tuple(await worker.observe(frame, context)))
+
+    @staticmethod
+    def _diagnostic(worker, status, code, started_at, started) -> CognitiveWorkerDiagnostic:
+        completed_at = int(time.time() * 1000)
+        latency_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
+        return CognitiveWorkerDiagnostic(
+            worker=str(worker),
+            status=str(status),
+            started_at=int(started_at),
+            completed_at=max(int(started_at), completed_at),
+            latency_ms=int(latency_ms),
+            diagnostic_code=None if code is None else str(code),
+        )
+
+    @staticmethod
+    def _instant_diagnostic(worker, status, code) -> CognitiveWorkerDiagnostic:
+        now = int(time.time() * 1000)
+        return CognitiveWorkerDiagnostic(
+            worker=str(worker),
+            status=str(status),
+            started_at=now,
+            completed_at=now,
+            latency_ms=0,
+            diagnostic_code=str(code),
+        )
 
     @staticmethod
     def _cost_level(frame: AttentionFrame) -> int:

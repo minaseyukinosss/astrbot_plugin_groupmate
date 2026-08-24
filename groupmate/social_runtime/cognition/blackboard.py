@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 from ..attention import AttentionFrame
-from .contracts import CognitiveObservation
+from .contracts import CognitiveObservation, CognitiveWorkerDiagnostic
 
 
 class ObservationRejected(ValueError):
@@ -29,6 +29,7 @@ class BlackboardSnapshot:
     degraded: bool
     recommended_outcome: str | None
     diagnostics: tuple[str, ...]
+    worker_diagnostics: tuple[CognitiveWorkerDiagnostic, ...]
 
 
 class CognitionBlackboard:
@@ -53,6 +54,7 @@ class CognitionBlackboard:
         cost_level: int,
         degraded: bool = False,
         diagnostics: tuple[str, ...] = (),
+        worker_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = (),
     ) -> BlackboardSnapshot:
         groups: dict[tuple[object, ...], set[str]] = {}
         for observation in self._observations:
@@ -75,6 +77,7 @@ class CognitionBlackboard:
             degraded=bool(degraded),
             recommended_outcome="OBSERVE" if degraded else None,
             diagnostics=tuple(diagnostics),
+            worker_diagnostics=tuple(worker_diagnostics),
         )
 
     @staticmethod

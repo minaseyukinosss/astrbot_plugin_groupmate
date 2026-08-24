@@ -168,6 +168,12 @@ def test_level_two_runs_multiple_requested_workers_within_budget():
     assert first.calls == second.calls == 1
     assert snapshot.degraded is False
     assert snapshot.conflict_count == 1
+    assert [item.status for item in snapshot.worker_diagnostics] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
+    assert all(item.latency_ms >= 0 for item in snapshot.worker_diagnostics)
 
 
 def test_level_three_adds_critic_without_skipping_hard_rules():
@@ -225,3 +231,7 @@ def test_hanging_worker_times_out_and_degrades_to_observe():
     assert snapshot.degraded is True
     assert snapshot.recommended_outcome == "OBSERVE"
     assert "worker_timeout:w1" in snapshot.diagnostics
+    assert snapshot.worker_diagnostics[-1].worker == "w1"
+    assert snapshot.worker_diagnostics[-1].status == "TIMED_OUT"
+    assert snapshot.worker_diagnostics[-1].diagnostic_code == "worker_timeout"
+    assert snapshot.worker_diagnostics[-1].latency_ms >= 0

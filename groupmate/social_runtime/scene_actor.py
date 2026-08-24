@@ -13,6 +13,7 @@ from .contracts import (
     RuntimeGovernanceState,
     SocialEventEnvelope,
 )
+from .cognition.contracts import CognitiveWorkerDiagnostic
 from .governor import GovernorResult
 from .persistence.event_store import ClaimedEvent, SQLiteSocialEventStore
 from .world import GroupWorldProjector, GroupWorldState
@@ -61,6 +62,7 @@ class SceneWorkResult:
     persona_state_version: int
     frame_id: str
     governor_result: GovernorResult
+    cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
     capture_evidence: dict[str, object] | None = None
 
 
@@ -596,6 +598,9 @@ class GroupSceneActor:
             "config_version": result.config_version,
             "persona_state_version": result.persona_state_version,
             "governor_result": safe_governor,
+            "cognition_diagnostics": [
+                asdict(item) for item in result.cognition_diagnostics
+            ],
         }
 
     def _request_to_dict(self, request: SceneWorkRequest) -> dict[str, object]:
