@@ -59,6 +59,60 @@ class CandidateIntention:
             raise ValueError("expires_at must not be negative")
 
 
+def create_candidate_intention(
+    *,
+    kind: str,
+    target_id: str | None,
+    topic_id: str | None,
+    evidence: tuple[str, ...],
+    proposed_act: str,
+    expires_at: int,
+    features: dict[str, float],
+    identity_salt: str = "",
+) -> CandidateIntention:
+    """Build a deterministic candidate from safe, scoped evidence."""
+
+    identity = {
+        "identity_salt": identity_salt,
+        "kind": kind,
+        "target_id": target_id,
+        "topic_id": topic_id,
+        "evidence": evidence,
+        "proposed_act": proposed_act,
+        "expires_at": expires_at,
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:24]
+    values = {
+        "obligation": 0.0,
+        "relevance": 0.0,
+        "relational_value": 0.0,
+        "continuity_value": 0.0,
+        "novelty": 0.0,
+        "urgency": 0.0,
+        "persona_fit": 1.0,
+        "state_fit": 1.0,
+        "information_gain": 0.0,
+        "disruption_cost": 0.0,
+        "uncertainty_cost": 0.0,
+        "repetition_cost": 0.0,
+        "resource_cost": 0.0,
+        "risk": 0.0,
+    }
+    values.update(features)
+    return CandidateIntention(
+        intention_id=f"intention:{digest}",
+        kind=kind,
+        target_id=target_id,
+        topic_id=topic_id,
+        evidence_event_ids=evidence,
+        proposed_act=proposed_act,
+        expires_at=expires_at,
+        **values,
+    )
+
+
 _OBSERVATION_MAP = {
     "help_request": ("HELP", "answer_help_request"),
     "care_signal": ("CARE", "offer_bounded_care"),
@@ -164,43 +218,14 @@ class IntentionEngine:
         expires_at: int,
         features: dict[str, float],
     ) -> CandidateIntention:
-        identity = {
-            "kind": kind,
-            "target_id": target_id,
-            "topic_id": topic_id,
-            "evidence": evidence,
-            "proposed_act": proposed_act,
-            "expires_at": expires_at,
-        }
-        digest = hashlib.sha256(
-            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()[:24]
-        values = {
-            "obligation": 0.0,
-            "relevance": 0.0,
-            "relational_value": 0.0,
-            "continuity_value": 0.0,
-            "novelty": 0.0,
-            "urgency": 0.0,
-            "persona_fit": 1.0,
-            "state_fit": 1.0,
-            "information_gain": 0.0,
-            "disruption_cost": 0.0,
-            "uncertainty_cost": 0.0,
-            "repetition_cost": 0.0,
-            "resource_cost": 0.0,
-            "risk": 0.0,
-        }
-        values.update(features)
-        return CandidateIntention(
-            intention_id=f"intention:{digest}",
+        return create_candidate_intention(
             kind=kind,
             target_id=target_id,
             topic_id=topic_id,
-            evidence_event_ids=evidence,
+            evidence=evidence,
             proposed_act=proposed_act,
             expires_at=expires_at,
-            **values,
+            features=features,
         )
 
     @staticmethod
@@ -230,4 +255,10 @@ class IntentionEngine:
             return 0.0
 
 
-__all__ = ("CandidateIntention", "IntentionEngine", "PersonaGoal", "STABLE_GOALS")
+__all__ = (
+    "CandidateIntention",
+    "IntentionEngine",
+    "PersonaGoal",
+    "STABLE_GOALS",
+    "create_candidate_intention",
+)
