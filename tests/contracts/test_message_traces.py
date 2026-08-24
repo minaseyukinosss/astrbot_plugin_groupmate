@@ -67,6 +67,9 @@ def _evaluation(event: SocialEventEnvelope, outcome: str):
         status="evaluated",
         candidate_response="我会先看报错第一行。" if outcome == "ACT" else None,
         reply_diagnostic=None,
+        participation_lane="DIRECT_FAST",
+        participation_diagnostics=("deterministic_direct_fast",),
+        candidates=(SimpleNamespace(intention_id="intent-1"),),
         cognition_diagnostics=(
             SimpleNamespace(
                 worker="direct_interaction",
@@ -159,9 +162,15 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
     )["items"][0]["summary"]
     assert summary["decision"]["pre_gate_outcome"] == "ACT"
     assert summary["decision"]["candidate_response"] == "我会先看报错第一行。"
+    assert summary["decision"]["participation_lane"] == "DIRECT_FAST"
+    assert summary["decision"]["would_reply"] is True
     assert summary["delivery"]["status"] == "BLOCKED_BY_SHADOW"
     assert summary["delivery"]["label"] == "SHADOW：已完成判断，未发送"
     assert summary["understanding"]["diagnostics"][0]["status"] == "SUCCEEDED"
+    assert summary["understanding"]["candidate_count"] == 1
+    assert summary["understanding"]["candidate_source"] == "deterministic"
+    assert "chain_of_thought" not in str(summary)
+    assert "prompt" not in str(summary)
 
 
 def test_non_text_segments_keep_order_without_exposing_platform_sources(tmp_path):

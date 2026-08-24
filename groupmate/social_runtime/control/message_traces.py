@@ -18,6 +18,7 @@ _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _LONG_NUMBER_RE = re.compile(r"(?<!\d)\d{6,}(?!\d)")
 _TRIGGER_LABELS = {
     "AMBIENT": "观察群聊上下文",
+    "CONTINUATION": "延续当前对话",
     "FAST": "直接请求或高优先级事件",
     "TEMPORAL": "定时事项到期",
     "AUTONOMOUS": "主动参与机会",
@@ -226,6 +227,26 @@ class MessageTraceRepository:
         reply_diagnostic = str(
             getattr(evaluation, "reply_diagnostic", "") or ""
         ).strip()
+        lane = str(
+            getattr(evaluation, "participation_lane", "AMBIENT")
+            or "AMBIENT"
+        ).upper()
+        if lane not in {"DIRECT_FAST", "CONTINUATION", "AMBIENT"}:
+            lane = "AMBIENT"
+        candidates = tuple(getattr(evaluation, "candidates", ()) or ())
+        candidate_source = (
+            "deterministic"
+            if candidates and lane in {"DIRECT_FAST", "CONTINUATION"}
+            else "model"
+            if candidates
+            else "none"
+        )
+        participation_diagnostics = [
+            self._safe_text(str(item), 80)
+            for item in tuple(
+                getattr(evaluation, "participation_diagnostics", ()) or ()
+            )
+        ]
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
@@ -236,10 +257,15 @@ class MessageTraceRepository:
                 ),
                 "summary": _TRIGGER_LABELS.get(trigger, "已结合当前群聊上下文完成理解"),
                 "diagnostics": diagnostics,
+                "candidate_count": len(candidates),
+                "candidate_source": candidate_source,
+                "participation_diagnostics": participation_diagnostics,
             }
             summary["decision"] = {
                 "outcome": outcome,
                 "pre_gate_outcome": outcome,
+                "participation_lane": lane,
+                "would_reply": outcome == "ACT",
                 "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
                 "reasons": reasons,
                 "candidate_response": candidate_response or None,

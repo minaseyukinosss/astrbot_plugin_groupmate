@@ -122,13 +122,31 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
         parts = bridge.manager.outbox.receipted_parts()
         state = await bridge.manager.group_snapshot("885617919")
         event_ids = bridge.manager.event_store.event_ids()
+        traces = bridge.trace_repository.query(
+            persona_id=settings.persona_id,
+            group_id="885617919",
+        )["items"]
         reply_error = bridge.reply_error
         await bridge.close()
-        return context, calls_after_external, parts, state, event_ids, reply_error
+        return (
+            context,
+            calls_after_external,
+            parts,
+            state,
+            event_ids,
+            traces,
+            reply_error,
+        )
 
-    context, calls_after_external, parts, state, event_ids, reply_error = asyncio.run(
-        scenario()
-    )
+    (
+        context,
+        calls_after_external,
+        parts,
+        state,
+        event_ids,
+        traces,
+        reply_error,
+    ) = asyncio.run(scenario())
 
     assert calls_after_external == 0
     assert len(context.client.calls) == 2
@@ -142,6 +160,19 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
         "结构化群聊观察器" not in call["system_prompt"]
         for call in context.model_calls
     )
+    direct_decision = next(
+        item["summary"]["decision"]
+        for item in traces
+        if "这个报错怎么看" in item["summary"]["message"]["summary"]
+    )
+    continuation_decision = next(
+        item["summary"]["decision"]
+        for item in traces
+        if "然后呢" in item["summary"]["message"]["summary"]
+    )
+    assert direct_decision["participation_lane"] == "DIRECT_FAST"
+    assert continuation_decision["participation_lane"] == "CONTINUATION"
+    assert continuation_decision["would_reply"] is True
     assert any(value.startswith("delivery-feedback:") for value in event_ids)
     assert state.recent_presence.last_bot_event_at == 100
     assert reply_error is None
