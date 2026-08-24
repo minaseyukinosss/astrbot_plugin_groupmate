@@ -74,6 +74,16 @@ class PresenceHistory:
 
 
 @dataclass(frozen=True)
+class ConversationLease:
+    target_id: str
+    topic_id: str
+    source_plan_id: str
+    opened_at: int
+    expires_at: int
+    remaining_turns: int
+
+
+@dataclass(frozen=True)
 class GroupWorldState:
     group_id: str
     scene_version: int
@@ -88,6 +98,7 @@ class GroupWorldState:
     open_loops: tuple[OpenLoopRef, ...]
     recent_presence: PresenceHistory
     culture_version: int
+    conversation_lease: ConversationLease | None = None
 
     def topic_for_message(self, message_id: str) -> TopicState:
         for topic in self.active_topics:
@@ -120,6 +131,7 @@ class GroupWorldProjector:
             open_loops=(),
             recent_presence=PresenceHistory((), None),
             culture_version=0,
+            conversation_lease=None,
         )
 
     def apply(
@@ -133,6 +145,19 @@ class GroupWorldProjector:
         participants = state.participants
         edges = state.interaction_edges
         message_id = event.source_message_id or event.event_id
+        conversation_lease = state.conversation_lease
+        if (
+            conversation_lease is not None
+            and event.occurred_at > conversation_lease.expires_at
+        ):
+            conversation_lease = None
+        if event.event_type in {
+            "conversation.lease_opened",
+            "conversation.lease_advanced",
+        }:
+            conversation_lease = self._project_conversation_lease(
+                conversation_lease, event
+            )
 
         if is_message:
             topics = self._project_topic(topics, event, message_id)
@@ -165,6 +190,59 @@ class GroupWorldProjector:
             interaction_edges=edges,
             group_activity=activity,
             recent_presence=presence,
+            conversation_lease=conversation_lease,
+        )
+
+    @staticmethod
+    def _project_conversation_lease(
+        current: ConversationLease | None,
+        event: SocialEventEnvelope,
+    ) -> ConversationLease | None:
+        payload = event.payload
+        target_id = str(payload.get("target_id") or "").strip()
+        topic_id = str(payload.get("topic_id") or "").strip()
+        source_plan_id = str(payload.get("source_plan_id") or "").strip()
+        try:
+            opened_at = int(payload.get("opened_at"))
+            expires_at = int(payload.get("expires_at"))
+            remaining_turns = int(payload.get("remaining_turns"))
+        except (TypeError, ValueError):
+            return current
+        if (
+            not target_id
+            or not topic_id
+            or not source_plan_id
+            or opened_at < 0
+            or expires_at <= opened_at
+        ):
+            return current
+        if event.event_type == "conversation.lease_opened":
+            if not 1 <= remaining_turns <= 5:
+                return current
+            return ConversationLease(
+                target_id=target_id,
+                topic_id=topic_id,
+                source_plan_id=source_plan_id,
+                opened_at=opened_at,
+                expires_at=expires_at,
+                remaining_turns=remaining_turns,
+            )
+        if (
+            current is None
+            or target_id != current.target_id
+            or topic_id != current.topic_id
+            or not 0 <= remaining_turns < current.remaining_turns
+        ):
+            return current
+        if remaining_turns == 0:
+            return None
+        return ConversationLease(
+            target_id=target_id,
+            topic_id=topic_id,
+            source_plan_id=source_plan_id,
+            opened_at=opened_at,
+            expires_at=expires_at,
+            remaining_turns=remaining_turns,
         )
 
     @staticmethod
@@ -278,6 +356,7 @@ class GroupWorldProjector:
 
     @staticmethod
     def from_dict(payload: Mapping[str, object]) -> GroupWorldState:
+        lease_payload = payload.get("conversation_lease")
         return GroupWorldState(
             group_id=str(payload["group_id"]),
             scene_version=int(payload["scene_version"]),
@@ -312,7 +391,17 @@ class GroupWorldProjector:
                 last_bot_event_at=payload["recent_presence"]["last_bot_event_at"],
             ),
             culture_version=int(payload["culture_version"]),
+            conversation_lease=(
+                ConversationLease(**lease_payload)
+                if isinstance(lease_payload, Mapping)
+                else None
+            ),
         )
 
 
-__all__ = ("GroupWorldProjector", "GroupWorldState", "TopicState")
+__all__ = (
+    "ConversationLease",
+    "GroupWorldProjector",
+    "GroupWorldState",
+    "TopicState",
+)
