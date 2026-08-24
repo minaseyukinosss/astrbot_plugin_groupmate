@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Awaitable, Callable, Mapping, TypeVar
 
 from ..attention import AttentionFrame
@@ -36,6 +36,14 @@ class CognitionBudget:
             raise ValueError("worker timeout must be positive")
         if self.max_worker_concurrency < 1:
             raise ValueError("worker concurrency must be positive")
+
+
+@dataclass(frozen=True)
+class _WorkerRun:
+    completed: bool
+    observations: tuple[CognitiveObservation, ...]
+    diagnostic: CognitiveWorkerDiagnostic
+    messages: tuple[str, ...] = ()
 
 
 class _WorkerConcurrencyGate:
@@ -145,12 +153,13 @@ class CognitionService:
         board = CognitionBlackboard(frame, now=context.now)
         diagnostics: list[str] = []
         worker_diagnostics: list[CognitiveWorkerDiagnostic] = []
-        rule_completed, rule_diagnostic = await self._run_worker(
+        rule_run = await self._invoke_worker(
             self.rule_worker,
             frame,
             context,
-            board,
-            diagnostics,
+        )
+        rule_completed, rule_diagnostic = self._integrate_worker(
+            rule_run, board, diagnostics
         )
         worker_diagnostics.append(rule_diagnostic)
 
@@ -176,32 +185,40 @@ class CognitionService:
             for name in missing_workers
         )
         degraded = not rule_completed or bool(missing_workers)
+        admitted: list[CognitiveWorker] = []
+        budget_denied: CognitiveWorker | None = None
         for worker, cost in selected:
             if (
                 used_calls + 1 > self.budget.max_worker_calls
                 or used_cost + cost > self.budget.max_cost_units
             ):
                 degraded = True
-                diagnostics.append("cognition_budget_exhausted")
-                worker_diagnostics.append(
-                    self._instant_diagnostic(
-                        worker.name,
-                        "BUDGET_EXHAUSTED",
-                        "cognition_budget_exhausted",
-                    )
-                )
+                budget_denied = worker
                 break
-            completed, worker_diagnostic = await self._run_worker(
-                worker,
-                frame,
-                context,
-                board,
-                diagnostics,
+            admitted.append(worker)
+            used_calls += 1
+            used_cost += cost
+        runs = await asyncio.gather(
+            *(
+                self._invoke_worker(worker, frame, context)
+                for worker in admitted
+            )
+        )
+        for run in runs:
+            completed, worker_diagnostic = self._integrate_worker(
+                run, board, diagnostics
             )
             worker_diagnostics.append(worker_diagnostic)
             degraded = degraded or not completed
-            used_calls += 1
-            used_cost += cost
+        if budget_denied is not None:
+            diagnostics.append("cognition_budget_exhausted")
+            worker_diagnostics.append(
+                self._instant_diagnostic(
+                    budget_denied.name,
+                    "BUDGET_EXHAUSTED",
+                    "cognition_budget_exhausted",
+                )
+            )
         if len(selected) > used_calls:
             degraded = True
         return board.snapshot(
@@ -211,9 +228,7 @@ class CognitionService:
             worker_diagnostics=tuple(worker_diagnostics),
         )
 
-    async def _run_worker(
-        self, worker, frame, context, board, diagnostics
-    ) -> tuple[bool, CognitiveWorkerDiagnostic]:
+    async def _invoke_worker(self, worker, frame, context) -> _WorkerRun:
         started_at = int(time.time() * 1000)
         started = time.monotonic_ns()
         try:
@@ -225,39 +240,73 @@ class CognitionService:
                 ),
             )
         except TimeoutError:
-            diagnostics.append(f"worker_timeout:{worker.name}")
-            return False, self._diagnostic(
-                worker.name, "TIMED_OUT", "worker_timeout", started_at, started
+            return _WorkerRun(
+                completed=False,
+                observations=(),
+                diagnostic=self._diagnostic(
+                    worker.name,
+                    "TIMED_OUT",
+                    "worker_timeout",
+                    started_at,
+                    started,
+                ),
+                messages=(f"worker_timeout:{worker.name}",),
             )
         except Exception as exc:
-            diagnostics.append(f"worker_error:{worker.name}:{type(exc).__name__}")
-            return False, self._diagnostic(
-                worker.name,
-                "FAILED",
-                f"worker_error:{type(exc).__name__}",
-                started_at,
-                started,
+            code = f"worker_error:{type(exc).__name__}"
+            return _WorkerRun(
+                completed=False,
+                observations=(),
+                diagnostic=self._diagnostic(
+                    worker.name, "FAILED", code, started_at, started
+                ),
+                messages=(f"{code}:{worker.name}",),
             )
         observations = result.observations
         if result.diagnostic_code:
             code = str(result.diagnostic_code)
-            diagnostics.append(f"{code}:{worker.name}")
             status = "MODEL_FAILED" if code == "model_call_failed" else "INVALID_OUTPUT"
-            return False, self._diagnostic(worker.name, status, code, started_at, started)
+            return _WorkerRun(
+                completed=False,
+                observations=(),
+                diagnostic=self._diagnostic(
+                    worker.name, status, code, started_at, started
+                ),
+                messages=(f"{code}:{worker.name}",),
+            )
+        return _WorkerRun(
+            completed=True,
+            observations=observations,
+            diagnostic=self._diagnostic(
+                worker.name, "SUCCEEDED", None, started_at, started
+            ),
+        )
+
+    @staticmethod
+    def _integrate_worker(
+        run: _WorkerRun,
+        board: CognitionBlackboard,
+        diagnostics: list[str],
+    ) -> tuple[bool, CognitiveWorkerDiagnostic]:
+        diagnostics.extend(run.messages)
+        if not run.completed:
+            return False, run.diagnostic
         rejected = False
-        for observation in observations:
+        for observation in run.observations:
             try:
                 board.add(observation)
             except ObservationRejected as exc:
                 rejected = True
-                diagnostics.append(f"observation_rejected:{worker.name}:{exc}")
+                diagnostics.append(
+                    f"observation_rejected:{run.diagnostic.worker}:{exc}"
+                )
         if rejected:
-            return False, self._diagnostic(
-                worker.name, "REJECTED", "observation_rejected", started_at, started
+            return False, replace(
+                run.diagnostic,
+                status="REJECTED",
+                diagnostic_code="observation_rejected",
             )
-        return True, self._diagnostic(
-            worker.name, "SUCCEEDED", None, started_at, started
-        )
+        return True, run.diagnostic
 
     @staticmethod
     async def _observe(worker, frame, context) -> CognitiveWorkerResult:

@@ -155,3 +155,80 @@ def test_missing_requested_worker_marks_cognition_degraded():
 
     assert snapshot.degraded is True
     assert "worker_missing:scene_interpreter" in snapshot.diagnostics
+
+
+def test_requested_model_workers_start_concurrently_and_merge_in_frame_order():
+    class BarrierWorker:
+        def __init__(self, name, entered, both_entered, release):
+            self.name = name
+            self.entered = entered
+            self.both_entered = both_entered
+            self.release = release
+
+        async def observe(self, frame, context):
+            self.entered.set()
+            if all(event.is_set() for event in entered_events):
+                self.both_entered.set()
+            await self.release.wait()
+            return (
+                CognitiveObservation.create(
+                    worker=self.name,
+                    kind=f"fact.{self.name}",
+                    proposition={"value": self.name},
+                    confidence=1.0,
+                    evidence_event_ids=(frame.focus_event_ids[0],),
+                    scene_version=frame.scene_version,
+                    expires_at=context.now + 30,
+                    uncertainty=(),
+                ),
+            )
+
+    async def scenario():
+        first = asyncio.Event()
+        second = asyncio.Event()
+        both_entered = asyncio.Event()
+        release = asyncio.Event()
+        entered_events.extend((first, second))
+        workers = {
+            name: BarrierWorker(name, entered, both_entered, release)
+            for name, entered in (
+                ("scene_interpreter", first),
+                ("participation_assessor", second),
+            )
+        }
+        frame = AttentionFrame(
+            **{
+                **_frame().__dict__,
+                "trigger_kind": "AMBIENT",
+                "requested_workers": tuple(workers),
+            }
+        )
+        service = CognitionService(
+            workers=workers,
+            budget=CognitionBudget(max_worker_calls=2, max_cost_units=2),
+        )
+        task = asyncio.create_task(service.evaluate(frame, _context()))
+        try:
+            await asyncio.wait_for(both_entered.wait(), timeout=0.2)
+        except TimeoutError:
+            release.set()
+            await task
+            raise
+        release.set()
+        return await task
+
+    entered_events = []
+    snapshot = asyncio.run(scenario())
+
+    assert [item.worker for item in snapshot.worker_diagnostics[1:]] == [
+        "scene_interpreter",
+        "participation_assessor",
+    ]
+    assert all(
+        item.status == "SUCCEEDED"
+        for item in snapshot.worker_diagnostics
+    )
+    assert [entry.observation.worker for entry in snapshot.entries[1:]] == [
+        "scene_interpreter",
+        "participation_assessor",
+    ]

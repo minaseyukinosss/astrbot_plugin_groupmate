@@ -573,8 +573,7 @@ class SocialRuntimeManager:
             if loaded.version != frame.config_version:
                 raise RuntimeError("persona profile changed during frozen cognition")
             profile = loaded.profile
-        world_summary = asdict(request.world_snapshot)
-        world_summary["persona_profile"] = profile.to_mapping()
+        world_summary = self._cognitive_world_view(request, frame, profile)
         context = CognitiveContext.create(
             group_id=request.group_id,
             scene_version=frame.scene_version,
@@ -583,7 +582,7 @@ class SocialRuntimeManager:
             now=now,
             focus_events=tuple(event.to_dict() for event in focus_events),
             world_summary=world_summary,
-            constraints=("shadow_only", "no_side_effects", "evidence_required"),
+            constraints=("no_side_effects", "evidence_required"),
             token_budget=1024,
         )
         blackboard = await self.cognition.evaluate(frame, context)
@@ -658,6 +657,41 @@ class SocialRuntimeManager:
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
+
+    @staticmethod
+    def _cognitive_world_view(
+        request: SceneWorkRequest,
+        frame: AttentionFrame,
+        profile: GroupmatePersonaProfile,
+    ) -> dict[str, object]:
+        world = request.world_snapshot
+        topic_ids = set(frame.focus_topic_ids)
+        topics = tuple(
+            asdict(topic)
+            for topic in world.active_topics
+            if topic.topic_id in topic_ids
+        )
+        audience_ids = set(frame.candidate_audiences)
+        for topic in world.active_topics:
+            if topic.topic_id in topic_ids:
+                audience_ids.update(topic.participant_ids)
+        audiences = tuple(
+            asdict(participant)
+            for participant in world.participants
+            if participant.actor_id in audience_ids
+        )
+        return {
+            "topics": topics,
+            "audiences": audiences,
+            "group_activity": asdict(world.group_activity),
+            "last_bot_event_at": world.recent_presence.last_bot_event_at,
+            "conversation_lease": (
+                asdict(world.conversation_lease)
+                if world.conversation_lease is not None
+                else None
+            ),
+            "persona_profile": profile.to_mapping(),
+        }
 
     @staticmethod
     def _participation_allows(frame: AttentionFrame, blackboard: object) -> bool:

@@ -87,6 +87,16 @@ class ParticipationWorker:
         )
 
 
+class ContextCapturingWorker(FixedWorker):
+    def __init__(self, name, observation_kind):
+        super().__init__(name, observation_kind)
+        self.contexts = []
+
+    async def observe(self, frame, context):
+        self.contexts.append(context)
+        return await super().observe(frame, context)
+
+
 def _event(
     message_id: str,
     *,
@@ -246,6 +256,45 @@ def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     assert after_quiet[0].frame.trigger_kind == "AMBIENT"
     assert set(after_quiet[0].frame.focus_topic_ids) == {"topic-a", "topic-b"}
     assert after_quiet[0].governor_result.outcome == "ACT"
+
+
+def test_model_context_contains_only_relevant_world_and_mode_neutral_constraints(
+    tmp_path,
+):
+    async def scenario():
+        scene = ContextCapturingWorker("scene_interpreter", "help_request")
+        participation = ParticipationWorker("speak")
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={
+                scene.name: scene,
+                participation.name: participation,
+            },
+        )
+        await manager.start()
+        await manager.ingest(_event("bounded", direct=False, occurred_at=100))
+        await manager.drain(now=102)
+        await manager.close()
+        return scene.contexts[0]
+
+    context = asyncio.run(scenario())
+
+    assert set(context.world_summary) == {
+        "topics",
+        "audiences",
+        "group_activity",
+        "last_bot_event_at",
+        "conversation_lease",
+        "persona_profile",
+    }
+    assert context.world_summary["topics"][0]["topic_id"] == "bounded"
+    assert context.world_summary["audiences"][0]["actor_id"] == "u1"
+    assert "participants" not in context.world_summary
+    assert "interaction_edges" not in context.world_summary
+    assert context.constraints == ("no_side_effects", "evidence_required")
 
 
 def test_ambient_chat_requires_explicit_high_confidence_participation(tmp_path):
