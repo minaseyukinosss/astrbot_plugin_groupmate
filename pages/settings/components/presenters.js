@@ -303,6 +303,65 @@ export function replyExpectation(decision = {}, delivery = {}) {
   return traceWouldReply({ decision }) ? "正式运行会回复" : "正式运行不会回复";
 }
 
+export function traceResultHeadline(summary = {}) {
+  if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
+    return "由外部能力处理";
+  }
+  const decision = summary.decision || {};
+  const outcome = String(
+    decision.outcome || decision.pre_gate_outcome || "",
+  ).toUpperCase();
+  if (!outcome || outcome === "PENDING") return "等待完成判断";
+  return traceWouldReply({ decision })
+    ? "正式运行会回复"
+    : "正式运行不会回复";
+}
+
+export function traceResultState(summary = {}) {
+  if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
+    return summary.route?.label || "交给外部能力";
+  }
+  const decision = summary.decision || {};
+  const outcome = String(
+    decision.outcome || decision.pre_gate_outcome || "",
+  ).toUpperCase();
+  if (!outcome || outcome === "PENDING") return "等待判断";
+  return summary.judgement?.label || decision.label || ({
+    ACT: "准备回复",
+    OBSERVE: "继续观察",
+    SILENCE: "保持沉默",
+    DEFER: "稍后再判断",
+  })[outcome] || "已完成判断";
+}
+
+export function traceResultReason(summary = {}) {
+  if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
+    return String(summary.route?.reason || "由已匹配的外部插件继续处理。");
+  }
+  const judgement = summary.judgement || {};
+  if (String(judgement.status || "") === "accepted" && judgement.reason) {
+    return String(judgement.reason);
+  }
+  if (String(judgement.status || "") === "unavailable") {
+    const diagnostics = Array.isArray(summary.understanding?.diagnostics)
+      ? summary.understanding.diagnostics
+      : [];
+    const failure = diagnostics.find(
+      (item) => String(item?.status || "").toUpperCase() !== "SUCCEEDED",
+    );
+    return failure
+      ? cognitionDiagnosticExplanation(failure)
+      : "模型判断未产生可用结果，本次按安全规则处理。";
+  }
+  const reasons = Array.isArray(summary.decision?.reasons)
+    ? summary.decision.reasons.filter(Boolean)
+    : [];
+  if (reasons.length) return reasons.join("；");
+  const outcome = String(summary.decision?.outcome || "").toUpperCase();
+  if (!outcome || outcome === "PENDING") return "消息仍在处理中。";
+  return String(summary.route?.reason || "已按当前策略完成判断。");
+}
+
 export function strategySummary(summary = {}) {
   if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
     return "Groupmate 不参与判断";

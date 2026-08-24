@@ -274,6 +274,47 @@ def test_trace_presenter_does_not_claim_a_reply_before_decision_or_handoff():
     assert result == ["等待进入策略判断", "Groupmate 不参与判断"]
 
 
+def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
+    result = _run_presenter(
+        "const silence={route:{owner:'GROUPMATE'},"
+        "judgement:{source:'model',status:'accepted',decision:'silence',"
+        "label:'继续观察',reason:'成员正在自然交流，现在插话会打断对话。'},"
+        "decision:{outcome:'OBSERVE',would_reply:false,label:'继续观察'}};"
+        "const speak={route:{owner:'GROUPMATE'},"
+        "judgement:{source:'model',status:'accepted',decision:'speak',"
+        "label:'准备回复',reason:'成员明确提出了可以帮助的问题。'},"
+        "decision:{outcome:'ACT',would_reply:true,label:'准备回复'}};"
+        "const unavailable={route:{owner:'GROUPMATE'},"
+        "judgement:{source:'model',status:'unavailable',label:'模型判断未采用'},"
+        "understanding:{diagnostics:[{status:'TIMED_OUT',"
+        "diagnostic_code:'direct_timeout'}]},"
+        "decision:{outcome:'OBSERVE',would_reply:false,reasons:["
+        "'认知降级或参与条件不足']}};"
+        "const policy={route:{owner:'GROUPMATE'},"
+        "judgement:{source:'policy',status:'not_required',label:'准备回复'},"
+        "decision:{outcome:'ACT',would_reply:true,reasons:['明确 @ 机器人']}};"
+        "const pending={route:{owner:'GROUPMATE'},decision:{outcome:'PENDING'}};"
+        "const external={route:{owner:'EXTERNAL_PLUGIN',label:'交给外部能力',"
+        "reason:'匹配视频解析规则'},decision:{outcome:'PENDING'}};"
+        "console.log(JSON.stringify([silence,speak,unavailable,policy,pending,external]"
+        ".map(item=>[presenter.traceResultHeadline(item),"
+        "presenter.traceResultState(item),presenter.traceResultReason(item)])));"
+    )
+
+    assert result == [
+        ["正式运行不会回复", "继续观察", "成员正在自然交流，现在插话会打断对话。"],
+        ["正式运行会回复", "准备回复", "成员明确提出了可以帮助的问题。"],
+        [
+            "正式运行不会回复",
+            "模型判断未采用",
+            "直连模型在 6 秒内未返回，本次已转为保守观察。",
+        ],
+        ["正式运行会回复", "准备回复", "明确 @ 机器人"],
+        ["等待完成判断", "等待判断", "消息仍在处理中。"],
+        ["由外部能力处理", "交给外部能力", "匹配视频解析规则"],
+    ]
+
+
 def test_trace_presenter_only_treats_completed_silence_as_observed():
     result = _run_presenter(
         "console.log(JSON.stringify(["
