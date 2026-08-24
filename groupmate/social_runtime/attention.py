@@ -104,6 +104,19 @@ class AttentionScheduler:
                 ),
             )
 
+        if self._matches_conversation_lease(event, world, now):
+            return (
+                self._frame(
+                    event=event,
+                    world=world,
+                    persona=persona,
+                    trigger_kind="CONTINUATION",
+                    urgency="high",
+                    deadline=now,
+                    requested_workers=(),
+                ),
+            )
+
         if event.event_type != "platform.message":
             return ()
         self._record_message_time(event.group_id, now)
@@ -320,7 +333,24 @@ class AttentionScheduler:
             return ("safety_guard",)
         if event.event_type == "capability.result":
             return ("capability_interpreter",)
-        return ("direct_interaction",)
+        return ()
+
+    @staticmethod
+    def _matches_conversation_lease(
+        event: SocialEventEnvelope,
+        world: GroupWorldState,
+        now: int,
+    ) -> bool:
+        lease = world.conversation_lease
+        if (
+            event.event_type != "platform.message"
+            or lease is None
+            or event.actor_id != lease.target_id
+            or int(now) > lease.expires_at
+            or lease.remaining_turns <= 0
+        ):
+            return False
+        return AttentionScheduler._topic_id(world, event) == lease.topic_id
 
     @staticmethod
     def _topic_id(world: GroupWorldState, event: SocialEventEnvelope) -> str:

@@ -45,6 +45,32 @@ def _world_with(event):
     return projector.apply(projector.empty(event.group_id), event)
 
 
+def _world_with_lease(*, target_id="u1", topic_id="m1", expires_at=280):
+    projector = GroupWorldProjector()
+    root = _event(topic_id, actor_id=target_id, occurred_at=90)
+    state = projector.apply(projector.empty(root.group_id), root)
+    lease = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="lease:open",
+            event_type="conversation.lease_opened",
+            source_message_id=None,
+            actor_id=None,
+            occurred_at=100,
+            received_at=100,
+            correlation_id="corr:lease:open",
+            payload={
+                "target_id": target_id,
+                "topic_id": topic_id,
+                "source_plan_id": "reply:open",
+                "opened_at": 100,
+                "expires_at": expires_at,
+                "remaining_turns": 5,
+            },
+        )
+    )
+    return projector.apply(state, lease)
+
+
 def test_direct_mention_immediately_creates_fast_frame():
     event = _event(
         payload={"text": "小爱在吗", "mentions": ["323537051"], "mentions_bot": True}
@@ -61,6 +87,59 @@ def test_direct_mention_immediately_creates_fast_frame():
     assert frame.focus_event_ids == ("qq:m1",)
     assert frame.focus_topic_ids == ("m1",)
     assert frame.deadline == 100
+    assert frame.requested_workers == ()
+
+
+def test_matching_live_lease_creates_continuation_frame_without_waiting():
+    projector = GroupWorldProjector()
+    world = _world_with_lease()
+    event = _event(
+        "m2",
+        actor_id="u1",
+        occurred_at=120,
+        payload={"text": "然后呢", "reply_to": "m1"},
+    )
+    world = projector.apply(world, event)
+
+    frame = AttentionScheduler().on_event(event, world, _persona(), now=120)[0]
+
+    assert frame.trigger_kind == "CONTINUATION"
+    assert frame.candidate_audiences == ("u1",)
+    assert frame.focus_topic_ids == ("m1",)
+    assert frame.requested_workers == ()
+
+
+def test_mismatched_or_expired_lease_falls_back_to_ambient_window():
+    projector = GroupWorldProjector()
+    scheduler = AttentionScheduler()
+    member_event = _event(
+        "m2",
+        actor_id="u2",
+        occurred_at=120,
+        payload={"text": "我也问问", "reply_to": "m1"},
+    )
+    member_world = projector.apply(_world_with_lease(), member_event)
+
+    assert scheduler.on_event(
+        member_event, member_world, _persona(), now=120
+    ) == ()
+    assert scheduler.pending_window("885617919") is not None
+
+    expired_scheduler = AttentionScheduler()
+    expired_event = _event(
+        "m3",
+        actor_id="u1",
+        occurred_at=300,
+        payload={"text": "还在吗", "reply_to": "m1"},
+    )
+    expired_world = projector.apply(
+        _world_with_lease(expires_at=280), expired_event
+    )
+
+    assert expired_scheduler.on_event(
+        expired_event, expired_world, _persona(), now=300
+    ) == ()
+    assert expired_scheduler.pending_window("885617919") is not None
 
 
 def test_boundary_and_capability_results_never_wait_for_ambient_window():
