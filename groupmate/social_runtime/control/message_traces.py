@@ -30,7 +30,7 @@ _OUTCOME_LABELS = {
     "PENDING": "等待判断",
 }
 _REASON_LABELS = {
-    "forced_observe": "SHADOW 模式禁止发送",
+    "forced_observe": "认知降级或参与条件不足",
     "no_eligible_intention": "没有足够合适的参与意图",
     "observe_intention": "当前更适合继续观察",
     "utility_below_threshold": "参与价值未达到阈值",
@@ -165,16 +165,43 @@ class MessageTraceRepository:
         mode = self._mode_value(getattr(evaluation, "runtime_mode", "OFF"))
         reason_codes = tuple(getattr(result, "reason_codes", ()) or ())
         reasons = [self._reason_label(item) for item in reason_codes]
+        diagnostics = [
+            {
+                "worker": str(getattr(item, "worker", "unknown")),
+                "status": str(getattr(item, "status", "FAILED")),
+                "latency_ms": max(0, int(getattr(item, "latency_ms", 0) or 0)),
+                "diagnostic_code": (
+                    str(getattr(item, "diagnostic_code"))
+                    if getattr(item, "diagnostic_code", None)
+                    else None
+                ),
+            }
+            for item in tuple(getattr(evaluation, "cognition_diagnostics", ()) or ())
+        ]
+        candidate_response = str(
+            getattr(evaluation, "candidate_response", "") or ""
+        ).strip()
+        reply_diagnostic = str(
+            getattr(evaluation, "reply_diagnostic", "") or ""
+        ).strip()
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
-                "status": "READY",
+                "status": (
+                    "DEGRADED"
+                    if any(item["status"] != "SUCCEEDED" for item in diagnostics)
+                    else "READY"
+                ),
                 "summary": _TRIGGER_LABELS.get(trigger, "已结合当前群聊上下文完成理解"),
+                "diagnostics": diagnostics,
             }
             summary["decision"] = {
                 "outcome": outcome,
+                "pre_gate_outcome": outcome,
                 "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
                 "reasons": reasons,
+                "candidate_response": candidate_response or None,
+                "reply_diagnostic": reply_diagnostic or None,
             }
             if outcome == "SILENCE":
                 summary["delivery"] = {
@@ -182,11 +209,17 @@ class MessageTraceRepository:
                     "status": "SILENT",
                     "label": "本次不回复",
                 }
-            elif outcome == "OBSERVE" or (mode == "SHADOW" and outcome == "ACT"):
+            elif mode == "SHADOW" and outcome == "ACT":
+                summary["delivery"] = {
+                    "mode": mode,
+                    "status": "BLOCKED_BY_SHADOW",
+                    "label": "SHADOW：已完成判断，未发送",
+                }
+            elif outcome == "OBSERVE":
                 summary["delivery"] = {
                     "mode": mode,
                     "status": "OBSERVED",
-                    "label": "SHADOW：仅观察，不发送" if mode == "SHADOW" else "继续观察",
+                    "label": "继续观察",
                 }
             elif outcome == "DEFER":
                 summary["delivery"] = {
@@ -233,7 +266,10 @@ class MessageTraceRepository:
         def mutate(summary: dict[str, object]) -> None:
             delivery = dict(summary.get("delivery") or {})
             if delivery.get("mode") == "SHADOW":
-                delivery.update(status="OBSERVED", label="SHADOW：已生成方案但不会发送")
+                delivery.update(
+                    status="BLOCKED_BY_SHADOW",
+                    label="SHADOW：已生成方案但不会发送",
+                )
             else:
                 delivery.update(status="READY", label="回复已准备，等待发送")
             summary["delivery"] = delivery

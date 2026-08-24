@@ -65,6 +65,16 @@ def _evaluation(event: SocialEventEnvelope, outcome: str):
         governor_result=result,
         accepted=True,
         status="evaluated",
+        candidate_response="我会先看报错第一行。" if outcome == "ACT" else None,
+        reply_diagnostic=None,
+        cognition_diagnostics=(
+            SimpleNamespace(
+                worker="direct_interaction",
+                status="SUCCEEDED",
+                latency_ms=120,
+                diagnostic_code=None,
+            ),
+        ),
     )
 
 
@@ -134,6 +144,24 @@ def test_query_orders_newest_message_first(tmp_path):
 
     items = repo.query(persona_id="groupmate:default", group_id="g-1")["items"]
     assert [item["summary"]["timing"]["received_at"] for item in items] == [20, 10]
+
+
+def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("shadow-act")
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.mark_entered(event.event_id, now=11)
+    repo.record_evaluation(_evaluation(event, outcome="ACT"), now=12)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["decision"]["pre_gate_outcome"] == "ACT"
+    assert summary["decision"]["candidate_response"] == "我会先看报错第一行。"
+    assert summary["delivery"]["status"] == "BLOCKED_BY_SHADOW"
+    assert summary["delivery"]["label"] == "SHADOW：已完成判断，未发送"
+    assert summary["understanding"]["diagnostics"][0]["status"] == "SUCCEEDED"
 
 
 def test_non_text_segments_keep_order_without_exposing_platform_sources(tmp_path):

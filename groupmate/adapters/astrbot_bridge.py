@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import replace
 import time
 from pathlib import Path
 from typing import Callable
@@ -209,22 +210,48 @@ class AstrBotSocialRuntimeBridge:
                 ),
             )
             for evaluation in ordered:
-                self._record_trace(
-                    self.trace_repository.record_evaluation,
-                    evaluation,
-                    int(self.clock()),
-                )
                 group_id = str(
                     getattr(getattr(evaluation, "source_event", None), "group_id", "")
                     or ""
                 )
                 if not group_id or group_id in handled_groups:
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        evaluation,
+                        int(self.clock()),
+                    )
                     continue
                 plan = self._reply_planner.plan(
                     evaluation, now=int(self.clock())
                 )
                 if plan is None:
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        evaluation,
+                        int(self.clock()),
+                    )
                     continue
+                mode = self._manager.group_mode(group_id)
+                if mode is RuntimeMode.SHADOW and self._reply_executor is not None:
+                    preview = await self._reply_executor.preview(
+                        plan,
+                        context_events=tuple(
+                            getattr(evaluation, "context_events", ())
+                        ),
+                        persona_profile={"persona_id": self.settings.persona_id},
+                        recent_outputs=(),
+                    )
+                    evaluation = replace(
+                        evaluation,
+                        candidate_response=preview.text,
+                        reply_diagnostic=preview.diagnostic_code,
+                    )
+                    self._manager.update_shadow_review_evidence(evaluation)
+                self._record_trace(
+                    self.trace_repository.record_evaluation,
+                    evaluation,
+                    int(self.clock()),
+                )
                 source_event = getattr(evaluation, "source_event", None)
                 if source_event is not None:
                     self._record_trace(
@@ -235,7 +262,7 @@ class AstrBotSocialRuntimeBridge:
                     )
                 handled_groups.add(group_id)
                 try:
-                    if self._manager.group_mode(group_id) is RuntimeMode.SHADOW:
+                    if mode is RuntimeMode.SHADOW:
                         self._manager.reply_plans.save(plan)
                         continue
                     if self._reply_executor is None:

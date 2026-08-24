@@ -110,3 +110,31 @@ def test_optional_generation_failure_stays_silent(tmp_path):
     assert part is None
     assert repository.load(plan.plan_id).status == "silent"
     assert outbox.count() == 0
+
+
+def test_shadow_preview_generates_reviewed_text_without_outbox(tmp_path):
+    class Model:
+        async def complete_text(self, **kwargs):
+            return "这个报错先看最上面一行原因。"
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    executor = ReplyExecutor(repository, outbox, Model())
+    evaluation = _evaluation()
+    plan = ReplyPlanner().plan(evaluation, now=100)
+
+    preview = asyncio.run(
+        executor.preview(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile={},
+            recent_outputs=(),
+        )
+    )
+
+    assert preview.status == "READY"
+    assert preview.text == "这个报错先看最上面一行原因。"
+    assert preview.diagnostic_code is None
+    assert outbox.count() == 0

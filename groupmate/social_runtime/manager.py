@@ -71,6 +71,8 @@ class ShadowEvaluation:
     accepted: bool
     status: str
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
+    candidate_response: str | None = None
+    reply_diagnostic: str | None = None
 
     def to_capture_evidence(self) -> dict[str, object]:
         frame_id = (
@@ -96,6 +98,8 @@ class ShadowEvaluation:
                 "cognition_diagnostics": [
                     asdict(item) for item in self.cognition_diagnostics
                 ],
+                "candidate_response": self.candidate_response,
+                "reply_diagnostic": self.reply_diagnostic,
                 "accepted": self.accepted,
                 "status": self.status,
             },
@@ -161,6 +165,12 @@ class ShadowEvaluation:
             accepted=bool(values["accepted"]),
             status=str(values["status"]),
             cognition_diagnostics=cognition_diagnostics,
+            candidate_response=(
+                str(values.get("candidate_response") or "").strip() or None
+            ),
+            reply_diagnostic=(
+                str(values.get("reply_diagnostic") or "").strip() or None
+            ),
         )
 
 
@@ -454,6 +464,10 @@ class SocialRuntimeManager:
 
     def complete_shadow_review_evidence(self, capture_id: str) -> bool:
         return self.event_store.complete_shadow_capture(capture_id)
+
+    def update_shadow_review_evidence(self, evaluation: ShadowEvaluation) -> bool:
+        evidence = evaluation.to_capture_evidence()
+        return self.event_store.update_shadow_capture(evidence)
 
     def submit_plan(
         self,

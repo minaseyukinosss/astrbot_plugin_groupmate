@@ -737,6 +737,27 @@ class SQLiteSocialEventStore:
             ).fetchone()
             return row is not None and str(row[0]) == "completed"
 
+    def update_shadow_capture(self, evidence: dict[str, object]) -> bool:
+        capture_id = str(evidence.get("capture_id") or "").strip()
+        evaluation = evidence.get("evaluation")
+        if not capture_id or not isinstance(evaluation, dict):
+            raise ValueError("shadow capture update is incomplete")
+        persona_id = str(evaluation.get("persona_id") or "").strip()
+        source_event = evaluation.get("source_event")
+        group_id = (
+            str(source_event.get("group_id") or "").strip()
+            if isinstance(source_event, dict)
+            else ""
+        )
+        encoded = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE shadow_capture_evidence SET evidence_json=? "
+                "WHERE capture_id=? AND persona_id=? AND group_id=? AND status='pending'",
+                (encoded, capture_id, persona_id, group_id),
+            )
+            return cursor.rowcount == 1
+
     def event_envelopes(
         self,
         persona_id: str,

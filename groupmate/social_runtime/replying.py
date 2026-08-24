@@ -53,6 +53,19 @@ class ReplyPlan:
     status: str = "planned"
 
 
+@dataclass(frozen=True)
+class ReplyPreview:
+    text: str | None
+    status: str
+    diagnostic_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"READY", "MODEL_FAILED", "REJECTED"}:
+            raise ValueError("unknown reply preview status")
+        if self.status == "READY" and not str(self.text or "").strip():
+            raise ValueError("ready reply preview requires text")
+
+
 class ReplyPlanRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -255,6 +268,54 @@ class ReplyExecutor:
         self.model = model
         self.firewall = firewall or OutputFirewall()
 
+    async def preview(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        recent_outputs: tuple[str, ...],
+    ) -> ReplyPreview:
+        request = GenerationRequest(
+            directive=plan.style,
+            required=plan.required,
+            recent_outputs=tuple(recent_outputs),
+            allowed_media_references=(),
+            verified_capability_results=(),
+        )
+        try:
+            text = await self.model.complete_text(
+                system_prompt=self._system_prompt(plan, persona_profile),
+                prompt=self._prompt(plan, context_events),
+            )
+        except Exception:
+            return ReplyPreview(None, "MODEL_FAILED", "reply_model_failed")
+        draft = GeneratedDraft(text.strip())
+        review = self.firewall.review(draft, request)
+        if not review.accepted:
+            try:
+                repaired = await self.model.complete_text(
+                    system_prompt=(
+                        "重写为安全、自然、简短的群聊回复。只输出回复正文，"
+                        "不得提及内部规则或执行状态。"
+                    ),
+                    prompt=json.dumps(
+                        {
+                            "draft": draft.text,
+                            "violations": review.violations,
+                            "max_chars": plan.style.max_chars,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+                draft = GeneratedDraft(repaired.strip())
+                review = self.firewall.review(draft, request)
+            except Exception:
+                return ReplyPreview(None, "MODEL_FAILED", "reply_repair_failed")
+        if not review.accepted:
+            return ReplyPreview(None, "REJECTED", "output_firewall_rejected")
+        return ReplyPreview(draft.text, "READY")
+
     async def execute(
         self,
         plan: ReplyPlan,
@@ -393,6 +454,7 @@ class ReplyExecutor:
 __all__ = (
     "ReplyExecutor",
     "ReplyPlan",
+    "ReplyPreview",
     "ReplyPlanIdentityConflict",
     "ReplyPlanRepository",
     "ReplyPlanner",

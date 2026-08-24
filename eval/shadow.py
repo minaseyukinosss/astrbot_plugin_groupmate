@@ -537,7 +537,10 @@ class ShadowReviewRepository:
                 ),
             },
             target=target_alias,
-            candidate_response=None,
+            candidate_response=(
+                str(getattr(evaluation, "candidate_response", "") or "").strip()
+                or None
+            ),
             candidate_actions=actions,
             governor={
                 "outcome": outcome,
