@@ -135,6 +135,7 @@ _SAFE_PROPOSITION_KEYS = frozenset(
         "novelty",
         "repetition_cost",
         "request",
+        "reason",
         "should_participate",
         "subject_id",
         "target_confidence",
@@ -150,12 +151,15 @@ def safe_cognitive_observation(
 ) -> dict[str, object]:
     """Project only bounded, decision-relevant observation fields."""
 
-    proposition = {
-        key: value
-        for key, value in observation.proposition.items()
-        if key in _SAFE_PROPOSITION_KEYS
-        and (value is None or isinstance(value, (bool, int, float, str)))
-    }
+    proposition = {}
+    for key, value in observation.proposition.items():
+        if key not in _SAFE_PROPOSITION_KEYS or not (
+            value is None or isinstance(value, (bool, int, float, str))
+        ):
+            continue
+        if key == "reason":
+            value = " ".join(str(value or "").split())[:80]
+        proposition[key] = value
     return {
         "worker": observation.worker,
         "kind": observation.kind,

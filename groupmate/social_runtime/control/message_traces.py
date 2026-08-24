@@ -261,6 +261,12 @@ class MessageTraceRepository:
                 getattr(evaluation, "participation_diagnostics", ()) or ()
             )
         ]
+        judgement = self._judgement(
+            evaluation=evaluation,
+            lane=lane,
+            outcome=outcome,
+            diagnostics=diagnostics,
+        )
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
@@ -275,6 +281,7 @@ class MessageTraceRepository:
                 "candidate_source": candidate_source,
                 "participation_diagnostics": participation_diagnostics,
             }
+            summary["judgement"] = judgement
             summary["decision"] = {
                 "outcome": outcome,
                 "pre_gate_outcome": outcome,
@@ -343,6 +350,96 @@ class MessageTraceRepository:
             }
         )
         self._mutate(event.event_id, now, mutate, stages=tuple(stages))
+
+    def _judgement(
+        self,
+        *,
+        evaluation: object,
+        lane: str,
+        outcome: str,
+        diagnostics: list[dict[str, object]],
+    ) -> dict[str, object]:
+        would_reply = outcome == "ACT"
+        if lane != "AMBIENT":
+            return {
+                "source": "policy",
+                "status": "not_required",
+                "decision": "speak" if would_reply else "silence",
+                "would_reply": would_reply,
+                "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
+            }
+        observations = tuple(
+            getattr(evaluation, "cognitive_observations", ()) or ()
+        )
+        model_unavailable = any(
+            str(item.get("worker") or "") == "ambient_social_assessor"
+            and str(item.get("status") or "") != "SUCCEEDED"
+            for item in diagnostics
+        )
+        assessment = next(
+            (
+                item
+                for item in reversed(observations)
+                if str(getattr(item, "kind", ""))
+                == "participation_assessment"
+            ),
+            None,
+        )
+        if model_unavailable or assessment is None:
+            return {
+                "source": "model",
+                "status": "unavailable",
+                "decision": None,
+                "would_reply": would_reply,
+                "label": "模型判断未采用",
+            }
+        proposition = getattr(assessment, "proposition", {})
+        if not isinstance(proposition, Mapping):
+            proposition = {}
+        decision = str(proposition.get("decision") or "").lower()
+        judgement = {
+            "source": "model",
+            "status": "accepted",
+            "decision": decision if decision in {"speak", "silence"} else None,
+            "would_reply": would_reply,
+            "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
+        }
+        reason = self._safe_text(proposition.get("reason"), 80)
+        if reason:
+            judgement["reason"] = reason
+        evidence = self._evidence_preview(
+            evaluation,
+            tuple(getattr(assessment, "evidence_event_ids", ()) or ()),
+        )
+        if evidence:
+            judgement["evidence"] = evidence
+        return judgement
+
+    def _evidence_preview(
+        self, evaluation: object, evidence_event_ids: tuple[object, ...]
+    ) -> dict[str, object] | None:
+        source_event = getattr(evaluation, "source_event", None)
+        if not isinstance(source_event, SocialEventEnvelope):
+            return None
+        persona_id = source_event.persona_id
+        group_id = source_event.group_id or ""
+        if not group_id:
+            return None
+        with connect_database(self.path) as db:
+            for event_id in reversed(evidence_event_ids):
+                row = db.execute(
+                    "SELECT state_json FROM message_traces "
+                    "WHERE event_id=? AND persona_id=? AND group_id=?",
+                    (str(event_id), persona_id, group_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                summary = json.loads(str(row["state_json"]))
+                actor = summary.get("actor")
+                message = summary.get("message")
+                if isinstance(actor, Mapping) and isinstance(message, Mapping):
+                    return {"actor": dict(actor), "message": dict(message)}
+        return None
 
     def record_plan(self, event_id: str, plan: object, now: int) -> None:
         def mutate(summary: dict[str, object]) -> None:

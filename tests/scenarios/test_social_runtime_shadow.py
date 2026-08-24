@@ -12,6 +12,7 @@ from groupmate.social_runtime.manager import (
     RuntimeGovernanceState,
     SocialRuntimeManager,
 )
+from groupmate.social_runtime.scene_actor import safe_cognitive_observation
 from groupmate.social_runtime.persistence.schema import connect_database
 from tests.factories import social_event_values
 
@@ -147,6 +148,34 @@ def _event(
             payload=payload,
         )
     )
+
+
+def test_safe_cognitive_reason_is_bounded_without_exposing_private_fields():
+    observation = CognitiveObservation.create(
+        worker="ambient_social_assessor",
+        kind="participation_assessment",
+        proposition={
+            "decision": "silence",
+            "reason": "  模型理由  " * 30,
+            "chain_of_thought": "不得持久化的推理",
+            "raw_response": "不得持久化的响应",
+            "prompt": "不得持久化的提示词",
+            "api_key": "sk-private",
+        },
+        confidence=0.8,
+        evidence_event_ids=("qq:evidence-private",),
+        scene_version=1,
+        expires_at=30,
+        uncertainty=(),
+    )
+
+    safe = safe_cognitive_observation(observation)
+
+    assert safe["proposition"]["decision"] == "silence"
+    assert 0 < len(safe["proposition"]["reason"]) <= 80
+    rendered = json.dumps(safe, ensure_ascii=False)
+    for private in ("chain_of_thought", "raw_response", "prompt", "api_key"):
+        assert private not in rendered
 
 
 def test_external_owned_event_has_zero_frames_workers_candidates_and_outbox(tmp_path):

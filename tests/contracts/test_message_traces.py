@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from groupmate.social_runtime.attention import AttentionFrame
+from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.control.message_traces import MessageTraceRepository
 from groupmate.social_runtime.governor import GovernorResult
@@ -103,6 +104,7 @@ def test_trace_updates_one_message_instead_of_appending_projection_rows(tmp_path
         "message",
         "route",
         "understanding",
+        "judgement",
         "decision",
         "delivery",
         "timing",
@@ -189,6 +191,117 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
     assert summary["understanding"]["candidate_source"] == "deterministic"
     assert "chain_of_thought" not in str(summary)
     assert "prompt" not in str(summary)
+
+
+def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    evidence_event = _platform_event("evidence", card="夏夏")
+    source_event = _platform_event("ambient-result", card="小林")
+    repo.record_received(evidence_event, runtime_mode="SHADOW", now=10)
+    repo.record_received(source_event, runtime_mode="SHADOW", now=11)
+    repo.mark_entered(source_event.event_id, now=12)
+    evaluation = _evaluation(source_event, outcome="OBSERVE")
+    evaluation.participation_lane = "AMBIENT"
+    evaluation.context_events = (evidence_event, source_event)
+    evaluation.cognitive_observations = (
+        CognitiveObservation.create(
+            worker="ambient_social_assessor",
+            kind="participation_assessment",
+            proposition={
+                "should_participate": False,
+                "decision": "silence",
+                "disruption_cost": 0.62,
+                "novelty": 0.18,
+                "reason": "成员正在自然交流，现在插话会打断对话。",
+            },
+            confidence=0.74,
+            evidence_event_ids=(evidence_event.event_id,),
+            scene_version=1,
+            expires_at=30,
+            uncertainty=(),
+        ),
+    )
+    evaluation.cognition_diagnostics = (
+        SimpleNamespace(
+            worker="ambient_social_assessor",
+            status="SUCCEEDED",
+            latency_ms=900,
+            diagnostic_code=None,
+        ),
+    )
+
+    repo.record_evaluation(evaluation, now=13)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["judgement"] == {
+        "source": "model",
+        "status": "accepted",
+        "decision": "silence",
+        "would_reply": False,
+        "label": "继续观察",
+        "reason": "成员正在自然交流，现在插话会打断对话。",
+        "evidence": {
+            "actor": summary["judgement"]["evidence"]["actor"],
+            "message": summary["judgement"]["evidence"]["message"],
+        },
+    }
+    assert summary["judgement"]["evidence"]["actor"]["display_name"] == "夏夏"
+    assert (
+        summary["judgement"]["evidence"]["message"]["summary"]
+        == "今晚一起打游戏吗？"
+    )
+    assert "qq:evidence" not in str(summary["judgement"])
+
+
+def test_unavailable_model_judgement_does_not_invent_reason_or_evidence(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("ambient-timeout")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    evaluation = _evaluation(event, outcome="OBSERVE")
+    evaluation.participation_lane = "AMBIENT"
+    evaluation.context_events = (event,)
+    evaluation.cognitive_observations = ()
+    evaluation.cognition_diagnostics = (
+        SimpleNamespace(
+            worker="ambient_social_assessor",
+            status="TIMED_OUT",
+            latency_ms=6000,
+            diagnostic_code="direct_timeout",
+        ),
+    )
+
+    repo.record_evaluation(evaluation, now=12)
+
+    judgement = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["judgement"]
+    assert judgement == {
+        "source": "model",
+        "status": "unavailable",
+        "decision": None,
+        "would_reply": False,
+        "label": "模型判断未采用",
+    }
+
+
+def test_policy_judgement_is_marked_as_not_requiring_model(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("direct-policy")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.record_evaluation(_evaluation(event, outcome="ACT"), now=12)
+
+    judgement = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["judgement"]
+    assert judgement == {
+        "source": "policy",
+        "status": "not_required",
+        "decision": "speak",
+        "would_reply": True,
+        "label": "准备回复",
+    }
 
 
 def test_non_text_segments_keep_order_without_exposing_platform_sources(tmp_path):
