@@ -102,8 +102,7 @@ class AstrBotSocialRuntimeBridge:
                 )
                 for name in (
                     "direct_interaction",
-                    "scene_interpreter",
-                    "participation_assessor",
+                    "ambient_social_assessor",
                 )
             }
             self._manager = SocialRuntimeManager(
@@ -114,6 +113,7 @@ class AstrBotSocialRuntimeBridge:
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
                 cognition_workers=cognition_workers,
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
+                worker_timeout_seconds=self.settings.cognition_timeout_seconds,
                 persona_profile_loader=lambda group_id: config_repository.snapshot(
                     persona_id=self.settings.persona_id,
                     group_id=group_id,

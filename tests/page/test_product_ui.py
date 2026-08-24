@@ -114,3 +114,109 @@ def test_message_presenter_formats_media_sizes_for_people():
     )
 
     assert result == ["800 B", "2 KB", "1.5 MB", ""]
+
+
+def test_trace_presenter_translates_strategy_and_cognition_diagnostics():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "direct: presenter.participationLaneLabel('DIRECT_FAST'),"
+        "continuation: presenter.participationLaneLabel('CONTINUATION'),"
+        "ambient: presenter.participationLaneLabel('AMBIENT'),"
+        "degraded: presenter.cognitionStateLabel('DEGRADED'),"
+        "scene: presenter.cognitionWorkerLabel('scene_interpreter'),"
+        "assessor: presenter.cognitionWorkerLabel('participation_assessor'),"
+        "combined: presenter.cognitionWorkerLabel('ambient_social_assessor'),"
+        "timeout: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'worker_timeout',latency_ms:10000,timeout_ms:8000}),"
+        "reply: presenter.replyExpectation({would_reply:true}, {mode:'SHADOW'}),"
+        "candidate: presenter.candidateSummary({candidate_count:1,"
+        "candidate_source:'deterministic'})"
+        "}));"
+    )
+
+    assert result == {
+        "direct": "直接互动",
+        "continuation": "延续对话",
+        "ambient": "普通群聊观察",
+        "degraded": "认知降级",
+        "scene": "群聊场景理解",
+        "assessor": "插话时机判断",
+        "combined": "群聊理解与插话评估",
+        "timeout": "模型等待约 8 秒仍未返回，本次已转为保守观察。",
+        "reply": "正式运行会回复",
+        "candidate": "策略生成 · 1 个参与方案",
+    }
+
+
+def test_timeout_explanation_distinguishes_queue_from_provider_wait():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "queue: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'worker_timeout',queue_wait_ms:8000,"
+        "provider_latency_ms:0,timeout_ms:8000}),"
+        "provider: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'worker_timeout',queue_wait_ms:10,"
+        "provider_latency_ms:7990,timeout_ms:8000})"
+        "}));"
+    )
+
+    assert result == {
+        "queue": "等待认知执行名额约 8 秒仍未开始，本次已转为保守观察。",
+        "provider": "模型等待约 8 秒仍未返回，本次已转为保守观察。",
+    }
+
+
+def test_trace_presenter_detects_cognition_failure_separately_from_delivery():
+    result = _run_presenter(
+        "console.log(JSON.stringify(["
+        "presenter.traceHasCognitionFailure({understanding:{status:'DEGRADED'}}),"
+        "presenter.traceHasCognitionFailure({understanding:{status:'READY',"
+        "diagnostics:[{status:'TIMED_OUT'}]}}),"
+        "presenter.traceHasCognitionFailure({understanding:{status:'READY',"
+        "diagnostics:[{status:'SUCCEEDED'}]}})"
+        "]));"
+    )
+
+    assert result == [True, True, False]
+
+
+def test_trace_presenter_does_not_claim_a_reply_before_decision_or_handoff():
+    result = _run_presenter(
+        "console.log(JSON.stringify(["
+        "presenter.strategySummary({route:{owner:'GROUPMATE'},"
+        "decision:{outcome:'PENDING'}}),"
+        "presenter.strategySummary({route:{owner:'EXTERNAL_PLUGIN'},"
+        "decision:{outcome:'PENDING'}})"
+        "]));"
+    )
+
+    assert result == ["等待进入策略判断", "Groupmate 不参与判断"]
+
+
+def test_trace_presenter_only_treats_completed_silence_as_observed():
+    result = _run_presenter(
+        "console.log(JSON.stringify(["
+        "presenter.traceIsObserved({decision:{outcome:'PENDING',would_reply:false}}),"
+        "presenter.traceIsObserved({decision:{outcome:'DEFER',would_reply:false}}),"
+        "presenter.traceIsObserved({decision:{outcome:'OBSERVE'}}),"
+        "presenter.traceIsObserved({decision:{would_reply:false}}),"
+        "presenter.traceIsObserved({delivery:{status:'OBSERVED'}})"
+        "]));"
+    )
+
+    assert result == [False, False, True, True, True]
+
+
+def test_cognition_presenter_formats_safe_latency_metrics():
+    result = _run_presenter(
+        "console.log(JSON.stringify(presenter.cognitionDiagnosticMetricRows({"
+        "queue_wait_ms:120,provider_latency_ms:1300,input_bytes:2048,"
+        "timeout_ms:8000})));"
+    )
+
+    assert result == [
+        ["排队等待", "不足 1 秒"],
+        ["Provider 等待", "1 秒"],
+        ["输入大小", "2 KB"],
+        ["本次截止", "8 秒"],
+    ]

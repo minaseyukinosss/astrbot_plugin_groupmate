@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Awaitable, Callable, Mapping, TypeVar
 
-from ..attention import AttentionFrame
+from ..attention import AMBIENT_DECISION_BUDGET_SECONDS, AttentionFrame
 from .blackboard import CognitionBlackboard, ObservationRejected
 from .contracts import (
     CognitiveContext,
@@ -26,7 +26,7 @@ T = TypeVar("T")
 class CognitionBudget:
     max_worker_calls: int
     max_cost_units: int
-    worker_timeout_seconds: float = 10.0
+    worker_timeout_seconds: float = 8.0
     max_worker_concurrency: int = 12
 
     def __post_init__(self) -> None:
@@ -58,7 +58,10 @@ class _WorkerConcurrencyGate:
     def waiting(self) -> int:
         return len(self._queue)
 
-    async def run(self, lane: str, operation: Callable[[], Awaitable[T]]) -> T:
+    async def run(
+        self, lane: str, operation: Callable[[int], Awaitable[T]]
+    ) -> T:
+        queued_at = time.monotonic_ns()
         token = object()
         async with self._condition:
             admission = self._queue.enqueue(lane, token)
@@ -72,8 +75,11 @@ class _WorkerConcurrencyGate:
             self._queue.dequeue()
             self.active += 1
             self.peak = max(self.peak, self.active)
+            queue_wait_ms = max(
+                0, (time.monotonic_ns() - queued_at) // 1_000_000
+            )
         try:
-            return await operation()
+            return await operation(int(queue_wait_ms))
         finally:
             async with self._condition:
                 self.active -= 1
@@ -135,6 +141,7 @@ class CognitionService:
         self.rule_worker = rule_worker or LevelZeroRuleWorker()
         self.critic_worker = critic_worker
         self._worker_gate = _WorkerConcurrencyGate(budget.max_worker_concurrency)
+        self._late_worker_tasks: set[asyncio.Task] = set()
 
     @property
     def peak_worker_concurrency(self) -> int:
@@ -150,6 +157,7 @@ class CognitionService:
 
     async def evaluate(self, frame: AttentionFrame, context: CognitiveContext):
         self._validate_context(frame, context)
+        evaluation_deadline = self._evaluation_deadline(frame, context)
         board = CognitionBlackboard(frame, now=context.now)
         diagnostics: list[str] = []
         worker_diagnostics: list[CognitiveWorkerDiagnostic] = []
@@ -157,6 +165,7 @@ class CognitionService:
             self.rule_worker,
             frame,
             context,
+            evaluation_deadline,
         )
         rule_completed, rule_diagnostic = self._integrate_worker(
             rule_run, board, diagnostics
@@ -200,7 +209,9 @@ class CognitionService:
             used_cost += cost
         runs = await asyncio.gather(
             *(
-                self._invoke_worker(worker, frame, context)
+                self._invoke_worker(
+                    worker, frame, context, evaluation_deadline
+                )
                 for worker in admitted
             )
         )
@@ -228,18 +239,67 @@ class CognitionService:
             worker_diagnostics=tuple(worker_diagnostics),
         )
 
-    async def _invoke_worker(self, worker, frame, context) -> _WorkerRun:
+    async def _invoke_worker(
+        self, worker, frame, context, evaluation_deadline: int | None = None
+    ) -> _WorkerRun:
         started_at = int(time.time() * 1000)
         started = time.monotonic_ns()
+        configured_deadline = started + int(
+            self.budget.worker_timeout_seconds * 1_000_000_000
+        )
+        effective_deadline = (
+            configured_deadline
+            if evaluation_deadline is None
+            else min(configured_deadline, evaluation_deadline)
+        )
+        timeout_ms = max(1, (effective_deadline - started) // 1_000_000)
+        queue_wait_ms = 0
+        provider_started = 0
+        input_size = getattr(worker, "input_bytes", None)
+        input_bytes = (
+            max(0, int(input_size(frame, context)))
+            if callable(input_size)
+            else 0
+        )
+
+        async def invoke(admission_wait_ms: int) -> CognitiveWorkerResult:
+            nonlocal queue_wait_ms, provider_started
+            queue_wait_ms = int(admission_wait_ms)
+            remaining = (effective_deadline - time.monotonic_ns()) / 1_000_000_000
+            if remaining <= 0:
+                raise TimeoutError
+            provider_started = time.monotonic_ns()
+            return await self._observe(worker, frame, context)
+
         try:
-            result = await self._worker_gate.run(
-                frame.trigger_kind,
-                lambda: asyncio.wait_for(
-                    self._observe(worker, frame, context),
-                    timeout=self.budget.worker_timeout_seconds,
+            remaining_before_queue = (
+                effective_deadline - time.monotonic_ns()
+            ) / 1_000_000_000
+            if remaining_before_queue <= 0:
+                raise TimeoutError
+            result = await self._await_with_hard_timeout(
+                self._worker_gate.run(
+                    frame.trigger_kind,
+                    invoke,
                 ),
+                remaining_before_queue,
             )
+            if time.monotonic_ns() > effective_deadline:
+                raise TimeoutError
         except TimeoutError:
+            if not provider_started:
+                queue_wait_ms = max(
+                    queue_wait_ms,
+                    (time.monotonic_ns() - started) // 1_000_000,
+                )
+            provider_latency_ms = (
+                0
+                if not provider_started
+                else max(
+                    0,
+                    (time.monotonic_ns() - provider_started) // 1_000_000,
+                )
+            )
             return _WorkerRun(
                 completed=False,
                 observations=(),
@@ -249,6 +309,10 @@ class CognitionService:
                     "worker_timeout",
                     started_at,
                     started,
+                    queue_wait_ms=queue_wait_ms,
+                    provider_latency_ms=provider_latency_ms,
+                    input_bytes=input_bytes,
+                    timeout_ms=timeout_ms,
                 ),
                 messages=(f"worker_timeout:{worker.name}",),
             )
@@ -258,19 +322,38 @@ class CognitionService:
                 completed=False,
                 observations=(),
                 diagnostic=self._diagnostic(
-                    worker.name, "FAILED", code, started_at, started
+                    worker.name,
+                    "FAILED",
+                    code,
+                    started_at,
+                    started,
+                    queue_wait_ms=queue_wait_ms,
+                    input_bytes=input_bytes,
+                    timeout_ms=timeout_ms,
                 ),
                 messages=(f"{code}:{worker.name}",),
             )
         observations = result.observations
         if result.diagnostic_code:
             code = str(result.diagnostic_code)
-            status = "MODEL_FAILED" if code == "model_call_failed" else "INVALID_OUTPUT"
+            status = (
+                "MODEL_FAILED"
+                if code.startswith("model_call_failed")
+                else "INVALID_OUTPUT"
+            )
             return _WorkerRun(
                 completed=False,
                 observations=(),
                 diagnostic=self._diagnostic(
-                    worker.name, status, code, started_at, started
+                    worker.name,
+                    status,
+                    code,
+                    started_at,
+                    started,
+                    queue_wait_ms=queue_wait_ms,
+                    provider_latency_ms=result.provider_latency_ms,
+                    input_bytes=result.input_bytes or input_bytes,
+                    timeout_ms=timeout_ms,
                 ),
                 messages=(f"{code}:{worker.name}",),
             )
@@ -278,9 +361,46 @@ class CognitionService:
             completed=True,
             observations=observations,
             diagnostic=self._diagnostic(
-                worker.name, "SUCCEEDED", None, started_at, started
+                worker.name,
+                "SUCCEEDED",
+                None,
+                started_at,
+                started,
+                queue_wait_ms=queue_wait_ms,
+                provider_latency_ms=result.provider_latency_ms,
+                input_bytes=result.input_bytes or input_bytes,
+                timeout_ms=timeout_ms,
             ),
         )
+
+    async def _await_with_hard_timeout(
+        self, operation: Awaitable[T], timeout: float
+    ) -> T:
+        task = asyncio.ensure_future(operation)
+        try:
+            done, _ = await asyncio.wait((task,), timeout=max(0.0, timeout))
+        except BaseException:
+            self._detach_late_task(task)
+            raise
+        if task in done:
+            return task.result()
+        self._detach_late_task(task)
+        raise TimeoutError
+
+    def _detach_late_task(self, task: asyncio.Task) -> None:
+        if task.done():
+            self._consume_late_task(task)
+            return
+        task.cancel()
+        self._late_worker_tasks.add(task)
+        task.add_done_callback(self._consume_late_task)
+
+    def _consume_late_task(self, task: asyncio.Task) -> None:
+        self._late_worker_tasks.discard(task)
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
     @staticmethod
     def _integrate_worker(
@@ -318,7 +438,18 @@ class CognitionService:
         return CognitiveWorkerResult(tuple(await worker.observe(frame, context)))
 
     @staticmethod
-    def _diagnostic(worker, status, code, started_at, started) -> CognitiveWorkerDiagnostic:
+    def _diagnostic(
+        worker,
+        status,
+        code,
+        started_at,
+        started,
+        *,
+        queue_wait_ms=0,
+        provider_latency_ms=0,
+        input_bytes=0,
+        timeout_ms=0,
+    ) -> CognitiveWorkerDiagnostic:
         completed_at = int(time.time() * 1000)
         latency_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
         return CognitiveWorkerDiagnostic(
@@ -328,7 +459,25 @@ class CognitionService:
             completed_at=max(int(started_at), completed_at),
             latency_ms=int(latency_ms),
             diagnostic_code=None if code is None else str(code),
+            queue_wait_ms=max(0, int(queue_wait_ms)),
+            provider_latency_ms=max(0, int(provider_latency_ms)),
+            input_bytes=max(0, int(input_bytes)),
+            timeout_ms=max(0, int(timeout_ms)),
         )
+
+    @staticmethod
+    def _evaluation_deadline(
+        frame: AttentionFrame, context: CognitiveContext
+    ) -> int | None:
+        if frame.trigger_kind != "AMBIENT":
+            return None
+        remaining_seconds = max(
+            0,
+            frame.deadline
+            + AMBIENT_DECISION_BUDGET_SECONDS
+            - context.now,
+        )
+        return time.monotonic_ns() + int(remaining_seconds * 1_000_000_000)
 
     @staticmethod
     def _instant_diagnostic(worker, status, code) -> CognitiveWorkerDiagnostic:

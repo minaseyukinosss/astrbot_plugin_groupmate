@@ -1,23 +1,26 @@
 import { governedAction } from "../components/command-dialog.js";
 import { button, element } from "../components/dom.js";
-import { formatTimestamp, formatTraceDuration } from "../components/presenters.js";
+import {
+  cognitionStateLabel,
+  formatTimestamp,
+  formatTraceDuration,
+  strategySummary,
+  traceHasCognitionFailure,
+  traceIsObserved,
+  traceWouldReply,
+} from "../components/presenters.js";
 import { controlVersion } from "../components/projection.js";
 import { renderMessageContent } from "../components/message.js";
 
 const FILTERS = Object.freeze([
   ["all", "全部消息"],
-  ["responded", "已回复"],
-  ["silent", "未参与"],
+  ["would_reply", "会回复"],
+  ["observed", "继续观察"],
   ["external", "外部能力"],
   ["failed", "异常"],
 ]);
 
-const DELIVERY_GROUPS = Object.freeze({
-  responded: new Set(["SENT"]),
-  silent: new Set(["SILENT", "OBSERVED", "BLOCKED_BY_SHADOW"]),
-  external: new Set(["HANDED_OFF"]),
-  failed: new Set(["FAILED", "UNKNOWN"]),
-});
+const FAILED_DELIVERIES = new Set(["FAILED", "UNKNOWN"]);
 
 const DELIVERY_TONES = Object.freeze({
   SENT: "ok",
@@ -65,6 +68,8 @@ function traceSearchText(item) {
     summary.route?.label,
     summary.route?.reason,
     summary.understanding?.summary,
+    cognitionStateLabel(summary.understanding?.status),
+    strategySummary(summary),
     summary.decision?.label,
     ...(summary.decision?.reasons || []),
     summary.delivery?.label,
@@ -109,10 +114,19 @@ function traceRow(item) {
     ]),
     element("td", { attrs: { "data-label": "Groupmate 的理解" } }, [
       element("span", { className: "two-line", text: summary.understanding?.summary || "等待理解" }),
+      ...(traceHasCognitionFailure(summary)
+        ? [element("small", { className: "trace-warning", text: cognitionStateLabel(summary.understanding?.status) })]
+        : []),
     ]),
     element("td", { attrs: { "data-label": "决定" } }, [
       element("strong", { className: "trace-primary", text: summary.decision?.label || "等待判断" }),
-      element("small", { className: "two-line", text: decisionReasons.join("；") || "—" }),
+      element("small", {
+        className: "two-line",
+        text: strategySummary(summary),
+      }),
+      ...(decisionReasons.length
+        ? [element("small", { className: "two-line", text: decisionReasons.join("；") })]
+        : []),
     ]),
     element("td", { attrs: { "data-label": "最终结果" } }, [
       element("span", {
@@ -131,8 +145,17 @@ function traceRow(item) {
 function filterTraces(items, state) {
   const query = state.query.trim().toLowerCase();
   return items.filter((item) => {
-    const status = String(item.summary?.delivery?.status || "").toUpperCase();
-    const matchesStatus = state.filter === "all" || DELIVERY_GROUPS[state.filter]?.has(status);
+    const summary = item.summary || {};
+    const status = String(summary.delivery?.status || "").toUpperCase();
+    const external = status === "HANDED_OFF" || summary.route?.owner === "EXTERNAL_PLUGIN";
+    const failed = FAILED_DELIVERIES.has(status) || traceHasCognitionFailure(summary);
+    const matchesStatus = (
+      state.filter === "all"
+      || (state.filter === "failed" && failed)
+      || (state.filter === "external" && external)
+      || (state.filter === "would_reply" && !failed && !external && traceWouldReply(summary))
+      || (state.filter === "observed" && !failed && !external && traceIsObserved(summary))
+    );
     return matchesStatus && (!query || traceSearchText(item).includes(query));
   });
 }
@@ -271,6 +294,8 @@ function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
   const [title, description] = modeCopy(mode, ready, paused);
   const groupmateCount = items.filter((item) => item.summary?.route?.owner === "GROUPMATE").length;
   const sentCount = items.filter((item) => item.summary?.delivery?.status === "SENT").length;
+  const wouldReplyCount = items.filter((item) => traceWouldReply(item.summary)).length;
+  const cognitionFailureCount = items.filter((item) => traceHasCognitionFailure(item.summary)).length;
   const children = [
     element("div", { className: "mode-copy" }, [
       element("span", { text: "运行概览" }),
@@ -283,7 +308,9 @@ function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
     element("dl", { className: "mode-facts" }, [
       element("div", {}, [element("dt", { text: "已收到" }), element("dd", { text: String(items.length) })]),
       element("div", {}, [element("dt", { text: "进入 Groupmate" }), element("dd", { text: String(groupmateCount) })]),
+      element("div", {}, [element("dt", { text: "会回复" }), element("dd", { text: String(wouldReplyCount) })]),
       element("div", {}, [element("dt", { text: "已发送" }), element("dd", { text: String(sentCount) })]),
+      element("div", {}, [element("dt", { text: "认知异常" }), element("dd", { text: String(cognitionFailureCount) })]),
     ]),
   ];
   if (mode !== "OFF" && ready) {

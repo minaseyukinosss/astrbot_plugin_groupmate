@@ -848,6 +848,7 @@ h1 { font-size: 1.2rem; }
 .trace-time small,
 .trace-table td > small,
 .trace-message-copy small { color: var(--color-muted); font-size: 0.66rem; }
+.trace-table td > .trace-warning { color: var(--color-warning); font-weight: 650; }
 .trace-message { display: flex; align-items: center; gap: 0.55rem; }
 .trace-message-copy { display: grid; min-width: 0; gap: 0.12rem; }
 .message-content { display: grid; gap: 0.5rem; min-width: 0; }
@@ -965,6 +966,15 @@ h1 { font-size: 1.2rem; }
 .stage-timeline time { color: var(--color-muted); font-size: 0.65rem; }
 .technical-details { padding: 0.8rem 0; border-block-start: 1px solid var(--color-border); }
 .technical-details summary { color: var(--color-muted); cursor: pointer; font-size: 0.7rem; }
+.cognition-diagnostics li[data-status="timed_out"],
+.cognition-diagnostics li[data-status="model_failed"],
+.cognition-diagnostics li[data-status="invalid_output"] {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+}
+.cognition-diagnostics li[data-status="timed_out"] span,
+.cognition-diagnostics li[data-status="model_failed"] span,
+.cognition-diagnostics li[data-status="invalid_output"] span { color: var(--color-warning); }
 
 @media (max-width: 70rem) {
   .mode-banner { grid-template-columns: minmax(14rem, 1fr) auto; }

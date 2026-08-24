@@ -88,6 +88,48 @@ const VALUE_LABELS = Object.freeze({
   shadow_only: "观察模式限制",
 });
 
+const PARTICIPATION_LANE_LABELS = Object.freeze({
+  DIRECT_FAST: "直接互动",
+  CONTINUATION: "延续对话",
+  AMBIENT: "普通群聊观察",
+});
+
+const COGNITION_STATE_LABELS = Object.freeze({
+  READY: "理解完成",
+  DEGRADED: "认知降级",
+  PENDING: "等待理解",
+  FAILED: "理解失败",
+});
+
+const COGNITION_WORKER_LABELS = Object.freeze({
+  "level0.rules": "本地规则判断",
+  direct_interaction: "直接互动识别",
+  ambient_social_assessor: "群聊理解与插话评估",
+  scene_interpreter: "群聊场景理解",
+  participation_assessor: "插话时机判断",
+  social_risk: "社交风险识别",
+  context_reconstruction: "上下文重建",
+  relationship: "成员关系理解",
+});
+
+const COGNITION_DIAGNOSTIC_STATUS_LABELS = Object.freeze({
+  SUCCEEDED: "完成",
+  TIMED_OUT: "等待超时",
+  MODEL_FAILED: "模型调用失败",
+  INVALID_OUTPUT: "模型输出无法使用",
+  REJECTED: "结果未采用",
+  FAILED: "执行失败",
+  MISSING: "未执行",
+  BUDGET_EXHAUSTED: "调用预算已用尽",
+});
+
+const PARTICIPATION_DIAGNOSTIC_LABELS = Object.freeze({
+  deterministic_direct_fast: "明确 @、回复或直接请求，策略直接进入回复准备",
+  deterministic_continuation: "命中当前对话延续窗口",
+  deterministic_scope_missing: "缺少明确对象或话题，未生成参与方案",
+  model_gated_ambient: "普通群聊由模型判断是否适合参与",
+});
+
 export function kindLabel(kind) {
   const value = String(kind || "").trim();
   if (!value) return "运行事件";
@@ -117,6 +159,133 @@ export function valueLabel(field, value) {
   }
   const text = String(value);
   return VALUE_LABELS[text] || text;
+}
+
+export function participationLaneLabel(value) {
+  const normalized = String(value || "").toUpperCase();
+  return PARTICIPATION_LANE_LABELS[normalized] || "策略通道未记录";
+}
+
+export function cognitionStateLabel(value) {
+  const normalized = String(value || "").toUpperCase();
+  return COGNITION_STATE_LABELS[normalized] || String(value || "状态未记录");
+}
+
+export function cognitionWorkerLabel(value) {
+  return COGNITION_WORKER_LABELS[String(value || "")] || "其他认知模块";
+}
+
+export function cognitionDiagnosticStatusLabel(value) {
+  const normalized = String(value || "").toUpperCase();
+  return COGNITION_DIAGNOSTIC_STATUS_LABELS[normalized] || "状态未知";
+}
+
+export function cognitionDiagnosticExplanation(diagnostic = {}) {
+  const code = String(diagnostic.diagnostic_code || "");
+  if (code === "worker_timeout") {
+    const hasProviderMetric = diagnostic.provider_latency_ms !== undefined
+      && diagnostic.provider_latency_ms !== null;
+    const queueWait = Math.max(0, Number(diagnostic.queue_wait_ms) || 0);
+    const providerWait = Math.max(0, Number(diagnostic.provider_latency_ms) || 0);
+    const milliseconds = Math.max(
+      0,
+      Number(diagnostic.timeout_ms)
+        || providerWait
+        || Number(diagnostic.latency_ms)
+        || 0,
+    );
+    const seconds = Math.max(1, Math.round(milliseconds / 1_000));
+    if (hasProviderMetric && providerWait <= 0 && queueWait > 0) {
+      return `等待认知执行名额约 ${seconds} 秒仍未开始，本次已转为保守观察。`;
+    }
+    if (hasProviderMetric && providerWait <= 0) {
+      return "本次认知未能在截止前开始，已转为保守观察。";
+    }
+    return `模型等待约 ${seconds} 秒仍未返回，本次已转为保守观察。`;
+  }
+  if (code.startsWith("model_call_failed")) {
+    const category = code.split(":", 2)[1];
+    return category
+      ? `模型 Provider 调用失败（${category}），本次已转为保守观察。`
+      : "模型 Provider 调用失败，本次已转为保守观察。";
+  }
+  if (code === "invalid_worker_output") return "模型返回内容不符合结构要求，本次未采用。";
+  if (code === "cognition_budget_exhausted") return "本轮认知调用预算已用尽，本次未继续调用模型。";
+  if (String(diagnostic.status || "").toUpperCase() === "SUCCEEDED") return "已按预期完成。";
+  return "该认知模块没有产生可用结果，本次按安全规则处理。";
+}
+
+export function cognitionDiagnosticMetricRows(diagnostic = {}) {
+  const rows = [];
+  if (Number(diagnostic.queue_wait_ms) > 0) {
+    rows.push(["排队等待", formatTraceDuration(diagnostic.queue_wait_ms)]);
+  }
+  if (Number(diagnostic.provider_latency_ms) > 0) {
+    rows.push(["Provider 等待", formatTraceDuration(diagnostic.provider_latency_ms)]);
+  }
+  if (Number(diagnostic.input_bytes) > 0) {
+    rows.push(["输入大小", formatBytes(diagnostic.input_bytes)]);
+  }
+  if (Number(diagnostic.timeout_ms) > 0) {
+    rows.push(["本次截止", formatTraceDuration(diagnostic.timeout_ms)]);
+  }
+  return rows;
+}
+
+export function participationDiagnosticLabel(value) {
+  return PARTICIPATION_DIAGNOSTIC_LABELS[String(value || "")] || "按当前参与策略完成判断";
+}
+
+export function traceWouldReply(summary = {}) {
+  const decision = summary.decision || summary;
+  if (typeof decision.would_reply === "boolean") return decision.would_reply;
+  return String(decision.outcome || decision.pre_gate_outcome || "").toUpperCase() === "ACT";
+}
+
+export function traceIsObserved(summary = {}) {
+  const decision = summary.decision || {};
+  const outcome = String(decision.outcome || decision.pre_gate_outcome || "").toUpperCase();
+  if (outcome) return ["OBSERVE", "SILENCE"].includes(outcome);
+  if (typeof decision.would_reply === "boolean") return !decision.would_reply;
+  return ["OBSERVED", "SILENT"].includes(String(summary.delivery?.status || "").toUpperCase());
+}
+
+export function replyExpectation(decision = {}, delivery = {}) {
+  if (typeof decision.would_reply === "boolean") {
+    return decision.would_reply ? "正式运行会回复" : "正式运行不会回复";
+  }
+  const outcome = String(decision.outcome || decision.pre_gate_outcome || "").toUpperCase();
+  if (!outcome || outcome === "PENDING") return "尚未完成判断";
+  return traceWouldReply({ decision }) ? "正式运行会回复" : "正式运行不会回复";
+}
+
+export function strategySummary(summary = {}) {
+  if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
+    return "Groupmate 不参与判断";
+  }
+  const decision = summary.decision || {};
+  const outcome = String(decision.outcome || decision.pre_gate_outcome || "").toUpperCase();
+  if (!outcome || outcome === "PENDING") return "等待进入策略判断";
+  return `${participationLaneLabel(decision.participation_lane)} · ${replyExpectation(decision, summary.delivery)}`;
+}
+
+export function candidateSummary(understanding = {}) {
+  const count = Math.max(0, Number(understanding.candidate_count) || 0);
+  const source = String(understanding.candidate_source || "").toLowerCase();
+  if (!count || source === "none") return "未生成参与方案";
+  const sourceLabel = source === "deterministic"
+    ? "策略生成"
+    : source === "model"
+      ? "模型生成"
+      : "来源未记录";
+  return `${sourceLabel} · ${count} 个参与方案`;
+}
+
+export function traceHasCognitionFailure(summary = {}) {
+  const understanding = summary.understanding || {};
+  if (["DEGRADED", "FAILED"].includes(String(understanding.status || "").toUpperCase())) return true;
+  return (Array.isArray(understanding.diagnostics) ? understanding.diagnostics : [])
+    .some((diagnostic) => String(diagnostic?.status || "").toUpperCase() !== "SUCCEEDED");
 }
 
 export function visibleFacts(summary = {}) {

@@ -24,6 +24,7 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.control_admin_ids == ()
     assert settings.external_command_prefixes == ()
     assert settings.external_link_domains == ()
+    assert settings.cognition_timeout_seconds == 8
 
 
 def test_astrbot_config_only_exposes_groupmate_deployment_choices():
@@ -41,6 +42,7 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "runtime_mode",
         "generation_provider",
         "vision_provider",
+        "cognition_timeout_seconds",
         "external_command_prefixes",
         "external_link_domains",
     }
@@ -54,6 +56,78 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     assert "persona_id" not in schema
     assert "bot_qq" not in schema
     assert "database_name" not in schema
+    assert schema["cognition_timeout_seconds"]["default"] == 8
+    assert schema["cognition_timeout_seconds"]["slider"] == {
+        "min": 3,
+        "max": 15,
+        "step": 1,
+    }
+
+
+def test_cognition_timeout_is_configurable_with_safe_bounds():
+    settings = SocialRuntimeSettings.from_mapping(
+        {"cognition_timeout_seconds": 12}
+    )
+
+    assert settings.cognition_timeout_seconds == 12
+
+    for invalid in (0, 2, 16):
+        try:
+            SocialRuntimeSettings.from_mapping(
+                {"cognition_timeout_seconds": invalid}
+            )
+        except ValueError as exc:
+            assert "cognition_timeout_seconds" in str(exc)
+        else:
+            raise AssertionError("unsafe cognition timeout was accepted")
+
+
+def test_previous_erroneous_twenty_second_default_migrates_to_eight():
+    settings = SocialRuntimeSettings.from_mapping(
+        {"cognition_timeout_seconds": 20}
+    )
+
+    assert settings.cognition_timeout_seconds == 8
+
+
+def test_bridge_threads_cognition_timeout_into_runtime_budget(tmp_path: Path):
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": ["group-1"],
+            "generation_provider": "provider:text",
+            "cognition_timeout_seconds": 12,
+        }
+    )
+    bridge = AstrBotSocialRuntimeBridge(object(), settings, tmp_path)
+
+    async def scenario():
+        await bridge.start()
+        timeout = bridge.manager.cognition.budget.worker_timeout_seconds
+        await bridge.close()
+        return timeout
+
+    assert asyncio.run(scenario()) == 12
+
+
+def test_bridge_registers_one_combined_ambient_model_worker(tmp_path: Path):
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": ["group-1"],
+            "generation_provider": "provider:text",
+        }
+    )
+    bridge = AstrBotSocialRuntimeBridge(object(), settings, tmp_path)
+
+    async def scenario():
+        await bridge.start()
+        workers = tuple(bridge.manager.cognition.workers)
+        await bridge.close()
+        return workers
+
+    workers = asyncio.run(scenario())
+    assert "ambient_social_assessor" in workers
+    assert "scene_interpreter" not in workers
+    assert "participation_assessor" not in workers
 
 
 def test_complete_native_configuration_enters_no_send_shadow_automatically():

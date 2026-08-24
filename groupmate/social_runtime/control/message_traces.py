@@ -218,6 +218,18 @@ class MessageTraceRepository:
                     if getattr(item, "diagnostic_code", None)
                     else None
                 ),
+                "queue_wait_ms": max(
+                    0, int(getattr(item, "queue_wait_ms", 0) or 0)
+                ),
+                "provider_latency_ms": max(
+                    0, int(getattr(item, "provider_latency_ms", 0) or 0)
+                ),
+                "input_bytes": max(
+                    0, int(getattr(item, "input_bytes", 0) or 0)
+                ),
+                "timeout_ms": max(
+                    0, int(getattr(item, "timeout_ms", 0) or 0)
+                ),
             }
             for item in tuple(getattr(evaluation, "cognition_diagnostics", ()) or ())
         ]

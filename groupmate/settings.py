@@ -19,6 +19,7 @@ class SocialRuntimeSettings:
     vision_provider: str
     persona_id: str
     worker_concurrency_limit: int = 12
+    cognition_timeout_seconds: int = 8
     control_admin_ids: tuple[str, ...] = ()
     external_command_prefixes: tuple[str, ...] = ()
     external_link_domains: tuple[str, ...] = ()
@@ -58,6 +59,9 @@ class SocialRuntimeSettings:
                 source.get("worker_concurrency_limit", 12),
                 "worker_concurrency_limit",
             ),
+            cognition_timeout_seconds=cls._cognition_timeout(
+                source.get("cognition_timeout_seconds", 8),
+            ),
             control_admin_ids=tuple(
                 str(value).strip()
                 for value in source.get("control_admin_ids", ())
@@ -85,4 +89,17 @@ class SocialRuntimeSettings:
             raise ValueError(f"{field} must be a positive integer") from exc
         if normalized < 1:
             raise ValueError(f"{field} must be a positive integer")
+        return normalized
+
+    @staticmethod
+    def _cognition_timeout(value: object) -> int:
+        normalized = SocialRuntimeSettings._positive_int(
+            value, "cognition_timeout_seconds"
+        )
+        if normalized == 20:
+            return 8
+        if not 3 <= normalized <= 15:
+            raise ValueError(
+                "cognition_timeout_seconds must be between 3 and 15"
+            )
         return normalized

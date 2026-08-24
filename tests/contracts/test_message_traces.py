@@ -76,6 +76,10 @@ def _evaluation(event: SocialEventEnvelope, outcome: str):
                 status="SUCCEEDED",
                 latency_ms=120,
                 diagnostic_code=None,
+                queue_wait_ms=4,
+                provider_latency_ms=100,
+                input_bytes=2048,
+                timeout_ms=8000,
             ),
         ),
     )
@@ -167,6 +171,16 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
     assert summary["delivery"]["status"] == "BLOCKED_BY_SHADOW"
     assert summary["delivery"]["label"] == "SHADOW：已完成判断，未发送"
     assert summary["understanding"]["diagnostics"][0]["status"] == "SUCCEEDED"
+    assert summary["understanding"]["diagnostics"][0] == {
+        "worker": "direct_interaction",
+        "status": "SUCCEEDED",
+        "latency_ms": 120,
+        "diagnostic_code": None,
+        "queue_wait_ms": 4,
+        "provider_latency_ms": 100,
+        "input_bytes": 2048,
+        "timeout_ms": 8000,
+    }
     assert summary["understanding"]["candidate_count"] == 1
     assert summary["understanding"]["candidate_source"] == "deterministic"
     assert "chain_of_thought" not in str(summary)

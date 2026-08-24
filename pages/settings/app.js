@@ -12,6 +12,7 @@ const router = createRouter();
 let locale = "zh-CN";
 let activeRoute = router.current();
 let refreshRequest = null;
+let activeInspectorQuery = null;
 const avatarCache = new Map();
 const avatarRequests = new Map();
 const mediaCache = new Map();
@@ -284,7 +285,8 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
 async function refreshWorkspaceData() {
   if (refreshRequest) return refreshRequest;
   refreshRequest = loadWorkspace(activeRoute, { timeoutMs: 4_000 })
-    .then(({ failedProjections }) => {
+    .then(async ({ failedProjections }) => {
+      await refreshOpenInspector({ timeoutMs: 4_000 });
       const current = store.snapshot().connection;
       const timestamp = new Intl.DateTimeFormat(locale, {
         hour: "2-digit",
@@ -320,18 +322,32 @@ async function submitWorkspaceCommand(spec) {
   }
 }
 
-async function openInspector(projection, entityRef) {
+async function openInspector(projection, entityRef, { timeoutMs } = {}) {
+  const query = { projection, entityRef };
+  activeInspectorQuery = query;
   elements.inspector.hidden = false;
   elements.inspectorContent.replaceChildren();
   try {
-    const view = await bridge.query(projection, { ...scopeParams(), entity_ref: entityRef });
+    const view = await bridge.query(
+      projection,
+      { ...scopeParams(), entity_ref: entityRef },
+      { timeoutMs },
+    );
+    if (activeInspectorQuery !== query) return;
     const item = (view.items || []).find((candidate) => candidate.entity_ref === entityRef);
     elements.inspectorContent.append(renderInspector(item || { entity_ref: entityRef }));
     hydrateAvatars(elements.inspectorContent);
     hydrateMedia(elements.inspectorContent);
   } catch (error) {
+    if (activeInspectorQuery !== query) return;
     elements.inspectorContent.textContent = ApiBridge.describeError(error).impact;
   }
+}
+
+async function refreshOpenInspector({ timeoutMs } = {}) {
+  if (elements.inspector.hidden || !activeInspectorQuery) return;
+  const { projection, entityRef } = activeInspectorQuery;
+  await openInspector(projection, entityRef, { timeoutMs });
 }
 
 async function selectGroup(groupId) {
@@ -381,6 +397,7 @@ elements.workspace.addEventListener("click", (event) => {
 });
 elements.closeInspector.addEventListener("click", () => {
   elements.inspector.hidden = true;
+  activeInspectorQuery = null;
 });
 elements.themeToggle.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";

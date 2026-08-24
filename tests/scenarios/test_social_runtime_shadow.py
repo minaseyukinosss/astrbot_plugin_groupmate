@@ -89,6 +89,32 @@ class ParticipationWorker:
         )
 
 
+class CombinedAmbientWorker:
+    name = "ambient_social_assessor"
+
+    def __init__(self, observation_kind="help_request", decision="speak"):
+        self.observation_kind = observation_kind
+        self.decision = decision
+        self.contexts = []
+
+    async def observe(self, frame, context):
+        self.contexts.append(context)
+        signal = await FixedWorker(
+            self.name, self.observation_kind
+        ).observe(frame, context)
+        assessment = CognitiveObservation.create(
+            worker=self.name,
+            kind="participation_assessment",
+            proposition={"decision": self.decision},
+            confidence=0.95,
+            evidence_event_ids=(frame.focus_event_ids[0],),
+            scene_version=context.scene_version,
+            expires_at=context.now + 30,
+            uncertainty=(),
+        )
+        return signal + (assessment,)
+
+
 class ContextCapturingWorker(FixedWorker):
     def __init__(self, name, observation_kind):
         super().__init__(name, observation_kind)
@@ -272,17 +298,13 @@ def test_direct_social_scenario_is_strategy_governed_without_model_worker(
 
 def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     async def scenario():
-        worker = FixedWorker("scene_interpreter", "help_request")
-        participation = ParticipationWorker("speak")
+        worker = CombinedAmbientWorker()
         manager = SocialRuntimeManager(
             database_path=tmp_path / "groupmate-social-runtime-v2.db",
             persona_id="aemeath",
             mode=RuntimeMode.SHADOW,
             enabled_groups=("885617919",),
-            cognition_workers={
-                worker.name: worker,
-                participation.name: participation,
-            },
+            cognition_workers={worker.name: worker},
         )
         await manager.start()
         await manager.ingest(
@@ -309,17 +331,13 @@ def test_model_context_contains_only_relevant_world_and_mode_neutral_constraints
     tmp_path,
 ):
     async def scenario():
-        scene = ContextCapturingWorker("scene_interpreter", "help_request")
-        participation = ParticipationWorker("speak")
+        scene = CombinedAmbientWorker()
         manager = SocialRuntimeManager(
             database_path=tmp_path / "groupmate-social-runtime-v2.db",
             persona_id="aemeath",
             mode=RuntimeMode.SHADOW,
             enabled_groups=("885617919",),
-            cognition_workers={
-                scene.name: scene,
-                participation.name: participation,
-            },
+            cognition_workers={scene.name: scene},
         )
         await manager.start()
         await manager.ingest(_event("bounded", direct=False, occurred_at=100))
@@ -346,17 +364,15 @@ def test_model_context_contains_only_relevant_world_and_mode_neutral_constraints
 
 def test_ambient_chat_requires_explicit_high_confidence_participation(tmp_path):
     async def scenario():
-        scene = FixedWorker("scene_interpreter", "help_request")
-        participation = ParticipationWorker("silence")
+        combined = CombinedAmbientWorker(
+            observation_kind="help_request", decision="silence"
+        )
         manager = SocialRuntimeManager(
             database_path=tmp_path / "groupmate-social-runtime-v2.db",
             persona_id="aemeath",
             mode=RuntimeMode.SHADOW,
             enabled_groups=("885617919",),
-            cognition_workers={
-                scene.name: scene,
-                participation.name: participation,
-            },
+            cognition_workers={combined.name: combined},
         )
         await manager.start()
         await manager.ingest(_event("ambient-gated", direct=False, occurred_at=100))
@@ -367,6 +383,10 @@ def test_ambient_chat_requires_explicit_high_confidence_participation(tmp_path):
     evaluations = asyncio.run(scenario())
 
     assert len(evaluations) == 1
+    assert evaluations[0].cognition_diagnostics[-1].worker == (
+        "ambient_social_assessor"
+    )
+    assert evaluations[0].cognition_diagnostics[-1].status == "SUCCEEDED"
     assert evaluations[0].governor_result.outcome == "OBSERVE"
     assert evaluations[0].governor_result.reason_codes == ("forced_observe",)
 

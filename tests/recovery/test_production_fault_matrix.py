@@ -198,14 +198,16 @@ def test_worker_timeout_and_invalid_json_fail_closed_without_delivery(tmp_path):
     async def run_case(name, model):
         diagnostics = []
         worker = AstrBotStructuredWorker(
-            "direct_interaction", model, diagnostic_sink=diagnostics.append
+            "ambient_social_assessor",
+            model,
+            diagnostic_sink=diagnostics.append,
         )
         manager = SocialRuntimeManager(
             database_path=tmp_path / f"{name}.db",
             persona_id=PERSONA,
             mode=RuntimeMode.SHADOW,
             enabled_groups=(GROUP,),
-            cognition_workers={"direct_interaction": worker},
+            cognition_workers={"ambient_social_assessor": worker},
             cognition_budget=CognitionBudget(
                 max_worker_calls=1,
                 max_cost_units=1,
@@ -213,8 +215,8 @@ def test_worker_timeout_and_invalid_json_fail_closed_without_delivery(tmp_path):
             ),
         )
         await manager.start()
-        await manager.ingest(_message(name))
-        evaluation = (await manager.drain(now=100))[0]
+        await manager.ingest(_message(name, direct=False))
+        evaluation = (await manager.drain(now=102))[0]
         result = (
             evaluation,
             diagnostics,
@@ -229,7 +231,7 @@ def test_worker_timeout_and_invalid_json_fail_closed_without_delivery(tmp_path):
     invalid = asyncio.run(run_case("invalid", InvalidModel()))
 
     assert timed_out[0].governor_result.outcome == "OBSERVE"
-    assert invalid[0].governor_result.outcome == "SILENCE"
+    assert invalid[0].governor_result.outcome == "OBSERVE"
     assert all(
         evaluation.governor_result.outcome != "ACT"
         for evaluation in (timed_out[0], invalid[0])
@@ -584,7 +586,7 @@ def test_ambient_result_crossing_deadline_in_worker_gate_is_discarded(tmp_path):
             return self.now
 
     class SlowAmbientWorker:
-        name = "scene_interpreter"
+        name = "ambient_social_assessor"
 
         def __init__(self):
             self.entered = asyncio.Event()
@@ -665,7 +667,7 @@ def test_explicit_drain_now_pins_ambient_deadline_checks_for_determinism(tmp_pat
         worker_calls = []
 
         class ImmediateAmbientWorker:
-            name = "scene_interpreter"
+            name = "ambient_social_assessor"
 
             async def observe(self, frame, context):
                 worker_calls.append(context.now)

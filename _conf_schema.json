@@ -20,6 +20,13 @@
     "default": "",
     "hint": "从 AstrBot 已配置的模型 Provider 中选择，独立于普通聊天会话。"
   },
+  "cognition_timeout_seconds": {
+    "description": "认知模型等待时间",
+    "type": "int",
+    "default": 8,
+    "slider": {"min": 3, "max": 15, "step": 1},
+    "hint": "普通群聊认知的安全上限；实际等待不会超过当前场景剩余的 8 秒参与判断预算。超时后继续观察。"
+  },
   "vision_provider": {
     "description": "Groupmate 视觉模型（可选）",
     "type": "string",

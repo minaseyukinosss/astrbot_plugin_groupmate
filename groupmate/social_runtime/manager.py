@@ -246,6 +246,7 @@ class SocialRuntimeManager:
         cognition_workers: Mapping[str, CognitiveWorker] | None = None,
         cognition_budget: CognitionBudget | None = None,
         worker_concurrency_limit: int = 12,
+        worker_timeout_seconds: float = 8.0,
         governance_state: RuntimeGovernanceState | None = None,
         persona_profile_loader: Callable[[str], object] | None = None,
         clock: Callable[[], float] | None = None,
@@ -296,6 +297,7 @@ class SocialRuntimeManager:
             or CognitionBudget(
                 8,
                 12,
+                worker_timeout_seconds=float(worker_timeout_seconds),
                 max_worker_concurrency=int(worker_concurrency_limit),
             ),
         )

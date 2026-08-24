@@ -13,6 +13,9 @@ from .world import GroupWorldState
 
 
 AMBIENT_DECISION_BUDGET_SECONDS = 8
+AMBIENT_MAX_FOCUS_EVENTS = 12
+AMBIENT_MAX_FOCUS_TOPICS = 4
+AMBIENT_MAX_CANDIDATE_AUDIENCES = 8
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,15 @@ class PendingAttentionWindow:
     deadline: int
     persona_state_version: int
     config_version: int
+
+    def __post_init__(self) -> None:
+        for field_name, limit in (
+            ("focus_topic_ids", AMBIENT_MAX_FOCUS_TOPICS),
+            ("focus_event_ids", AMBIENT_MAX_FOCUS_EVENTS),
+            ("candidate_audiences", AMBIENT_MAX_CANDIDATE_AUDIENCES),
+        ):
+            values = tuple(getattr(self, field_name))
+            object.__setattr__(self, field_name, values[-limit:])
 
 
 class AttentionScheduler:
@@ -138,14 +150,20 @@ class AttentionScheduler:
             window = replace(
                 current,
                 scene_version=world.scene_version,
-                focus_topic_ids=self._append_unique(
-                    current.focus_topic_ids, topic_id
+                focus_topic_ids=self._append_recent_unique(
+                    current.focus_topic_ids,
+                    topic_id,
+                    AMBIENT_MAX_FOCUS_TOPICS,
                 ),
-                focus_event_ids=self._append_unique(
-                    current.focus_event_ids, event.event_id
+                focus_event_ids=self._append_recent_unique(
+                    current.focus_event_ids,
+                    event.event_id,
+                    AMBIENT_MAX_FOCUS_EVENTS,
                 ),
-                candidate_audiences=self._append_unique(
-                    current.candidate_audiences, event.actor_id
+                candidate_audiences=self._append_recent_unique(
+                    current.candidate_audiences,
+                    event.actor_id,
+                    AMBIENT_MAX_CANDIDATE_AUDIENCES,
                 ),
                 deadline=now + delay,
                 persona_state_version=persona.state_version,
@@ -228,7 +246,7 @@ class AttentionScheduler:
             candidate_audiences=window.candidate_audiences,
             urgency="normal",
             deadline=window.deadline,
-            requested_workers=("scene_interpreter", "participation_assessor"),
+            requested_workers=("ambient_social_assessor",),
             persona_state_version=window.persona_state_version,
             config_version=window.config_version,
         )
@@ -372,6 +390,15 @@ class AttentionScheduler:
         return values + (value,)
 
     @staticmethod
+    def _append_recent_unique(
+        values: tuple[str, ...], value: str | None, limit: int
+    ) -> tuple[str, ...]:
+        if not value:
+            return values[-int(limit) :]
+        refreshed = tuple(item for item in values if item != value) + (value,)
+        return refreshed[-int(limit) :]
+
+    @staticmethod
     def _payload_texts(value: object) -> tuple[str, ...]:
         if not isinstance(value, (list, tuple)):
             return ()
@@ -401,6 +428,9 @@ def ambient_deadline_expired(frame: AttentionFrame, decision_at: int) -> bool:
 
 __all__ = (
     "AMBIENT_DECISION_BUDGET_SECONDS",
+    "AMBIENT_MAX_CANDIDATE_AUDIENCES",
+    "AMBIENT_MAX_FOCUS_EVENTS",
+    "AMBIENT_MAX_FOCUS_TOPICS",
     "AttentionFrame",
     "AttentionScheduler",
     "PendingAttentionWindow",

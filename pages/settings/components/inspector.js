@@ -1,5 +1,19 @@
 import { element, textValue } from "./dom.js";
-import { formatTimestamp, formatTraceDuration, messageSummary } from "./presenters.js";
+import {
+  candidateSummary,
+  cognitionDiagnosticExplanation,
+  cognitionDiagnosticMetricRows,
+  cognitionDiagnosticStatusLabel,
+  cognitionStateLabel,
+  cognitionWorkerLabel,
+  formatTimestamp,
+  formatTraceDuration,
+  messageSummary,
+  participationDiagnosticLabel,
+  participationLaneLabel,
+  replyExpectation,
+  valueLabel,
+} from "./presenters.js";
 import { renderMessageContent } from "./message.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
@@ -33,14 +47,6 @@ function section(title, children, className = "") {
   ]);
 }
 
-function stateLabel(value) {
-  return ({
-    READY: "已完成",
-    PENDING: "等待处理",
-    FAILED: "失败",
-  })[String(value || "").toUpperCase()] || value;
-}
-
 function decisionLabel(value) {
   return ({
     ACT: "应当参与并准备回复",
@@ -49,28 +55,6 @@ function decisionLabel(value) {
     SILENCE: "保持沉默",
     PENDING: "等待判断",
   })[String(value || "").toUpperCase()] || value;
-}
-
-function workerLabel(value) {
-  return ({
-    direct_interaction: "直接互动识别",
-    social_risk: "社交风险识别",
-    context_reconstruction: "上下文重建",
-    relationship: "成员关系理解",
-  })[String(value || "")] || String(value || "认知模块");
-}
-
-function diagnosticStatus(value) {
-  return ({
-    SUCCEEDED: "完成",
-    TIMED_OUT: "超时",
-    MODEL_FAILED: "模型调用失败",
-    INVALID_OUTPUT: "输出无效",
-    REJECTED: "结果未采用",
-    FAILED: "失败",
-    MISSING: "未执行",
-    BUDGET_EXHAUSTED: "预算已用尽",
-  })[String(value || "").toUpperCase()] || String(value || "未知");
 }
 
 function cognitionDiagnostics(diagnostics = []) {
@@ -82,12 +66,13 @@ function cognitionDiagnostics(diagnostics = []) {
       attrs: { "data-status": String(diagnostic.status || "FAILED").toLowerCase() },
     }, [
       element("div", {}, [
-        element("strong", { text: workerLabel(diagnostic.worker) }),
-        element("span", { text: diagnosticStatus(diagnostic.status) }),
+        element("strong", { text: cognitionWorkerLabel(diagnostic.worker) }),
+        element("span", { text: cognitionDiagnosticStatusLabel(diagnostic.status) }),
       ]),
       definitionRows([
-        ["耗时", `${Number(diagnostic.latency_ms || 0)} ms`],
-        ["诊断码", diagnostic.diagnostic_code],
+        ["耗时", formatTraceDuration(diagnostic.latency_ms)],
+        ...cognitionDiagnosticMetricRows(diagnostic),
+        ["说明", cognitionDiagnosticExplanation(diagnostic)],
       ]),
     ])),
   );
@@ -142,13 +127,17 @@ export function renderInspector(item) {
     section("处理阶段", [stageTimeline(summary.stages)]),
     section("Groupmate 的理解", [
       definitionRows([
-        ["状态", stateLabel(understanding.status)],
+        ["状态", cognitionStateLabel(understanding.status)],
         ["理解摘要", understanding.summary],
       ]),
       element("h4", { className: "inspector-subheading", text: "认知模块" }),
       cognitionDiagnostics(understanding.diagnostics),
     ]),
-    section("决定", [definitionRows([
+    section("策略判断", [definitionRows([
+      ["策略通道", participationLaneLabel(decision.participation_lane)],
+      ["策略依据", (understanding.participation_diagnostics || []).map(participationDiagnosticLabel).join("；")],
+      ["正式运行", replyExpectation(decision, delivery)],
+      ["参与方案", candidateSummary(understanding)],
       ["参与判断", decision.label],
       ["SHADOW 前判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
       ["判断依据", decision.reasons],
@@ -156,7 +145,7 @@ export function renderInspector(item) {
       ["生成说明", decision.reply_diagnostic],
     ])]),
     section("最终结果", [definitionRows([
-      ["运行模式", delivery.mode],
+      ["运行模式", valueLabel("runtime_mode", delivery.mode)],
       ["状态", delivery.label],
       ["错误", delivery.error],
     ])], "delivery-section"),
@@ -164,6 +153,9 @@ export function renderInspector(item) {
       element("summary", { text: "技术信息" }),
       definitionRows([
         ["追踪引用", item?.entity_ref],
+        ["原始策略通道", decision.participation_lane],
+        ["原始候选来源", understanding.candidate_source],
+        ["原始诊断码", (understanding.diagnostics || []).map((entry) => entry.diagnostic_code).filter(Boolean).join("、")],
         ["链路历时", formatTraceDuration(timing.total_ms)],
         ["更新时间", formatTimestamp(timing.updated_at || item?.as_of)],
       ]),

@@ -107,6 +107,10 @@ class CognitiveWorkerDiagnostic:
     completed_at: int
     latency_ms: int
     diagnostic_code: str | None = None
+    queue_wait_ms: int = 0
+    provider_latency_ms: int = 0
+    input_bytes: int = 0
+    timeout_ms: int = 0
 
     def __post_init__(self) -> None:
         if not self.worker:
@@ -126,12 +130,24 @@ class CognitiveWorkerDiagnostic:
             raise ValueError("worker diagnostic timestamps are invalid")
         if self.latency_ms < 0:
             raise ValueError("worker diagnostic latency is invalid")
+        if any(
+            value < 0
+            for value in (
+                self.queue_wait_ms,
+                self.provider_latency_ms,
+                self.input_bytes,
+                self.timeout_ms,
+            )
+        ):
+            raise ValueError("worker diagnostic metrics must not be negative")
 
 
 @dataclass(frozen=True)
 class CognitiveWorkerResult:
     observations: tuple[CognitiveObservation, ...]
     diagnostic_code: str | None = None
+    provider_latency_ms: int = 0
+    input_bytes: int = 0
 
 
 class CognitiveWorker(Protocol):

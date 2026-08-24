@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from groupmate.social_runtime.attention import AttentionScheduler
+from groupmate.social_runtime.attention import (
+    AttentionScheduler,
+    PendingAttentionWindow,
+)
 from groupmate.social_runtime.contracts import PersonaSnapshot, SocialEventEnvelope
 from groupmate.social_runtime.world import GroupWorldProjector
 from tests.factories import social_event_values
@@ -103,3 +106,55 @@ def test_undispatched_ambient_frame_refreshes_when_fast_event_advances_scene():
     assert fast.scene_version == 2
     assert ambient_frame.scene_version == 2
     assert ambient_frame.focus_event_ids == ("qq:m1",)
+
+
+def test_busy_ambient_window_keeps_only_recent_bounded_context():
+    scheduler = AttentionScheduler()
+    projector = GroupWorldProjector()
+    world = projector.empty("885617919")
+
+    for index in range(1, 21):
+        event = _message(index, 100 + index, f"u{index}")
+        world = projector.apply(world, event)
+        assert scheduler.on_event(
+            event, world, _persona(), now=event.occurred_at
+        ) == ()
+
+    window = scheduler.pending_window("885617919")
+    assert window is not None
+    assert window.focus_event_ids == tuple(
+        f"qq:m{index}" for index in range(9, 21)
+    )
+    assert window.focus_topic_ids == tuple(
+        f"m{index}" for index in range(17, 21)
+    )
+    assert window.candidate_audiences == tuple(
+        f"u{index}" for index in range(13, 21)
+    )
+
+    frame = scheduler.flush_due(now=126)[0]
+    assert frame.requested_workers == ("ambient_social_assessor",)
+
+
+def test_restored_ambient_window_is_rebounded_before_dispatch():
+    scheduler = AttentionScheduler()
+    scheduler.restore_window(
+        PendingAttentionWindow(
+            group_id="885617919",
+            scene_version=20,
+            focus_topic_ids=tuple(f"t{index}" for index in range(1, 10)),
+            focus_event_ids=tuple(f"e{index}" for index in range(1, 21)),
+            candidate_audiences=tuple(f"u{index}" for index in range(1, 15)),
+            deadline=100,
+            persona_state_version=1,
+            config_version=2,
+        )
+    )
+
+    frame = scheduler.flush_due(now=100)[0]
+
+    assert frame.focus_event_ids == tuple(f"e{index}" for index in range(9, 21))
+    assert frame.focus_topic_ids == tuple(f"t{index}" for index in range(6, 10))
+    assert frame.candidate_audiences == tuple(
+        f"u{index}" for index in range(7, 15)
+    )
