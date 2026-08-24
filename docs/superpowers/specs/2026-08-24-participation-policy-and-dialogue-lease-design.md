@@ -48,6 +48,12 @@
 
 因此运行中心只能看到最终 OBSERVE，无法回答“识别到了什么”“原本准备做什么”“为何没有继续”。
 
+### 6. 认知上下文错误地固定声明 `shadow_only`
+
+当前 `SocialRuntimeManager._evaluate_cycle()` 无论实际群模式为何，都向 CognitiveContext 写入 `shadow_only`。这会让 SOCIAL_RUNTIME 的参与评估模型也收到“仅观察”的错误约束，并把运行模式泄漏到本应只负责理解事实的认知层。
+
+本轮将认知约束改为与运行模式无关的 `no_side_effects` 和 `evidence_required`。是否允许发送继续由 DeliveryGate 根据真实群模式决定。
+
 ## 方案选择
 
 ### 采用：策略优先，模型增强
@@ -138,6 +144,8 @@
 - 冻结的人格配置。
 
 不再传入全量参与者、全量互动边或无关活跃话题。Focus events 继续只来自冻结 frame，并保留证据范围校验。
+
+CognitiveContext 不再包含 `shadow_only`。认知阶段始终是无副作用的事实理解；SHADOW 与 SOCIAL_RUNTIME 的差异只在交付层体现。
 
 该改动不承诺模型生成总时延一定低于 5 秒，但会消除 AMBIENT Worker 的串行等待，并使参与决策不再随群历史无限变慢。
 
@@ -241,12 +249,13 @@ AMBIENT 在模型超时、低置信或目标/话题不明确时仍不得产生�
 4. AMBIENT 模型失败时保持 OBSERVE/SILENCE。
 5. AMBIENT Worker 确实并发启动，预算和全局并发上限仍有效。
 6. CognitiveContext 只包含有界相关场景。
-7. READY ReplyPreview 建立租约；MODEL_FAILED/REJECTED 不建立。
-8. 同对象同话题命中 CONTINUATION；对象、话题、过期和轮次耗尽均不命中。
-9. 认知、候选、lane 和 Governor 结果原子持久化，stale 结果不持久化为 accepted。
-10. SHADOW 下 Outbox 和 OneBot 调用仍为零。
-11. 外部插件拥有的消息仍为零 Frame、零 Worker、零候选。
-12. Snapshot 在增加租约字段前后的数据均可恢复。
+7. SHADOW 与 SOCIAL_RUNTIME 的 CognitiveContext 均不包含 `shadow_only`，且 SHADOW 仍保持零发送。
+8. READY ReplyPreview 建立租约；MODEL_FAILED/REJECTED 不建立。
+9. 同对象同话题命中 CONTINUATION；对象、话题、过期和轮次耗尽均不命中。
+10. 认知、候选、lane 和 Governor 结果原子持久化，stale 结果不持久化为 accepted。
+11. SHADOW 下 Outbox 和 OneBot 调用仍为零。
+12. 外部插件拥有的消息仍为零 Frame、零 Worker、零候选。
+13. Snapshot 在增加租约字段前后的数据均可恢复。
 
 ## 非目标
 
