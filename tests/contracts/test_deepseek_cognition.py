@@ -73,6 +73,11 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
     assert body["response_format"] == {"type": "json_object"}
     assert body["max_tokens"] == 192
     assert body["temperature"] == 0.1
+    system_message = body["messages"][0]["content"]
+    assert '"decision":"silence"' in system_message
+    assert '"evidence_event_ids":[]' in system_message
+    assert "silence时允许证据为空" in system_message
+    assert "speak时证据不得为空" in system_message
     assert json.loads(body["messages"][1]["content"]) == {
         "events": [{"id": "qq:1"}]
     }
@@ -94,11 +99,28 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
         (JsonHttpResponse(503, {}), None, "direct_upstream_failed"),
         (None, TimeoutError("raw timeout detail"), "direct_timeout"),
         (None, TransportNetworkError("raw network detail"), "direct_network_failed"),
-        (JsonHttpResponse(200, {"choices": []}), None, "direct_invalid_output"),
+        (
+            JsonHttpResponse(200, {"choices": []}),
+            None,
+            "direct_response_shape_invalid",
+        ),
+        (
+            JsonHttpResponse(
+                200,
+                {"choices": [{"message": {"content": ""}}]},
+            ),
+            None,
+            "direct_response_empty",
+        ),
         (
             JsonHttpResponse(200, {"choices": [{"message": {"content": "not json"}}]}),
             None,
-            "direct_invalid_output",
+            "direct_response_json_invalid",
+        ),
+        (
+            JsonHttpResponse(200, {"choices": [{"message": {"content": "[]"}}]}),
+            None,
+            "direct_response_shape_invalid",
         ),
     ),
 )

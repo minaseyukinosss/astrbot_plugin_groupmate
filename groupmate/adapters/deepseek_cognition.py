@@ -10,10 +10,16 @@ from typing import Mapping, Protocol
 
 _BACKEND = "direct_deepseek"
 _SYSTEM_MESSAGE = (
-    "判断Groupmate是否应参与群聊，不生成回复或推理。只输出JSON对象："
-    "decision(speak|silence),signal(help_request|care_signal|humor_signal|greeting|"
-    "boundary_signal|none),target_id,evidence_event_ids,confidence,disruption,novelty,"
-    "reason。ID只能选输入值，三个数值为0到1；不确定、对象不明或会打断时选silence。"
+    "判断Groupmate是否应参与群聊，不生成回复或推理。只输出一个JSON对象，不要Markdown、"
+    "代码块、回复正文或额外字段。所有字段必填。示例："
+    '{"decision":"silence","signal":"none","target_id":null,'
+    '"evidence_event_ids":[],"confidence":0.74,"disruption":0.62,'
+    '"novelty":0.18,"reason":"成员正在自然交流，插话会打断"}。'
+    "decision只能是speak或silence；signal只能是help_request、care_signal、"
+    "humor_signal、greeting、boundary_signal或none。target_id和evidence_event_ids中的"
+    "ID只能原样复制输入值。confidence、disruption、novelty必须是0到1的JSON数字。"
+    "silence时允许证据为空；speak时证据不得为空且signal不能为none。不确定、对象不明或"
+    "会打断时选择silence。"
 )
 _MAX_RESPONSE_BYTES = 64 * 1024
 
@@ -211,15 +217,29 @@ class DeepSeekCognitionClient:
                 "direct_upstream_failed", started, request_bytes
             ) from None
         try:
-            body = response.body
-            choices = body["choices"]
+            choices = response.body["choices"]
             content = choices[0]["message"]["content"]
-            verdict = json.loads(content)
-            if not isinstance(verdict, dict):
-                raise TypeError
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        except (KeyError, IndexError, TypeError):
             raise self._error(
-                "direct_invalid_output", started, request_bytes
+                "direct_response_shape_invalid", started, request_bytes
+            ) from None
+        if not isinstance(content, str):
+            raise self._error(
+                "direct_response_shape_invalid", started, request_bytes
+            ) from None
+        if not content.strip():
+            raise self._error(
+                "direct_response_empty", started, request_bytes
+            ) from None
+        try:
+            verdict = json.loads(content)
+        except json.JSONDecodeError:
+            raise self._error(
+                "direct_response_json_invalid", started, request_bytes
+            ) from None
+        if not isinstance(verdict, dict):
+            raise self._error(
+                "direct_response_shape_invalid", started, request_bytes
             ) from None
         return DirectCognitionResponse(
             verdict=verdict,
