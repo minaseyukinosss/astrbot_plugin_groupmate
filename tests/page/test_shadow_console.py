@@ -173,5 +173,9 @@ def test_preview_fixture_exercises_strategy_and_timeout_states():
         "direct_deepseek",
         "deepseek-v4-flash",
         "direct_timeout",
+        "judgement:",
+        'status: "accepted"',
+        'status: "unavailable"',
+        "关键证据来自当前公开群聊消息",
     ):
         assert value in source
