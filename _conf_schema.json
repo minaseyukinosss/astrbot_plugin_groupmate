@@ -14,11 +14,30 @@
     "hint": "SHADOW 只观察并记录决策，不发送消息；正式运行允许 Groupmate 在已启用的群中参与对话。"
   },
   "generation_provider": {
-    "description": "Groupmate 文本模型",
+    "description": "Groupmate 最终回复模型",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "从 AstrBot 已配置的模型 Provider 中选择，独立于普通聊天会话。"
+    "hint": "从 AstrBot 已配置的 Provider 中选择，仅用于生成最终回复；普通群聊理解由下方直连认知模型负责。"
+  },
+  "cognition_api_key": {
+    "description": "认知模型 API Key",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "仅用于插件直连 DeepSeek 完成群聊理解。请勿截图、导出或粘贴到日志中。"
+  },
+  "cognition_api_base": {
+    "description": "认知模型 API 地址",
+    "type": "string",
+    "default": "https://api.deepseek.com",
+    "hint": "默认使用 DeepSeek 官方地址，一般无需修改。"
+  },
+  "cognition_model": {
+    "description": "认知模型名称",
+    "type": "string",
+    "default": "deepseek-v4-flash",
+    "hint": "用于普通群聊理解与插话评估，可填写兼容的 DeepSeek 模型 ID。"
   },
   "cognition_timeout_seconds": {
     "description": "认知模型等待时间",

@@ -6,6 +6,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.settings import (
     DEFAULT_GROUPMATE_PERSONA_ID,
@@ -25,6 +27,9 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.external_command_prefixes == ()
     assert settings.external_link_domains == ()
     assert settings.cognition_timeout_seconds == 8
+    assert settings.cognition_api_key == ""
+    assert settings.cognition_api_base == "https://api.deepseek.com"
+    assert settings.cognition_model == "deepseek-v4-flash"
 
 
 def test_astrbot_config_only_exposes_groupmate_deployment_choices():
@@ -41,6 +46,9 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "enabled_groups",
         "runtime_mode",
         "generation_provider",
+        "cognition_api_key",
+        "cognition_api_base",
+        "cognition_model",
         "vision_provider",
         "cognition_timeout_seconds",
         "external_command_prefixes",
@@ -53,6 +61,10 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     ]
     assert schema["generation_provider"]["_special"] == "select_provider"
     assert schema["vision_provider"]["_special"] == "select_provider"
+    assert schema["cognition_api_key"]["type"] == "string"
+    assert schema["cognition_api_key"]["obvious_hint"] is True
+    assert schema["cognition_api_base"]["default"] == "https://api.deepseek.com"
+    assert schema["cognition_model"]["default"] == "deepseek-v4-flash"
     assert "persona_id" not in schema
     assert "bot_qq" not in schema
     assert "database_name" not in schema
@@ -62,6 +74,47 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "max": 15,
         "step": 1,
     }
+
+
+def test_direct_cognition_settings_are_normalized_and_secret_repr_is_redacted():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "cognition_api_key": "  sk-test-secret  ",
+            "cognition_api_base": "https://api.deepseek.com/",
+            "cognition_model": " deepseek-v4-flash ",
+        }
+    )
+
+    assert settings.cognition_api_key == "sk-test-secret"
+    assert settings.cognition_api_base == "https://api.deepseek.com"
+    assert settings.cognition_model == "deepseek-v4-flash"
+    assert "sk-test-secret" not in repr(settings)
+    assert "cognition_api_key" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "base",
+    (
+        "",
+        "ftp://api.deepseek.com",
+        "https://",
+        "https://api.deepseek.com/chat?debug=1",
+        "https://api.deepseek.com/#fragment",
+    ),
+)
+def test_direct_cognition_base_rejects_unsafe_urls(base):
+    with pytest.raises(ValueError, match="cognition_api_base"):
+        SocialRuntimeSettings.from_mapping({"cognition_api_base": base})
+
+
+def test_composition_root_reports_each_model_configuration_blocker():
+    root = Path(__file__).parents[2]
+    composition = (root / "main.py").read_text(encoding="utf-8")
+
+    assert "未选择最终回复模型" in composition
+    assert "未配置认知模型 API Key" in composition
+    assert "认知模型 API 地址无效" in composition
+    assert "未配置认知模型名称" in composition
 
 
 def test_cognition_timeout_is_configurable_with_safe_bounds():

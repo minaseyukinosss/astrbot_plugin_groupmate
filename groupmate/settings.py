@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 SOCIAL_RUNTIME_DATABASE_NAME = "groupmate-social-runtime-v2.db"
 DEFAULT_GROUPMATE_PERSONA_ID = "groupmate:default"
+DEFAULT_COGNITION_API_BASE = "https://api.deepseek.com"
+DEFAULT_COGNITION_MODEL = "deepseek-v4-flash"
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,9 @@ class SocialRuntimeSettings:
     generation_provider: str
     vision_provider: str
     persona_id: str
+    cognition_api_key: str = field(default="", repr=False)
+    cognition_api_base: str = DEFAULT_COGNITION_API_BASE
+    cognition_model: str = DEFAULT_COGNITION_MODEL
     worker_concurrency_limit: int = 12
     cognition_timeout_seconds: int = 8
     control_admin_ids: tuple[str, ...] = ()
@@ -48,6 +54,14 @@ class SocialRuntimeSettings:
         social_runtime_groups = explicit_social_runtime_groups
         if runtime_mode == "SOCIAL_RUNTIME" and not social_runtime_groups:
             social_runtime_groups = enabled_groups
+        cognition_api_base = cls._cognition_api_base(
+            source.get("cognition_api_base", DEFAULT_COGNITION_API_BASE)
+        )
+        cognition_model = str(
+            source.get("cognition_model", DEFAULT_COGNITION_MODEL) or ""
+        ).strip()
+        if not cognition_model:
+            raise ValueError("cognition_model must not be empty")
         return cls(
             enabled_groups=enabled_groups,
             social_runtime_test_groups=social_runtime_groups,
@@ -55,6 +69,11 @@ class SocialRuntimeSettings:
             generation_provider=generation_provider,
             vision_provider=str(source.get("vision_provider", "") or "").strip(),
             persona_id=persona_id,
+            cognition_api_key=str(
+                source.get("cognition_api_key", "") or ""
+            ).strip(),
+            cognition_api_base=cognition_api_base,
+            cognition_model=cognition_model,
             worker_concurrency_limit=cls._positive_int(
                 source.get("worker_concurrency_limit", 12),
                 "worker_concurrency_limit",
@@ -102,4 +121,19 @@ class SocialRuntimeSettings:
             raise ValueError(
                 "cognition_timeout_seconds must be between 3 and 15"
             )
+        return normalized
+
+    @staticmethod
+    def _cognition_api_base(value: object) -> str:
+        normalized = str(value or "").strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("cognition_api_base must be a safe HTTP(S) URL")
         return normalized
