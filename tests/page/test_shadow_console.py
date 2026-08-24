@@ -112,7 +112,7 @@ def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details(
         assert diagnostic_label in inspector + presenters
 
 
-def test_runtime_list_shows_formal_result_state_and_reason():
+def test_runtime_list_distinguishes_reply_observe_silence_and_defer_results():
     runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
     presenters = (PAGE / "components" / "presenters.js").read_text(encoding="utf-8")
 
@@ -123,7 +123,8 @@ def test_runtime_list_shows_formal_result_state_and_reason():
     ):
         assert helper in runtime
     assert "正式运行会回复" in runtime + presenters
-    assert "正式运行不会回复" in runtime + presenters
+    for label in ("本轮暂不参与", "本轮不回复", "稍后重新判断", "判断未完成"):
+        assert label in runtime + presenters
 
 
 def test_result_first_styles_preserve_readable_single_column_evidence():

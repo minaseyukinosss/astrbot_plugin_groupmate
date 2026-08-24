@@ -105,11 +105,13 @@ function traceRow(item) {
         attrs: { title: "从消息进入 Groupmate 到最后一个处理阶段更新" },
       }),
     ]),
-    element("td", { className: "trace-message", attrs: { "data-label": "收到的消息" } }, [
-      participantAvatar(actor),
-      element("span", { className: "trace-message-copy" }, [
-        element("strong", { text: actor.display_name || "群成员" }),
-        renderMessageContent(summary.message, { compact: true }),
+    element("td", { attrs: { "data-label": "收到的消息" } }, [
+      element("div", { className: "trace-message" }, [
+        participantAvatar(actor),
+        element("span", { className: "trace-message-copy" }, [
+          element("strong", { text: actor.display_name || "群成员" }),
+          renderMessageContent(summary.message, { compact: true }),
+        ]),
       ]),
     ]),
     element("td", { attrs: { "data-label": "处理路径" } }, [

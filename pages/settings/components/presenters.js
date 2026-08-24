@@ -295,12 +295,20 @@ export function traceIsObserved(summary = {}) {
 }
 
 export function replyExpectation(decision = {}, delivery = {}) {
-  if (typeof decision.would_reply === "boolean") {
-    return decision.would_reply ? "正式运行会回复" : "正式运行不会回复";
-  }
   const outcome = String(decision.outcome || decision.pre_gate_outcome || "").toUpperCase();
-  if (!outcome || outcome === "PENDING") return "尚未完成判断";
-  return traceWouldReply({ decision }) ? "正式运行会回复" : "正式运行不会回复";
+  if (outcome === "PENDING") return "尚未完成判断";
+  const labels = {
+    ACT: "正式运行会回复",
+    OBSERVE: "本轮暂不参与",
+    SILENCE: "本轮不回复",
+    DEFER: "稍后重新判断",
+  };
+  if (labels[outcome]) return labels[outcome];
+  if (typeof decision.would_reply === "boolean") {
+    return decision.would_reply ? "正式运行会回复" : "本轮不回复";
+  }
+  if (!outcome) return "尚未完成判断";
+  return "已完成判断";
 }
 
 export function traceResultHeadline(summary = {}) {
@@ -312,9 +320,15 @@ export function traceResultHeadline(summary = {}) {
     decision.outcome || decision.pre_gate_outcome || "",
   ).toUpperCase();
   if (!outcome || outcome === "PENDING") return "等待完成判断";
-  return traceWouldReply({ decision })
-    ? "正式运行会回复"
-    : "正式运行不会回复";
+  if (String(summary.judgement?.status || "") === "unavailable") {
+    return "判断未完成";
+  }
+  return ({
+    ACT: "正式运行会回复",
+    OBSERVE: "本轮暂不参与",
+    SILENCE: "本轮不回复",
+    DEFER: "稍后重新判断",
+  })[outcome] || replyExpectation(decision, summary.delivery);
 }
 
 export function traceResultState(summary = {}) {

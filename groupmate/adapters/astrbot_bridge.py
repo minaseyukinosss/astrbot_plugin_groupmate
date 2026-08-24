@@ -272,10 +272,6 @@ class AstrBotSocialRuntimeBridge:
                         reply_diagnostic=preview.diagnostic_code,
                     )
                     self._manager.update_shadow_review_evidence(evaluation)
-                    if preview.status == "READY":
-                        await self._manager.record_usable_reply(
-                            plan, now=int(self.clock())
-                        )
                 self._record_trace(
                     self.trace_repository.record_evaluation,
                     evaluation,

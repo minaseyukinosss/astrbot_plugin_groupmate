@@ -178,7 +178,7 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     assert reply_error is None
 
 
-def test_shadow_dialogue_lease_opens_only_after_ready_preview(tmp_path):
+def test_shadow_preview_never_opens_a_dialogue_lease(tmp_path):
     async def run(context, directory):
         settings = SocialRuntimeSettings.from_mapping(
             {
@@ -201,7 +201,6 @@ def test_shadow_dialogue_lease_opens_only_after_ready_preview(tmp_path):
     ready_state = asyncio.run(run(ready_context, tmp_path / "ready"))
     failed_state = asyncio.run(run(failed_context, tmp_path / "failed"))
 
-    assert ready_state.conversation_lease is not None
-    assert ready_state.conversation_lease.remaining_turns == 5
+    assert ready_state.conversation_lease is None
     assert failed_state.conversation_lease is None
     assert ready_context.client.calls == failed_context.client.calls == []

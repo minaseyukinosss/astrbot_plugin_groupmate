@@ -284,6 +284,12 @@ def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
         "judgement:{source:'model',status:'accepted',decision:'speak',"
         "label:'准备回复',reason:'成员明确提出了可以帮助的问题。'},"
         "decision:{outcome:'ACT',would_reply:true,label:'准备回复'}};"
+        "const explicitSilence={route:{owner:'GROUPMATE'},"
+        "decision:{outcome:'SILENCE',would_reply:false,label:'保持沉默',"
+        "reasons:['当前没有合适的参与意图']}};"
+        "const deferred={route:{owner:'GROUPMATE'},"
+        "decision:{outcome:'DEFER',would_reply:false,label:'稍后再判断',"
+        "reasons:['触发频率限制']}};"
         "const unavailable={route:{owner:'GROUPMATE'},"
         "judgement:{source:'model',status:'unavailable',label:'模型判断未采用'},"
         "understanding:{diagnostics:[{status:'TIMED_OUT',"
@@ -296,16 +302,19 @@ def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
         "const pending={route:{owner:'GROUPMATE'},decision:{outcome:'PENDING'}};"
         "const external={route:{owner:'EXTERNAL_PLUGIN',label:'交给外部能力',"
         "reason:'匹配视频解析规则'},decision:{outcome:'PENDING'}};"
-        "console.log(JSON.stringify([silence,speak,unavailable,policy,pending,external]"
+        "console.log(JSON.stringify([silence,speak,explicitSilence,deferred,"
+        "unavailable,policy,pending,external]"
         ".map(item=>[presenter.traceResultHeadline(item),"
         "presenter.traceResultState(item),presenter.traceResultReason(item)])));"
     )
 
     assert result == [
-        ["正式运行不会回复", "继续观察", "成员正在自然交流，现在插话会打断对话。"],
+        ["本轮暂不参与", "继续观察", "成员正在自然交流，现在插话会打断对话。"],
         ["正式运行会回复", "准备回复", "成员明确提出了可以帮助的问题。"],
+        ["本轮不回复", "保持沉默", "当前没有合适的参与意图"],
+        ["稍后重新判断", "稍后再判断", "触发频率限制"],
         [
-            "正式运行不会回复",
+            "判断未完成",
             "模型判断未采用",
             "直连模型在 6 秒内未返回，本次已转为保守观察。",
         ],

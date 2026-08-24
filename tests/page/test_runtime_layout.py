@@ -35,6 +35,13 @@ def test_trace_table_becomes_readable_cards_on_narrow_screens():
     assert "-webkit-line-clamp: 2" in css
 
 
+def test_trace_message_flex_layout_does_not_replace_the_table_cell_layout():
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+
+    assert 'element("td", { className: "trace-message"' not in runtime
+    assert 'element("div", { className: "trace-message"' in runtime
+
+
 def test_light_and_dark_tokens_keep_status_surfaces_theme_safe():
     tokens = (PAGE / "styles" / "tokens.css").read_text(encoding="utf-8")
 
