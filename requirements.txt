@@ -1,2 +1,1 @@
-# Runtime uses only Python's standard library and AstrBot-provided packages.
-
+aiohttp>=3.9,<4
