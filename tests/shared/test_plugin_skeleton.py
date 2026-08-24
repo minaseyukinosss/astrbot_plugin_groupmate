@@ -9,11 +9,13 @@ from pathlib import Path
 import pytest
 
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
+from groupmate.adapters.astrbot_models import AstrBotModelPort
 from groupmate.settings import (
     DEFAULT_GROUPMATE_PERSONA_ID,
     SOCIAL_RUNTIME_DATABASE_NAME,
     SocialRuntimeSettings,
 )
+from groupmate.social_runtime.cognition.ambient_worker import DirectAmbientWorker
 
 
 def test_default_settings_are_off_and_database_is_plugin_owned():
@@ -173,14 +175,80 @@ def test_bridge_registers_one_combined_ambient_model_worker(tmp_path: Path):
 
     async def scenario():
         await bridge.start()
-        workers = tuple(bridge.manager.cognition.workers)
+        workers = dict(bridge.manager.cognition.workers)
         await bridge.close()
         return workers
 
     workers = asyncio.run(scenario())
     assert "ambient_social_assessor" in workers
+    assert isinstance(workers["ambient_social_assessor"], DirectAmbientWorker)
     assert "scene_interpreter" not in workers
     assert "participation_assessor" not in workers
+    assert "direct_interaction" not in workers
+
+
+def test_bridge_owns_direct_client_but_keeps_astrbot_for_final_reply(tmp_path):
+    class FakeDirectClient:
+        model = "deepseek-v4-flash"
+
+        def __init__(self):
+            self.close_calls = 0
+
+        def input_bytes(self, _facts):
+            return 1
+
+        async def close(self):
+            self.close_calls += 1
+
+    client = FakeDirectClient()
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": ["group-1"],
+            "generation_provider": "provider:reply",
+            "cognition_api_key": "sk-test",
+        }
+    )
+    bridge = AstrBotSocialRuntimeBridge(
+        object(),
+        settings,
+        tmp_path,
+        cognition_client_factory=lambda received: (
+            client if received is settings else None
+        ),
+    )
+
+    async def scenario():
+        await bridge.start()
+        worker = bridge.manager.cognition.workers["ambient_social_assessor"]
+        reply_model = bridge._reply_executor.model
+        await bridge.close()
+        await bridge.close()
+        return worker, reply_model
+
+    worker, reply_model = asyncio.run(scenario())
+
+    assert isinstance(worker, DirectAmbientWorker)
+    assert isinstance(reply_model, AstrBotModelPort)
+    assert reply_model.provider_id == "provider:reply"
+    assert client.close_calls == 1
+
+
+def test_off_bridge_does_not_create_direct_client(tmp_path):
+    calls = []
+    bridge = AstrBotSocialRuntimeBridge(
+        object(),
+        SocialRuntimeSettings.from_mapping({}),
+        tmp_path,
+        cognition_client_factory=lambda settings: calls.append(settings),
+    )
+
+    async def scenario():
+        await bridge.start()
+        await bridge.close()
+
+    asyncio.run(scenario())
+
+    assert calls == []
 
 
 def test_complete_native_configuration_enters_no_send_shadow_automatically():

@@ -13,7 +13,7 @@ from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.contracts import RuntimeMode
 from ..social_runtime.control.config_versions import ConfigVersionRepository
 from ..social_runtime.control.message_traces import MessageTraceRepository
-from ..social_runtime.cognition.astrbot_workers import AstrBotStructuredWorker
+from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
@@ -22,6 +22,7 @@ from ..social_runtime.actions.contracts import OutboxStatus
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
+from .deepseek_cognition import DeepSeekCognitionClient
 from .onebot_delivery import OneBotDeliveryAdapter
 
 
@@ -34,11 +35,16 @@ class AstrBotSocialRuntimeBridge:
         *,
         shadow_reviews: object | None = None,
         clock: Callable[[], float] | None = None,
+        cognition_client_factory: Callable[[SocialRuntimeSettings], object]
+        | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
         self.data_dir = Path(data_dir)
         self.clock = time.time if clock is None else clock
+        self._cognition_client_factory = (
+            cognition_client_factory or self._new_cognition_client
+        )
         self.translator = AstrBotEventTranslator(
             settings.persona_id,
             external_trigger_policy=ExternalTriggerPolicy.from_entries(
@@ -48,6 +54,7 @@ class AstrBotSocialRuntimeBridge:
             clock=self.clock,
         )
         self._manager: SocialRuntimeManager | None = None
+        self._cognition_client: object | None = None
         self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
         self.shadow_review_error: str | None = None
@@ -89,29 +96,23 @@ class AstrBotSocialRuntimeBridge:
             config_repository = ConfigVersionRepository(
                 self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             )
-            model = AstrBotModelPort(
+            reply_model = AstrBotModelPort(
                 self.context, self.settings.generation_provider
             )
-            cognition_workers = {
-                name: AstrBotStructuredWorker(
-                    name,
-                    model,
-                    diagnostic_sink=lambda code, worker=name: (
-                        self.cognition_diagnostics.append(f"{worker}:{code}")
-                    ),
-                )
-                for name in (
-                    "direct_interaction",
-                    "ambient_social_assessor",
-                )
-            }
-            self._manager = SocialRuntimeManager(
+            cognition_client = self._cognition_client_factory(self.settings)
+            if cognition_client is None:
+                raise RuntimeError("direct cognition client is unavailable")
+            manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,
                 mode=mode,
                 enabled_groups=self.settings.enabled_groups,
                 social_runtime_test_groups=self.settings.social_runtime_test_groups,
-                cognition_workers=cognition_workers,
+                cognition_workers={
+                    "ambient_social_assessor": DirectAmbientWorker(
+                        cognition_client
+                    )
+                },
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
                 worker_timeout_seconds=self.settings.cognition_timeout_seconds,
                 persona_profile_loader=lambda group_id: config_repository.snapshot(
@@ -120,23 +121,36 @@ class AstrBotSocialRuntimeBridge:
                 ),
                 clock=self.clock,
             )
-            await self._manager.start()
-            self._reply_executor = ReplyExecutor(
-                self._manager.reply_plans,
-                self._manager.outbox,
-                model,
-            )
-            self._dispatcher = DeliveryDispatcher(
-                self._manager.outbox,
-                OneBotDeliveryAdapter(
-                    AstrBotOneBotSender(self.context), clock=self.clock
-                ),
-                receipt_handler=self._manager.coordinator.apply_delivery_receipt,
-            )
-            self._attention_task = asyncio.create_task(
-                self._attention_wakeup_loop(self._manager),
-                name=f"groupmate-attention:{self.settings.persona_id}",
-            )
+            try:
+                await manager.start()
+                self._manager = manager
+                self._cognition_client = cognition_client
+                self._reply_executor = ReplyExecutor(
+                    manager.reply_plans,
+                    manager.outbox,
+                    reply_model,
+                )
+                self._dispatcher = DeliveryDispatcher(
+                    manager.outbox,
+                    OneBotDeliveryAdapter(
+                        AstrBotOneBotSender(self.context), clock=self.clock
+                    ),
+                    receipt_handler=manager.coordinator.apply_delivery_receipt,
+                )
+                self._attention_task = asyncio.create_task(
+                    self._attention_wakeup_loop(manager),
+                    name=f"groupmate-attention:{self.settings.persona_id}",
+                )
+            except BaseException:
+                self._manager = None
+                self._cognition_client = None
+                with suppress(Exception):
+                    await manager.close()
+                close = getattr(cognition_client, "close", None)
+                if callable(close):
+                    with suppress(Exception):
+                        await close()
+                raise
         self._started = True
         self._reconcile_shadow_reviews()
 
@@ -367,9 +381,27 @@ class AstrBotSocialRuntimeBridge:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-        if self._manager is not None:
-            await self._manager.close()
-            self._manager = None
-        self._reply_executor = None
-        self._dispatcher = None
-        self._started = False
+        manager = self._manager
+        cognition_client = self._cognition_client
+        self._manager = None
+        self._cognition_client = None
+        try:
+            if manager is not None:
+                await manager.close()
+        finally:
+            close = getattr(cognition_client, "close", None)
+            if callable(close):
+                await close()
+            self._reply_executor = None
+            self._dispatcher = None
+            self._started = False
+
+    @staticmethod
+    def _new_cognition_client(
+        settings: SocialRuntimeSettings,
+    ) -> DeepSeekCognitionClient:
+        return DeepSeekCognitionClient(
+            api_key=settings.cognition_api_key,
+            api_base=settings.cognition_api_base,
+            model=settings.cognition_model,
+        )
