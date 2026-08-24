@@ -55,6 +55,15 @@ def test_manual_refresh_keeps_existing_data_visible_and_reports_partial_failure(
     assert "failedProjections" in app
 
 
+def test_trace_duration_is_explicitly_labeled_in_list_and_detail():
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+    inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
+
+    assert "链路历时" in runtime
+    assert '["链路历时", formatTraceDuration' in inspector
+    assert '["总耗时"' not in inspector
+
+
 def test_inspector_explains_shadow_pre_gate_result_and_cognition_diagnostics():
     inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
 

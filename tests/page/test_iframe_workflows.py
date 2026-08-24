@@ -244,3 +244,39 @@ console.log(JSON.stringify(result));
     assert value["kind"] == "rejected"
     assert "traces" in value["message"]
     assert "超时" in value["message"]
+
+
+def test_trace_duration_is_presented_in_plain_chinese_units():
+    source = (
+        __import__("pathlib").Path(__file__).parents[2]
+        / "pages"
+        / "settings"
+        / "components"
+        / "presenters.js"
+    ).read_bytes()
+    encoded = base64.b64encode(source).decode("ascii")
+    script = f"""
+const module = await import('data:text/javascript;base64,{encoded}');
+console.log(JSON.stringify([
+  module.formatTraceDuration(0),
+  module.formatTraceDuration(999),
+  module.formatTraceDuration(1_000),
+  module.formatTraceDuration(20_000),
+  module.formatTraceDuration(90_000),
+]));
+"""
+
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == [
+        "不足 1 秒",
+        "不足 1 秒",
+        "1 秒",
+        "20 秒",
+        "1 分 30 秒",
+    ]

@@ -151,6 +151,16 @@ export function formatTimestamp(value) {
   }).format(new Date(timestamp * 1000));
 }
 
+export function formatTraceDuration(value) {
+  const milliseconds = Math.max(0, Number(value) || 0);
+  if (milliseconds < 1_000) return "不足 1 秒";
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+}
+
 export function messageSummary(message = {}) {
   const explicit = String(message?.summary || "").trim();
   if (explicit && explicit !== "[非文本消息]") return explicit;

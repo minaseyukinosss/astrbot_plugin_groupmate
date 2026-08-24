@@ -1,5 +1,5 @@
 import { element, textValue } from "./dom.js";
-import { formatTimestamp, messageSummary } from "./presenters.js";
+import { formatTimestamp, formatTraceDuration, messageSummary } from "./presenters.js";
 import { renderMessageContent } from "./message.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
@@ -164,7 +164,7 @@ export function renderInspector(item) {
       element("summary", { text: "技术信息" }),
       definitionRows([
         ["追踪引用", item?.entity_ref],
-        ["总耗时", `${timing.total_ms || 0} ms`],
+        ["链路历时", formatTraceDuration(timing.total_ms)],
         ["更新时间", formatTimestamp(timing.updated_at || item?.as_of)],
       ]),
     ]),

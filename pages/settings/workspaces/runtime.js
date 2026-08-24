@@ -1,6 +1,6 @@
 import { governedAction } from "../components/command-dialog.js";
 import { button, element } from "../components/dom.js";
-import { formatTimestamp } from "../components/presenters.js";
+import { formatTimestamp, formatTraceDuration } from "../components/presenters.js";
 import { controlVersion } from "../components/projection.js";
 import { renderMessageContent } from "../components/message.js";
 
@@ -91,7 +91,10 @@ function traceRow(item) {
   }, [
     element("td", { className: "trace-time", attrs: { "data-label": "时间" } }, [
       element("time", { text: formatTimestamp(summary.timing?.received_at || item.as_of) }),
-      element("small", { text: `${summary.timing?.total_ms || 0} ms` }),
+      element("small", {
+        text: `链路历时 ${formatTraceDuration(summary.timing?.total_ms)}`,
+        attrs: { title: "从消息进入 Groupmate 到最后一个处理阶段更新" },
+      }),
     ]),
     element("td", { className: "trace-message", attrs: { "data-label": "收到的消息" } }, [
       participantAvatar(actor),
