@@ -183,6 +183,28 @@ def test_direct_cognition_presenter_explains_backend_and_safe_failures():
         "diagnostic_code:'direct_upstream_failed',backend:'direct_deepseek'}),"
         "invalid: presenter.cognitionDiagnosticExplanation({"
         "diagnostic_code:'direct_invalid_output',backend:'direct_deepseek'}),"
+        "empty: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_response_empty'}),"
+        "badJson: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_response_json_invalid'}),"
+        "badShape: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_response_shape_invalid'}),"
+        "missing: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_missing_field'}),"
+        "decision: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_invalid_decision'}),"
+        "signal: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_invalid_signal'}),"
+        "speakSignal: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_speak_without_signal'}),"
+        "target: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_unknown_target'}),"
+        "speakEvidence: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_empty_speak_evidence'}),"
+        "evidence: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_unknown_evidence'}),"
+        "score: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_invalid_score'}),"
         "metrics: presenter.cognitionDiagnosticMetricRows({"
         "backend:'direct_deepseek',provider_latency_ms:1300})"
         "}));"
@@ -196,6 +218,17 @@ def test_direct_cognition_presenter_explains_backend_and_safe_failures():
         "network": "无法连接认知模型服务，本次已转为保守观察。",
         "upstream": "认知模型服务暂时异常，本次已转为保守观察。",
         "invalid": "认知模型返回内容未通过本地校验，本次未采用。",
+        "empty": "认知模型返回了空内容，本次未采用。",
+        "badJson": "认知模型返回内容不是可解析的 JSON，本次未采用。",
+        "badShape": "认知模型返回结构不完整，本次未采用。",
+        "missing": "认知模型返回结果缺少必填字段，本次未采用。",
+        "decision": "认知模型给出了无效的参与决定，本次未采用。",
+        "signal": "认知模型给出了无效的群聊信号，本次未采用。",
+        "speakSignal": "认知模型建议参与，但没有给出有效信号，本次未采用。",
+        "target": "认知模型引用了当前候选成员之外的对象，本次未采用。",
+        "speakEvidence": "认知模型建议参与，但没有提供消息证据，本次未采用。",
+        "evidence": "认知模型引用了当前上下文之外的消息，本次未采用。",
+        "score": "认知模型返回的评分不在有效范围内，本次未采用。",
         "metrics": [["模型请求", "1 秒"]],
     }
 

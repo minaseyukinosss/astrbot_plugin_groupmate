@@ -21,6 +21,21 @@ from .scheduling import WorkerAdmissionQueue
 
 T = TypeVar("T")
 
+_DIRECT_INVALID_OUTPUT_CODES = {
+    "direct_invalid_output",
+    "direct_response_empty",
+    "direct_response_json_invalid",
+    "direct_response_shape_invalid",
+    "direct_missing_field",
+    "direct_invalid_decision",
+    "direct_invalid_signal",
+    "direct_speak_without_signal",
+    "direct_unknown_target",
+    "direct_empty_speak_evidence",
+    "direct_unknown_evidence",
+    "direct_invalid_score",
+}
+
 
 @dataclass(frozen=True)
 class CognitionBudget:
@@ -344,7 +359,10 @@ class CognitionService:
             code = str(result.diagnostic_code)
             if code == "direct_timeout":
                 status = "TIMED_OUT"
-            elif code in {"direct_invalid_output", "invalid_worker_output"}:
+            elif (
+                code in _DIRECT_INVALID_OUTPUT_CODES
+                or code == "invalid_worker_output"
+            ):
                 status = "INVALID_OUTPUT"
             elif code.startswith(("model_call_failed", "direct_")):
                 status = "MODEL_FAILED"

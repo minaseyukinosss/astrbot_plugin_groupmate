@@ -300,3 +300,24 @@ def test_direct_failure_metadata_reaches_cognition_diagnostic():
     assert diagnostic.input_bytes == 2_048
     assert diagnostic.backend == "direct_deepseek"
     assert diagnostic.model == "deepseek-v4-flash"
+
+
+def test_direct_output_failure_is_classified_as_invalid_output():
+    error = DirectCognitionError(
+        "direct_response_json_invalid",
+        latency_ms=120,
+        request_bytes=1_024,
+        backend="direct_deepseek",
+        model="deepseek-v4-flash",
+    )
+    worker = DirectAmbientWorker(FakeClient(error=error))
+    service = CognitionService(
+        workers={"ambient_social_assessor": worker},
+        budget=CognitionBudget(1, 1),
+    )
+
+    snapshot = asyncio.run(service.evaluate(_frame(), _context()))
+
+    diagnostic = snapshot.worker_diagnostics[-1]
+    assert diagnostic.status == "INVALID_OUTPUT"
+    assert diagnostic.diagnostic_code == "direct_response_json_invalid"

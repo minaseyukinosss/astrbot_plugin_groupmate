@@ -123,6 +123,20 @@ const COGNITION_DIAGNOSTIC_STATUS_LABELS = Object.freeze({
   BUDGET_EXHAUSTED: "调用预算已用尽",
 });
 
+const DIRECT_OUTPUT_EXPLANATIONS = Object.freeze({
+  direct_response_empty: "认知模型返回了空内容，本次未采用。",
+  direct_response_json_invalid: "认知模型返回内容不是可解析的 JSON，本次未采用。",
+  direct_response_shape_invalid: "认知模型返回结构不完整，本次未采用。",
+  direct_missing_field: "认知模型返回结果缺少必填字段，本次未采用。",
+  direct_invalid_decision: "认知模型给出了无效的参与决定，本次未采用。",
+  direct_invalid_signal: "认知模型给出了无效的群聊信号，本次未采用。",
+  direct_speak_without_signal: "认知模型建议参与，但没有给出有效信号，本次未采用。",
+  direct_unknown_target: "认知模型引用了当前候选成员之外的对象，本次未采用。",
+  direct_empty_speak_evidence: "认知模型建议参与，但没有提供消息证据，本次未采用。",
+  direct_unknown_evidence: "认知模型引用了当前上下文之外的消息，本次未采用。",
+  direct_invalid_score: "认知模型返回的评分不在有效范围内，本次未采用。",
+});
+
 const PARTICIPATION_DIAGNOSTIC_LABELS = Object.freeze({
   deterministic_direct_fast: "明确 @、回复或直接请求，策略直接进入回复准备",
   deterministic_continuation: "命中当前对话延续窗口",
@@ -205,6 +219,9 @@ export function cognitionDiagnosticExplanation(diagnostic = {}) {
   }
   if (code === "direct_invalid_output") {
     return "认知模型返回内容未通过本地校验，本次未采用。";
+  }
+  if (DIRECT_OUTPUT_EXPLANATIONS[code]) {
+    return DIRECT_OUTPUT_EXPLANATIONS[code];
   }
   if (code === "worker_timeout") {
     const hasProviderMetric = diagnostic.provider_latency_ms !== undefined
