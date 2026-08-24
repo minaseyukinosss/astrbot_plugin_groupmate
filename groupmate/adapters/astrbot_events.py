@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from typing import Mapping
+from typing import Callable, Mapping
 
 from ..social_runtime.contracts import SocialEventEnvelope
 from ..social_runtime.ownership import (
@@ -53,18 +53,20 @@ class AstrBotEventTranslator:
         persona_id: str,
         *,
         external_trigger_policy: ExternalTriggerPolicy | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.persona_id = persona_id
         self.platform = "qq"
         self.external_trigger_policy = (
             external_trigger_policy or ExternalTriggerPolicy.create()
         )
+        self._clock = time.time if clock is None else clock
 
     def translate(self, host_event: object) -> SocialEventEnvelope:
         raw = self._raw_message(host_event)
         group_id = str(raw.get("group_id") or _call_text(host_event, "get_group_id"))
         actor_id = str(raw.get("user_id") or _call_text(host_event, "get_sender_id"))
-        now = int(time.time())
+        now = int(self._clock())
         occurred_at = int(raw.get("time") or now)
         segments = self._segments(raw, host_event)
         source_id = str(raw.get("message_id") or "").strip()

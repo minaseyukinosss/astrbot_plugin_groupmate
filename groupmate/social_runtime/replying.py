@@ -51,6 +51,7 @@ class ReplyPlan:
     created_at: int
     expires_at: int
     status: str = "planned"
+    participation_lane: str = "AMBIENT"
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,23 @@ class ReplyPreview:
             raise ValueError("unknown reply preview status")
         if self.status == "READY" and not str(self.text or "").strip():
             raise ValueError("ready reply preview requires text")
+
+
+@dataclass(frozen=True)
+class ReplyExecutionResult:
+    part: OutboxPart | None
+    status: str
+    diagnostic_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"READY", "MODEL_FAILED", "REJECTED"}:
+            raise ValueError("unknown reply execution status")
+        if self.status == "READY" and self.part is None:
+            raise ValueError("ready reply execution requires an outbox part")
+
+    @property
+    def usable_for_lease(self) -> bool:
+        return self.status == "READY" and self.part is not None
 
 
 class ReplyPlanRepository:
@@ -174,6 +192,7 @@ class ReplyPlanRepository:
         values = json.loads(encoded)
         values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
         values["style"] = StyleDirective(**values["style"])
+        values.setdefault("participation_lane", "AMBIENT")
         return ReplyPlan(**values)
 
 
@@ -242,6 +261,10 @@ class ReplyPlanner:
             ),
             created_at=int(now),
             expires_at=min(int(selected.expires_at), int(now) + 30),
+            participation_lane=str(
+                getattr(evaluation, "participation_lane", "AMBIENT")
+                or "AMBIENT"
+            ),
         )
 
     @staticmethod
@@ -324,6 +347,23 @@ class ReplyExecutor:
         persona_profile: Mapping[str, object],
         recent_outputs: tuple[str, ...],
     ) -> OutboxPart | None:
+        return (
+            await self.execute_with_result(
+                plan,
+                context_events=context_events,
+                persona_profile=persona_profile,
+                recent_outputs=recent_outputs,
+            )
+        ).part
+
+    async def execute_with_result(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        recent_outputs: tuple[str, ...],
+    ) -> ReplyExecutionResult:
         self.repository.save(plan)
         request = GenerationRequest(
             directive=plan.style,
@@ -338,7 +378,11 @@ class ReplyExecutor:
                 prompt=self._prompt(plan, context_events),
             )
         except Exception:
-            return self._failed(plan, request)
+            return ReplyExecutionResult(
+                self._failed(plan, request),
+                "MODEL_FAILED",
+                "reply_model_failed",
+            )
         draft = GeneratedDraft(text.strip())
         review = self.firewall.review(draft, request)
         if not review.accepted:
@@ -360,11 +404,19 @@ class ReplyExecutor:
                 draft = GeneratedDraft(repaired.strip())
                 review = self.firewall.review(draft, request)
             except Exception:
-                return self._failed(plan, request)
+                return ReplyExecutionResult(
+                    self._failed(plan, request),
+                    "MODEL_FAILED",
+                    "reply_repair_failed",
+                )
         if not review.accepted:
-            return self._failed(plan, request)
+            return ReplyExecutionResult(
+                self._failed(plan, request),
+                "REJECTED",
+                "output_firewall_rejected",
+            )
         self.repository.mark(plan.plan_id, "generated")
-        return self._enqueue(plan, draft.text)
+        return ReplyExecutionResult(self._enqueue(plan, draft.text), "READY")
 
     def _failed(
         self, plan: ReplyPlan, request: GenerationRequest
@@ -453,6 +505,7 @@ class ReplyExecutor:
 
 __all__ = (
     "ReplyExecutor",
+    "ReplyExecutionResult",
     "ReplyPlan",
     "ReplyPreview",
     "ReplyPlanIdentityConflict",

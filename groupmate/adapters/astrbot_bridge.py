@@ -38,17 +38,18 @@ class AstrBotSocialRuntimeBridge:
         self.context = context
         self.settings = settings
         self.data_dir = Path(data_dir)
+        self.clock = time.time if clock is None else clock
         self.translator = AstrBotEventTranslator(
             settings.persona_id,
             external_trigger_policy=ExternalTriggerPolicy.from_entries(
                 command_prefixes=settings.external_command_prefixes,
                 link_domains=settings.external_link_domains,
             ),
+            clock=self.clock,
         )
         self._manager: SocialRuntimeManager | None = None
         self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
-        self.clock = time.time if clock is None else clock
         self.shadow_review_error: str | None = None
         self.attention_wakeup_error: str | None = None
         self.cognition_diagnostics: list[str] = []
@@ -257,6 +258,10 @@ class AstrBotSocialRuntimeBridge:
                         reply_diagnostic=preview.diagnostic_code,
                     )
                     self._manager.update_shadow_review_evidence(evaluation)
+                    if preview.status == "READY":
+                        await self._manager.record_usable_reply(
+                            plan, now=int(self.clock())
+                        )
                 self._record_trace(
                     self.trace_repository.record_evaluation,
                     evaluation,
@@ -277,7 +282,7 @@ class AstrBotSocialRuntimeBridge:
                         continue
                     if self._reply_executor is None:
                         raise RuntimeError("reply executor is unavailable")
-                    await self._reply_executor.execute(
+                    execution = await self._reply_executor.execute_with_result(
                         plan,
                         context_events=tuple(
                             getattr(evaluation, "context_events", ())
@@ -285,6 +290,10 @@ class AstrBotSocialRuntimeBridge:
                         persona_profile={"persona_id": self.settings.persona_id},
                         recent_outputs=(),
                     )
+                    if execution.usable_for_lease:
+                        await self._manager.record_usable_reply(
+                            plan, now=int(self.clock())
+                        )
                     await self._dispatch_ready()
                     self.reply_error = None
                 except Exception as exc:

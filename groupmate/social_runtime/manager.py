@@ -37,7 +37,7 @@ from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
 from .persona.profile import GroupmatePersonaProfile
-from .replying import ReplyPlanRepository
+from .replying import ReplyPlan, ReplyPlanRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import (
     GroupSceneActor,
@@ -456,6 +456,65 @@ class SocialRuntimeManager:
             return await actor.snapshot()
         finally:
             await self._end_drain()
+
+    async def record_usable_reply(self, plan: ReplyPlan, *, now: int) -> bool:
+        """Project a bounded dialogue lease after usable text exists."""
+
+        if (
+            plan.persona_id != self.persona_id
+            or plan.group_id not in self.enabled_groups
+            or not plan.target_id
+            or not plan.topic_id
+        ):
+            return False
+        now = int(now)
+        world = await self.group_snapshot(plan.group_id)
+        lease = world.conversation_lease
+        if plan.participation_lane == "CONTINUATION":
+            if (
+                lease is None
+                or lease.target_id != plan.target_id
+                or lease.topic_id != plan.topic_id
+                or lease.expires_at < now
+                or lease.remaining_turns <= 0
+            ):
+                return False
+            event_type = "conversation.lease_advanced"
+            opened_at = lease.opened_at
+            remaining_turns = lease.remaining_turns - 1
+        else:
+            event_type = "conversation.lease_opened"
+            opened_at = now
+            remaining_turns = 5
+        event = SocialEventEnvelope.create(
+            event_id=f"conversation-lease:{plan.plan_id}",
+            event_type=event_type,
+            occurred_at=now,
+            received_at=now,
+            persona_id=self.persona_id,
+            group_id=plan.group_id,
+            actor_id=None,
+            source_message_id=None,
+            correlation_id=f"{plan.correlation_id}:conversation-lease",
+            causation_id=(
+                plan.evidence_event_ids[0]
+                if plan.evidence_event_ids
+                else None
+            ),
+            payload={
+                "target_id": plan.target_id,
+                "topic_id": plan.topic_id,
+                "source_plan_id": plan.plan_id,
+                "opened_at": opened_at,
+                "expires_at": now + 180,
+                "remaining_turns": remaining_turns,
+            },
+        )
+        appended = await self.ingest(event)
+        if appended is None:
+            return False
+        await self.fabric.drain()
+        return appended.inserted
 
     async def next_attention_deadline(self) -> int | None:
         async with self._lifecycle_lock:

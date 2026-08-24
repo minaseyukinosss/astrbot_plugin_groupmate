@@ -64,7 +64,13 @@ class _Context:
         return _Platform(self.client)
 
 
-def _event(message_id, text, *, mention_bot=False):
+class _FailingReplyContext(_Context):
+    async def llm_generate(self, **kwargs):
+        self.model_calls.append(kwargs)
+        raise RuntimeError("reply provider unavailable")
+
+
+def _event(message_id, text, *, mention_bot=False, actor_id="u1"):
     message = []
     if mention_bot:
         message.append({"type": "at", "data": {"qq": "bot-1"}})
@@ -75,7 +81,7 @@ def _event(message_id, text, *, mention_bot=False):
         raw_message = {
             "message_id": message_id,
             "group_id": "885617919",
-            "user_id": "u1",
+            "user_id": actor_id,
             "time": 100,
             "message": message,
         }
@@ -92,7 +98,7 @@ def _event(message_id, text, *, mention_bot=False):
     return Event()
 
 
-def test_live_chat_replies_once_while_external_command_stays_out(tmp_path):
+def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     async def scenario():
         context = _Context()
         settings = SocialRuntimeSettings.from_mapping(
@@ -107,11 +113,12 @@ def test_live_chat_replies_once_while_external_command_stays_out(tmp_path):
             context, settings, tmp_path, clock=lambda: 100
         )
         await bridge.start()
-        await bridge.handle_event(_event("external", "bq 开心"))
+        await bridge.handle_event(_event("external", "bq 开心", actor_id="u2"))
         calls_after_external = len(context.model_calls)
         await bridge.handle_event(
             _event("m1", "这个报错怎么看", mention_bot=True)
         )
+        await bridge.handle_event(_event("m2", "然后呢"))
         parts = bridge.manager.outbox.receipted_parts()
         state = await bridge.manager.group_snapshot("885617919")
         event_ids = bridge.manager.event_store.event_ids()
@@ -124,8 +131,46 @@ def test_live_chat_replies_once_while_external_command_stays_out(tmp_path):
     )
 
     assert calls_after_external == 0
-    assert len(context.client.calls) == 1
-    assert len(parts) == 1 and parts[0].status is OutboxStatus.SENT
+    assert len(context.client.calls) == 2
+    assert len(parts) == 2
+    assert all(part.status is OutboxStatus.SENT for part in parts)
+    assert state.conversation_lease is not None
+    assert state.conversation_lease.target_id == "u1"
+    assert state.conversation_lease.topic_id == "m1"
+    assert state.conversation_lease.remaining_turns == 4
+    assert all(
+        "结构化群聊观察器" not in call["system_prompt"]
+        for call in context.model_calls
+    )
     assert any(value.startswith("delivery-feedback:") for value in event_ids)
     assert state.recent_presence.last_bot_event_at == 100
     assert reply_error is None
+
+
+def test_shadow_dialogue_lease_opens_only_after_ready_preview(tmp_path):
+    async def run(context, directory):
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context, settings, directory, clock=lambda: 100
+        )
+        await bridge.start()
+        await bridge.handle_event(_event("m1", "在吗", mention_bot=True))
+        state = await bridge.manager.group_snapshot("885617919")
+        await bridge.close()
+        return state
+
+    ready_context = _Context()
+    failed_context = _FailingReplyContext()
+    ready_state = asyncio.run(run(ready_context, tmp_path / "ready"))
+    failed_state = asyncio.run(run(failed_context, tmp_path / "failed"))
+
+    assert ready_state.conversation_lease is not None
+    assert ready_state.conversation_lease.remaining_turns == 5
+    assert failed_state.conversation_lease is None
+    assert ready_context.client.calls == failed_context.client.calls == []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
@@ -72,6 +73,9 @@ def _evaluation(trigger_kind="FAST"):
         config_version=1,
         persona_id="aemeath",
         context_events=(event,),
+        participation_lane=(
+            "CONTINUATION" if trigger_kind == "CONTINUATION" else "DIRECT_FAST"
+        ),
     )
 
 
@@ -82,8 +86,19 @@ def test_reply_planner_builds_one_short_text_plan():
     assert plan.target_id == "u1"
     assert plan.platform_id == "onebot-main"
     assert plan.required is True
+    assert plan.participation_lane == "DIRECT_FAST"
     assert plan.style.max_chars == 120
     assert plan.style.max_segments == 2
+
+
+def test_old_serialized_reply_plan_defaults_to_ambient_lane():
+    plan = ReplyPlanner().plan(_evaluation(), now=100)
+    values = json.loads(ReplyPlanRepository._encode(plan))
+    values.pop("participation_lane")
+
+    restored = ReplyPlanRepository._decode(json.dumps(values))
+
+    assert restored.participation_lane == "AMBIENT"
 
 
 def test_optional_generation_failure_stays_silent(tmp_path):
@@ -110,6 +125,35 @@ def test_optional_generation_failure_stays_silent(tmp_path):
     assert part is None
     assert repository.load(plan.plan_id).status == "silent"
     assert outbox.count() == 0
+
+
+def test_required_generation_fallback_is_not_usable_for_a_dialogue_lease(
+    tmp_path,
+):
+    class FailingModel:
+        async def complete_text(self, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    executor = ReplyExecutor(repository, outbox, FailingModel())
+    evaluation = _evaluation()
+    plan = ReplyPlanner().plan(evaluation, now=100)
+
+    result = asyncio.run(
+        executor.execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile={},
+            recent_outputs=(),
+        )
+    )
+
+    assert result.part is not None
+    assert result.status == "MODEL_FAILED"
+    assert result.usable_for_lease is False
 
 
 def test_shadow_preview_generates_reviewed_text_without_outbox(tmp_path):
