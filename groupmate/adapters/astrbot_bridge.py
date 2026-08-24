@@ -46,9 +46,7 @@ class AstrBotSocialRuntimeBridge:
             ),
         )
         self._manager: SocialRuntimeManager | None = None
-        self.trace_repository = MessageTraceRepository(
-            self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
-        )
+        self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
         self.clock = time.time if clock is None else clock
         self.shadow_review_error: str | None = None
@@ -63,6 +61,15 @@ class AstrBotSocialRuntimeBridge:
         self._attention_changed = asyncio.Event()
         self._attention_task: asyncio.Task[None] | None = None
         self._started = False
+
+    @property
+    def trace_repository(self) -> MessageTraceRepository:
+        """Create trace storage only when the configured plugin actually needs it."""
+        if self._trace_repository is None:
+            self._trace_repository = MessageTraceRepository(
+                self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+            )
+        return self._trace_repository
 
     @property
     def manager(self) -> SocialRuntimeManager:
@@ -160,6 +167,9 @@ class AstrBotSocialRuntimeBridge:
 
     async def observe_event(self, event: object) -> None:
         """Record arrival and route facts without entering Social Runtime."""
+
+        if not self.settings.enabled_groups:
+            return
 
         translated = self.translator.translate(event)
         self._record_trace(
