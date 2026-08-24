@@ -29,7 +29,7 @@ class BlackboardSnapshot:
     degraded: bool
     recommended_outcome: str | None
     diagnostics: tuple[str, ...]
-    worker_diagnostics: tuple[CognitiveWorkerDiagnostic, ...]
+    worker_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
 
 
 class CognitionBlackboard:
