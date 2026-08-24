@@ -1,6 +1,5 @@
 import { element, textValue } from "./dom.js";
 import {
-  candidateSummary,
   cognitionBackendLabel,
   cognitionDiagnosticExplanation,
   cognitionDiagnosticMetricRows,
@@ -12,7 +11,9 @@ import {
   messageSummary,
   participationDiagnosticLabel,
   participationLaneLabel,
-  replyExpectation,
+  traceResultHeadline,
+  traceResultReason,
+  traceResultState,
   valueLabel,
 } from "./presenters.js";
 import { renderMessageContent } from "./message.js";
@@ -80,6 +81,46 @@ function cognitionDiagnostics(diagnostics = []) {
   );
 }
 
+function renderResultSummary(summary) {
+  const judgement = summary.judgement || {};
+  const decision = summary.decision || {};
+  const evidence = judgement.evidence || null;
+  const evidenceActor = evidence?.actor || {};
+  const status = String(judgement.status || "").toLowerCase();
+  const children = [
+    element("div", {
+      className: "result-summary",
+      attrs: { "data-status": status || "pending" },
+    }, [
+      element("div", { className: "result-summary-heading" }, [
+        element("strong", { text: traceResultHeadline(summary) }),
+        element("span", { className: "result-state", text: traceResultState(summary) }),
+      ]),
+      element("div", { className: "result-reason" }, [
+        element("span", { text: "判断原因" }),
+        element("p", { text: traceResultReason(summary) }),
+      ]),
+    ]),
+  ];
+  if (evidence?.message) {
+    children.push(element("div", { className: "result-evidence" }, [
+      element("h4", { text: "关键证据" }),
+      avatar(evidenceActor),
+      element("div", {}, [
+        element("strong", { text: evidenceActor.display_name || "群成员" }),
+        renderMessageContent(evidence.message),
+      ]),
+    ]));
+  }
+  if (decision.candidate_response) {
+    children.push(element("div", { className: "result-candidate" }, [
+      element("span", { text: "候选回复" }),
+      element("p", { text: decision.candidate_response }),
+    ]));
+  }
+  return section("处理结果", children, "result-section");
+}
+
 function definitionRows(rows) {
   return element("dl", { className: "inspector-facts" }, rows
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
@@ -121,39 +162,28 @@ export function renderInspector(item) {
         element("time", { text: formatTimestamp(timing.received_at || item?.as_of) }),
       ]),
     ]),
+    renderResultSummary(summary),
     section("收到的消息", [renderMessageContent(message)]),
     section("处理路径", [definitionRows([
       ["当前归属", route.label || "等待路由"],
       ["原因", route.reason],
     ])]),
-    section("处理阶段", [stageTimeline(summary.stages)]),
-    section("Groupmate 的理解", [
-      definitionRows([
-        ["状态", cognitionStateLabel(understanding.status)],
-        ["理解摘要", understanding.summary],
-      ]),
-      element("h4", { className: "inspector-subheading", text: "认知模块" }),
-      cognitionDiagnostics(understanding.diagnostics),
-    ]),
-    section("策略判断", [definitionRows([
-      ["策略通道", participationLaneLabel(decision.participation_lane)],
-      ["策略依据", (understanding.participation_diagnostics || []).map(participationDiagnosticLabel).join("；")],
-      ["正式运行", replyExpectation(decision, delivery)],
-      ["参与方案", candidateSummary(understanding)],
-      ["参与判断", decision.label],
-      ["SHADOW 前判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
-      ["判断依据", decision.reasons],
-      ["候选回复", decision.candidate_response || (delivery.mode === "SHADOW" ? "本次未生成候选回复" : null)],
-      ["生成说明", decision.reply_diagnostic],
-    ])]),
-    section("最终结果", [definitionRows([
-      ["运行模式", valueLabel("runtime_mode", delivery.mode)],
-      ["状态", delivery.label],
-      ["错误", delivery.error],
-    ])], "delivery-section"),
     element("details", { className: "technical-details" }, [
       element("summary", { text: "技术信息" }),
+      element("h4", { className: "inspector-subheading", text: "处理阶段" }),
+      stageTimeline(summary.stages),
+      element("h4", { className: "inspector-subheading", text: "认知模块" }),
+      cognitionDiagnostics(understanding.diagnostics),
       definitionRows([
+        ["理解状态", cognitionStateLabel(understanding.status)],
+        ["理解摘要", understanding.summary],
+        ["策略通道", participationLaneLabel(decision.participation_lane)],
+        ["策略依据", (understanding.participation_diagnostics || []).map(participationDiagnosticLabel).join("；")],
+        ["原始参与判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
+        ["运行模式", valueLabel("runtime_mode", delivery.mode)],
+        ["交付状态", delivery.label],
+        ["交付错误", delivery.error],
+        ["生成诊断", decision.reply_diagnostic],
         ["追踪引用", item?.entity_ref],
         ["原始策略通道", decision.participation_lane],
         ["原始候选来源", understanding.candidate_source],

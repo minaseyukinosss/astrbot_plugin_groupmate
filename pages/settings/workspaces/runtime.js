@@ -7,6 +7,9 @@ import {
   strategySummary,
   traceHasCognitionFailure,
   traceIsObserved,
+  traceResultHeadline,
+  traceResultReason,
+  traceResultState,
   traceWouldReply,
 } from "../components/presenters.js";
 import { controlVersion } from "../components/projection.js";
@@ -70,6 +73,8 @@ function traceSearchText(item) {
     summary.understanding?.summary,
     cognitionStateLabel(summary.understanding?.status),
     strategySummary(summary),
+    traceResultHeadline(summary),
+    traceResultReason(summary),
     summary.decision?.label,
     ...(summary.decision?.reasons || []),
     summary.delivery?.label,
@@ -80,7 +85,6 @@ function traceRow(item) {
   const summary = item.summary || {};
   const actor = summary.actor || {};
   const delivery = summary.delivery || {};
-  const decisionReasons = summary.decision?.reasons || [];
   const row = element("tr", {
     className: "trace-row",
     dataset: {
@@ -119,14 +123,12 @@ function traceRow(item) {
         : []),
     ]),
     element("td", { attrs: { "data-label": "决定" } }, [
-      element("strong", { className: "trace-primary", text: summary.decision?.label || "等待判断" }),
+      element("strong", { className: "trace-primary", text: traceResultHeadline(summary) }),
       element("small", {
         className: "two-line",
-        text: strategySummary(summary),
+        text: traceResultState(summary),
       }),
-      ...(decisionReasons.length
-        ? [element("small", { className: "two-line", text: decisionReasons.join("；") })]
-        : []),
+      element("small", { className: "two-line", text: traceResultReason(summary) }),
     ]),
     element("td", { attrs: { "data-label": "最终结果" } }, [
       element("span", {

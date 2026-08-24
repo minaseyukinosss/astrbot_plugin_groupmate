@@ -73,24 +73,71 @@ def test_trace_duration_is_explicitly_labeled_in_list_and_detail():
     assert '["总耗时"' not in inspector
 
 
-def test_inspector_explains_shadow_pre_gate_result_and_cognition_diagnostics():
+def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details():
     inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
     presenters = (PAGE / "components" / "presenters.js").read_text(encoding="utf-8")
+    default_content, technical_content = inspector.split(
+        'element("details", { className: "technical-details" }', 1
+    )
 
     for label in (
-        "策略通道",
-        "正式运行",
+        "处理结果",
+        "判断原因",
+        "关键证据",
+        "result-summary",
+        "result-evidence",
+    ):
+        assert label in default_content
+    for removed_default in (
         "参与方案",
         "SHADOW 前判断",
-        "候选回复",
+        "生成说明",
+    ):
+        assert removed_default not in default_content
+    for technical_label in (
+        "处理阶段",
         "认知模块",
+        "策略通道",
+        "原始诊断码",
+    ):
+        assert technical_label in technical_content
+    assert "cognitionDiagnostics(understanding.diagnostics)" in technical_content
+    for diagnostic_label in (
         "认知后端",
         "耗时",
         "Provider 等待",
         "输入大小",
         "本次截止",
     ):
-        assert label in inspector + presenters
+        assert diagnostic_label in inspector + presenters
+
+
+def test_runtime_list_shows_formal_result_state_and_reason():
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+    presenters = (PAGE / "components" / "presenters.js").read_text(encoding="utf-8")
+
+    for helper in (
+        "traceResultHeadline",
+        "traceResultState",
+        "traceResultReason",
+    ):
+        assert helper in runtime
+    assert "正式运行会回复" in runtime + presenters
+    assert "正式运行不会回复" in runtime + presenters
+
+
+def test_result_first_styles_preserve_readable_single_column_evidence():
+    styles = (PAGE / "styles" / "components.css").read_text(encoding="utf-8")
+
+    for selector in (
+        ".result-summary",
+        ".result-summary-heading",
+        ".result-state",
+        ".result-reason",
+        ".result-evidence",
+    ):
+        assert selector in styles
+    assert ".result-evidence" in styles and "minmax(0, 1fr)" in styles
 
 
 def test_runtime_console_surfaces_strategy_and_cognition_failures():

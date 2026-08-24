@@ -712,6 +712,45 @@ h1 { font-size: 1.2rem; }
 .inspector-event-heading time { font-size: 0.68rem; }
 .inspector-section { padding: 0.8rem 0; border-block-start: 1px solid var(--color-border); border-block-end: 0; }
 .inspector-section h3 { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.45rem; font-size: 0.75rem; }
+.result-section { padding-top: 0.9rem; }
+.result-summary { display: grid; gap: 0.7rem; }
+.result-summary-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.result-summary-heading strong { color: var(--color-ink); font-size: 1rem; line-height: 1.4; }
+.result-state {
+  flex: 0 0 auto;
+  padding: 0.22rem 0.5rem;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 650;
+}
+.result-summary[data-status="unavailable"] .result-state {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.result-reason { display: grid; gap: 0.18rem; }
+.result-reason > span,
+.result-candidate > span { color: var(--color-muted); font-size: 0.66rem; }
+.result-reason p,
+.result-candidate p { margin: 0; color: var(--color-ink-soft); line-height: 1.6; }
+.result-evidence {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem 0.65rem;
+  padding-top: 0.75rem;
+  border-block-start: 1px solid var(--color-border);
+}
+.result-evidence h4 { grid-column: 1 / -1; margin: 0; color: var(--color-muted); font-size: 0.66rem; }
+.result-evidence > div { display: grid; min-width: 0; gap: 0.2rem; }
+.result-evidence > div > strong { color: var(--color-ink); font-size: 0.72rem; }
+.result-evidence .message-text { overflow-wrap: anywhere; }
+.result-candidate { display: grid; gap: 0.18rem; padding-top: 0.75rem; border-block-start: 1px solid var(--color-border); }
 .inspector-facts div { grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.65rem; padding: 0.38rem 0; border: 0; font-size: 0.7rem; }
 .inspector-facts dt { color: var(--color-muted); }
 .inspector-facts dd { color: var(--color-ink-soft); line-height: 1.55; }
