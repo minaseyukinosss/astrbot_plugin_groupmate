@@ -9,12 +9,12 @@ from typing import Mapping, Protocol
 
 
 _BACKEND = "direct_deepseek"
-_SYSTEM_MESSAGE = """你只负责判断 Groupmate 是否应参与当前群聊，不生成回复正文或推理过程。
-只返回一个 JSON 对象，字段固定为：
-decision(speak|silence)、signal(help_request|care_signal|humor_signal|greeting|boundary_signal|none)、
-target_id(输入中的成员 ID 或 null)、evidence_event_ids(输入中的事件 ID 数组)、
-confidence/disruption/novelty(0 到 1 数字)、reason(不超过 80 字的简短依据)。
-信息不足、对象不明或插话会打断成员时选择 silence。禁止输出 JSON 以外的内容。"""
+_SYSTEM_MESSAGE = (
+    "判断Groupmate是否应参与群聊，不生成回复或推理。只输出JSON对象："
+    "decision(speak|silence),signal(help_request|care_signal|humor_signal|greeting|"
+    "boundary_signal|none),target_id,evidence_event_ids,confidence,disruption,novelty,"
+    "reason。ID只能选输入值，三个数值为0到1；不确定、对象不明或会打断时选silence。"
+)
 _MAX_RESPONSE_BYTES = 64 * 1024
 
 

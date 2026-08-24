@@ -261,6 +261,8 @@ class CognitionService:
             if callable(input_size)
             else 0
         )
+        worker_backend = str(getattr(worker, "backend", "") or "")
+        worker_model = str(getattr(worker, "model", "") or "")
 
         async def invoke(admission_wait_ms: int) -> CognitiveWorkerResult:
             nonlocal queue_wait_ms, provider_started
@@ -313,6 +315,8 @@ class CognitionService:
                     provider_latency_ms=provider_latency_ms,
                     input_bytes=input_bytes,
                     timeout_ms=timeout_ms,
+                    backend=worker_backend,
+                    model=worker_model,
                 ),
                 messages=(f"worker_timeout:{worker.name}",),
             )
@@ -330,17 +334,22 @@ class CognitionService:
                     queue_wait_ms=queue_wait_ms,
                     input_bytes=input_bytes,
                     timeout_ms=timeout_ms,
+                    backend=worker_backend,
+                    model=worker_model,
                 ),
                 messages=(f"{code}:{worker.name}",),
             )
         observations = result.observations
         if result.diagnostic_code:
             code = str(result.diagnostic_code)
-            status = (
-                "MODEL_FAILED"
-                if code.startswith("model_call_failed")
-                else "INVALID_OUTPUT"
-            )
+            if code == "direct_timeout":
+                status = "TIMED_OUT"
+            elif code in {"direct_invalid_output", "invalid_worker_output"}:
+                status = "INVALID_OUTPUT"
+            elif code.startswith(("model_call_failed", "direct_")):
+                status = "MODEL_FAILED"
+            else:
+                status = "INVALID_OUTPUT"
             return _WorkerRun(
                 completed=False,
                 observations=(),
@@ -354,6 +363,8 @@ class CognitionService:
                     provider_latency_ms=result.provider_latency_ms,
                     input_bytes=result.input_bytes or input_bytes,
                     timeout_ms=timeout_ms,
+                    backend=result.backend or worker_backend,
+                    model=result.model or worker_model,
                 ),
                 messages=(f"{code}:{worker.name}",),
             )
@@ -370,6 +381,8 @@ class CognitionService:
                 provider_latency_ms=result.provider_latency_ms,
                 input_bytes=result.input_bytes or input_bytes,
                 timeout_ms=timeout_ms,
+                backend=result.backend or worker_backend,
+                model=result.model or worker_model,
             ),
         )
 
@@ -449,6 +462,8 @@ class CognitionService:
         provider_latency_ms=0,
         input_bytes=0,
         timeout_ms=0,
+        backend="",
+        model="",
     ) -> CognitiveWorkerDiagnostic:
         completed_at = int(time.time() * 1000)
         latency_ms = max(0, (time.monotonic_ns() - started) // 1_000_000)
@@ -463,6 +478,8 @@ class CognitionService:
             provider_latency_ms=max(0, int(provider_latency_ms)),
             input_bytes=max(0, int(input_bytes)),
             timeout_ms=max(0, int(timeout_ms)),
+            backend=str(backend or ""),
+            model=str(model or ""),
         )
 
     @staticmethod

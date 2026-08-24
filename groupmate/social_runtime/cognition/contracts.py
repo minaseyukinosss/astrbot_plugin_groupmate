@@ -111,6 +111,8 @@ class CognitiveWorkerDiagnostic:
     provider_latency_ms: int = 0
     input_bytes: int = 0
     timeout_ms: int = 0
+    backend: str = ""
+    model: str = ""
 
     def __post_init__(self) -> None:
         if not self.worker:
@@ -148,6 +150,8 @@ class CognitiveWorkerResult:
     diagnostic_code: str | None = None
     provider_latency_ms: int = 0
     input_bytes: int = 0
+    backend: str = ""
+    model: str = ""
 
 
 class CognitiveWorker(Protocol):
