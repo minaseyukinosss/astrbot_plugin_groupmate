@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -11,6 +12,7 @@ from groupmate.social_runtime.manager import (
     RuntimeGovernanceState,
     SocialRuntimeManager,
 )
+from groupmate.social_runtime.persistence.schema import connect_database
 from tests.factories import social_event_values
 
 
@@ -168,21 +170,65 @@ def test_external_owned_event_has_zero_frames_workers_candidates_and_outbox(tmp_
     assert calls == ()
 
 
-@pytest.mark.parametrize(
-    ("observation_kind", "expected_outcome"),
-    (
-        ("help_request", "ACT"),
-        ("humor_signal", "ACT"),
-        ("care_signal", "ACT"),
-        ("boundary_signal", "ACT"),
-        ("none", "SILENCE"),
-    ),
-)
-def test_direct_social_scenarios_are_governed_in_shadow(
-    tmp_path, observation_kind, expected_outcome
+def test_accepted_direct_evaluation_atomically_persists_safe_strategy_evidence(
+    tmp_path,
 ):
     async def scenario():
-        worker = FixedWorker("direct_interaction", observation_kind)
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        manager = SocialRuntimeManager(
+            database_path=path,
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        await manager.start()
+        await manager.ingest(_event("strategy-direct"))
+        evaluations = await manager.drain()
+        await manager.close()
+        return path, evaluations
+
+    path, evaluations = asyncio.run(scenario())
+
+    assert evaluations[0].governor_result.outcome == "ACT"
+    assert evaluations[0].participation_lane == "DIRECT_FAST"
+    with connect_database(path) as db:
+        counts = {
+            table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "attention_frames",
+                "cognitive_observations",
+                "candidate_intentions",
+                "governor_results",
+            )
+        }
+        serialized = json.dumps(
+            [
+                row[0]
+                for table, column in (
+                    ("attention_frames", "frame_json"),
+                    ("cognitive_observations", "observation_json"),
+                    ("candidate_intentions", "intention_json"),
+                    ("governor_results", "result_json"),
+                )
+                for row in db.execute(f"SELECT {column} FROM {table}")
+            ]
+        )
+    assert counts == {
+        "attention_frames": 1,
+        "cognitive_observations": 1,
+        "candidate_intentions": 1,
+        "governor_results": 1,
+    }
+    assert "chain_of_thought" not in serialized
+    assert "prompt" not in serialized
+    assert "url" not in serialized
+
+
+def test_direct_social_scenario_is_strategy_governed_without_model_worker(
+    tmp_path,
+):
+    async def scenario():
+        worker = CountingFixedWorker("direct_interaction", "none")
         manager = SocialRuntimeManager(
             database_path=tmp_path / "groupmate-social-runtime-v2.db",
             persona_id="aemeath",
@@ -199,15 +245,16 @@ def test_direct_social_scenarios_are_governed_in_shadow(
         )
         outbox_count = manager.event_store.outbox_count()
         await manager.close()
-        return manager, evaluations, journal, projection, outbox_count
+        return manager, worker.calls, evaluations, journal, projection, outbox_count
 
-    manager, evaluations, journal, projection, outbox_count = asyncio.run(
-        scenario()
+    manager, worker_calls, evaluations, journal, projection, outbox_count = (
+        asyncio.run(scenario())
     )
 
+    assert worker_calls == 0
     assert len(evaluations) == 1
     assert evaluations[0].accepted is True
-    assert evaluations[0].governor_result.outcome == expected_outcome
+    assert evaluations[0].governor_result.outcome == "ACT"
     assert evaluations[0].cognition_diagnostics
     assert all(
         item.status == "SUCCEEDED"
@@ -491,8 +538,8 @@ def test_concurrent_flush_does_not_invalidate_running_fast_frame(tmp_path):
         entered = asyncio.Event()
         release = asyncio.Event()
         ambient_worker = FixedWorker("scene_interpreter", "help_request")
-        direct_worker = BlockingFixedWorker(
-            "direct_interaction",
+        capability_worker = BlockingFixedWorker(
+            "capability_interpreter",
             "care_signal",
             entered,
             release,
@@ -504,13 +551,17 @@ def test_concurrent_flush_does_not_invalidate_running_fast_frame(tmp_path):
             enabled_groups=("885617919",),
             cognition_workers={
                 ambient_worker.name: ambient_worker,
-                direct_worker.name: direct_worker,
+                capability_worker.name: capability_worker,
             },
             clock=lambda: 101,
         )
         await manager.start()
         await manager.ingest(_event("ambient", direct=False, occurred_at=100))
-        await manager.ingest(_event("direct", direct=True, occurred_at=101))
+        capability_values = _event(
+            "capability", direct=True, occurred_at=101
+        ).to_dict()
+        capability_values["event_type"] = "capability.result"
+        await manager.ingest(SocialEventEnvelope.create(**capability_values))
         fast_task = asyncio.create_task(manager.drain())
         await entered.wait()
         ambient = await manager.drain(now=102)

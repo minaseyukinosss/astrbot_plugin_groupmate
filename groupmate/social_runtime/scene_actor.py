@@ -13,8 +13,9 @@ from .contracts import (
     RuntimeGovernanceState,
     SocialEventEnvelope,
 )
-from .cognition.contracts import CognitiveWorkerDiagnostic
+from .cognition.contracts import CognitiveObservation, CognitiveWorkerDiagnostic
 from .governor import GovernorResult
+from .intentions import CandidateIntention
 from .persistence.event_store import ClaimedEvent, SQLiteSocialEventStore
 from .world import GroupWorldProjector, GroupWorldState
 
@@ -63,6 +64,10 @@ class SceneWorkResult:
     frame_id: str
     governor_result: GovernorResult
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
+    participation_lane: str = "AMBIENT"
+    participation_diagnostics: tuple[str, ...] = ()
+    cognitive_observations: tuple[CognitiveObservation, ...] = ()
+    candidates: tuple[CandidateIntention, ...] = ()
     capture_evidence: dict[str, object] | None = None
 
 
@@ -121,6 +126,45 @@ _Command = Union[
 ]
 _SnapshotProvider = Callable[[], Awaitable[PersonaSnapshot]]
 _GovernanceProvider = Callable[[], RuntimeGovernanceState]
+
+_SAFE_PROPOSITION_KEYS = frozenset(
+    {
+        "attribute",
+        "decision",
+        "disruption_cost",
+        "novelty",
+        "repetition_cost",
+        "request",
+        "should_participate",
+        "subject_id",
+        "target_confidence",
+        "topic_confidence",
+        "topic_id",
+        "value",
+    }
+)
+
+
+def safe_cognitive_observation(
+    observation: CognitiveObservation,
+) -> dict[str, object]:
+    """Project only bounded, decision-relevant observation fields."""
+
+    proposition = {
+        key: value
+        for key, value in observation.proposition.items()
+        if key in _SAFE_PROPOSITION_KEYS
+        and (value is None or isinstance(value, (bool, int, float, str)))
+    }
+    return {
+        "worker": observation.worker,
+        "kind": observation.kind,
+        "proposition": proposition,
+        "confidence": observation.confidence,
+        "evidence_event_ids": list(observation.evidence_event_ids),
+        "scene_version": observation.scene_version,
+        "expires_at": observation.expires_at,
+    }
 
 
 class GroupSceneActor:
@@ -583,6 +627,16 @@ class GroupSceneActor:
             )
             if key in governor
         }
+        frame = next(
+            (
+                item
+                for item in request.attention_frames
+                if item.frame_id == result.frame_id
+            ),
+            None,
+        )
+        if frame is None:
+            raise ValueError("accepted evaluation requires its frozen frame")
         result_id = f"governor:{result.frame_id}"
         return {
             "effect_id": f"shadow:{result.frame_id}",
@@ -597,6 +651,16 @@ class GroupSceneActor:
             "scene_version": result.scene_version,
             "config_version": result.config_version,
             "persona_state_version": result.persona_state_version,
+            "frame": asdict(frame),
+            "participation_lane": result.participation_lane,
+            "participation_diagnostics": list(
+                result.participation_diagnostics
+            ),
+            "cognitive_observations": [
+                safe_cognitive_observation(item)
+                for item in result.cognitive_observations
+            ],
+            "candidates": [asdict(item) for item in result.candidates],
             "governor_result": safe_governor,
             "cognition_diagnostics": [
                 asdict(item) for item in result.cognition_diagnostics
@@ -788,4 +852,5 @@ __all__ = (
     "SceneWorkResult",
     "TaskResultDecision",
     "TaskResultDisposition",
+    "safe_cognitive_observation",
 )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -572,6 +573,7 @@ class SQLiteSocialEventStore:
         db: sqlite3.Connection,
         evaluation: dict[str, object],
     ) -> bool:
+        frame_id = str(evaluation.get("frame_id") or "")
         result = db.execute(
             "SELECT result_json FROM governor_results WHERE result_id=?",
             (str(evaluation.get("result_id") or ""),),
@@ -580,16 +582,50 @@ class SQLiteSocialEventStore:
             "SELECT effect_json FROM journal WHERE effect_id=?",
             (str(evaluation.get("effect_id") or ""),),
         ).fetchone()
+        frame = db.execute(
+            "SELECT frame_json FROM attention_frames WHERE frame_id=?",
+            (frame_id,),
+        ).fetchone()
+        observation_rows = {
+            str(row[0]): str(row[1])
+            for row in db.execute(
+                "SELECT observation_id, observation_json "
+                "FROM cognitive_observations WHERE frame_id=?",
+                (frame_id,),
+            ).fetchall()
+        }
+        candidate_rows = {
+            str(row[0]): str(row[1])
+            for row in db.execute(
+                "SELECT intention_id, intention_json "
+                "FROM candidate_intentions WHERE frame_id=?",
+                (frame_id,),
+            ).fetchall()
+        }
         encoded = json.dumps(evaluation, ensure_ascii=False, sort_keys=True)
-        if result is None and journal is None:
+        expected_frame, expected_observations, expected_candidates = (
+            SQLiteSocialEventStore._evaluation_evidence(evaluation)
+        )
+        if (
+            result is None
+            and journal is None
+            and frame is None
+            and not observation_rows
+            and not candidate_rows
+        ):
             return False
-        if result is None or journal is None:
+        if (
+            result is None
+            or journal is None
+            or frame is None
+            or str(result[0]) != encoded
+            or str(journal[0]) != encoded
+            or str(frame[0]) != expected_frame
+            or observation_rows != expected_observations
+            or candidate_rows != expected_candidates
+        ):
             raise JournalEffectIdentityConflict(
-                "scene work is missing part of its evaluation identity"
-            )
-        if str(result[0]) != encoded or str(journal[0]) != encoded:
-            raise JournalEffectIdentityConflict(
-                "scene work belongs to a different evaluation"
+                "scene work evaluation evidence is partial or conflicting"
             )
         return True
 
@@ -609,12 +645,80 @@ class SQLiteSocialEventStore:
             "persona_id",
             "group_id",
             "scene_version",
+            "frame",
+            "participation_lane",
             "governor_result",
         )
         if any(evaluation.get(key) in (None, "") for key in required):
             raise ValueError("shadow evaluation identity is incomplete")
         now = int(time.time())
         encoded = json.dumps(evaluation, ensure_ascii=False, sort_keys=True)
+        frame_json, observation_rows, candidate_rows = (
+            SQLiteSocialEventStore._evaluation_evidence(evaluation)
+        )
+        frame = dict(evaluation["frame"])
+        observation_values = tuple(
+            dict(item) for item in evaluation.get("cognitive_observations", ())
+        )
+        candidate_values = tuple(
+            dict(item) for item in evaluation.get("candidates", ())
+        )
+        expiries = [int(frame.get("deadline") or 0)]
+        expiries.extend(int(item.get("expires_at") or 0) for item in observation_values)
+        expiries.extend(int(item.get("expires_at") or 0) for item in candidate_values)
+        db.execute(
+            "INSERT INTO attention_frames("
+            "frame_id, persona_id, group_id, scene_version, status, frame_json, expires_at"
+            ") VALUES(?, ?, ?, ?, 'accepted', ?, ?)",
+            (
+                str(evaluation["frame_id"]),
+                str(evaluation["persona_id"]),
+                str(evaluation["group_id"]),
+                int(evaluation["scene_version"]),
+                frame_json,
+                max(expiries),
+            ),
+        )
+        for item in observation_values:
+            item_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            observation_id = SQLiteSocialEventStore._observation_id(
+                str(evaluation["frame_id"]), item_json
+            )
+            if observation_rows.get(observation_id) != item_json:
+                raise ValueError("cognitive observation identity is invalid")
+            db.execute(
+                "INSERT INTO cognitive_observations("
+                "observation_id, frame_id, persona_id, group_id, scene_version, "
+                "observation_json, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    observation_id,
+                    str(evaluation["frame_id"]),
+                    str(evaluation["persona_id"]),
+                    str(evaluation["group_id"]),
+                    int(evaluation["scene_version"]),
+                    item_json,
+                    int(item["expires_at"]),
+                ),
+            )
+        for item in candidate_values:
+            intention_id = str(item.get("intention_id") or "").strip()
+            item_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if not intention_id or candidate_rows.get(intention_id) != item_json:
+                raise ValueError("candidate intention identity is invalid")
+            db.execute(
+                "INSERT INTO candidate_intentions("
+                "intention_id, frame_id, persona_id, group_id, scene_version, "
+                "intention_json, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    intention_id,
+                    str(evaluation["frame_id"]),
+                    str(evaluation["persona_id"]),
+                    str(evaluation["group_id"]),
+                    int(evaluation["scene_version"]),
+                    item_json,
+                    int(item["expires_at"]),
+                ),
+            )
         db.execute(
             "INSERT INTO journal("
             "effect_id, source_event_id, correlation_id, causation_id, "
@@ -645,6 +749,47 @@ class SQLiteSocialEventStore:
                 now,
             ),
         )
+
+    @staticmethod
+    def _evaluation_evidence(
+        evaluation: dict[str, object],
+    ) -> tuple[str, dict[str, str], dict[str, str]]:
+        frame = evaluation.get("frame")
+        if not isinstance(frame, dict):
+            raise ValueError("accepted evaluation requires a safe frame")
+        frame_json = json.dumps(frame, ensure_ascii=False, sort_keys=True)
+        observations: dict[str, str] = {}
+        frame_id = str(evaluation.get("frame_id") or "").strip()
+        if not frame_id:
+            raise ValueError("accepted evaluation requires a frame identity")
+        for raw in evaluation.get("cognitive_observations", ()):
+            if not isinstance(raw, dict):
+                raise ValueError("cognitive observation must be a mapping")
+            encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+            observation_id = SQLiteSocialEventStore._observation_id(
+                frame_id, encoded
+            )
+            if observation_id in observations:
+                raise ValueError("duplicate cognitive observation identity")
+            observations[observation_id] = encoded
+        candidates: dict[str, str] = {}
+        for raw in evaluation.get("candidates", ()):
+            if not isinstance(raw, dict):
+                raise ValueError("candidate intention must be a mapping")
+            intention_id = str(raw.get("intention_id") or "").strip()
+            if not intention_id or intention_id in candidates:
+                raise ValueError("candidate intention identity is invalid")
+            candidates[intention_id] = json.dumps(
+                raw, ensure_ascii=False, sort_keys=True
+            )
+        return frame_json, observations, candidates
+
+    @staticmethod
+    def _observation_id(frame_id: str, encoded: str) -> str:
+        digest = hashlib.sha256(
+            f"{frame_id}\n{encoded}".encode()
+        ).hexdigest()[:24]
+        return f"observation:{digest}"
 
     @staticmethod
     def _insert_shadow_capture_evidence(

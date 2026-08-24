@@ -14,6 +14,7 @@ from .actions.contracts import ActionPlan, DeliveryBundle, PlanValidation
 from .actions.coordinator import ExecutionCoordinator
 from .cognition.contracts import (
     CognitiveContext,
+    CognitiveObservation,
     CognitiveWorker,
     CognitiveWorkerDiagnostic,
 )
@@ -31,13 +32,19 @@ from .governor import (
     SocialGovernor,
 )
 from .intentions import CandidateIntention, IntentionEngine
+from .participation import ParticipationPolicy
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import SQLitePersonaStateRepository
 from .persona.profile import GroupmatePersonaProfile
 from .replying import ReplyPlanRepository
 from .delivery.outbox import OutboxService
-from .scene_actor import GroupSceneActor, SceneWorkRequest, SceneWorkResult
+from .scene_actor import (
+    GroupSceneActor,
+    SceneWorkRequest,
+    SceneWorkResult,
+    safe_cognitive_observation,
+)
 from .supervisor import PersonaSupervisor
 from .tasks.runtime import TaskRuntime
 
@@ -70,6 +77,9 @@ class ShadowEvaluation:
     candidates: tuple[CandidateIntention, ...]
     accepted: bool
     status: str
+    participation_lane: str = "AMBIENT"
+    participation_diagnostics: tuple[str, ...] = ()
+    cognitive_observations: tuple[CognitiveObservation, ...] = ()
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
     candidate_response: str | None = None
     reply_diagnostic: str | None = None
@@ -95,6 +105,14 @@ class ShadowEvaluation:
                     event.to_dict() for event in self.context_events
                 ],
                 "candidates": [asdict(candidate) for candidate in self.candidates],
+                "participation_lane": self.participation_lane,
+                "participation_diagnostics": list(
+                    self.participation_diagnostics
+                ),
+                "cognitive_observations": [
+                    safe_cognitive_observation(item)
+                    for item in self.cognitive_observations
+                ],
                 "cognition_diagnostics": [
                     asdict(item) for item in self.cognition_diagnostics
                 ],
@@ -148,6 +166,18 @@ class ShadowEvaluation:
             CognitiveWorkerDiagnostic(**dict(item))
             for item in values.get("cognition_diagnostics", ())
         )
+        cognitive_observations = tuple(
+            CognitiveObservation.create(
+                **{
+                    **dict(item),
+                    "evidence_event_ids": tuple(
+                        item.get("evidence_event_ids", ())
+                    ),
+                    "uncertainty": (),
+                }
+            )
+            for item in values.get("cognitive_observations", ())
+        )
         return cls(
             persona_id=str(values["persona_id"]),
             request_id=str(values["request_id"]),
@@ -164,6 +194,13 @@ class ShadowEvaluation:
             candidates=tuple(candidates),
             accepted=bool(values["accepted"]),
             status=str(values["status"]),
+            participation_lane=str(
+                values.get("participation_lane") or "AMBIENT"
+            ),
+            participation_diagnostics=tuple(
+                values.get("participation_diagnostics", ())
+            ),
+            cognitive_observations=cognitive_observations,
             cognition_diagnostics=cognition_diagnostics,
             candidate_response=(
                 str(values.get("candidate_response") or "").strip() or None
@@ -263,6 +300,7 @@ class SocialRuntimeManager:
             ),
         )
         self.intentions = IntentionEngine()
+        self.participation = ParticipationPolicy(self.intentions)
         self.governor = SocialGovernor()
         self._governance_state = governance_state or RuntimeGovernanceState()
         self.fabric = SocialEventFabric(self._new_actor, self.event_store)
@@ -587,7 +625,8 @@ class SocialRuntimeManager:
         )
         blackboard = await self.cognition.evaluate(frame, context)
         decision_now = now if explicit_now else self._resolve_now(None)
-        candidates = self.intentions.propose(blackboard, decision_now)
+        proposal = self.participation.propose(frame, blackboard, decision_now)
+        candidates = proposal.candidates
         governor_result = self.governor.decide(
             candidates,
             GovernorContext(
@@ -605,7 +644,7 @@ class SocialRuntimeManager:
                 platform_available=request.governance_snapshot.platform_available,
                 capability_allowed=request.governance_snapshot.capability_allowed,
                 force_observe=(
-                    blackboard.degraded
+                    (blackboard.degraded and not proposal.allow_degraded)
                     or not self._participation_allows(frame, blackboard)
                 ),
                 rate_limited_until=request.governance_snapshot.rate_limited_until,
@@ -630,6 +669,11 @@ class SocialRuntimeManager:
             candidates=candidates,
             accepted=True,
             status="accepted",
+            participation_lane=proposal.lane.value,
+            participation_diagnostics=proposal.diagnostics,
+            cognitive_observations=tuple(
+                entry.observation for entry in blackboard.entries
+            ),
             cognition_diagnostics=blackboard.worker_diagnostics,
         )
         result = SceneWorkResult(
@@ -640,6 +684,12 @@ class SocialRuntimeManager:
             persona_state_version=frame.persona_state_version,
             frame_id=frame.frame_id,
             governor_result=governor_result,
+            participation_lane=proposal.lane.value,
+            participation_diagnostics=proposal.diagnostics,
+            cognitive_observations=tuple(
+                entry.observation for entry in blackboard.entries
+            ),
+            candidates=candidates,
             cognition_diagnostics=blackboard.worker_diagnostics,
             capture_evidence=evaluation.to_capture_evidence(),
         )

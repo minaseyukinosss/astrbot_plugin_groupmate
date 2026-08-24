@@ -9,11 +9,12 @@ from groupmate.social_runtime.contracts import (
     SocialEventEnvelope,
 )
 from groupmate.social_runtime.manager import SocialRuntimeManager
+from groupmate.social_runtime.persistence.schema import connect_database
 from tests.factories import social_event_values
 
 
 class BlockingWorker:
-    name = "direct_interaction"
+    name = "capability_interpreter"
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -26,7 +27,14 @@ class BlockingWorker:
             CognitiveObservation.create(
                 worker=self.name,
                 kind="help_request",
-                proposition={"subject_id": "u1", "topic_id": "m1"},
+                proposition={
+                    "subject_id": "u1",
+                    "topic_id": (
+                        frame.focus_topic_ids[0]
+                        if frame.focus_topic_ids
+                        else None
+                    ),
+                },
                 confidence=1.0,
                 evidence_event_ids=("qq:m1",),
                 scene_version=context.scene_version,
@@ -37,14 +45,21 @@ class BlockingWorker:
 
 
 class ImmediateWorker:
-    name = "direct_interaction"
+    name = "capability_interpreter"
 
     async def observe(self, frame, context):
         return (
             CognitiveObservation.create(
                 worker=self.name,
                 kind="help_request",
-                proposition={"subject_id": "u1", "topic_id": "m1"},
+                proposition={
+                    "subject_id": "u1",
+                    "topic_id": (
+                        frame.focus_topic_ids[0]
+                        if frame.focus_topic_ids
+                        else None
+                    ),
+                },
                 confidence=1.0,
                 evidence_event_ids=("qq:m1",),
                 scene_version=context.scene_version,
@@ -76,15 +91,15 @@ class ImmediateAmbientWorker:
 
 
 def _direct_event():
-    return SocialEventEnvelope.create(
-        **social_event_values(
-            event_id="qq:m1",
-            source_message_id="m1",
-            actor_id="u1",
-            correlation_id="corr:m1",
-            payload={"text": "帮我看看", "direct_address": True},
-        )
+    values = social_event_values(
+        event_id="qq:m1",
+        source_message_id="m1",
+        actor_id="u1",
+        correlation_id="corr:m1",
+        payload={"text": "帮我看看", "direct_address": True},
     )
+    values["event_type"] = "capability.result"
+    return SocialEventEnvelope.create(**values)
 
 
 def _ambient_event():
@@ -123,16 +138,32 @@ def test_config_change_while_worker_runs_discards_stale_act(tmp_path):
         worker.release.set()
         evaluations = await draining
         journal = manager.event_store.journal("corr:m1")
+        with connect_database(manager.event_store.path) as db:
+            evidence_counts = {
+                table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "attention_frames",
+                    "cognitive_observations",
+                    "candidate_intentions",
+                    "governor_results",
+                )
+            }
         await manager.close()
-        return evaluations, journal
+        return evaluations, journal, evidence_counts
 
-    evaluations, journal = asyncio.run(scenario())
+    evaluations, journal, evidence_counts = asyncio.run(scenario())
 
     assert len(evaluations) == 1
     assert evaluations[0].governor_result.outcome == "ACT"
     assert evaluations[0].accepted is False
     assert evaluations[0].status == "stale"
     assert all(item.effect_type != "shadow.governor_evaluated" for item in journal)
+    assert evidence_counts == {
+        "attention_frames": 0,
+        "cognitive_observations": 0,
+        "candidate_intentions": 0,
+        "governor_results": 0,
+    }
 
 
 def test_scene_change_while_worker_runs_discards_stale_act(tmp_path):
