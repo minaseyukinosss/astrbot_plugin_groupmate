@@ -33,11 +33,15 @@
       understanding: {
         status: options.understood ? "READY" : "PENDING",
         summary: options.understanding || "尚未进入理解链路",
+        diagnostics: options.diagnostics || [],
       },
       decision: {
         outcome: options.outcome || "PENDING",
+        pre_gate_outcome: options.outcome || "PENDING",
         label: options.decision || "等待判断",
         reasons: options.reasons || [],
+        candidate_response: options.candidateResponse || null,
+        reply_diagnostic: options.replyDiagnostic || null,
       },
       delivery: {
         mode: options.mode || "SHADOW",
@@ -91,15 +95,30 @@
       }),
       trace("a1", 12, {
         name: "阿杰",
-        message: "产品今晚能上线吗？如果有风险也一起说下。",
+        message: "@小雨 · 产品今晚能上线吗？如果有风险也一起说下。",
+        parts: [
+          {
+            kind: "at",
+            label: "@小雨",
+            display_name: "小雨",
+            member_ref: "member:b2",
+            avatar_ref: "participant:b2",
+          },
+          { kind: "text", text: " 产品今晚能上线吗？如果有风险也一起说下。" },
+        ],
         route: "进入 Groupmate",
         understood: true,
         understanding: "成员在询问上线进度，并希望同时了解发布风险",
+        diagnostics: [
+          { worker: "direct_interaction", status: "SUCCEEDED", latency_ms: 118, diagnostic_code: null },
+          { worker: "social_risk", status: "SUCCEEDED", latency_ms: 96, diagnostic_code: null },
+        ],
         outcome: "ACT",
         decision: "准备回复",
         reasons: ["这是一个明确问题，当前上下文足够回答"],
-        status: "OBSERVED",
-        result: "SHADOW：已生成方案但不会发送",
+        candidateResponse: "当前还有两项发布风险需要确认，建议确认后再上线。",
+        status: "BLOCKED_BY_SHADOW",
+        result: "SHADOW：已完成判断，未发送",
         stages: ["NapCat 消息已到达 AstrBot", "AstrBot 已路由至 Groupmate", "观察群聊上下文", "已理解当前群聊场景", "准备回复", "回复方案已生成"],
       }),
       trace("b2", 58, {

@@ -61,6 +61,16 @@ def test_layout_preserves_product_navigation_at_normal_iframe_width():
     assert ".nav-label" in layout
 
 
+def test_product_palette_is_neutral_with_green_reserved_for_status():
+    tokens = (PAGE / "styles" / "tokens.css").read_text(encoding="utf-8")
+    components = (PAGE / "styles" / "components.css").read_text(encoding="utf-8")
+
+    assert "--color-canvas: oklch(0.965 0.002 260)" in tokens
+    assert "--color-surface: oklch(0.965 0.002 260)" in tokens
+    assert ".sidebar nav a[aria-current]" in components
+    assert "background: var(--color-surface-active)" in components
+
+
 def test_runtime_is_the_single_message_trace_product_view():
     runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
 
@@ -84,6 +94,13 @@ def test_message_presenter_uses_non_text_parts_instead_of_generic_placeholder():
         "onlyMedia": "图片 · 语音",
         "mixed": "看看 · 图片",
     }
+
+
+def test_full_message_renderer_keeps_segment_order():
+    source = (PAGE / "components" / "message.js").read_text(encoding="utf-8")
+
+    assert "for (const part of parts)" in source
+    assert 'parts.filter((part) => part?.kind !== "text")' not in source
 
 
 def test_message_presenter_formats_media_sizes_for_people():

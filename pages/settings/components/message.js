@@ -45,18 +45,29 @@ export function renderMessageContent(message = {}, { compact = false } = {}) {
   const children = [];
   if (compact) {
     children.push(element("small", { className: "two-line", text: messageSummary(message) }));
+    const compactMedia = [];
+    for (const part of parts) {
+      if (part?.kind !== "text") compactMedia.push(mediaPart(part, true));
+    }
+    if (compactMedia.length) {
+      children.push(element("div", { className: "message-parts message-parts-compact" }, compactMedia));
+    }
   } else {
+    let mediaRun = [];
+    const flushMedia = () => {
+      if (!mediaRun.length) return;
+      children.push(element("div", { className: "message-parts" }, mediaRun));
+      mediaRun = [];
+    };
     for (const part of parts) {
       if (part?.kind === "text") {
+        flushMedia();
         children.push(element("p", { className: "message-text", text: part.text || "" }));
+      } else if (part) {
+        mediaRun.push(mediaPart(part, false));
       }
     }
-  }
-  const media = parts.filter((part) => part?.kind !== "text");
-  if (media.length) {
-    children.push(element("div", {
-      className: compact ? "message-parts message-parts-compact" : "message-parts",
-    }, media.map((part) => mediaPart(part, compact))));
+    flushMedia();
   }
   return element("div", {
     className: compact ? "message-content message-content-compact" : "message-content",
