@@ -18,6 +18,22 @@ _SIGNALS = {
     "boundary_signal",
     "none",
 }
+_REQUIRED_VERDICT_FIELDS = {
+    "decision",
+    "signal",
+    "target_id",
+    "evidence_event_ids",
+    "confidence",
+    "disruption",
+    "novelty",
+    "reason",
+}
+
+
+class _VerdictRejected(ValueError):
+    def __init__(self, code: str) -> None:
+        self.code = str(code)
+        super().__init__(self.code)
 
 
 class DirectAmbientWorker:
@@ -57,6 +73,15 @@ class DirectAmbientWorker:
         try:
             observations = self._observations(
                 response.verdict, frame, context
+            )
+        except _VerdictRejected as exc:
+            return CognitiveWorkerResult(
+                (),
+                exc.code,
+                provider_latency_ms=response.latency_ms,
+                input_bytes=response.request_bytes or fallback_bytes,
+                backend=response.backend or self.backend,
+                model=response.model or self.model,
             )
         except (KeyError, TypeError, ValueError):
             return CognitiveWorkerResult(
@@ -228,20 +253,24 @@ class DirectAmbientWorker:
         context: CognitiveContext,
     ) -> tuple[CognitiveObservation, ...]:
         if not isinstance(verdict, Mapping):
-            raise TypeError
+            raise _VerdictRejected("direct_response_shape_invalid")
+        if not _REQUIRED_VERDICT_FIELDS <= set(verdict):
+            raise _VerdictRejected("direct_missing_field")
         decision = cls._text(verdict["decision"], 16).lower()
         signal = cls._text(verdict["signal"], 40).lower()
-        if decision not in {"speak", "silence"} or signal not in _SIGNALS:
-            raise ValueError
+        if decision not in {"speak", "silence"}:
+            raise _VerdictRejected("direct_invalid_decision")
+        if signal not in _SIGNALS:
+            raise _VerdictRejected("direct_invalid_signal")
         if decision == "speak" and signal == "none":
-            raise ValueError
-        target_value = verdict.get("target_id")
+            raise _VerdictRejected("direct_speak_without_signal")
+        target_value = verdict["target_id"]
         target_id = cls._text(target_value, 80) or None
         if target_id is not None and target_id not in frame.candidate_audiences:
-            raise ValueError
+            raise _VerdictRejected("direct_unknown_target")
         evidence_value = verdict["evidence_event_ids"]
         if not isinstance(evidence_value, (list, tuple)):
-            raise TypeError
+            raise _VerdictRejected("direct_unknown_evidence")
         evidence = tuple(
             dict.fromkeys(
                 value
@@ -251,12 +280,18 @@ class DirectAmbientWorker:
                 if value
             )
         )
-        if not evidence or not set(evidence) <= set(frame.focus_event_ids):
-            raise ValueError
+        if not evidence:
+            if decision == "speak":
+                raise _VerdictRejected("direct_empty_speak_evidence")
+            if not frame.focus_event_ids:
+                raise _VerdictRejected("direct_unknown_evidence")
+            evidence = (frame.focus_event_ids[-1],)
+        if not set(evidence) <= set(frame.focus_event_ids):
+            raise _VerdictRejected("direct_unknown_evidence")
         confidence = cls._unit_number(verdict["confidence"])
         disruption = cls._unit_number(verdict["disruption"])
         novelty = cls._unit_number(verdict["novelty"])
-        reason = cls._text(verdict.get("reason"), 80)
+        reason = cls._text(verdict["reason"], 80)
         topic_id = next(iter(frame.focus_topic_ids), None)
         common = {
             "worker": cls.name,
@@ -331,10 +366,13 @@ class DirectAmbientWorker:
     @staticmethod
     def _unit_number(value: object) -> float:
         if isinstance(value, bool):
-            raise TypeError
-        number = float(value)
+            raise _VerdictRejected("direct_invalid_score")
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise _VerdictRejected("direct_invalid_score") from None
         if not math.isfinite(number) or not 0.0 <= number <= 1.0:
-            raise ValueError
+            raise _VerdictRejected("direct_invalid_score")
         return number
 
 

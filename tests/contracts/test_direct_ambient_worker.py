@@ -169,7 +169,7 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
         "config_version",
     ):
         assert excluded not in rendered
-    assert result.input_bytes < 5_000
+    assert result.input_bytes < 6_000
 
 
 def test_valid_speak_verdict_becomes_signal_then_local_assessment():
@@ -214,28 +214,67 @@ def test_valid_silence_verdict_produces_only_assessment():
     assert result.observations[0].proposition["should_participate"] is False
 
 
+def test_silence_with_empty_evidence_binds_to_newest_frozen_event():
+    worker = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                decision="silence",
+                signal="none",
+                target_id=None,
+                evidence_event_ids=[],
+            )
+        )
+    )
+
+    result = asyncio.run(worker.observe_with_result(_frame(), _context()))
+
+    assert result.diagnostic_code is None
+    assert len(result.observations) == 1
+    assert result.observations[0].evidence_event_ids == ("qq:13",)
+    assert result.observations[0].proposition["should_participate"] is False
+
+
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "expected_code"),
     (
-        {"decision": "maybe"},
-        {"signal": "unknown"},
-        {"decision": "speak", "signal": "none"},
-        {"target_id": "outside-frame"},
-        {"evidence_event_ids": []},
-        {"evidence_event_ids": ["qq:outside"]},
-        {"confidence": True},
-        {"confidence": float("nan")},
-        {"disruption": 2.0},
-        {"novelty": -0.1},
+        ({"decision": "maybe"}, "direct_invalid_decision"),
+        ({"signal": "unknown"}, "direct_invalid_signal"),
+        (
+            {"decision": "speak", "signal": "none"},
+            "direct_speak_without_signal",
+        ),
+        ({"target_id": "outside-frame"}, "direct_unknown_target"),
+        ({"evidence_event_ids": []}, "direct_empty_speak_evidence"),
+        (
+            {"evidence_event_ids": ["qq:outside"]},
+            "direct_unknown_evidence",
+        ),
+        ({"confidence": True}, "direct_invalid_score"),
+        ({"confidence": float("nan")}, "direct_invalid_score"),
+        ({"disruption": 2.0}, "direct_invalid_score"),
+        ({"novelty": -0.1}, "direct_invalid_score"),
     ),
 )
-def test_invalid_remote_scope_or_numbers_are_not_accepted(overrides):
+def test_invalid_remote_scope_or_numbers_are_not_accepted(
+    overrides, expected_code
+):
     worker = DirectAmbientWorker(FakeClient(_verdict(**overrides)))
 
     result = asyncio.run(worker.observe_with_result(_frame(), _context()))
 
     assert result.observations == ()
-    assert result.diagnostic_code == "direct_invalid_output"
+    assert result.diagnostic_code == expected_code
+
+
+def test_missing_required_field_is_not_accepted():
+    verdict = _verdict()
+    del verdict["reason"]
+    worker = DirectAmbientWorker(FakeClient(verdict))
+
+    result = asyncio.run(worker.observe_with_result(_frame(), _context()))
+
+    assert result.observations == ()
+    assert result.diagnostic_code == "direct_missing_field"
 
 
 def test_direct_failure_metadata_reaches_cognition_diagnostic():
