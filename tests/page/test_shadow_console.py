@@ -47,6 +47,14 @@ def test_runtime_console_supports_immediate_refresh_without_losing_filters():
     assert "renderRuntime(select, command, refreshData)" in runtime
 
 
+def test_manual_refresh_keeps_existing_data_visible_and_reports_partial_failure():
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+
+    assert 'elements.workspace.setAttribute("aria-busy", "true")' not in app
+    assert "刷新完成，但" in app
+    assert "failedProjections" in app
+
+
 def test_inspector_explains_shadow_pre_gate_result_and_cognition_diagnostics():
     inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
 

@@ -1,4 +1,5 @@
 const POLL_INTERVAL_MS = 15_000;
+const QUERY_TIMEOUT_MS = 8_000;
 
 export class ApiBridge {
   constructor(pageBridge = window.AstrBotPluginPage) {
@@ -12,8 +13,16 @@ export class ApiBridge {
     return this.bridge.ready();
   }
 
-  query(endpoint, params = {}) {
-    return this.bridge.apiGet(endpoint, params);
+  query(endpoint, params = {}, { timeoutMs = QUERY_TIMEOUT_MS } = {}) {
+    const deadline = Math.max(1, Number(timeoutMs) || QUERY_TIMEOUT_MS);
+    let timer;
+    const request = Promise.resolve().then(() => this.bridge.apiGet(endpoint, params));
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`${endpoint} 请求超时`));
+      }, deadline);
+    });
+    return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
   }
 
   command(body) {
@@ -89,6 +98,9 @@ export class ApiBridge {
     }
     if (message.includes("400")) {
       return { status: 400, code: "invalid", impact: "输入未通过服务端校验" };
+    }
+    if (message.includes("超时")) {
+      return { status: 408, code: "timeout", impact: "请求超时，页面已停止等待，请稍后重试" };
     }
     return { status: 500, code: "failed", impact: message };
   }

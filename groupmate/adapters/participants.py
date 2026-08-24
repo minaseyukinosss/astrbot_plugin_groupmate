@@ -45,7 +45,28 @@ class ParticipantDirectory:
         sender = event.payload.get("sender")
         sender_map = sender if isinstance(sender, Mapping) else {}
         display_name = " ".join(str(sender_map.get("name") or "群成员").split())[:48]
-        identity = self._digest(event.group_id, actor_id or display_name)
+        return self.remember_actor(
+            persona_id=event.persona_id,
+            group_id=event.group_id,
+            actor_id=actor_id,
+            display_name=display_name,
+            updated_at=int(event.received_at),
+        )
+
+    def remember_actor(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        actor_id: str,
+        display_name: str,
+        updated_at: int,
+    ) -> dict[str, str]:
+        normalized_actor_id = str(actor_id or "").strip()
+        normalized_name = " ".join(
+            str(display_name or "群成员").split()
+        )[:48]
+        identity = self._digest(group_id, normalized_actor_id or normalized_name)
         avatar_ref = f"participant:{identity}"
         member_ref = f"member:{identity}"
         with connect_database(self.path) as db:
@@ -57,16 +78,16 @@ class ParticipantDirectory:
                 (
                     avatar_ref,
                     member_ref,
-                    event.persona_id,
-                    event.group_id,
-                    actor_id,
-                    display_name,
-                    int(event.received_at),
+                    str(persona_id),
+                    str(group_id),
+                    normalized_actor_id,
+                    normalized_name,
+                    int(updated_at),
                 ),
             )
         return {
             "member_ref": member_ref,
-            "display_name": display_name,
+            "display_name": normalized_name,
             "avatar_ref": avatar_ref,
         }
 

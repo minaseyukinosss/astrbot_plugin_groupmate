@@ -210,3 +210,37 @@ console.log(JSON.stringify({{calls, states, polls}}));
     ]
     assert ["event", None] not in value["calls"]
     assert value["polls"] == 2
+
+
+def test_page_bridge_rejects_a_hanging_projection_query_within_its_deadline():
+    source = (
+        __import__("pathlib").Path(__file__).parents[2]
+        / "pages"
+        / "settings"
+        / "bridge.js"
+    ).read_bytes()
+    encoded = base64.b64encode(source).decode("ascii")
+    script = f"""
+const module = await import('data:text/javascript;base64,{encoded}');
+const fake = {{ apiGet: async () => new Promise(() => {{}}) }};
+const bridge = new module.ApiBridge(fake);
+const result = await Promise.race([
+  bridge.query('traces', {{}}, {{timeoutMs: 10}})
+    .then(() => ({{kind:'resolved'}}))
+    .catch((error) => ({{kind:'rejected', message:String(error.message || error)}})),
+  new Promise((resolve) => setTimeout(() => resolve({{kind:'outer_timeout'}}), 100)),
+]);
+console.log(JSON.stringify(result));
+"""
+
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    value = json.loads(result.stdout)
+
+    assert value["kind"] == "rejected"
+    assert "traces" in value["message"]
+    assert "超时" in value["message"]

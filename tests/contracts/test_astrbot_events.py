@@ -91,6 +91,70 @@ def test_translator_reads_astrbot_event_accessors_and_raw_message():
     assert translated.payload["sender"]["name"] == "小夏"
 
 
+def test_translator_enriches_raw_at_and_reply_from_astrbot_components():
+    class AtComponent:
+        qq = "123"
+        name = "仲手天尊"
+
+        @staticmethod
+        def toDict():
+            return {"type": "at", "data": {"qq": "123"}}
+
+    class ReplyComponent:
+        id = "50"
+        sender_id = "123"
+        sender_nickname = "仲手天尊"
+        time = 9
+        message_str = "我再也不相信傻呗了"
+
+        @staticmethod
+        def toDict():
+            return {"type": "reply", "data": {"id": "50"}}
+
+    class PlainComponent:
+        text = " 昨"
+
+        @staticmethod
+        def toDict():
+            return {"type": "text", "data": {"text": " 昨"}}
+
+    class MessageObject:
+        self_id = "bot-1"
+        raw_message = {
+            "message_id": "51",
+            "group_id": "885617919",
+            "user_id": "42",
+            "time": 10,
+            "sender": {"card": "连金怪"},
+            "message": [
+                {"type": "reply", "data": {"id": "50"}},
+                {"type": "at", "data": {"qq": "123"}},
+                {"type": "text", "data": {"text": " 昨"}},
+            ],
+        }
+        message = [ReplyComponent(), AtComponent(), PlainComponent()]
+
+    class Event:
+        message_obj = MessageObject()
+        message_str = "昨"
+
+    translated = AstrBotEventTranslator("aemeath").translate(Event())
+
+    assert translated.payload["segments"][0]["data"] == {
+        "id": "50",
+        "sender_id": "123",
+        "sender_nickname": "仲手天尊",
+        "time": 9,
+        "message_str": "我再也不相信傻呗了",
+    }
+    assert translated.payload["segments"][1]["data"] == {
+        "qq": "123",
+        "name": "仲手天尊",
+    }
+    assert translated.payload["reply_to_actor_id"] == "123"
+    assert translated.payload["reply_to_bot"] is False
+
+
 def test_translator_preserves_astrbot_route_and_reply_defaults():
     class MessageObject:
         self_id = "bot-1"

@@ -88,3 +88,30 @@ def test_low_priority_handler_marks_the_existing_trace_entered(tmp_path):
     assert len(view["items"]) == 1
     assert view["items"][0]["summary"]["route"]["owner"] == "GROUPMATE"
     assert len(bridge.manager.ingested) == 1
+
+
+def test_trace_uses_astrbot_resolved_name_for_previously_unseen_at_member(tmp_path):
+    class AtComponent:
+        qq = "123"
+        name = "仲手天尊"
+
+        @staticmethod
+        def toDict():
+            return {"type": "at", "data": {"qq": "123"}}
+
+    event = _FakeAstrEvent("11", "昨")
+    event.message_obj.raw_message["message"] = [
+        {"type": "at", "data": {"qq": "123"}},
+        {"type": "text", "data": {"text": "昨"}},
+    ]
+    event.message_obj.message = [AtComponent()]
+    bridge = _bridge_for(tmp_path)
+
+    asyncio.run(bridge.observe_event(event))
+
+    message = bridge.trace_repository.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["message"]
+    assert message["parts"][0]["label"] == "@仲手天尊"
+    assert message["parts"][0]["display_name"] == "仲手天尊"
+    assert "123" not in str(message)

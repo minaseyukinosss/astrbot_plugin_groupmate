@@ -257,22 +257,34 @@ function render(snapshot) {
   renderWorkspace(activeRoute);
 }
 
-async function loadWorkspace(route = activeRoute) {
+async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
   const projections = WORKSPACE_PROJECTIONS[route.path] || [route.endpoint];
-  await Promise.all(projections.map(async (projection) => {
+  const results = await Promise.all(projections.map(async (projection) => {
     try {
-      store.merge(await bridge.query(projection, scopeParams()));
+      store.merge(await bridge.query(projection, scopeParams(), { timeoutMs }));
+      return { projection, error: null };
     } catch (error) {
-      store.setError(ApiBridge.describeError(error));
+      return { projection, error };
     }
   }));
+  const failedProjections = results.filter((result) => result.error);
+  if (failedProjections.length) {
+    const detail = failedProjections.map((result) => result.projection).join("、");
+    store.setError({
+      status: 408,
+      code: "refresh_incomplete",
+      impact: `以下数据未能及时更新：${detail}。现有数据仍可继续查看。`,
+    });
+  } else {
+    store.setError(null);
+  }
+  return { failedProjections };
 }
 
 async function refreshWorkspaceData() {
   if (refreshRequest) return refreshRequest;
-  elements.workspace.setAttribute("aria-busy", "true");
-  refreshRequest = loadWorkspace(activeRoute)
-    .then(() => {
+  refreshRequest = loadWorkspace(activeRoute, { timeoutMs: 4_000 })
+    .then(({ failedProjections }) => {
       const current = store.snapshot().connection;
       const timestamp = new Intl.DateTimeFormat(locale, {
         hour: "2-digit",
@@ -280,11 +292,13 @@ async function refreshWorkspaceData() {
         second: "2-digit",
         hour12: false,
       }).format(new Date());
-      store.setConnection({ ...current, impact: `数据已刷新 · ${timestamp}` });
+      const impact = failedProjections.length
+        ? `刷新完成，但 ${failedProjections.length} 项未更新 · ${timestamp}`
+        : `数据已刷新 · ${timestamp}`;
+      store.setConnection({ ...current, impact });
     })
     .finally(() => {
       refreshRequest = null;
-      elements.workspace.setAttribute("aria-busy", "false");
     });
   return refreshRequest;
 }

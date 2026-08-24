@@ -76,6 +76,7 @@ class MessageTraceRepository:
             return
         now = int(now)
         mode = self._mode_value(runtime_mode)
+        self._remember_segment_participants(event)
         participant = self.participants.remember(event)
         owner = str(event.payload.get("interaction_owner") or "UNKNOWN").upper()
         external = owner == "EXTERNAL_PLUGIN"
@@ -138,6 +139,40 @@ class MessageTraceRepository:
             "status": "DONE",
         }
         self._create_or_update(event, summary, stage, now)
+
+    def _remember_segment_participants(self, event: SocialEventEnvelope) -> None:
+        segments = event.payload.get("segments")
+        if not isinstance(segments, (list, tuple)) or not event.group_id:
+            return
+        for segment in segments:
+            if not isinstance(segment, Mapping):
+                continue
+            kind = str(segment.get("type") or "").lower()
+            data = segment.get("data")
+            if not isinstance(data, Mapping):
+                continue
+            if kind == "at":
+                actor_id = str(data.get("qq") or "").strip()
+                display_name = str(data.get("name") or "").strip()
+                if actor_id.lower() == "all":
+                    continue
+            elif kind == "reply":
+                actor_id = str(
+                    data.get("sender_id") or data.get("qq") or ""
+                ).strip()
+                display_name = str(
+                    data.get("sender_nickname") or ""
+                ).strip()
+            else:
+                continue
+            if actor_id and display_name:
+                self.participants.remember_actor(
+                    persona_id=event.persona_id,
+                    group_id=event.group_id,
+                    actor_id=actor_id,
+                    display_name=display_name,
+                    updated_at=int(event.received_at),
+                )
 
     def mark_entered(self, event_id: str, now: int) -> None:
         def mutate(summary: dict[str, object]) -> None:
