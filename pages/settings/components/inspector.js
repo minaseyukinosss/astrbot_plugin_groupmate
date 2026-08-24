@@ -1,6 +1,7 @@
 import { element, textValue } from "./dom.js";
 import {
   candidateSummary,
+  cognitionBackendLabel,
   cognitionDiagnosticExplanation,
   cognitionDiagnosticMetricRows,
   cognitionDiagnosticStatusLabel,
@@ -70,6 +71,7 @@ function cognitionDiagnostics(diagnostics = []) {
         element("span", { text: cognitionDiagnosticStatusLabel(diagnostic.status) }),
       ]),
       definitionRows([
+        ["认知后端", cognitionBackendLabel(diagnostic)],
         ["耗时", formatTraceDuration(diagnostic.latency_ms)],
         ...cognitionDiagnosticMetricRows(diagnostic),
         ["说明", cognitionDiagnosticExplanation(diagnostic)],

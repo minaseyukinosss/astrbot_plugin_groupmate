@@ -166,6 +166,54 @@ def test_timeout_explanation_distinguishes_queue_from_provider_wait():
     }
 
 
+def test_direct_cognition_presenter_explains_backend_and_safe_failures():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "backend: presenter.cognitionBackendLabel({backend:'direct_deepseek',"
+        "model:'deepseek-v4-flash'}),"
+        "timeout: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_timeout',backend:'direct_deepseek'}),"
+        "auth: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_auth_failed',backend:'direct_deepseek'}),"
+        "rate: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_rate_limited',backend:'direct_deepseek'}),"
+        "network: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_network_failed',backend:'direct_deepseek'}),"
+        "upstream: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_upstream_failed',backend:'direct_deepseek'}),"
+        "invalid: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_invalid_output',backend:'direct_deepseek'}),"
+        "metrics: presenter.cognitionDiagnosticMetricRows({"
+        "backend:'direct_deepseek',provider_latency_ms:1300})"
+        "}));"
+    )
+
+    assert result == {
+        "backend": "直连 DeepSeek · deepseek-v4-flash",
+        "timeout": "直连模型在 6 秒内未返回，本次已转为保守观察。",
+        "auth": "认知模型鉴权失败，请管理员检查 API Key。",
+        "rate": "认知模型触发限流，本次已转为保守观察。",
+        "network": "无法连接认知模型服务，本次已转为保守观察。",
+        "upstream": "认知模型服务暂时异常，本次已转为保守观察。",
+        "invalid": "认知模型返回内容未通过本地校验，本次未采用。",
+        "metrics": [["模型请求", "1 秒"]],
+    }
+
+
+def test_legacy_cognition_diagnostic_keeps_provider_wording():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "backend: presenter.cognitionBackendLabel({}),"
+        "metrics: presenter.cognitionDiagnosticMetricRows({provider_latency_ms:1300})"
+        "}));"
+    )
+
+    assert result == {
+        "backend": "",
+        "metrics": [["Provider 等待", "1 秒"]],
+    }
+
+
 def test_trace_presenter_detects_cognition_failure_separately_from_delivery():
     result = _run_presenter(
         "console.log(JSON.stringify(["

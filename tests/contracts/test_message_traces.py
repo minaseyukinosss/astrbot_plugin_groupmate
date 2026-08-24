@@ -80,6 +80,8 @@ def _evaluation(event: SocialEventEnvelope, outcome: str):
                 provider_latency_ms=100,
                 input_bytes=2048,
                 timeout_ms=8000,
+                backend="direct_deepseek",
+                model="deepseek-v4-flash",
             ),
         ),
     )
@@ -180,6 +182,8 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
         "provider_latency_ms": 100,
         "input_bytes": 2048,
         "timeout_ms": 8000,
+        "backend": "direct_deepseek",
+        "model": "deepseek-v4-flash",
     }
     assert summary["understanding"]["candidate_count"] == 1
     assert summary["understanding"]["candidate_source"] == "deterministic"

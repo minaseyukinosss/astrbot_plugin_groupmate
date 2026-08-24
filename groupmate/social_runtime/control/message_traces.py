@@ -230,6 +230,8 @@ class MessageTraceRepository:
                 "timeout_ms": max(
                     0, int(getattr(item, "timeout_ms", 0) or 0)
                 ),
+                "backend": str(getattr(item, "backend", "") or ""),
+                "model": str(getattr(item, "model", "") or ""),
             }
             for item in tuple(getattr(evaluation, "cognition_diagnostics", ()) or ())
         ]

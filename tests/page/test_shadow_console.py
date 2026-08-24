@@ -84,6 +84,7 @@ def test_inspector_explains_shadow_pre_gate_result_and_cognition_diagnostics():
         "SHADOW 前判断",
         "候选回复",
         "认知模块",
+        "认知后端",
         "耗时",
         "Provider 等待",
         "输入大小",
@@ -122,6 +123,8 @@ def test_preview_fixture_exercises_strategy_and_timeout_states():
         "candidate_count",
         "candidate_source",
         "participation_diagnostics",
-        "worker_timeout",
+        "direct_deepseek",
+        "deepseek-v4-flash",
+        "direct_timeout",
     ):
         assert value in source

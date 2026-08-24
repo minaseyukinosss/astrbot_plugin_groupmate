@@ -175,6 +175,12 @@ export function cognitionWorkerLabel(value) {
   return COGNITION_WORKER_LABELS[String(value || "")] || "其他认知模块";
 }
 
+export function cognitionBackendLabel(diagnostic = {}) {
+  if (String(diagnostic.backend || "") !== "direct_deepseek") return "";
+  const model = String(diagnostic.model || "").trim();
+  return model ? `直连 DeepSeek · ${model}` : "直连 DeepSeek";
+}
+
 export function cognitionDiagnosticStatusLabel(value) {
   const normalized = String(value || "").toUpperCase();
   return COGNITION_DIAGNOSTIC_STATUS_LABELS[normalized] || "状态未知";
@@ -182,6 +188,24 @@ export function cognitionDiagnosticStatusLabel(value) {
 
 export function cognitionDiagnosticExplanation(diagnostic = {}) {
   const code = String(diagnostic.diagnostic_code || "");
+  if (code === "direct_timeout") {
+    return "直连模型在 6 秒内未返回，本次已转为保守观察。";
+  }
+  if (code === "direct_auth_failed") {
+    return "认知模型鉴权失败，请管理员检查 API Key。";
+  }
+  if (code === "direct_rate_limited") {
+    return "认知模型触发限流，本次已转为保守观察。";
+  }
+  if (code === "direct_network_failed") {
+    return "无法连接认知模型服务，本次已转为保守观察。";
+  }
+  if (code === "direct_upstream_failed") {
+    return "认知模型服务暂时异常，本次已转为保守观察。";
+  }
+  if (code === "direct_invalid_output") {
+    return "认知模型返回内容未通过本地校验，本次未采用。";
+  }
   if (code === "worker_timeout") {
     const hasProviderMetric = diagnostic.provider_latency_ms !== undefined
       && diagnostic.provider_latency_ms !== null;
@@ -221,7 +245,10 @@ export function cognitionDiagnosticMetricRows(diagnostic = {}) {
     rows.push(["排队等待", formatTraceDuration(diagnostic.queue_wait_ms)]);
   }
   if (Number(diagnostic.provider_latency_ms) > 0) {
-    rows.push(["Provider 等待", formatTraceDuration(diagnostic.provider_latency_ms)]);
+    rows.push([
+      String(diagnostic.backend || "") === "direct_deepseek" ? "模型请求" : "Provider 等待",
+      formatTraceDuration(diagnostic.provider_latency_ms),
+    ]);
   }
   if (Number(diagnostic.input_bytes) > 0) {
     rows.push(["输入大小", formatBytes(diagnostic.input_bytes)]);
