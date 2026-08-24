@@ -719,6 +719,20 @@ h1 { font-size: 1.2rem; }
 .evidence-list { display: grid; gap: 0.4rem; }
 .evidence-list li { padding: 0.5rem; color: var(--color-ink-soft); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.65rem; overflow-wrap: anywhere; }
 .inspector-empty { margin: 0; color: var(--color-muted); font-size: 0.7rem; }
+.inspector-subheading { margin: 0.7rem 0 0.4rem; color: var(--color-ink); font-size: 0.7rem; }
+.cognition-diagnostics { display: grid; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+.cognition-diagnostics li {
+  padding: 0.5rem 0.6rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.cognition-diagnostics li > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.cognition-diagnostics strong { font-size: 0.68rem; }
+.cognition-diagnostics span { color: var(--color-muted); font-size: 0.64rem; }
+.cognition-diagnostics li[data-status="succeeded"] span { color: var(--color-primary); }
+.cognition-diagnostics .inspector-facts { margin-top: 0.25rem; }
+.cognition-diagnostics .inspector-facts div { padding: 0.15rem 0; }
 
 @media (max-width: 70rem) {
   .mode-banner { grid-template-columns: auto minmax(14rem, 1fr) auto; }
@@ -759,6 +773,19 @@ h1 { font-size: 1.2rem; }
 .console-heading > div { display: grid; gap: 0.1rem; }
 .console-heading span { color: var(--color-muted); font-size: 0.68rem; }
 .console-heading h2 { margin: 0; font-size: 0.9rem; }
+.console-heading .console-heading-actions { display: flex; align-items: center; gap: 0.65rem; }
+.runtime-refresh {
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  background: var(--color-bg);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.runtime-refresh:hover { background: var(--color-surface); color: var(--color-ink); }
+.runtime-refresh:disabled { cursor: wait; opacity: 0.6; }
 .console-toolbar { justify-content: space-between; }
 .trace-filters {
   display: flex;

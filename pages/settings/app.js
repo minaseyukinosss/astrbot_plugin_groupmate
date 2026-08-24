@@ -11,6 +11,7 @@ const store = new ProjectionStore();
 const router = createRouter();
 let locale = "zh-CN";
 let activeRoute = router.current();
+let refreshRequest = null;
 const avatarCache = new Map();
 const avatarRequests = new Map();
 const mediaCache = new Map();
@@ -81,6 +82,7 @@ function renderWorkspace(route = activeRoute) {
   elements.workspace.append(renderer(
     (projection) => store.selectView(projection),
     submitWorkspaceCommand,
+    refreshWorkspaceData,
   ));
   hydrateAvatars(elements.workspace);
   hydrateMedia(elements.workspace);
@@ -264,6 +266,27 @@ async function loadWorkspace(route = activeRoute) {
       store.setError(ApiBridge.describeError(error));
     }
   }));
+}
+
+async function refreshWorkspaceData() {
+  if (refreshRequest) return refreshRequest;
+  elements.workspace.setAttribute("aria-busy", "true");
+  refreshRequest = loadWorkspace(activeRoute)
+    .then(() => {
+      const current = store.snapshot().connection;
+      const timestamp = new Intl.DateTimeFormat(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(new Date());
+      store.setConnection({ ...current, impact: `数据已刷新 · ${timestamp}` });
+    })
+    .finally(() => {
+      refreshRequest = null;
+      elements.workspace.setAttribute("aria-busy", "false");
+    });
+  return refreshRequest;
 }
 
 async function submitWorkspaceCommand(spec) {

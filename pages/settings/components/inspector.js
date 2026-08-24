@@ -41,6 +41,58 @@ function stateLabel(value) {
   })[String(value || "").toUpperCase()] || value;
 }
 
+function decisionLabel(value) {
+  return ({
+    ACT: "应当参与并准备回复",
+    OBSERVE: "继续观察",
+    DEFER: "稍后重新判断",
+    SILENCE: "保持沉默",
+    PENDING: "等待判断",
+  })[String(value || "").toUpperCase()] || value;
+}
+
+function workerLabel(value) {
+  return ({
+    direct_interaction: "直接互动识别",
+    social_risk: "社交风险识别",
+    context_reconstruction: "上下文重建",
+    relationship: "成员关系理解",
+  })[String(value || "")] || String(value || "认知模块");
+}
+
+function diagnosticStatus(value) {
+  return ({
+    SUCCEEDED: "完成",
+    TIMED_OUT: "超时",
+    MODEL_FAILED: "模型调用失败",
+    INVALID_OUTPUT: "输出无效",
+    REJECTED: "结果未采用",
+    FAILED: "失败",
+    MISSING: "未执行",
+    BUDGET_EXHAUSTED: "预算已用尽",
+  })[String(value || "").toUpperCase()] || String(value || "未知");
+}
+
+function cognitionDiagnostics(diagnostics = []) {
+  if (!Array.isArray(diagnostics) || !diagnostics.length) {
+    return element("p", { className: "inspector-empty", text: "本条消息没有认知模块诊断记录。" });
+  }
+  return element("ul", { className: "cognition-diagnostics", attrs: { "aria-label": "认知模块诊断" } },
+    diagnostics.map((diagnostic) => element("li", {
+      attrs: { "data-status": String(diagnostic.status || "FAILED").toLowerCase() },
+    }, [
+      element("div", {}, [
+        element("strong", { text: workerLabel(diagnostic.worker) }),
+        element("span", { text: diagnosticStatus(diagnostic.status) }),
+      ]),
+      definitionRows([
+        ["耗时", `${Number(diagnostic.latency_ms || 0)} ms`],
+        ["诊断码", diagnostic.diagnostic_code],
+      ]),
+    ])),
+  );
+}
+
 function definitionRows(rows) {
   return element("dl", { className: "inspector-facts" }, rows
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
@@ -88,13 +140,20 @@ export function renderInspector(item) {
       ["原因", route.reason],
     ])]),
     section("处理阶段", [stageTimeline(summary.stages)]),
-    section("Groupmate 的理解", [definitionRows([
-      ["状态", stateLabel(understanding.status)],
-      ["理解摘要", understanding.summary],
-    ])]),
+    section("Groupmate 的理解", [
+      definitionRows([
+        ["状态", stateLabel(understanding.status)],
+        ["理解摘要", understanding.summary],
+      ]),
+      element("h4", { className: "inspector-subheading", text: "认知模块" }),
+      cognitionDiagnostics(understanding.diagnostics),
+    ]),
     section("决定", [definitionRows([
       ["参与判断", decision.label],
+      ["SHADOW 前判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
       ["判断依据", decision.reasons],
+      ["候选回复", decision.candidate_response || (delivery.mode === "SHADOW" ? "本次未生成候选回复" : null)],
+      ["生成说明", decision.reply_diagnostic],
     ])]),
     section("最终结果", [definitionRows([
       ["运行模式", delivery.mode],

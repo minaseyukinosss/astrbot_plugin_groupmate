@@ -14,7 +14,7 @@ const FILTERS = Object.freeze([
 
 const DELIVERY_GROUPS = Object.freeze({
   responded: new Set(["SENT"]),
-  silent: new Set(["SILENT", "OBSERVED"]),
+  silent: new Set(["SILENT", "OBSERVED", "BLOCKED_BY_SHADOW"]),
   external: new Set(["HANDED_OFF"]),
   failed: new Set(["FAILED", "UNKNOWN"]),
 });
@@ -30,7 +30,14 @@ const DELIVERY_TONES = Object.freeze({
   PLANNING: "info",
   READY: "info",
   RECEIVED: "neutral",
+  BLOCKED_BY_SHADOW: "shadow",
 });
+
+const runtimeViewState = {
+  filter: "all",
+  query: "",
+  limit: 16,
+};
 
 function initials(name) {
   const normalized = String(name || "群成员").trim();
@@ -127,8 +134,8 @@ function filterTraces(items, state) {
   });
 }
 
-function messageBrowser(items) {
-  const state = { filter: "all", query: "", limit: 16 };
+function messageBrowser(items, refreshData) {
+  const state = runtimeViewState;
   const body = element("tbody");
   const count = element("span", { className: "result-count" });
   const empty = element("div", {
@@ -175,6 +182,7 @@ function messageBrowser(items) {
       "aria-label": "搜索消息链路",
     },
   });
+  search.value = state.query;
   search.addEventListener("input", () => {
     state.query = search.value;
     state.limit = 16;
@@ -185,13 +193,29 @@ function messageBrowser(items) {
     refresh();
   });
 
+  const refreshButton = button("立即刷新", {
+    className: "runtime-refresh",
+    attrs: { "aria-label": "立即刷新运行中心数据" },
+    onClick: async () => {
+      if (typeof refreshData !== "function" || refreshButton.disabled) return;
+      refreshButton.disabled = true;
+      refreshButton.textContent = "刷新中…";
+      try {
+        await refreshData();
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = "立即刷新";
+      }
+    },
+  });
+
   const browser = element("section", { className: "runtime-console", attrs: { "aria-label": "消息链路" } }, [
     element("header", { className: "console-heading" }, [
       element("div", {}, [
         element("span", { text: "实时事件流" }),
         element("h2", { text: "消息链路" }),
       ]),
-      count,
+      element("div", { className: "console-heading-actions" }, [count, refreshButton]),
     ]),
     element("div", { className: "console-toolbar" }, [
       filters,
@@ -290,7 +314,7 @@ function chainGuide(health) {
   ]);
 }
 
-export function renderRuntime(select, command) {
+export function renderRuntime(select, command, refreshData) {
   const bootstrap = select("bootstrap");
   const runtime = select("runtime");
   const traces = select("traces");
@@ -303,7 +327,7 @@ export function renderRuntime(select, command) {
 
   return element("div", { className: "workspace-stack runtime-workspace" }, [
     modeBanner(bootstrap, runtime, items, expectedVersion, command),
-    messageBrowser(items),
+    messageBrowser(items, refreshData),
     chainGuide(health),
   ]);
 }

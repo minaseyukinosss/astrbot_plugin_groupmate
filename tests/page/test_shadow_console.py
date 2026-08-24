@@ -35,3 +35,20 @@ def test_runtime_console_covers_real_delivery_and_handoff_states():
         assert state in runtime
     for label in ("全部消息", "已回复", "未参与", "外部能力", "异常"):
         assert label in runtime
+
+
+def test_runtime_console_supports_immediate_refresh_without_losing_filters():
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+
+    assert "refreshWorkspaceData" in app
+    assert "立即刷新" in runtime
+    assert "runtimeViewState" in runtime
+    assert "renderRuntime(select, command, refreshData)" in runtime
+
+
+def test_inspector_explains_shadow_pre_gate_result_and_cognition_diagnostics():
+    inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
+
+    for label in ("SHADOW 前判断", "候选回复", "认知模块", "诊断码", "耗时"):
+        assert label in inspector
