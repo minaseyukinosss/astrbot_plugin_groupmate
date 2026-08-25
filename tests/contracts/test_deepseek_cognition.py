@@ -71,13 +71,15 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
     assert body["stream"] is False
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
-    assert body["max_tokens"] == 192
+    assert body["max_tokens"] == 512
     assert body["temperature"] == 0.1
     system_message = body["messages"][0]["content"]
     assert '"decision":"silence"' in system_message
     assert '"evidence_event_ids":[]' in system_message
     assert "silence时允许证据为空" in system_message
     assert "speak时证据不得为空" in system_message
+    assert "relationship_events" in system_message
+    assert "不得输出amount、delta、score" in system_message
     assert json.loads(body["messages"][1]["content"]) == {
         "events": [{"id": "qq:1"}]
     }

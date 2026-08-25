@@ -10,16 +10,23 @@ from typing import Mapping, Protocol
 
 _BACKEND = "direct_deepseek"
 _SYSTEM_MESSAGE = (
-    "判断Groupmate是否应参与群聊，不生成回复或推理。只输出一个JSON对象，不要Markdown、"
-    "代码块、回复正文或额外字段。所有字段必填。示例："
+    "判断Groupmate是否应参与群聊，不生成回复或推理。只输出JSON对象，不要Markdown、"
+    "代码块或回复正文。参与判断字段必填。示例："
     '{"decision":"silence","signal":"none","target_id":null,'
     '"evidence_event_ids":[],"confidence":0.74,"disruption":0.62,'
-    '"novelty":0.18,"reason":"成员正在自然交流，插话会打断"}。'
+    '"novelty":0.18,"reason":"成员正在自然交流，插话会打断",'
+    '"relationship_events":[]}。'
     "decision只能是speak或silence；signal只能是help_request、care_signal、"
     "humor_signal、greeting、boundary_signal或none。target_id和evidence_event_ids中的"
     "ID只能原样复制输入值。confidence、disruption、novelty必须是0到1的JSON数字。"
     "silence时允许证据为空；speak时证据不得为空且signal不能为none。不确定、对象不明或"
-    "会打断时选择silence。"
+    "会打断时选择silence。relationship_events可选且最多4条，只记录证据明确的关系"
+    "事件；每条含kind、subject_id、severity、confidence、summary、evidence_event_ids、"
+    "repair_of、sensitivity。kind只能是interaction、warm_exchange、trust_confirmed、"
+    "reciprocal_action、play_accepted、reliable_help、care_permission、boundary_pressure、"
+    "repair_attempt或repair_confirmed；severity只能是minor、ordinary、significant或severe。"
+    "subject_id和证据ID只能复制输入值；不确定就输出空数组。不得输出amount、delta、score"
+    "或好感度数值。"
 )
 _MAX_RESPONSE_BYTES = 64 * 1024
 
@@ -164,7 +171,7 @@ class DeepSeekCognitionClient:
             "stream": False,
             "thinking": {"type": "disabled"},
             "response_format": {"type": "json_object"},
-            "max_tokens": 192,
+            "max_tokens": 512,
             "temperature": 0.1,
         }
 

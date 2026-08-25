@@ -7,6 +7,10 @@ from typing import Mapping
 
 from ...adapters.deepseek_cognition import DirectCognitionError
 from ..attention import AttentionFrame
+from ..society.relationship_events import (
+    RELATIONSHIP_EVENT_KINDS,
+    RELATIONSHIP_SEVERITIES,
+)
 from .contracts import CognitiveContext, CognitiveObservation, CognitiveWorkerResult
 
 
@@ -315,6 +319,11 @@ class DirectAmbientWorker:
                     },
                 )
             )
+        observations.extend(
+            cls._relationship_observations(
+                verdict.get("relationship_events"), frame, context
+            )
+        )
         observations.append(
             CognitiveObservation.create(
                 **common,
@@ -333,6 +342,78 @@ class DirectAmbientWorker:
                 },
             )
         )
+        return tuple(observations)
+
+    @classmethod
+    def _relationship_observations(
+        cls,
+        value: object,
+        frame: AttentionFrame,
+        context: CognitiveContext,
+    ) -> tuple[CognitiveObservation, ...]:
+        if not isinstance(value, (list, tuple)):
+            return ()
+        observations = []
+        forbidden_fields = {"amount", "delta", "score", "public_delta"}
+        for item in value[:4]:
+            if not isinstance(item, Mapping) or forbidden_fields & set(item):
+                continue
+            try:
+                kind = cls._text(item.get("kind"), 40).lower()
+                subject_id = cls._text(item.get("subject_id"), 80)
+                severity = cls._text(item.get("severity"), 24).lower()
+                confidence = cls._unit_number(item.get("confidence"))
+                summary = cls._text(item.get("summary"), 160)
+                sensitivity = cls._text(
+                    item.get("sensitivity") or "normal", 24
+                ).lower()
+                repair_of = cls._text(item.get("repair_of"), 160) or None
+                evidence_value = item.get("evidence_event_ids")
+                if not isinstance(evidence_value, (list, tuple)):
+                    continue
+                evidence = tuple(
+                    dict.fromkeys(
+                        text
+                        for text in (
+                            cls._text(event_id, 160)
+                            for event_id in evidence_value
+                        )
+                        if text
+                    )
+                )
+            except _VerdictRejected:
+                continue
+            if (
+                kind not in RELATIONSHIP_EVENT_KINDS
+                or subject_id not in frame.candidate_audiences
+                or severity not in RELATIONSHIP_SEVERITIES
+                or not summary
+                or sensitivity not in {"normal", "sensitive", "restricted"}
+                or not evidence
+                or len(evidence) > 8
+                or not set(evidence) <= set(frame.focus_event_ids)
+                or (kind == "repair_confirmed" and repair_of is None)
+            ):
+                continue
+            observations.append(
+                CognitiveObservation.create(
+                    worker=cls.name,
+                    kind="relationship_event",
+                    proposition={
+                        "kind": kind,
+                        "subject_id": subject_id,
+                        "severity": severity,
+                        "summary": summary,
+                        "repair_of": repair_of,
+                        "sensitivity": sensitivity,
+                    },
+                    confidence=confidence,
+                    evidence_event_ids=evidence,
+                    scene_version=frame.scene_version,
+                    expires_at=context.now + 30,
+                    uncertainty=(),
+                )
+            )
         return tuple(observations)
 
     @staticmethod

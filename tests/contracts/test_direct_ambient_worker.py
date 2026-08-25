@@ -195,6 +195,77 @@ def test_valid_speak_verdict_becomes_signal_then_local_assessment():
     assert assessment.proposition["topic_confidence"] == 0.86
 
 
+def test_ambient_verdict_emits_validated_relationship_observation():
+    worker = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                relationship_events=[
+                    {
+                        "kind": "warm_exchange",
+                        "subject_id": "u1",
+                        "severity": "ordinary",
+                        "confidence": 0.91,
+                        "summary": "成员认真感谢了爱弥斯",
+                        "evidence_event_ids": ["qq:12"],
+                        "repair_of": None,
+                        "sensitivity": "normal",
+                    }
+                ]
+            )
+        )
+    )
+
+    result = asyncio.run(worker.observe_with_result(_frame(), _context()))
+
+    assert result.diagnostic_code is None
+    assert [item.kind for item in result.observations] == [
+        "help_request",
+        "relationship_event",
+        "participation_assessment",
+    ]
+    relationship = result.observations[1]
+    assert relationship.proposition == {
+        "kind": "warm_exchange",
+        "subject_id": "u1",
+        "severity": "ordinary",
+        "summary": "成员认真感谢了爱弥斯",
+        "repair_of": None,
+        "sensitivity": "normal",
+    }
+    assert relationship.confidence == 0.91
+    assert relationship.evidence_event_ids == ("qq:12",)
+
+
+def test_invalid_relationship_entry_does_not_invalidate_participation():
+    worker = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                relationship_events=[
+                    {
+                        "kind": "invented_score_change",
+                        "subject_id": "u9",
+                        "severity": "huge",
+                        "confidence": 2,
+                        "summary": "invalid",
+                        "evidence_event_ids": ["missing"],
+                        "repair_of": None,
+                        "sensitivity": "normal",
+                        "delta": 999,
+                    }
+                ]
+            )
+        )
+    )
+
+    result = asyncio.run(worker.observe_with_result(_frame(), _context()))
+
+    assert result.diagnostic_code is None
+    assert [item.kind for item in result.observations] == [
+        "help_request",
+        "participation_assessment",
+    ]
+
+
 def test_valid_silence_verdict_produces_only_assessment():
     worker = DirectAmbientWorker(
         FakeClient(
