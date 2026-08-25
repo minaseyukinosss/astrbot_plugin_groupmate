@@ -97,6 +97,12 @@ def test_member_row_matches_reference_spacing_without_you_badge():
     assert "font-weight: 700; line-height: 1; text-align: right" in AFFECTION_CARD_TEMPLATE
 
 
+def test_member_row_aligns_mixed_font_sizes_by_text_baseline():
+    assert "align-items: baseline; align-content: center" in AFFECTION_CARD_TEMPLATE
+    assert "align-items: center; gap: 6px; line-height: 1" not in AFFECTION_CARD_TEMPLATE
+    assert "align-items: baseline; gap: 6px; line-height: 1" in AFFECTION_CARD_TEMPLATE
+
+
 @pytest.mark.parametrize(
     ("count", "layout", "columns", "pages"),
     (

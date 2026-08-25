@@ -70,7 +70,7 @@ AFFECTION_CARD_TEMPLATE = r"""
   }
   .rank-column { display: flex; min-width: 0; flex-direction: column; gap: {{ row_gap }}px; }
   .member-pill {
-    display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 12px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: baseline; align-content: center; gap: 12px;
     height: {{ row_height }}px; min-width: 0; padding: 0 10px;
     border: 1px solid rgba(255, 255, 255, .90); border-radius: 8px;
     background: rgba(255, 255, 255, .69);
@@ -80,7 +80,7 @@ AFFECTION_CARD_TEMPLATE = r"""
     border-color: #ff5c8d; background: linear-gradient(90deg, #ffe1eb, #fff5f8);
     box-shadow: 0 0 0 2px rgba(255, 92, 141, .12), 0 3px 9px rgba(151, 25, 72, .10);
   }
-  .identity { display: flex; min-width: 0; align-items: center; gap: 6px; line-height: 1; }
+  .identity { display: flex; min-width: 0; align-items: baseline; gap: 6px; line-height: 1; }
   .name { min-width: 0; overflow: hidden; color: #4a3540; font-size: {{ item_font_size }}px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
   .tail { flex: 0 0 auto; color: #ad979f; font-size: calc({{ item_font_size }}px - 2px); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
   .score { min-width: 44px; color: #b12355; font-size: {{ item_font_size }}px; font-weight: 700; line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
