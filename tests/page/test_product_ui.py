@@ -148,6 +148,26 @@ def test_trace_presenter_translates_strategy_and_cognition_diagnostics():
     }
 
 
+def test_expression_summary_leads_with_relationship_and_material_result():
+    result = _run_presenter(
+        "console.log(JSON.stringify({"
+        "plain: presenter.expressionSummary({core_response_goal:'reply',"
+        "relationship_stage:'陌生',reaction_stance:'attentive',"
+        "followup_hook:'only_if_it_adds_value',message_count:1,"
+        "explicit_material_selected:false}),"
+        "relevant: presenter.expressionSummary({core_response_goal:'reply',"
+        "relationship_stage:'熟悉',reaction_stance:'continue_current_exchange',"
+        "followup_hook:'optional_if_natural',message_count:1,"
+        "explicit_material_selected:true})"
+        "}));"
+    )
+
+    assert result == {
+        "plain": "陌生 · 直接回应当前内容 · 未使用显式人设素材",
+        "relevant": "熟悉 · 承接上一轮内容 · 已使用当前话题相关素材",
+    }
+
+
 def test_timeout_explanation_distinguishes_queue_from_provider_wait():
     result = _run_presenter(
         "console.log(JSON.stringify({"

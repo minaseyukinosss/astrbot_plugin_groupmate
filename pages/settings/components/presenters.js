@@ -426,6 +426,13 @@ export function expressionSummary(expression = {}) {
     only_if_it_adds_value: "仅在有新增价值时追问",
   };
   const reaction = reactions[expression.reaction_stance] || "自然回应";
+  const stage = String(expression.relationship_stage || "").trim();
+  if (stage) {
+    const material = expression.explicit_material_selected === true
+      ? "已使用当前话题相关素材"
+      : "未使用显式人设素材";
+    return `${stage} · ${reaction} · ${material}`;
+  }
   const hook = hooks[expression.followup_hook] || "不强行延长对话";
   const count = Math.max(1, Math.min(2, Number(expression.message_count) || 1));
   return `${reaction}；${hook}；${count} 段以内`;

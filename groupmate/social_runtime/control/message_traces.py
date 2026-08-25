@@ -526,6 +526,21 @@ class MessageTraceRepository:
                         getattr(expression, "capability_request", ""), 60
                     )
                     or None,
+                    "relationship_stage": self._safe_text(
+                        getattr(expression, "relationship_stage", "陌生"), 12
+                    )
+                    or "陌生",
+                    "explicit_material_selected": bool(
+                        getattr(expression, "explicit_material", None)
+                    ),
+                    "material_reason": self._safe_text(
+                        getattr(
+                            expression,
+                            "material_reason",
+                            "no_relevant_material",
+                        ),
+                        40,
+                    ),
                 }
 
         self._mutate(
