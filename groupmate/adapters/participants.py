@@ -116,6 +116,37 @@ class ParticipantDirectory:
             "avatar_ref": str(row["avatar_ref"]),
         }
 
+    def active_members(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        since: int,
+        exclude_actor_ids: tuple[str, ...] = (),
+    ) -> tuple[dict[str, object], ...]:
+        excluded = {
+            str(item or "").strip()
+            for item in exclude_actor_ids
+            if str(item or "").strip()
+        }
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT actor_id, display_name, updated_at "
+                "FROM participant_directory WHERE persona_id=? AND group_id=? "
+                "AND updated_at>=? AND actor_id<>'' "
+                "ORDER BY updated_at DESC, display_name, actor_id",
+                (str(persona_id), str(group_id), max(0, int(since))),
+            ).fetchall()
+        return tuple(
+            {
+                "actor_id": str(row["actor_id"]),
+                "display_name": str(row["display_name"]),
+                "updated_at": int(row["updated_at"]),
+            }
+            for row in rows
+            if str(row["actor_id"]) not in excluded
+        )
+
     async def avatar_data(self, avatar_ref: str) -> dict[str, str]:
         normalized = str(avatar_ref or "").strip()
         cached = self._read_cache(normalized)

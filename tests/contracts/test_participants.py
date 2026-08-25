@@ -52,6 +52,34 @@ def test_participant_can_be_resolved_inside_the_same_group(tmp_path):
     ) is None
 
 
+def test_active_members_are_scoped_recent_and_can_exclude_bot(tmp_path):
+    directory = ParticipantDirectory(tmp_path / "runtime.db", tmp_path / "avatars")
+    for actor_id, group_id, updated_at in (
+        ("recent", "g-1", 100),
+        ("old", "g-1", 20),
+        ("bot", "g-1", 101),
+        ("other-group", "g-2", 102),
+    ):
+        directory.remember_actor(
+            persona_id="groupmate:default",
+            group_id=group_id,
+            actor_id=actor_id,
+            display_name=actor_id,
+            updated_at=updated_at,
+        )
+
+    active = directory.active_members(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        since=70,
+        exclude_actor_ids=("bot",),
+    )
+
+    assert active == (
+        {"actor_id": "recent", "display_name": "recent", "updated_at": 100},
+    )
+
+
 def test_avatar_failure_returns_stable_generated_svg(tmp_path):
     async def failing_fetcher(_url):
         raise OSError("offline")

@@ -1,5 +1,10 @@
 """Group-scoped relationship, impression, and culture projections."""
 
+from .affection_leaderboard import (
+    AffectionLeaderboard,
+    AffectionLeaderboardEntry,
+    AffectionLeaderboardService,
+)
 from .relationships import PublicAffection, RelationshipProjection, RelationshipStage
 from .relationship_events import (
     RelationshipEventDecision,
@@ -9,6 +14,9 @@ from .relationship_events import (
 )
 
 __all__ = (
+    "AffectionLeaderboard",
+    "AffectionLeaderboardEntry",
+    "AffectionLeaderboardService",
     "PublicAffection",
     "RelationshipEventDecision",
     "RelationshipEventPolicy",
