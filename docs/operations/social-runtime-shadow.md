@@ -78,6 +78,14 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m tests.architecture_guard
 git diff --check
 ```
 
+## Persona 触发机制复核
+
+1. 分别发送主名称、确认别称、带别称的外部命令、普通正文提及和一次自然追问。
+2. 运行中心应依次显示“会回应这次呼唤”“由外部能力处理”“普通群聊观察”“继续当前对话”。
+3. 主名称、别称和续聊不得出现 `ambient_social_assessor`；普通正文提及可以出现。
+4. SHADOW 只预览表达，不建立真实对话租约；正式运行仅在可用回复成功发送后建立租约。
+5. 技术详情中不得出现 API Key、原始模型异常、内部提示词、Persona 背景或原始成员 ID。
+
 运行中还应核查：
 
 - `outbox_count() == 0`

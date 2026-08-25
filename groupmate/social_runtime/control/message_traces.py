@@ -281,11 +281,16 @@ class MessageTraceRepository:
         reply_diagnostic = str(
             getattr(evaluation, "reply_diagnostic", "") or ""
         ).strip()
-        lane = str(
+        external_compatibility = bool(
+            event.payload.get("interaction_owner") == "EXTERNAL_PLUGIN"
+            and event.payload.get("social_eligible") is False
+            and frame is None
+        )
+        lane = "" if external_compatibility else str(
             getattr(evaluation, "participation_lane", "AMBIENT")
             or "AMBIENT"
         ).upper()
-        if lane not in {"DIRECT_FAST", "CONTINUATION", "AMBIENT"}:
+        if lane and lane not in {"DIRECT_FAST", "CONTINUATION", "AMBIENT"}:
             lane = "AMBIENT"
         candidates = tuple(getattr(evaluation, "candidates", ()) or ())
         candidate_source = (
@@ -322,16 +327,18 @@ class MessageTraceRepository:
                 "participation_diagnostics": participation_diagnostics,
             }
             summary["judgement"] = judgement
-            summary["decision"] = {
+            decision = {
                 "outcome": outcome,
                 "pre_gate_outcome": outcome,
-                "participation_lane": lane,
                 "would_reply": outcome == "ACT",
                 "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
                 "reasons": reasons,
                 "candidate_response": candidate_response or None,
                 "reply_diagnostic": reply_diagnostic or None,
             }
+            if lane:
+                decision["participation_lane"] = lane
+            summary["decision"] = decision
             if outcome == "SILENCE":
                 summary["delivery"] = {
                     "mode": mode,

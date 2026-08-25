@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
+from groupmate.adapters.deepseek_cognition import DirectCognitionResponse
 from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import OutboxStatus
 
@@ -70,6 +73,39 @@ class _FailingReplyContext(_Context):
         raise RuntimeError("reply provider unavailable")
 
 
+class _MatrixCognition:
+    model = "test-cognition"
+
+    def __init__(self):
+        self.calls = 0
+
+    def input_bytes(self, facts):
+        return len(json.dumps(facts, ensure_ascii=False).encode("utf-8"))
+
+    async def classify(self, facts):
+        self.calls += 1
+        evidence = facts["events"][-1]["id"]
+        return DirectCognitionResponse(
+            verdict={
+                "decision": "silence",
+                "signal": "none",
+                "target_id": None,
+                "evidence_event_ids": [evidence],
+                "confidence": 0.9,
+                "disruption": 0.8,
+                "novelty": 0.1,
+                "reason": "普通正文提及，不构成直接呼唤",
+            },
+            latency_ms=1,
+            request_bytes=1,
+            backend="test",
+            model=self.model,
+        )
+
+    async def close(self):
+        return None
+
+
 def _event(message_id, text, *, mention_bot=False, actor_id="u1"):
     message = []
     if mention_bot:
@@ -123,6 +159,59 @@ async def _run_alias_case(tmp_path, text):
     return context, trace
 
 
+async def _trigger_case(tmp_path, message):
+    context = _Context()
+    cognition = _MatrixCognition()
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": ["885617919"],
+            "runtime_mode": "SHADOW",
+            "generation_provider": "provider:text",
+            "cognition_api_key": "sk-test",
+            "persona_name": "爱弥斯",
+            "persona_aliases": ["小爱"],
+            "external_command_prefixes": ["bq=astrbot.meme"],
+        }
+    )
+    bridge = AstrBotSocialRuntimeBridge(
+        context,
+        settings,
+        tmp_path,
+        clock=lambda: 100,
+        cognition_client_factory=lambda _: cognition,
+    )
+    await bridge.start()
+    await bridge.handle_event(_event("matrix", message))
+    due = await bridge.manager.drain(now=102)
+    await bridge._handle_evaluations(due)
+    summary = bridge.trace_repository.query(
+        persona_id=settings.persona_id,
+        group_id="885617919",
+    )["items"][0]["summary"]
+    ambient_calls = cognition.calls
+    await bridge.close()
+    return summary, ambient_calls
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_owner", "expected_lane", "ambient_calls"),
+    (
+        ("小爱", "GROUPMATE", "DIRECT_FAST", 0),
+        ("小爱说话", "GROUPMATE", "DIRECT_FAST", 0),
+        ("小爱 bq 开心", "EXTERNAL_PLUGIN", None, 0),
+        ("我觉得小爱这个名字不错", "GROUPMATE", "AMBIENT", 1),
+    ),
+)
+def test_persona_trigger_matrix(
+    message, expected_owner, expected_lane, ambient_calls, tmp_path
+):
+    summary, actual_ambient_calls = asyncio.run(_trigger_case(tmp_path, message))
+
+    assert summary["route"]["owner"] == expected_owner
+    assert summary["decision"].get("participation_lane") == expected_lane
+    assert actual_ambient_calls == ambient_calls
+
+
 def test_alias_prefixed_external_command_stays_owned_by_astrbot(tmp_path):
     context, trace = asyncio.run(_run_alias_case(tmp_path, "小爱 bq 开心"))
 
@@ -170,6 +259,8 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
             _event("m1", "这个报错怎么看", mention_bot=True)
         )
         await bridge.handle_event(_event("m2", "然后呢"))
+        state_before_external = await bridge.manager.group_snapshot("885617919")
+        await bridge.handle_event(_event("external-after", "bq 继续", actor_id="u1"))
         parts = bridge.manager.outbox.receipted_parts()
         state = await bridge.manager.group_snapshot("885617919")
         event_ids = bridge.manager.event_store.event_ids()
@@ -183,6 +274,7 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
             context,
             calls_after_external,
             parts,
+            state_before_external,
             state,
             event_ids,
             traces,
@@ -193,6 +285,7 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
         context,
         calls_after_external,
         parts,
+        state_before_external,
         state,
         event_ids,
         traces,
@@ -207,6 +300,7 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     assert state.conversation_lease.target_id == "u1"
     assert state.conversation_lease.topic_id == "m1"
     assert state.conversation_lease.remaining_turns == 4
+    assert state.conversation_lease == state_before_external.conversation_lease
     assert all(
         "结构化群聊观察器" not in call["system_prompt"]
         for call in context.model_calls
