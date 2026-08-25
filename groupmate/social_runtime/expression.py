@@ -25,11 +25,17 @@ class ExpressionPlan:
     explicit_material: str | None = None
     material_reason: str = "no_relevant_material"
     persona_avoidances: tuple[str, ...] = ()
+    relationship_memory_cues: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "persona_cues", tuple(self.persona_cues))
         object.__setattr__(
             self, "persona_avoidances", tuple(self.persona_avoidances)
+        )
+        object.__setattr__(
+            self,
+            "relationship_memory_cues",
+            tuple(self.relationship_memory_cues)[:2],
         )
         if self.message_count not in {1, 2}:
             raise ValueError("expression message_count must be 1 or 2")
@@ -74,6 +80,7 @@ class ExpressionPlanner:
         persona_profile: Mapping[str, object],
         relationship: PublicAffection | None = None,
         recent_outputs: tuple[str, ...] = (),
+        relationship_memory_cues: tuple[str, ...] = (),
     ) -> ExpressionPlan:
         identity = self._section(persona_profile, "identity")
         expression = self._section(persona_profile, "expression")
@@ -130,6 +137,7 @@ class ExpressionPlanner:
             ),
             material_reason=material.reason,
             persona_avoidances=canon.current_snapshot().avoidances,
+            relationship_memory_cues=tuple(relationship_memory_cues)[:2],
         )
 
     @staticmethod
@@ -140,6 +148,16 @@ class ExpressionPlanner:
             return "冷静、明确拒绝迎合；只依据相关且已证实的行为指出边界"
         if stage is RelationshipStage.DISTANT:
             return "克制、保持距离，不假装关系亲密"
+        if stage is RelationshipStage.IN_SYNC:
+            return "默契、自然省略，可使用双方已经形成且当前相关的内部梗"
+        if stage is RelationshipStage.CLOSE:
+            return "亲近而自然，可以更直接地关心，但不要强行拉长回复"
+        if stage is RelationshipStage.FAMILIAR:
+            return "熟悉、随意，可轻微调侃并使用已确认的偏好"
+        if stage is RelationshipStage.KNOWS:
+            return "正常友好，保持自然分寸"
+        if stage is RelationshipStage.STRANGER:
+            return "自然、克制，不擅自表现得过度亲密"
         return default
 
     @staticmethod

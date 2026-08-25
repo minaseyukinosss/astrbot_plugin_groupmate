@@ -25,7 +25,8 @@ _SYSTEM_MESSAGE = (
     "repair_of、sensitivity。kind只能是warm_exchange、trust_confirmed、play_accepted、"
     "reliable_help、care_permission、boundary_pressure、"
     "repair_attempt或repair_confirmed；severity只能是minor、ordinary、significant或severe。"
-    "subject_id和证据ID只能复制输入值；不确定就输出空数组。不得输出amount、delta、score"
+    "subject_id和证据ID只能复制输入值；repair_confirmed的repair_of必须复制"
+    "输入relationship_memories中同一subject_id的event_id；不确定就输出空数组。不得输出amount、delta、score"
     "或好感度数值。"
 )
 _MAX_RESPONSE_BYTES = 64 * 1024

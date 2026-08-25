@@ -12,6 +12,11 @@ from .retrieval import (
     MemoryQuery,
     MemoryRetriever,
 )
+from .relationship_memory import (
+    RelationshipMemory,
+    RelationshipMemorySelector,
+    relationship_memory_from_decision,
+)
 
 __all__ = (
     "ConsolidationReport",
@@ -25,4 +30,7 @@ __all__ = (
     "MemoryQuery",
     "MemoryRecord",
     "MemoryRetriever",
+    "RelationshipMemory",
+    "RelationshipMemorySelector",
+    "relationship_memory_from_decision",
 )

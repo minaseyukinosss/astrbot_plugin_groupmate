@@ -397,6 +397,23 @@ class AstrBotSocialRuntimeBridge:
                 relationship = self._manager.relationship_affection(
                     group_id, subject_id
                 )
+                try:
+                    relationship_memory_cues = (
+                        self._manager.relationship_memory_cues(
+                            group_id,
+                            subject_id,
+                            text=str(source_event.payload.get("text") or "")
+                            if source_event is not None
+                            else "",
+                            now=int(self.clock()),
+                        )
+                        if subject_id
+                        else ()
+                    )
+                except Exception:
+                    # Relationship memory enriches expression but must never
+                    # block an already approved social reply.
+                    relationship_memory_cues = ()
                 recent_outputs = tuple(
                     self._recent_outputs.get(group_id, ())
                 )
@@ -406,6 +423,7 @@ class AstrBotSocialRuntimeBridge:
                     persona_profile=persona_profile,
                     relationship=relationship,
                     recent_outputs=recent_outputs,
+                    relationship_memory_cues=relationship_memory_cues,
                 )
                 if plan is None:
                     self._record_trace(

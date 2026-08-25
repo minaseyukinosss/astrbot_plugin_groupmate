@@ -113,3 +113,36 @@ def test_guarded_relationship_changes_boundary_posture_not_action():
     assert plan.core_response_goal == "respond_to_direct_interaction"
     assert plan.relationship_stage == "警戒"
     assert "冷静" in plan.boundary_style
+
+
+def test_relevant_relationship_memory_is_bounded_in_expression_plan():
+    plan = ExpressionPlanner().plan(
+        lane="DIRECT_FAST",
+        act="respond_to_direct_interaction",
+        source_text="现在陪我聊天",
+        persona_profile=_profile(),
+        relationship=PublicAffection(-45.0, RelationshipStage.GUARDED),
+        relationship_memory_cues=(
+            "未修复边界事件：成员上次明确辱骂爱弥斯",
+            "不应进入的第三条",
+            "也不应进入的第四条",
+        ),
+    )
+
+    assert plan.relationship_memory_cues == (
+        "未修复边界事件：成员上次明确辱骂爱弥斯",
+        "不应进入的第三条",
+    )
+
+
+def test_close_relationship_has_warmer_distance_without_forcing_more_words():
+    plan = ExpressionPlanner().plan(
+        lane="DIRECT_FAST",
+        act="respond_to_direct_interaction",
+        source_text="在吗",
+        persona_profile=_profile(),
+        relationship=PublicAffection(60.0, RelationshipStage.CLOSE),
+    )
+
+    assert "亲近" in plan.boundary_style
+    assert plan.message_count == 1

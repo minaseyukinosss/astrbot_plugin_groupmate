@@ -122,6 +122,15 @@ def _context():
                 },
                 "expression": {"tone": "private style"},
             },
+            "relationship_memories": [
+                {
+                    "event_id": "relationship:boundary-1",
+                    "subject_id": "u1",
+                    "kind": "boundary_pressure",
+                    "summary": "成员上次明确辱骂爱弥斯",
+                    "occurred_at": 90,
+                }
+            ],
             "database_path": "/private/runtime.db",
         },
         constraints=("no_side_effects", "evidence_required"),
@@ -154,6 +163,15 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
     assert len(facts["events"]) == 12
     assert len(facts["topics"]) <= 4
     assert len(facts["audiences"]) <= 8
+    assert facts["relationship_memories"] == [
+        {
+            "event_id": "relationship:boundary-1",
+            "subject_id": "u1",
+            "kind": "boundary_pressure",
+            "summary": "成员上次明确辱骂爱弥斯",
+            "occurred_at": 90,
+        }
+    ]
     assert facts["events"][0]["id"] == "qq:2"
     assert facts["events"][-1]["parts"] == ["image", "at"]
     assert facts["persona"].keys() == {"presence", "participation"}
@@ -169,7 +187,7 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
         "config_version",
     ):
         assert excluded not in rendered
-    assert result.input_bytes < 6_000
+    assert result.input_bytes < 6_500
 
 
 def test_valid_speak_verdict_becomes_signal_then_local_assessment():
@@ -234,6 +252,60 @@ def test_ambient_verdict_emits_validated_relationship_observation():
     }
     assert relationship.confidence == 0.91
     assert relationship.evidence_event_ids == ("qq:12",)
+
+
+def test_confirmed_repair_must_reference_an_supplied_relationship_memory():
+    known = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                relationship_events=[
+                    {
+                        "kind": "repair_confirmed",
+                        "subject_id": "u1",
+                        "severity": "significant",
+                        "confidence": 0.93,
+                        "summary": "成员认真道歉并停止冒犯",
+                        "evidence_event_ids": ["qq:13"],
+                        "repair_of": "relationship:boundary-1",
+                        "sensitivity": "normal",
+                    }
+                ]
+            )
+        )
+    )
+    fabricated = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                relationship_events=[
+                    {
+                        "kind": "repair_confirmed",
+                        "subject_id": "u1",
+                        "severity": "significant",
+                        "confidence": 0.93,
+                        "summary": "成员声称已经道歉",
+                        "evidence_event_ids": ["qq:13"],
+                        "repair_of": "relationship:invented",
+                        "sensitivity": "normal",
+                    }
+                ]
+            )
+        )
+    )
+
+    known_result = asyncio.run(known.observe_with_result(_frame(), _context()))
+    fabricated_result = asyncio.run(
+        fabricated.observe_with_result(_frame(), _context())
+    )
+
+    assert any(
+        item.kind == "relationship_event"
+        and item.proposition["repair_of"] == "relationship:boundary-1"
+        for item in known_result.observations
+    )
+    assert not any(
+        item.kind == "relationship_event"
+        for item in fabricated_result.observations
+    )
 
 
 def test_invalid_relationship_entry_does_not_invalidate_participation():

@@ -158,6 +158,14 @@ class DirectAmbientWorker:
             if isinstance(lease, Mapping)
             else None
         )
+        relationship_memories = [
+            cls._relationship_memory_fact(item)
+            for item in cls._mapping_items(
+                world.get("relationship_memories")
+            )
+            if cls._text(item.get("subject_id"), 80)
+            in set(frame.candidate_audiences)
+        ][-8:]
         profile = world.get("persona_profile")
         persona = {}
         if isinstance(profile, Mapping):
@@ -176,6 +184,7 @@ class DirectAmbientWorker:
             "activity": activity_fact,
             "lease": lease_fact,
             "persona": persona,
+            "relationship_memories": relationship_memories,
         }
 
     @classmethod
@@ -251,6 +260,18 @@ class DirectAmbientWorker:
             "actor_id": cls._text(audience.get("actor_id"), 80),
             "message_count": cls._safe_int(audience.get("message_count")),
             "last_seen_at": cls._optional_int(audience.get("last_seen_at")),
+        }
+
+    @classmethod
+    def _relationship_memory_fact(
+        cls, memory: Mapping[str, object]
+    ) -> dict[str, object]:
+        return {
+            "event_id": cls._text(memory.get("event_id"), 160),
+            "subject_id": cls._text(memory.get("subject_id"), 80),
+            "kind": cls._text(memory.get("kind"), 40),
+            "summary": cls._text(memory.get("summary"), 120),
+            "occurred_at": cls._optional_int(memory.get("occurred_at")),
         }
 
     @classmethod
@@ -359,6 +380,18 @@ class DirectAmbientWorker:
             return ()
         observations = []
         forbidden_fields = {"amount", "delta", "score", "public_delta"}
+        supplied_memories = cls._mapping_items(
+            context.world_summary.get("relationship_memories")
+        )
+        repair_refs = {
+            (
+                cls._text(item.get("event_id"), 160),
+                cls._text(item.get("subject_id"), 80),
+            )
+            for item in supplied_memories
+            if cls._text(item.get("event_id"), 160)
+            and cls._text(item.get("subject_id"), 80)
+        }
         for item in value[:4]:
             if not isinstance(item, Mapping) or forbidden_fields & set(item):
                 continue
@@ -397,6 +430,10 @@ class DirectAmbientWorker:
                 or len(evidence) > 8
                 or not set(evidence) <= set(frame.focus_event_ids)
                 or (kind == "repair_confirmed" and repair_of is None)
+                or (
+                    kind == "repair_confirmed"
+                    and (repair_of, subject_id) not in repair_refs
+                )
             ):
                 continue
             observations.append(

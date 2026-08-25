@@ -218,6 +218,7 @@ class ReplyPlanner:
         persona_profile: Mapping[str, object],
         relationship: PublicAffection | None = None,
         recent_outputs: tuple[str, ...] = (),
+        relationship_memory_cues: tuple[str, ...] = (),
     ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
@@ -248,6 +249,7 @@ class ReplyPlanner:
             relationship=relationship
             or PublicAffection(0.0, RelationshipStage.STRANGER),
             recent_outputs=tuple(recent_outputs),
+            relationship_memory_cues=tuple(relationship_memory_cues),
         )
         return self._build_plan(
             evaluation=evaluation,
@@ -535,6 +537,8 @@ class ReplyExecutor:
             "当前现实只用于保证事实正确，不要求在回复中复述。"
             "explicit_material 为空时，默认不要显式提及任何设定素材；"
             "不要为了证明人设而随机加入校园、报告、歌曲、游戏、电子、机械或能力元素。\n"
+            "关系记忆只有当前语境相关时才可简短引用；不得泄露内部ID或敏感内容，"
+            "不得根据关系分数凭空编造旧事。关系记忆为空时禁止翻旧账。\n"
             + json.dumps(
                 {
                     "act": plan.act,
@@ -554,6 +558,9 @@ class ReplyExecutor:
                             ),
                             "reaction_stance": plan.expression.reaction_stance,
                             "boundary_style": plan.expression.boundary_style,
+                            "relationship_memory_cues": list(
+                                plan.expression.relationship_memory_cues
+                            ),
                         },
                         "current_reality": current_reality,
                         "explicit_material": plan.expression.explicit_material,

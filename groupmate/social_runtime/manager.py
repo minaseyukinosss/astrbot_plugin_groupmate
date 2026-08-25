@@ -42,6 +42,7 @@ from .persistence.repositories import (
     SQLiteSocietyRepository,
 )
 from .persona.profile import GroupmatePersonaProfile
+from .memory.relationship_memory import RelationshipMemorySelector
 from .society.relationship_events import (
     RelationshipEventDecision,
     RelationshipEventProposal,
@@ -333,6 +334,7 @@ class SocialRuntimeManager:
         )
         self.society = SQLiteSocietyRepository(database_path)
         self.relationship_events = RelationshipEventService(self.society)
+        self._relationship_memory_selector = RelationshipMemorySelector()
         self.execution_port = NoSideEffectExecutionPort()
         self.cognition = CognitionService(
             workers=cognition_workers or {},
@@ -528,6 +530,35 @@ class SocialRuntimeManager:
             normalized_subject,
         )
         return affection
+
+    def relationship_memory_cues(
+        self,
+        group_id: str,
+        subject_id: str,
+        *,
+        text: str,
+        now: int,
+    ) -> tuple[str, ...]:
+        """Select bounded, expressible memories inside one relationship scope."""
+
+        normalized_group = str(group_id).strip()
+        normalized_subject = str(subject_id).strip()
+        if normalized_group not in self.enabled_groups or not normalized_subject:
+            raise ValueError("relationship memory lookup requires an enabled scope")
+        records = self.society.relationship_memories(
+            self.persona_id,
+            normalized_group,
+            normalized_subject,
+        )
+        affection = self.relationship_affection(
+            normalized_group, normalized_subject
+        )
+        return self._relationship_memory_selector.select(
+            records,
+            text=str(text or ""),
+            stage=affection.stage,
+            now=int(now),
+        )
 
     async def record_usable_reply(self, plan: ReplyPlan, *, now: int) -> bool:
         """Project a bounded dialogue lease after usable text exists."""
@@ -1024,8 +1055,8 @@ class SocialRuntimeManager:
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
         return f"relationship:{digest}"
 
-    @staticmethod
     def _cognitive_world_view(
+        self,
         request: SceneWorkRequest,
         frame: AttentionFrame,
         profile: GroupmatePersonaProfile,
@@ -1046,6 +1077,27 @@ class SocialRuntimeManager:
             for participant in world.participants
             if participant.actor_id in audience_ids
         )
+        try:
+            relationship_records = self.society.relationship_memories_for_subjects(
+                request.persona_id,
+                request.group_id,
+                tuple(sorted(audience_ids)),
+            )
+            relationship_memories = tuple(
+                {
+                    "event_id": item.relationship_event_id,
+                    "subject_id": item.subject_id,
+                    "kind": item.kind,
+                    "summary": item.summary,
+                    "occurred_at": item.occurred_at,
+                }
+                for item in relationship_records
+                if item.resolved_at is None
+                and item.sensitivity == "normal"
+                and item.kind in {"boundary_pressure", "repair_attempt"}
+            )[-8:]
+        except Exception:
+            relationship_memories = ()
         return {
             "topics": topics,
             "audiences": audiences,
@@ -1057,6 +1109,7 @@ class SocialRuntimeManager:
                 else None
             ),
             "persona_profile": profile.to_mapping(),
+            "relationship_memories": relationship_memories,
         }
 
     @staticmethod

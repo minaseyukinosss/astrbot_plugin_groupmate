@@ -350,31 +350,127 @@ class SQLiteSocietyRepository:
                 if (
                     resolved_mode == "SOCIAL_RUNTIME"
                     and decision.outcome == "ACCEPT"
-                    and decision.evidence is not None
                 ):
-                    updated = self._projector.apply(current, decision.evidence)
-                    encoded = _canonical_json(self._projector.to_dict(updated))
-                    db.execute(
-                        "INSERT INTO relationship_projection(persona_id, group_id, "
-                        "subject_id, version, projection_json, updated_at) "
-                        "VALUES(?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT(persona_id, group_id, subject_id) DO UPDATE SET "
-                        "version=excluded.version, projection_json=excluded.projection_json, "
-                        "updated_at=excluded.updated_at",
-                        (
-                            updated.persona_id,
-                            updated.group_id,
-                            updated.subject_id,
-                            updated.version,
-                            encoded,
-                            int(time.time()),
-                        ),
-                    )
+                    if decision.evidence is not None:
+                        updated = self._projector.apply(current, decision.evidence)
+                        encoded = _canonical_json(self._projector.to_dict(updated))
+                        db.execute(
+                            "INSERT INTO relationship_projection(persona_id, group_id, "
+                            "subject_id, version, projection_json, updated_at) "
+                            "VALUES(?, ?, ?, ?, ?, ?) "
+                            "ON CONFLICT(persona_id, group_id, subject_id) DO UPDATE SET "
+                            "version=excluded.version, projection_json=excluded.projection_json, "
+                            "updated_at=excluded.updated_at",
+                            (
+                                updated.persona_id,
+                                updated.group_id,
+                                updated.subject_id,
+                                updated.version,
+                                encoded,
+                                int(time.time()),
+                            ),
+                        )
+                    self._persist_relationship_memory(db, decision)
                 db.commit()
                 return decision
             except BaseException:
                 db.rollback()
                 raise
+
+    def relationship_memories(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> tuple[RelationshipMemory, ...]:
+        from ..memory.relationship_memory import RelationshipMemory
+
+        self._require_scope(persona_id, group_id, subject_id)
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT memory_json FROM memories WHERE persona_id=? AND group_id=? "
+                "AND subject_id=? AND kind='relationship' ORDER BY created_at, memory_id",
+                (persona_id, group_id, subject_id),
+            ).fetchall()
+        return tuple(
+            RelationshipMemory(**json.loads(str(row["memory_json"])))
+            for row in rows
+        )
+
+    def relationship_memories_for_subjects(
+        self,
+        persona_id: str,
+        group_id: str,
+        subject_ids: tuple[str, ...],
+    ) -> tuple[RelationshipMemory, ...]:
+        from ..memory.relationship_memory import RelationshipMemory
+
+        self._require_group_scope(persona_id, group_id)
+        subjects = tuple(
+            dict.fromkeys(
+                str(item or "").strip()
+                for item in subject_ids
+                if str(item or "").strip()
+            )
+        )[:8]
+        if not subjects:
+            return ()
+        placeholders = ",".join("?" for _ in subjects)
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(
+                "SELECT memory_json FROM memories WHERE persona_id=? AND group_id=? "
+                f"AND subject_id IN ({placeholders}) AND kind='relationship' "
+                "ORDER BY created_at, memory_id",
+                (persona_id, group_id, *subjects),
+            ).fetchall()
+        return tuple(
+            RelationshipMemory(**json.loads(str(row["memory_json"])))
+            for row in rows
+        )
+
+    @staticmethod
+    def _persist_relationship_memory(
+        db, decision: RelationshipEventDecision
+    ) -> None:
+        from ..memory.relationship_memory import (
+            RelationshipMemory,
+            relationship_memory_from_decision,
+        )
+
+        proposal = decision.proposal
+        if proposal.kind == "repair_confirmed" and proposal.repair_of:
+            rows = db.execute(
+                "SELECT memory_id, memory_json FROM memories WHERE persona_id=? "
+                "AND group_id=? AND subject_id=? AND kind='relationship'",
+                (proposal.persona_id, proposal.group_id, proposal.subject_id),
+            ).fetchall()
+            for row in rows:
+                memory = RelationshipMemory(
+                    **json.loads(str(row["memory_json"]))
+                )
+                if memory.relationship_event_id != proposal.repair_of:
+                    continue
+                resolved = memory.resolve(
+                    at=proposal.occurred_at, by=proposal.event_id
+                )
+                db.execute(
+                    "UPDATE memories SET memory_json=? WHERE memory_id=?",
+                    (_canonical_json(asdict(resolved)), memory.memory_id),
+                )
+        memory = relationship_memory_from_decision(decision)
+        if memory is None:
+            return
+        db.execute(
+            "INSERT OR IGNORE INTO memories(memory_id, persona_id, group_id, "
+            "subject_id, kind, sensitivity, memory_json, created_at, expires_at) "
+            "VALUES(?, ?, ?, ?, 'relationship', ?, ?, ?, NULL)",
+            (
+                memory.memory_id,
+                memory.persona_id,
+                memory.group_id,
+                memory.subject_id,
+                memory.sensitivity,
+                _canonical_json(asdict(memory)),
+                memory.occurred_at,
+            ),
+        )
 
     def relationship_decisions(
         self,

@@ -241,3 +241,21 @@ def test_prompt_does_not_dump_the_full_persona_material_pool():
     assert "隧者兵装" not in prompt
     assert "写歌" not in prompt
     assert "默认不要显式提及任何设定素材" in prompt
+
+
+def test_prompt_gets_only_selected_relationship_memory_cues():
+    plan = ReplyPlanner().plan(
+        _evaluation(text="现在陪我聊天"),
+        now=100,
+        persona_profile=_persona_profile(),
+        relationship=PublicAffection(-45.0, RelationshipStage.GUARDED),
+        relationship_memory_cues=(
+            "未修复边界事件：成员上次明确辱骂爱弥斯",
+        ),
+    )
+
+    prompt = ReplyExecutor._system_prompt(plan, _persona_profile())
+
+    assert "成员上次明确辱骂爱弥斯" in prompt
+    assert "只有当前语境相关时才可简短引用" in prompt
+    assert "relationship:boundary-1" not in prompt
