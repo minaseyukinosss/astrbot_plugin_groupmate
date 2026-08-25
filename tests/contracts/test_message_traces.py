@@ -5,6 +5,10 @@ from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.control.message_traces import MessageTraceRepository
 from groupmate.social_runtime.governor import GovernorResult
+from groupmate.social_runtime.society.relationship_events import (
+    RelationshipEventDecision,
+    RelationshipEventProposal,
+)
 
 
 def _platform_event(
@@ -130,6 +134,46 @@ def test_trace_updates_one_message_instead_of_appending_projection_rows(tmp_path
     ]
 
 
+def test_trace_exposes_only_compact_relationship_result(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("relationship-trace")
+    proposal = RelationshipEventProposal(
+        event_id="relationship:r1",
+        persona_id="groupmate:default",
+        group_id="g-1",
+        subject_id="42",
+        kind="warm_exchange",
+        confidence=0.91,
+        severity="ordinary",
+        summary="这段模型摘要不应出现在看板",
+        source_event_ids=(event.event_id,),
+        occurred_at=10,
+    )
+    decision = RelationshipEventDecision(
+        "SUGGEST", ("shadow_observation_only",), proposal, None, 0.0
+    )
+    evaluation = SimpleNamespace(
+        **vars(_evaluation(event, outcome="SILENCE")),
+        relationship_decisions=(decision,),
+        relationship_stage="陌生",
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.mark_entered(event.event_id, now=11)
+    repo.record_evaluation(evaluation, now=12)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["relationship"] == {
+        "outcome": "SUGGEST",
+        "kind": "友好交流",
+        "reason": "SHADOW 仅记录，未更新好感度",
+        "stage": "陌生",
+    }
+    assert proposal.summary not in str(summary)
+
+
 def test_external_trigger_is_visible_without_claiming_plugin_success(tmp_path):
     repo = MessageTraceRepository(tmp_path / "runtime.db")
     event = _platform_event("m-2", owner="EXTERNAL_PLUGIN")
@@ -220,6 +264,9 @@ def test_reply_plan_projects_only_safe_expression_summary(tmp_path):
         "followup_hook": "optional_if_natural",
         "message_count": 2,
         "capability_request": None,
+        "relationship_stage": "陌生",
+        "explicit_material_selected": False,
+        "material_reason": "no_relevant_material",
     }
     assert "persona_cues" not in str(summary)
     assert "不应展示的人格背景" not in str(summary)

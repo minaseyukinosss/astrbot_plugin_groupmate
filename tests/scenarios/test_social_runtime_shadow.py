@@ -93,9 +93,15 @@ class ParticipationWorker:
 class CombinedAmbientWorker:
     name = "ambient_social_assessor"
 
-    def __init__(self, observation_kind="help_request", decision="speak"):
+    def __init__(
+        self,
+        observation_kind="help_request",
+        decision="speak",
+        relationship_kind=None,
+    ):
         self.observation_kind = observation_kind
         self.decision = decision
+        self.relationship_kind = relationship_kind
         self.contexts = []
 
     async def observe(self, frame, context):
@@ -103,6 +109,27 @@ class CombinedAmbientWorker:
         signal = await FixedWorker(
             self.name, self.observation_kind
         ).observe(frame, context)
+        relationship = ()
+        if self.relationship_kind:
+            relationship = (
+                CognitiveObservation.create(
+                    worker=self.name,
+                    kind="relationship_event",
+                    proposition={
+                        "kind": self.relationship_kind,
+                        "subject_id": frame.candidate_audiences[0],
+                        "severity": "ordinary",
+                        "summary": "成员认真感谢了爱弥斯",
+                        "repair_of": None,
+                        "sensitivity": "normal",
+                    },
+                    confidence=0.91,
+                    evidence_event_ids=(frame.focus_event_ids[0],),
+                    scene_version=context.scene_version,
+                    expires_at=context.now + 30,
+                    uncertainty=(),
+                ),
+            )
         assessment = CognitiveObservation.create(
             worker=self.name,
             kind="participation_assessment",
@@ -113,7 +140,7 @@ class CombinedAmbientWorker:
             expires_at=context.now + 30,
             uncertainty=(),
         )
-        return signal + (assessment,)
+        return signal + relationship + (assessment,)
 
 
 class ContextCapturingWorker(FixedWorker):
@@ -323,6 +350,60 @@ def test_direct_social_scenario_is_strategy_governed_without_model_worker(
     assert "chain_of_thought" not in str(projection)
     assert manager.execution_port.calls == ()
     assert outbox_count == 0
+
+
+def test_direct_call_adds_only_a_small_interaction_event(tmp_path):
+    async def scenario():
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SOCIAL_RUNTIME,
+            enabled_groups=("885617919",),
+            social_runtime_test_groups=("885617919",),
+        )
+        await manager.start()
+        await manager.ingest(_event("relationship-direct"))
+        evaluations = await manager.drain()
+        affection = manager.relationship_affection("885617919", "u1")
+        await manager.close()
+        return evaluations[0], affection
+
+    evaluation, affection = asyncio.run(scenario())
+
+    assert evaluation.relationship_decisions[-1].outcome == "ACCEPT"
+    assert evaluation.relationship_decisions[-1].proposal.kind == "interaction"
+    assert affection.value <= 0.2
+
+
+def test_shadow_model_event_is_visible_but_does_not_change_affection(tmp_path):
+    async def scenario():
+        worker = CombinedAmbientWorker(
+            decision="silence", relationship_kind="warm_exchange"
+        )
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+            cognition_workers={worker.name: worker},
+        )
+        await manager.start()
+        await manager.ingest(
+            _event("relationship-ambient", direct=False, occurred_at=100)
+        )
+        evaluations = await manager.drain(now=102)
+        affection = manager.relationship_affection("885617919", "u1")
+        pending = manager.pending_shadow_review_evidence()
+        await manager.close()
+        return evaluations[0], affection, pending
+
+    evaluation, affection, pending = asyncio.run(scenario())
+
+    assert evaluation.relationship_decisions[-1].outcome == "SUGGEST"
+    assert evaluation.relationship_decisions[-1].proposal.kind == "warm_exchange"
+    assert evaluation.relationship_stage == "陌生"
+    assert affection.value == 0.0
+    assert pending[-1].evaluation.relationship_decisions[-1].outcome == "SUGGEST"
 
 
 def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):

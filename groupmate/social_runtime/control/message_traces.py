@@ -56,6 +56,18 @@ _ADDRESS_KINDS = {
     "ALIAS_PREFIX",
     "ALIAS_SUFFIX",
 }
+_RELATIONSHIP_KIND_LABELS = {
+    "interaction": "普通互动",
+    "warm_exchange": "友好交流",
+    "trust_confirmed": "信任确认",
+    "reciprocal_action": "持续互动",
+    "play_accepted": "玩笑被接纳",
+    "reliable_help": "可靠帮助",
+    "care_permission": "关心被接纳",
+    "boundary_pressure": "越界压力",
+    "repair_attempt": "尝试修复关系",
+    "repair_confirmed": "关系修复成立",
+}
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -312,6 +324,17 @@ class MessageTraceRepository:
             outcome=outcome,
             diagnostics=diagnostics,
         )
+        relationship_decisions = tuple(
+            getattr(evaluation, "relationship_decisions", ()) or ()
+        )
+        relationship = (
+            self._relationship_summary(
+                relationship_decisions[-1],
+                getattr(evaluation, "relationship_stage", None),
+            )
+            if relationship_decisions
+            else None
+        )
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
@@ -327,6 +350,8 @@ class MessageTraceRepository:
                 "participation_diagnostics": participation_diagnostics,
             }
             summary["judgement"] = judgement
+            if relationship is not None:
+                summary["relationship"] = relationship
             decision = {
                 "outcome": outcome,
                 "pre_gate_outcome": outcome,
@@ -397,6 +422,35 @@ class MessageTraceRepository:
             }
         )
         self._mutate(event.event_id, now, mutate, stages=tuple(stages))
+
+    @staticmethod
+    def _relationship_summary(
+        decision: object, stage: object
+    ) -> dict[str, object]:
+        outcome = str(getattr(decision, "outcome", "REJECT") or "REJECT")
+        proposal = getattr(decision, "proposal", None)
+        kind = str(getattr(proposal, "kind", "") or "")
+        reasons = tuple(getattr(decision, "reason_codes", ()) or ())
+        if outcome == "SUGGEST":
+            reason = "SHADOW 仅记录，未更新好感度"
+        elif outcome == "ACCEPT":
+            reason = "已按本地规则记录"
+        elif outcome == "DUPLICATE":
+            reason = "该关系事件已处理"
+        elif "confidence_below_threshold" in reasons:
+            reason = "证据置信度不足，未计入"
+        elif "positive_daily_budget_exhausted" in reasons:
+            reason = "今日正向变化已达上限"
+        elif "scope_mismatch" in reasons:
+            reason = "关系对象不匹配，未计入"
+        else:
+            reason = "未通过本地关系规则"
+        return {
+            "outcome": outcome,
+            "kind": _RELATIONSHIP_KIND_LABELS.get(kind, "关系事件"),
+            "reason": reason,
+            "stage": str(stage or "未知"),
+        }
 
     def _judgement(
         self,

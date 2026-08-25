@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from contextlib import closing
 from dataclasses import asdict, dataclass, replace
@@ -36,11 +37,17 @@ from .participation import ParticipationPolicy
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
 from .persistence.repositories import (
+    RelationshipEventIdentityConflict,
     SQLitePersonaStateRepository,
     SQLiteSocietyRepository,
 )
 from .persona.profile import GroupmatePersonaProfile
-from .society.relationships import PublicAffection
+from .society.relationship_events import (
+    RelationshipEventDecision,
+    RelationshipEventProposal,
+    RelationshipEventService,
+)
+from .society.relationships import PublicAffection, RelationshipEvidence
 from .replying import ReplyPlan, ReplyPlanRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import (
@@ -87,6 +94,8 @@ class ShadowEvaluation:
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
     candidate_response: str | None = None
     reply_diagnostic: str | None = None
+    relationship_decisions: tuple[RelationshipEventDecision, ...] = ()
+    relationship_stage: str | None = None
 
     def to_capture_evidence(self) -> dict[str, object]:
         frame_id = (
@@ -122,6 +131,10 @@ class ShadowEvaluation:
                 ],
                 "candidate_response": self.candidate_response,
                 "reply_diagnostic": self.reply_diagnostic,
+                "relationship_decisions": [
+                    asdict(item) for item in self.relationship_decisions
+                ],
+                "relationship_stage": self.relationship_stage,
                 "accepted": self.accepted,
                 "status": self.status,
             },
@@ -182,6 +195,26 @@ class ShadowEvaluation:
             )
             for item in values.get("cognitive_observations", ())
         )
+        relationship_decisions = []
+        for item in values.get("relationship_decisions", ()):
+            decision = dict(item)
+            decision["reason_codes"] = tuple(
+                decision.get("reason_codes", ())
+            )
+            proposal = dict(decision["proposal"])
+            proposal["source_event_ids"] = tuple(
+                proposal.get("source_event_ids", ())
+            )
+            decision["proposal"] = RelationshipEventProposal(**proposal)
+            evidence = decision.get("evidence")
+            decision["evidence"] = (
+                RelationshipEvidence(**dict(evidence))
+                if isinstance(evidence, Mapping)
+                else None
+            )
+            relationship_decisions.append(
+                RelationshipEventDecision(**decision)
+            )
         return cls(
             persona_id=str(values["persona_id"]),
             request_id=str(values["request_id"]),
@@ -211,6 +244,10 @@ class ShadowEvaluation:
             ),
             reply_diagnostic=(
                 str(values.get("reply_diagnostic") or "").strip() or None
+            ),
+            relationship_decisions=tuple(relationship_decisions),
+            relationship_stage=(
+                str(values.get("relationship_stage") or "").strip() or None
             ),
         )
 
@@ -295,6 +332,7 @@ class SocialRuntimeManager:
             persona_id, SQLitePersonaStateRepository(database_path)
         )
         self.society = SQLiteSocietyRepository(database_path)
+        self.relationship_events = RelationshipEventService(self.society)
         self.execution_port = NoSideEffectExecutionPort()
         self.cognition = CognitionService(
             workers=cognition_workers or {},
@@ -801,11 +839,186 @@ class SocialRuntimeManager:
             self._expired_attention_count += int(discarded)
             return replace(evaluation, accepted=False, status="stale")
         accepted = await actor.accept_result(result)
-        return replace(
+        evaluation = replace(
             evaluation,
             accepted=accepted,
             status="accepted" if accepted else "stale",
         )
+        if not accepted:
+            return evaluation
+        decisions = self._process_relationship_events(
+            request,
+            frame,
+            blackboard,
+            proposal.lane.value,
+            focus_events,
+            decision_now,
+        )
+        relationship_stage = None
+        if decisions:
+            affection = self.relationship_affection(
+                request.group_id, decisions[-1].proposal.subject_id
+            )
+            relationship_stage = affection.stage.value
+            evaluation = replace(
+                evaluation,
+                relationship_decisions=decisions,
+                relationship_stage=relationship_stage,
+            )
+            if evaluation.runtime_mode is RuntimeMode.SHADOW:
+                self.update_shadow_review_evidence(evaluation)
+        return evaluation
+
+    def _process_relationship_events(
+        self,
+        request: SceneWorkRequest,
+        frame: AttentionFrame,
+        blackboard: object,
+        lane: str,
+        focus_events: tuple[SocialEventEnvelope, ...],
+        now: int,
+    ) -> tuple[RelationshipEventDecision, ...]:
+        proposals = self._relationship_proposals(
+            request, frame, blackboard, lane, focus_events, now
+        )
+        decisions = []
+        mode = self.group_mode(request.group_id).value
+        for proposal in proposals:
+            try:
+                decisions.append(
+                    self.relationship_events.process(proposal, mode=mode)
+                )
+            except RelationshipEventIdentityConflict:
+                existing = self.relationship_events.decisions(
+                    proposal.persona_id,
+                    proposal.group_id,
+                    proposal.subject_id,
+                )
+                previous = next(
+                    (
+                        item
+                        for item in reversed(existing)
+                        if item.proposal.event_id == proposal.event_id
+                    ),
+                    None,
+                )
+                if previous is not None:
+                    decisions.append(
+                        RelationshipEventDecision(
+                            "DUPLICATE",
+                            ("event_id_already_processed",),
+                            previous.proposal,
+                            previous.evidence,
+                            0.0,
+                        )
+                    )
+        return tuple(decisions)
+
+    def _relationship_proposals(
+        self,
+        request: SceneWorkRequest,
+        frame: AttentionFrame,
+        blackboard: object,
+        lane: str,
+        focus_events: tuple[SocialEventEnvelope, ...],
+        now: int,
+    ) -> tuple[RelationshipEventProposal, ...]:
+        occurred_at_by_id = {
+            event.event_id: int(event.occurred_at) for event in focus_events
+        }
+        proposals = []
+        for entry in getattr(blackboard, "entries", ()):
+            observation = entry.observation
+            if entry.conflict or observation.kind != "relationship_event":
+                continue
+            proposition = observation.proposition
+            subject_id = str(proposition.get("subject_id") or "").strip()
+            source_ids = tuple(observation.evidence_event_ids)
+            occurred_at = max(
+                (occurred_at_by_id.get(item, int(now)) for item in source_ids),
+                default=int(now),
+            )
+            try:
+                proposals.append(
+                    RelationshipEventProposal(
+                        event_id=self._relationship_event_id(
+                            request.persona_id,
+                            request.group_id,
+                            subject_id,
+                            str(proposition.get("kind") or ""),
+                            source_ids,
+                        ),
+                        persona_id=request.persona_id,
+                        group_id=request.group_id,
+                        subject_id=subject_id,
+                        kind=str(proposition.get("kind") or ""),
+                        confidence=observation.confidence,
+                        severity=str(proposition.get("severity") or ""),
+                        summary=str(proposition.get("summary") or ""),
+                        source_event_ids=source_ids,
+                        occurred_at=occurred_at,
+                        repair_of=(
+                            str(proposition.get("repair_of") or "").strip()
+                            or None
+                        ),
+                        sensitivity=str(
+                            proposition.get("sensitivity") or "normal"
+                        ),
+                    )
+                )
+            except ValueError:
+                continue
+        if proposals or lane not in {"DIRECT_FAST", "CONTINUATION"}:
+            return tuple(proposals)
+        subject_id = str(request.event.actor_id or "").strip()
+        if not subject_id:
+            return ()
+        kind = "interaction" if lane == "DIRECT_FAST" else "reciprocal_action"
+        source_ids = (request.event.event_id,)
+        return (
+            RelationshipEventProposal(
+                event_id=self._relationship_event_id(
+                    request.persona_id,
+                    request.group_id,
+                    subject_id,
+                    kind,
+                    source_ids,
+                ),
+                persona_id=request.persona_id,
+                group_id=request.group_id,
+                subject_id=subject_id,
+                kind=kind,
+                confidence=1.0,
+                severity="minor",
+                summary=(
+                    "成员延续了与爱弥斯的对话"
+                    if lane == "CONTINUATION"
+                    else "成员直接与爱弥斯互动"
+                ),
+                source_event_ids=source_ids,
+                occurred_at=int(request.event.occurred_at),
+            ),
+        )
+
+    @staticmethod
+    def _relationship_event_id(
+        persona_id: str,
+        group_id: str,
+        subject_id: str,
+        kind: str,
+        source_event_ids: tuple[str, ...],
+    ) -> str:
+        identity = "\x1f".join(
+            (
+                str(persona_id),
+                str(group_id),
+                str(subject_id),
+                str(kind),
+                *tuple(str(item) for item in source_event_ids),
+            )
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        return f"relationship:{digest}"
 
     @staticmethod
     def _cognitive_world_view(
