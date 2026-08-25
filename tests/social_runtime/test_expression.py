@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from groupmate.social_runtime.expression import ExpressionPlanner
 from groupmate.social_runtime.persona.profile import GroupmatePersonaProfile
+from groupmate.social_runtime.persona.presets import AEMEATH_CURRENT_CANON
+from groupmate.social_runtime.society.relationships import (
+    PublicAffection,
+    RelationshipStage,
+)
 
 
 def _profile():
     profile = GroupmatePersonaProfile.default().to_mapping()
     profile["identity"]["name"] = "爱弥斯"
+    profile["canon"] = AEMEATH_CURRENT_CANON.to_mapping()
     return profile
 
 
@@ -48,3 +54,62 @@ def test_ambient_expression_uses_a_low_interruption_posture():
 
     assert plan.reaction_stance == "attentive"
     assert plan.followup_hook == "only_if_it_adds_value"
+
+
+def test_unrelated_chat_uses_no_explicit_persona_material():
+    plan = ExpressionPlanner().plan(
+        lane="DIRECT_FAST",
+        act="respond_to_direct_interaction",
+        source_text="小爱，陪我聊会儿",
+        persona_profile=_profile(),
+        relationship=PublicAffection(0.0, RelationshipStage.STRANGER),
+        recent_outputs=(),
+    )
+
+    assert plan.explicit_material is None
+    assert plan.material_reason == "no_relevant_material"
+    assert plan.relationship_stage == "陌生"
+
+
+def test_relevant_game_topic_may_select_one_daily_life_fact():
+    plan = ExpressionPlanner().plan(
+        lane="CONTINUATION",
+        act="continue_dialogue",
+        source_text="你最近在玩什么游戏",
+        persona_profile=_profile(),
+        relationship=PublicAffection(35.0, RelationshipStage.FAMILIAR),
+        recent_outputs=(),
+    )
+
+    assert plan.explicit_material is not None
+    assert "游戏" in plan.explicit_material
+    assert plan.material_reason == "topic_relevant"
+
+
+def test_recent_material_is_cooled_down():
+    plan = ExpressionPlanner().plan(
+        lane="CONTINUATION",
+        act="continue_dialogue",
+        source_text="说说你的机兵",
+        persona_profile=_profile(),
+        relationship=PublicAffection(35.0, RelationshipStage.FAMILIAR),
+        recent_outputs=("刚刚才说过隧者兵装。",),
+    )
+
+    assert plan.explicit_material is None
+    assert plan.material_reason == "recently_repeated"
+
+
+def test_guarded_relationship_changes_boundary_posture_not_action():
+    plan = ExpressionPlanner().plan(
+        lane="DIRECT_FAST",
+        act="respond_to_direct_interaction",
+        source_text="你理我一下",
+        persona_profile=_profile(),
+        relationship=PublicAffection(-45.0, RelationshipStage.GUARDED),
+        recent_outputs=(),
+    )
+
+    assert plan.core_response_goal == "respond_to_direct_interaction"
+    assert plan.relationship_stage == "警戒"
+    assert "冷静" in plan.boundary_style

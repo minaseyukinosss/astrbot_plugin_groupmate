@@ -100,6 +100,50 @@ class PersonaCanonSnapshot:
 
 
 @dataclass(frozen=True)
+class PersonaMaterialSelection:
+    fact: PersonaFact | None
+    reason: str
+
+
+class PersonaMaterialSelector:
+    """Select zero or one explicit fact only when the current topic asks for it."""
+
+    _CATEGORY_ORDER = ("daily_life", "values", "abilities", "history")
+
+    def select(
+        self,
+        canon: "PersonaCanon",
+        *,
+        source_text: str,
+        recent_outputs: tuple[str, ...] = (),
+    ) -> PersonaMaterialSelection:
+        source = str(source_text or "").casefold()
+        snapshot = canon.current_snapshot()
+        facts_by_category = {
+            "daily_life": snapshot.daily_life,
+            "values": snapshot.values,
+            "abilities": snapshot.abilities,
+            "history": snapshot.history,
+        }
+        candidates = []
+        for category in self._CATEGORY_ORDER:
+            for fact in facts_by_category[category]:
+                if any(tag.casefold() in source for tag in fact.tags):
+                    candidates.append(fact)
+        if not candidates:
+            return PersonaMaterialSelection(None, "no_relevant_material")
+        recent = "\n".join(str(item or "").casefold() for item in recent_outputs[-8:])
+        for fact in candidates:
+            repeated = any(
+                len(tag.strip()) >= 2 and tag.casefold() in recent
+                for tag in fact.tags
+            )
+            if not repeated:
+                return PersonaMaterialSelection(fact, "topic_relevant")
+        return PersonaMaterialSelection(None, "recently_repeated")
+
+
+@dataclass(frozen=True)
 class PersonaCanon:
     current_phase: int
     checked_at: int
@@ -168,4 +212,10 @@ class PersonaCanon:
         )
 
 
-__all__ = ("PersonaCanon", "PersonaCanonSnapshot", "PersonaFact")
+__all__ = (
+    "PersonaCanon",
+    "PersonaCanonSnapshot",
+    "PersonaFact",
+    "PersonaMaterialSelection",
+    "PersonaMaterialSelector",
+)
