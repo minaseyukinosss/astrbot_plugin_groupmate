@@ -77,6 +77,9 @@ function traceSearchText(item) {
     traceResultReason(summary),
     summary.decision?.label,
     ...(summary.decision?.reasons || []),
+    summary.relationship?.kind,
+    summary.relationship?.reason,
+    summary.relationship?.stage,
     summary.delivery?.label,
   ].join(" ").toLowerCase();
 }

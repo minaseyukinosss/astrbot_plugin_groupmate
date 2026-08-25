@@ -753,6 +753,13 @@ h1 { font-size: 1.2rem; }
 .result-candidate { display: grid; gap: 0.18rem; padding-top: 0.75rem; border-block-start: 1px solid var(--color-border); }
 .trigger-basis-section .inspector-facts { padding: 0.1rem 0; }
 .trigger-basis-section .inspector-facts dd { color: var(--color-ink); }
+.relationship-section {
+  margin-inline: -0.6rem;
+  padding-inline: 0.6rem;
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+}
+.relationship-section .inspector-facts dd { color: var(--color-ink); }
 .inspector-facts div { grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.65rem; padding: 0.38rem 0; border: 0; font-size: 0.7rem; }
 .inspector-facts dt { color: var(--color-muted); }
 .inspector-facts dd { color: var(--color-ink-soft); line-height: 1.55; }

@@ -62,6 +62,15 @@ function decisionLabel(value) {
   })[String(value || "").toUpperCase()] || value;
 }
 
+function relationshipOutcomeLabel(value) {
+  return ({
+    ACCEPT: "已计入关系",
+    SUGGEST: "仅观察，未计入",
+    REJECT: "未通过本地规则",
+    DUPLICATE: "该事件已处理",
+  })[String(value || "").toUpperCase()] || "等待判断";
+}
+
 function cognitionDiagnostics(diagnostics = []) {
   if (!Array.isArray(diagnostics) || !diagnostics.length) {
     return element("p", { className: "inspector-empty", text: "本条消息没有认知模块诊断记录。" });
@@ -155,6 +164,7 @@ export function renderInspector(item) {
   const decision = summary.decision || {};
   const delivery = summary.delivery || {};
   const timing = summary.timing || {};
+  const relationship = summary.relationship || null;
 
   return element("div", { className: "inspector-fields trace-inspector" }, [
     element("div", { className: "inspector-event-heading" }, [
@@ -166,6 +176,12 @@ export function renderInspector(item) {
       ]),
     ]),
     renderResultSummary(summary),
+    ...(relationship ? [section("关系变化", [definitionRows([
+      ["关系事件", relationship.kind],
+      ["处理结果", relationshipOutcomeLabel(relationship.outcome)],
+      ["当前阶段", relationship.stage],
+      ["说明", relationship.reason],
+    ])], "relationship-section")] : []),
     section("收到的消息", [renderMessageContent(message)]),
     section("触发与回复依据", [definitionRows([
       ["触发方式", triggerBasisLabel(summary)],

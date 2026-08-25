@@ -151,6 +151,17 @@ def test_result_first_styles_preserve_readable_single_column_evidence():
     assert ".result-evidence" in styles and "minmax(0, 1fr)" in styles
 
 
+def test_relationship_result_is_visible_without_internal_model_details():
+    inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+
+    for label in ("关系变化", "关系事件", "处理结果", "当前阶段"):
+        assert label in inspector
+    assert "summary.relationship" in inspector + runtime
+    for internal in ("public_delta", "boundary_pressure", "warmth"):
+        assert internal not in inspector + runtime
+
+
 def test_runtime_console_surfaces_strategy_and_cognition_failures():
     runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
     inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
