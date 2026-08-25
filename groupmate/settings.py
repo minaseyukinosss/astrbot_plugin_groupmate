@@ -21,6 +21,8 @@ class SocialRuntimeSettings:
     generation_provider: str
     vision_provider: str
     persona_id: str
+    persona_name: str = "Groupmate"
+    persona_aliases: tuple[str, ...] = ()
     cognition_api_key: str = field(default="", repr=False)
     cognition_api_base: str = DEFAULT_COGNITION_API_BASE
     cognition_model: str = DEFAULT_COGNITION_MODEL
@@ -62,6 +64,11 @@ class SocialRuntimeSettings:
         ).strip()
         if not cognition_model:
             raise ValueError("cognition_model must not be empty")
+        persona_name = str(source.get("persona_name", "Groupmate") or "").strip()
+        if not persona_name:
+            raise ValueError("persona_name must not be empty")
+        if len(persona_name) > 24:
+            raise ValueError("persona_name must contain at most 24 characters")
         return cls(
             enabled_groups=enabled_groups,
             social_runtime_test_groups=social_runtime_groups,
@@ -69,6 +76,11 @@ class SocialRuntimeSettings:
             generation_provider=generation_provider,
             vision_provider=str(source.get("vision_provider", "") or "").strip(),
             persona_id=persona_id,
+            persona_name=persona_name,
+            persona_aliases=cls._persona_aliases(
+                persona_name,
+                source.get("persona_aliases", ()),
+            ),
             cognition_api_key=str(
                 source.get("cognition_api_key", "") or ""
             ).strip(),
@@ -97,6 +109,25 @@ class SocialRuntimeSettings:
                 if str(value).strip()
             ),
         )
+
+    @staticmethod
+    def _persona_aliases(name: str, values: object) -> tuple[str, ...]:
+        source = values if isinstance(values, (list, tuple)) else ()
+        normalized = tuple(
+            dict.fromkeys(
+                str(value or "").strip()
+                for value in source
+                if str(value or "").strip()
+            )
+        )
+        aliases = tuple(value for value in normalized if value != name)
+        if len(aliases) > 12 or any(
+            len(value) < 2 or len(value) > 24 for value in aliases
+        ):
+            raise ValueError(
+                "persona aliases must contain 2-24 characters and at most 12 entries"
+            )
+        return aliases
 
     @staticmethod
     def _positive_int(value: object, field: str) -> int:

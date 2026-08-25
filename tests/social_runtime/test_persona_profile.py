@@ -24,10 +24,29 @@ def test_default_plugin_persona_is_complete_and_group_chat_oriented():
     payload = profile.to_mapping()
 
     assert payload["identity"]["name"] == "Groupmate"
+    assert payload["identity"]["aliases"] == []
     assert payload["identity"]["role"]
     assert payload["participation"]["initiative"] == "balanced"
     assert payload["expression"]["reply_length"] == "short"
     assert payload["tools"]["autonomy"] == "read_only"
+
+
+def test_old_persona_profile_without_aliases_remains_valid():
+    payload = GroupmatePersonaProfile.default().to_mapping()
+    payload["identity"].pop("aliases")
+
+    restored = GroupmatePersonaProfile.from_mapping(payload).to_mapping()
+
+    assert restored["identity"]["aliases"] == []
+
+
+def test_persona_profile_rejects_ambiguous_aliases():
+    payload = GroupmatePersonaProfile.default().to_mapping()
+    payload["identity"]["name"] = "爱弥斯"
+    payload["identity"]["aliases"] = ["爱弥斯", "爱"]
+
+    with pytest.raises(ValueError, match="persona alias"):
+        GroupmatePersonaProfile.from_mapping(payload)
 
 
 def test_plugin_persona_rejects_unknown_sections_and_invalid_choices():

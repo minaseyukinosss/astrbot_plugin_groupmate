@@ -13,6 +13,18 @@
     "default": "SHADOW",
     "hint": "SHADOW 只观察并记录决策，不发送消息；正式运行允许 Groupmate 在已启用的群中参与对话。"
   },
+  "persona_name": {
+    "description": "Groupmate 人格名称",
+    "type": "string",
+    "default": "Groupmate",
+    "hint": "用于自称和直接呼唤识别。"
+  },
+  "persona_aliases": {
+    "description": "已确认的人格别称",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个别称。只有管理员确认的别称会触发直接互动。"
+  },
   "generation_provider": {
     "description": "Groupmate 最终回复模型",
     "type": "string",

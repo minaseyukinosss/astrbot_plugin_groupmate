@@ -31,6 +31,10 @@ _FIELDS = {
     "tools": ("autonomy", "confirmation_policy"),
 }
 
+_OPTIONAL_FIELDS = {
+    "identity": ("aliases",),
+}
+
 _CHOICES = {
     ("presence", "default_mode"): {"social", "quiet_observer"},
     ("participation", "initiative"): {"reserved", "balanced", "proactive"},
@@ -43,6 +47,7 @@ _CHOICES = {
 _DEFAULT = {
     "identity": {
         "name": "Groupmate",
+        "aliases": [],
         "role": "群聊中的长期伙伴，先理解现场，再在有价值时自然参与。",
         "background": "熟悉群内关系和共同经历，但不冒充任何真实成员。",
     },
@@ -79,7 +84,7 @@ _DEFAULT = {
 
 @dataclass(frozen=True)
 class GroupmatePersonaProfile:
-    sections: Mapping[str, Mapping[str, str]]
+    sections: Mapping[str, Mapping[str, object]]
 
     @classmethod
     def default(cls) -> "GroupmatePersonaProfile":
@@ -101,14 +106,14 @@ class GroupmatePersonaProfile:
             raise ValueError(
                 f"missing persona sections: {sorted(missing_sections)}"
             )
-        normalized: dict[str, Mapping[str, str]] = {}
+        normalized: dict[str, Mapping[str, object]] = {}
         for section in _SECTIONS:
             raw_section = value[section]
             if not isinstance(raw_section, Mapping):
                 raise ValueError(f"persona section must be an object: {section}")
-            expected = set(_FIELDS[section])
+            expected = set(_FIELDS[section]) | set(_OPTIONAL_FIELDS.get(section, ()))
             unknown = set(raw_section) - expected
-            missing = expected - set(raw_section)
+            missing = set(_FIELDS[section]) - set(raw_section)
             if unknown:
                 raise ValueError(
                     f"unknown persona fields in {section}: {sorted(unknown)}"
@@ -117,7 +122,7 @@ class GroupmatePersonaProfile:
                 raise ValueError(
                     f"missing persona fields in {section}: {sorted(missing)}"
                 )
-            section_values: dict[str, str] = {}
+            section_values: dict[str, object] = {}
             for field in _FIELDS[section]:
                 text = str(raw_section[field] or "").strip()
                 if not text:
@@ -130,8 +135,35 @@ class GroupmatePersonaProfile:
                         f"unsupported {field}: {text}; expected one of {sorted(allowed)}"
                     )
                 section_values[field] = text
+            if section == "identity":
+                section_values["aliases"] = cls._aliases(
+                    raw_section,
+                    section_values["name"],
+                )
             normalized[section] = MappingProxyType(section_values)
         return cls(MappingProxyType(normalized))
+
+    @staticmethod
+    def _aliases(
+        raw_section: Mapping[str, object], primary_name: object
+    ) -> tuple[str, ...]:
+        raw = raw_section.get("aliases", ())
+        if not isinstance(raw, (list, tuple)):
+            raise ValueError("persona aliases must be a list")
+        values = tuple(str(value or "").strip() for value in raw)
+        if any(not value for value in values):
+            raise ValueError("persona alias must not be empty")
+        if len(set(values)) != len(values):
+            raise ValueError("persona alias must be unique")
+        if len(values) > 12 or any(
+            len(value) < 2 or len(value) > 24 for value in values
+        ):
+            raise ValueError(
+                "persona alias must contain 2-24 characters and at most 12 entries"
+            )
+        if str(primary_name) in values:
+            raise ValueError("persona alias must differ from the primary name")
+        return values
 
     @classmethod
     def from_behavior_config(
@@ -144,13 +176,13 @@ class GroupmatePersonaProfile:
             raise ValueError("persona profile config must be an object")
         return cls.from_mapping(raw)
 
-    def to_mapping(self) -> dict[str, dict[str, str]]:
-        return copy.deepcopy(
-            {
-                section: dict(values)
-                for section, values in self.sections.items()
-            }
+    def to_mapping(self) -> dict[str, dict[str, object]]:
+        result = copy.deepcopy(
+            {section: dict(values) for section, values in self.sections.items()}
         )
+        identity = result["identity"]
+        identity["aliases"] = list(identity.get("aliases", ()))
+        return result
 
 
 __all__ = ("GroupmatePersonaProfile", "PERSONA_PROFILE_CONFIG_KEY")

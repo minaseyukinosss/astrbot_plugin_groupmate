@@ -32,6 +32,20 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.cognition_api_key == ""
     assert settings.cognition_api_base == "https://api.deepseek.com"
     assert settings.cognition_model == "deepseek-v4-flash"
+    assert settings.persona_name == "Groupmate"
+    assert settings.persona_aliases == ()
+
+
+def test_persona_identity_settings_normalize_confirmed_aliases():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "persona_name": " 爱弥斯 ",
+            "persona_aliases": [" 小爱 ", "爱弥斯", "小爱", ""],
+        }
+    )
+
+    assert settings.persona_name == "爱弥斯"
+    assert settings.persona_aliases == ("小爱",)
 
 
 def test_astrbot_config_only_exposes_groupmate_deployment_choices():
@@ -55,6 +69,8 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "cognition_timeout_seconds",
         "external_command_prefixes",
         "external_link_domains",
+        "persona_name",
+        "persona_aliases",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
