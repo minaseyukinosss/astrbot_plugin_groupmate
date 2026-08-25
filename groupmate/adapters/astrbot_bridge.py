@@ -6,6 +6,7 @@ import asyncio
 from collections import deque
 from contextlib import suppress
 from dataclasses import asdict, replace
+import inspect
 import time
 from pathlib import Path
 from typing import Callable, Mapping
@@ -85,7 +86,9 @@ class AstrBotSocialRuntimeBridge:
         self._attention_task: asyncio.Task[None] | None = None
         self._started = False
 
-    def prepare_affection_query(self, event: object) -> AffectionQuery | None:
+    async def prepare_affection_query(
+        self, event: object
+    ) -> AffectionQuery | None:
         """Build the local query result without entering chat or cognition."""
 
         if not self._started or self._manager is None:
@@ -100,19 +103,57 @@ class AstrBotSocialRuntimeBridge:
         now = int(self.clock())
         participants = self.trace_repository.participants
         participants.remember(translated)
+        bot_id = str(translated.payload.get("bot_id") or "").strip()
+        since = now - 30 * 24 * 60 * 60
+        recent_ids = participants.recent_actor_ids(
+            persona_id=self.settings.persona_id,
+            group_id=group_id,
+            since=since,
+        )
         members = participants.active_members(
             persona_id=self.settings.persona_id,
             group_id=group_id,
-            since=now - 30 * 24 * 60 * 60,
-            exclude_actor_ids=(str(translated.payload.get("bot_id") or ""),),
+            since=since,
+            exclude_actor_ids=(bot_id,),
         )
+        group_name = str(
+            translated.payload.get("group_name") or "当前群聊"
+        )
+        roster_complete = False
+        group_getter = getattr(event, "get_group", None)
+        if callable(group_getter):
+            try:
+                pending = group_getter(group_id)
+                group = (
+                    await asyncio.wait_for(pending, timeout=5.0)
+                    if inspect.isawaitable(pending)
+                    else pending
+                )
+                platform_members = self._normalize_group_members(
+                    group,
+                    bot_id=bot_id,
+                    now=now,
+                )
+                if platform_members:
+                    members = platform_members
+                    roster_complete = True
+                    platform_name = (
+                        group.get("group_name")
+                        if isinstance(group, Mapping)
+                        else getattr(group, "group_name", "")
+                    )
+                    group_name = str(platform_name or group_name)
+            except Exception:
+                roster_complete = False
         leaderboard = AffectionLeaderboardService(self._manager.society).build(
             persona_id=self.settings.persona_id,
             group_id=group_id,
-            group_name=str(translated.payload.get("group_name") or "当前群聊"),
+            group_name=group_name,
             requester_id=translated.actor_id,
             members=members,
             updated_at=now,
+            recent_active_count=len(recent_ids - {bot_id}),
+            roster_complete=roster_complete,
         )
         self._record_trace(
             self.trace_repository.record_affection_query,
@@ -123,6 +164,57 @@ class AstrBotSocialRuntimeBridge:
             leaderboard=leaderboard,
             pages=AffectionCardPresenter().pages(leaderboard),
         )
+
+    @staticmethod
+    def _normalize_group_members(
+        group: object,
+        *,
+        bot_id: str,
+        now: int,
+    ) -> tuple[dict[str, object], ...]:
+        value = (
+            group.get("members")
+            if isinstance(group, Mapping)
+            else getattr(group, "members", None)
+        )
+        if not isinstance(value, (list, tuple)):
+            return ()
+        normalized: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for member in value:
+            if isinstance(member, Mapping):
+                actor_id = str(
+                    member.get("user_id") or member.get("actor_id") or ""
+                ).strip()
+                display_name = str(
+                    member.get("card")
+                    or member.get("nickname")
+                    or member.get("display_name")
+                    or "群成员"
+                )
+            else:
+                actor_id = str(
+                    getattr(member, "user_id", "")
+                    or getattr(member, "actor_id", "")
+                ).strip()
+                display_name = str(
+                    getattr(member, "card", "")
+                    or getattr(member, "nickname", "")
+                    or getattr(member, "display_name", "")
+                    or "群成员"
+                )
+            if not actor_id or actor_id == bot_id or actor_id in seen:
+                continue
+            seen.add(actor_id)
+            normalized.append(
+                {
+                    "actor_id": actor_id,
+                    "display_name": " ".join(display_name.split())[:48]
+                    or "群成员",
+                    "updated_at": int(now),
+                }
+            )
+        return tuple(normalized)
 
     @property
     def trace_repository(self) -> MessageTraceRepository:

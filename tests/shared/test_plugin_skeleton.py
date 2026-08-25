@@ -326,6 +326,7 @@ def test_affection_query_is_claimed_before_chat_and_has_text_fallback():
     assert composition.index("prepare_affection_query") < composition.index(
         "await self.bridge.handle_event(event)"
     )
+    assert "await self.bridge.prepare_affection_query(event)" in composition
     assert "event.stop_event()" in composition
     assert "await self.html_render(" in composition
     assert '"full_page": False' in composition
