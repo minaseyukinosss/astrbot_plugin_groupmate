@@ -94,6 +94,15 @@ def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details(
         "生成说明",
     ):
         assert removed_default not in default_content
+    for trigger_label in (
+        "触发方式",
+        "命中别称",
+        "能力归属",
+        "对话对象",
+        "租约状态",
+        "表达计划",
+    ):
+        assert trigger_label in default_content
     for technical_label in (
         "处理阶段",
         "认知模块",
@@ -102,6 +111,7 @@ def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details(
     ):
         assert technical_label in technical_content
     assert "cognitionDiagnostics(understanding.diagnostics)" in technical_content
+    assert "persona_cues" not in inspector
     for diagnostic_label in (
         "认知后端",
         "耗时",

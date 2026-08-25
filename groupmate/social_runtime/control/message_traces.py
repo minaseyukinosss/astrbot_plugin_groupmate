@@ -499,6 +499,27 @@ class MessageTraceRepository:
             else:
                 delivery.update(status="READY", label="回复已准备，等待发送")
             summary["delivery"] = delivery
+            expression = getattr(plan, "expression", None)
+            if expression is not None:
+                summary["expression"] = {
+                    "reaction_stance": self._safe_text(
+                        getattr(expression, "reaction_stance", ""), 40
+                    ),
+                    "core_response_goal": self._safe_text(
+                        getattr(expression, "core_response_goal", ""), 80
+                    ),
+                    "followup_hook": self._safe_text(
+                        getattr(expression, "followup_hook", ""), 40
+                    ),
+                    "message_count": max(
+                        1,
+                        min(2, int(getattr(expression, "message_count", 1))),
+                    ),
+                    "capability_request": self._safe_text(
+                        getattr(expression, "capability_request", ""), 60
+                    )
+                    or None,
+                }
 
         self._mutate(
             event_id,

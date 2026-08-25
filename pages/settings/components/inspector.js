@@ -8,12 +8,15 @@ import {
   cognitionWorkerLabel,
   formatTimestamp,
   formatTraceDuration,
+  expressionSummary,
+  leaseStatusLabel,
   messageSummary,
   participationDiagnosticLabel,
   participationLaneLabel,
   traceResultHeadline,
   traceResultReason,
   traceResultState,
+  triggerBasisLabel,
   valueLabel,
 } from "./presenters.js";
 import { renderMessageContent } from "./message.js";
@@ -164,10 +167,15 @@ export function renderInspector(item) {
     ]),
     renderResultSummary(summary),
     section("收到的消息", [renderMessageContent(message)]),
-    section("处理路径", [definitionRows([
-      ["当前归属", route.label || "等待路由"],
-      ["原因", route.reason],
-    ])]),
+    section("触发与回复依据", [definitionRows([
+      ["触发方式", triggerBasisLabel(summary)],
+      ["命中别称", route.matched_alias],
+      ["能力归属", route.label || "等待路由"],
+      ["对话对象", decision.participation_lane === "AMBIENT" ? "当前公开群聊" : actor.display_name],
+      ["租约状态", leaseStatusLabel(summary)],
+      ["表达计划", expressionSummary(summary.expression)],
+      ["原因", traceResultReason(summary)],
+    ])], "trigger-basis-section"),
     element("details", { className: "technical-details" }, [
       element("summary", { text: "技术信息" }),
       element("h4", { className: "inspector-subheading", text: "处理阶段" }),

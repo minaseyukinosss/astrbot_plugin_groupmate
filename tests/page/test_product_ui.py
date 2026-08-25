@@ -296,9 +296,11 @@ def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
         "diagnostic_code:'direct_timeout'}]},"
         "decision:{outcome:'OBSERVE',would_reply:false,reasons:["
         "'认知降级或参与条件不足']}};"
-        "const policy={route:{owner:'GROUPMATE'},"
+        "const policy={route:{owner:'GROUPMATE',address_kind:'AT',"
+        "address_reason:'明确 @ 机器人'},"
         "judgement:{source:'policy',status:'not_required',label:'准备回复'},"
-        "decision:{outcome:'ACT',would_reply:true,reasons:['明确 @ 机器人']}};"
+        "decision:{outcome:'ACT',would_reply:true,participation_lane:'DIRECT_FAST',"
+        "reasons:['明确 @ 机器人']}};"
         "const pending={route:{owner:'GROUPMATE'},decision:{outcome:'PENDING'}};"
         "const external={route:{owner:'EXTERNAL_PLUGIN',label:'交给外部能力',"
         "reason:'匹配视频解析规则'},decision:{outcome:'PENDING'}};"
@@ -310,7 +312,7 @@ def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
 
     assert result == [
         ["本轮暂不参与", "继续观察", "成员正在自然交流，现在插话会打断对话。"],
-        ["正式运行会回复", "准备回复", "成员明确提出了可以帮助的问题。"],
+        ["适合加入当前话题", "准备回复", "成员明确提出了可以帮助的问题。"],
         ["本轮不回复", "保持沉默", "当前没有合适的参与意图"],
         ["稍后重新判断", "稍后再判断", "触发频率限制"],
         [
@@ -318,10 +320,32 @@ def test_trace_result_presenters_lead_with_outcome_reason_and_safe_fallbacks():
             "模型判断未采用",
             "直连模型在 6 秒内未返回，本次已转为保守观察。",
         ],
-        ["正式运行会回复", "准备回复", "明确 @ 机器人"],
+        ["会回应这次呼唤", "准备回复", "明确 @ 机器人"],
         ["等待完成判断", "等待判断", "消息仍在处理中。"],
         ["由外部能力处理", "交给外部能力", "匹配视频解析规则"],
     ]
+
+
+def test_runtime_result_prefers_human_trigger_basis():
+    result = _run_presenter(
+        "const item={route:{owner:'GROUPMATE',address_kind:'ALIAS_PREFIX',"
+        "matched_alias:'小爱',address_reason:'命中人格别称：小爱'},"
+        "judgement:{status:'accepted',reason:'模型给出的次要理由'},"
+        "decision:{outcome:'ACT',participation_lane:'DIRECT_FAST'}};"
+        "console.log(JSON.stringify(presenter.traceResultReason(item)));"
+    )
+
+    assert result == "命中人格别称：小爱"
+
+
+def test_continuation_result_has_a_distinct_human_headline():
+    result = _run_presenter(
+        "const item={decision:{outcome:'ACT',would_reply:true,"
+        "participation_lane:'CONTINUATION'}};"
+        "console.log(JSON.stringify(presenter.traceResultHeadline(item)));"
+    )
+
+    assert result == "继续当前对话"
 
 
 def test_trace_presenter_only_treats_completed_silence_as_observed():

@@ -323,8 +323,13 @@ export function traceResultHeadline(summary = {}) {
   if (String(summary.judgement?.status || "") === "unavailable") {
     return "判断未完成";
   }
+  if (outcome === "ACT") {
+    const lane = String(decision.participation_lane || "").toUpperCase();
+    if (lane === "CONTINUATION") return "继续当前对话";
+    if (lane === "DIRECT_FAST") return "会回应这次呼唤";
+    return "适合加入当前话题";
+  }
   return ({
-    ACT: "正式运行会回复",
     OBSERVE: "本轮暂不参与",
     SILENCE: "本轮不回复",
     DEFER: "稍后重新判断",
@@ -352,6 +357,10 @@ export function traceResultReason(summary = {}) {
   if (String(summary.route?.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
     return String(summary.route?.reason || "由已匹配的外部插件继续处理。");
   }
+  const route = summary.route || {};
+  if (route.address_reason) return String(route.address_reason);
+  const lane = String(summary.decision?.participation_lane || "").toUpperCase();
+  if (lane === "CONTINUATION") return "命中当前成员的短程对话承接窗口。";
   const judgement = summary.judgement || {};
   if (String(judgement.status || "") === "accepted" && judgement.reason) {
     return String(judgement.reason);
@@ -374,6 +383,52 @@ export function traceResultReason(summary = {}) {
   const outcome = String(summary.decision?.outcome || "").toUpperCase();
   if (!outcome || outcome === "PENDING") return "消息仍在处理中。";
   return String(summary.route?.reason || "已按当前策略完成判断。");
+}
+
+export function triggerBasisLabel(summary = {}) {
+  const route = summary.route || {};
+  if (String(route.owner || "").toUpperCase() === "EXTERNAL_PLUGIN") {
+    return "命中外部插件规则";
+  }
+  const kinds = {
+    AT: "明确 @ 机器人",
+    REPLY: "回复 Bot 上一条消息",
+    PURE_ALIAS: "只发送了人格名称或别称",
+    ALIAS_PREFIX: "以人格名称或别称开头",
+    ALIAS_SUFFIX: "以人格名称或别称收尾",
+  };
+  const kind = String(route.address_kind || "").toUpperCase();
+  if (kinds[kind]) return kinds[kind];
+  const lane = String(summary.decision?.participation_lane || "").toUpperCase();
+  if (lane === "CONTINUATION") return "自然承接上一轮对话";
+  if (lane === "AMBIENT") return "普通群聊参与判断";
+  return "尚未确认触发方式";
+}
+
+export function leaseStatusLabel(summary = {}) {
+  const lane = String(summary.decision?.participation_lane || "").toUpperCase();
+  if (lane === "CONTINUATION") return "已命中短程对话";
+  if (lane === "DIRECT_FAST" && traceWouldReply(summary)) return "回复成功后建立";
+  return "本轮未使用";
+}
+
+export function expressionSummary(expression = {}) {
+  if (!expression || typeof expression !== "object" || !expression.core_response_goal) {
+    return "";
+  }
+  const reactions = {
+    acknowledge_relationship: "先接住情绪，再回应",
+    continue_current_exchange: "承接上一轮内容",
+    attentive: "直接回应当前内容",
+  };
+  const hooks = {
+    optional_if_natural: "自然时保留续聊口",
+    only_if_it_adds_value: "仅在有新增价值时追问",
+  };
+  const reaction = reactions[expression.reaction_stance] || "自然回应";
+  const hook = hooks[expression.followup_hook] || "不强行延长对话";
+  const count = Math.max(1, Math.min(2, Number(expression.message_count) || 1));
+  return `${reaction}；${hook}；${count} 段以内`;
 }
 
 export function strategySummary(summary = {}) {

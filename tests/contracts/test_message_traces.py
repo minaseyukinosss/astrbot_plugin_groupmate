@@ -193,6 +193,38 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
     assert "prompt" not in str(summary)
 
 
+def test_reply_plan_projects_only_safe_expression_summary(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("expression")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.mark_entered(event.event_id, now=11)
+    plan = SimpleNamespace(
+        expression=SimpleNamespace(
+            reaction_stance="acknowledge_relationship",
+            core_response_goal="respond_to_direct_interaction",
+            followup_hook="optional_if_natural",
+            message_count=2,
+            capability_request=None,
+            persona_cues=("不应展示的人格背景",),
+        )
+    )
+
+    repo.record_plan(event.event_id, plan, now=12)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["expression"] == {
+        "reaction_stance": "acknowledge_relationship",
+        "core_response_goal": "respond_to_direct_interaction",
+        "followup_hook": "optional_if_natural",
+        "message_count": 2,
+        "capability_request": None,
+    }
+    assert "persona_cues" not in str(summary)
+    assert "不应展示的人格背景" not in str(summary)
+
+
 def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):
     repo = MessageTraceRepository(tmp_path / "runtime.db")
     evidence_event = _platform_event("evidence", card="夏夏")
