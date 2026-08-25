@@ -476,7 +476,6 @@ class SocialRuntimeManager:
             if (
                 lease is None
                 or lease.target_id != plan.target_id
-                or lease.topic_id != plan.topic_id
                 or lease.expires_at < now
                 or lease.remaining_turns <= 0
             ):
@@ -484,10 +483,14 @@ class SocialRuntimeManager:
             event_type = "conversation.lease_advanced"
             opened_at = lease.opened_at
             remaining_turns = lease.remaining_turns - 1
+            topic_id = lease.topic_id
+            unresolved_intent = lease.unresolved_intent or plan.act
         else:
             event_type = "conversation.lease_opened"
             opened_at = now
             remaining_turns = 5
+            topic_id = plan.topic_id
+            unresolved_intent = plan.act
         event = SocialEventEnvelope.create(
             event_id=f"conversation-lease:{plan.plan_id}",
             event_type=event_type,
@@ -505,11 +508,14 @@ class SocialRuntimeManager:
             ),
             payload={
                 "target_id": plan.target_id,
-                "topic_id": plan.topic_id,
+                "topic_id": topic_id,
                 "source_plan_id": plan.plan_id,
                 "opened_at": opened_at,
                 "expires_at": now + 180,
                 "remaining_turns": remaining_turns,
+                "last_bot_event_id": plan.plan_id,
+                "unresolved_intent": unresolved_intent,
+                "last_activity_at": now,
             },
         )
         appended = await self.ingest(event)

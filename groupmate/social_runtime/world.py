@@ -81,6 +81,9 @@ class ConversationLease:
     opened_at: int
     expires_at: int
     remaining_turns: int
+    last_bot_event_id: str | None = None
+    unresolved_intent: str | None = None
+    last_activity_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +211,19 @@ class GroupWorldProjector:
             remaining_turns = int(payload.get("remaining_turns"))
         except (TypeError, ValueError):
             return current
+        last_bot_event_id = str(payload.get("last_bot_event_id") or "").strip() or None
+        unresolved_intent = str(payload.get("unresolved_intent") or "").strip() or None
+        raw_last_activity_at = payload.get("last_activity_at")
+        try:
+            last_activity_at = (
+                int(raw_last_activity_at)
+                if raw_last_activity_at is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            return current
+        if last_activity_at is not None and last_activity_at < 0:
+            return current
         if (
             not target_id
             or not topic_id
@@ -226,6 +242,9 @@ class GroupWorldProjector:
                 opened_at=opened_at,
                 expires_at=expires_at,
                 remaining_turns=remaining_turns,
+                last_bot_event_id=last_bot_event_id,
+                unresolved_intent=unresolved_intent,
+                last_activity_at=last_activity_at,
             )
         if (
             current is None
@@ -243,6 +262,13 @@ class GroupWorldProjector:
             opened_at=opened_at,
             expires_at=expires_at,
             remaining_turns=remaining_turns,
+            last_bot_event_id=last_bot_event_id or current.last_bot_event_id,
+            unresolved_intent=unresolved_intent or current.unresolved_intent,
+            last_activity_at=(
+                last_activity_at
+                if last_activity_at is not None
+                else current.last_activity_at
+            ),
         )
 
     @staticmethod

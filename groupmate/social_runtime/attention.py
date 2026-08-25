@@ -363,12 +363,48 @@ class AttentionScheduler:
         if (
             event.event_type != "platform.message"
             or lease is None
+            or event.payload.get("social_eligible") is False
+            or event.payload.get("direct_address")
             or event.actor_id != lease.target_id
             or int(now) > lease.expires_at
             or lease.remaining_turns <= 0
         ):
             return False
-        return AttentionScheduler._topic_id(world, event) == lease.topic_id
+        if event.payload.get("reply_to_bot"):
+            return True
+        if AttentionScheduler._topic_id(world, event) == lease.topic_id:
+            return True
+        return AttentionScheduler._looks_like_short_followup(
+            str(event.payload.get("text") or "")
+        )
+
+    @staticmethod
+    def _looks_like_short_followup(text: str) -> bool:
+        value = " ".join(str(text or "").strip().split()).strip()
+        if not value or len(value) > 18:
+            return False
+        exact = {
+            "然后呢",
+            "后来呢",
+            "为什么",
+            "怎么了",
+            "那怎么办",
+            "继续",
+            "还有呢",
+            "嗯",
+            "嗯嗯",
+            "好",
+            "好的",
+            "对",
+            "是的",
+            "不是",
+            "行",
+            "可以",
+            "没了",
+        }
+        if value.rstrip("？?。.!！~～") in exact:
+            return True
+        return value.startswith(("然后", "后来", "为什么", "怎么", "那怎么办"))
 
     @staticmethod
     def _topic_id(world: GroupWorldState, event: SocialEventEnvelope) -> str:

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from groupmate.social_runtime.attention import (
     AttentionScheduler,
     PendingAttentionWindow,
 )
 from groupmate.social_runtime.contracts import PersonaSnapshot, SocialEventEnvelope
-from groupmate.social_runtime.world import GroupWorldProjector
+from groupmate.social_runtime.world import ConversationLease, GroupWorldProjector
 from tests.factories import social_event_values
 
 
@@ -181,3 +183,80 @@ def test_restored_ambient_window_is_rebounded_before_dispatch():
     assert frame.candidate_audiences == tuple(
         f"u{index}" for index in range(7, 15)
     )
+
+
+def test_short_followup_keeps_dialogue_after_topic_projection_changes():
+    projector = GroupWorldProjector()
+    scheduler = AttentionScheduler()
+    first = _message(1, 100, "u1")
+    world = projector.apply(projector.empty("885617919"), first)
+    lease = ConversationLease("u1", "m1", "reply:1", 100, 300, 5)
+    world = replace(world, conversation_lease=lease)
+    followup = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="qq:m2",
+            source_message_id="m2",
+            actor_id="u1",
+            occurred_at=150,
+            received_at=150,
+            correlation_id="corr:m2",
+            payload={"text": "然后呢"},
+        )
+    )
+    world = projector.apply(world, followup)
+
+    assert world.topic_for_message("m2").topic_id != lease.topic_id
+    frame = scheduler.on_event(followup, world, _persona(), now=150)[0]
+    assert frame.trigger_kind == "CONTINUATION"
+    assert frame.requested_workers == ()
+
+
+def test_new_direct_call_preempts_existing_dialogue_lease():
+    projector = GroupWorldProjector()
+    scheduler = AttentionScheduler()
+    base = projector.apply(projector.empty("885617919"), _message(1, 100, "u1"))
+    world = replace(
+        base,
+        conversation_lease=ConversationLease(
+            "u1", "m1", "reply:1", 100, 300, 5
+        ),
+    )
+    direct = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="qq:m2",
+            source_message_id="m2",
+            actor_id="u2",
+            occurred_at=101,
+            received_at=101,
+            correlation_id="corr:m2",
+            payload={"text": "小爱说话", "direct_address": True},
+        )
+    )
+    world = projector.apply(world, direct)
+
+    frame = scheduler.on_event(direct, world, _persona(), now=101)[0]
+    assert frame.trigger_kind == "FAST"
+    assert frame.candidate_audiences == ("u2",)
+
+
+def test_external_capability_never_advances_social_lease():
+    projector = GroupWorldProjector()
+    scheduler = AttentionScheduler()
+    base = projector.apply(projector.empty("885617919"), _message(1, 100, "u1"))
+    lease = ConversationLease("u1", "m1", "reply:1", 100, 300, 5)
+    world = replace(base, conversation_lease=lease)
+    external = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="qq:m2",
+            source_message_id="m2",
+            actor_id="u1",
+            occurred_at=101,
+            received_at=101,
+            correlation_id="corr:m2",
+            payload={"text": "bq 开心", "social_eligible": False},
+        )
+    )
+    world = projector.apply(world, external)
+
+    assert scheduler.on_event(external, world, _persona(), now=101) == ()
+    assert world.conversation_lease == lease

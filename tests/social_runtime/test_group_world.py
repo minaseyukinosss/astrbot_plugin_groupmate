@@ -159,3 +159,39 @@ def test_old_world_snapshot_restores_with_no_conversation_lease():
     restored = projector.from_dict(payload)
 
     assert restored.conversation_lease is None
+
+
+def test_conversation_lease_round_trip_preserves_continuation_evidence():
+    projector = GroupWorldProjector()
+    state = projector.apply(
+        projector.empty("885617919"),
+        SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="lease:evidence",
+                event_type="conversation.lease_opened",
+                source_message_id=None,
+                actor_id=None,
+                occurred_at=100,
+                received_at=100,
+                correlation_id="corr:lease:evidence",
+                payload={
+                    "target_id": "u1",
+                    "topic_id": "m1",
+                    "source_plan_id": "reply:1",
+                    "opened_at": 100,
+                    "expires_at": 280,
+                    "remaining_turns": 5,
+                    "last_bot_event_id": "reply:1",
+                    "unresolved_intent": "respond_to_direct_interaction",
+                    "last_activity_at": 100,
+                },
+            )
+        ),
+    )
+
+    restored = projector.from_dict(projector.to_dict(state))
+
+    assert restored.conversation_lease is not None
+    assert restored.conversation_lease.last_bot_event_id == "reply:1"
+    assert restored.conversation_lease.unresolved_intent == "respond_to_direct_interaction"
+    assert restored.conversation_lease.last_activity_at == 100
