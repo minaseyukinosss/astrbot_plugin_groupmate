@@ -11,7 +11,11 @@ from pathlib import Path
 
 from ..contracts import GlobalSelfState, GlobalStateEffect
 from .schema import connect_database, initialize_database
-from ..society.relationships import RelationshipProjector, RelationshipProjection
+from ..society.relationships import (
+    PublicAffection,
+    RelationshipProjector,
+    RelationshipProjection,
+)
 from ..society.impressions import Impression
 from ..society.culture import CultureArtifact
 
@@ -214,6 +218,12 @@ class SQLiteSocietyRepository:
         if row is None:
             return self._projector.empty(persona_id, group_id, subject_id)
         return self._projector.from_dict(json.loads(row[0]))
+
+    def relationship_snapshot(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> tuple[RelationshipProjection, PublicAffection]:
+        state = self.load_relationship(persona_id, group_id, subject_id)
+        return state, PublicAffection.from_projection(state)
 
     def save_impression(self, impression: Impression) -> None:
         self._require_scope(

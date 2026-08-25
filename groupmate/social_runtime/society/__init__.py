@@ -1,5 +1,5 @@
 """Group-scoped relationship, impression, and culture projections."""
 
-from .relationships import RelationshipProjection
+from .relationships import PublicAffection, RelationshipProjection, RelationshipStage
 
-__all__ = ("RelationshipProjection",)
+__all__ = ("PublicAffection", "RelationshipProjection", "RelationshipStage")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from enum import Enum
 from typing import Mapping
 
 
@@ -29,6 +30,61 @@ class RelationshipProjection:
     boundary_pressure: int = 0
     evidence_event_ids: tuple[str, ...] = ()
     version: int = 0
+
+
+class RelationshipStage(str, Enum):
+    GUARDED = "警戒"
+    DISTANT = "疏远"
+    STRANGER = "陌生"
+    KNOWS = "认识"
+    FAMILIAR = "熟悉"
+    CLOSE = "亲近"
+    IN_SYNC = "默契"
+
+
+def relationship_stage(value: float) -> RelationshipStage:
+    score = max(-100.0, min(100.0, float(value)))
+    if score <= -40.0:
+        return RelationshipStage.GUARDED
+    if score <= -10.0:
+        return RelationshipStage.DISTANT
+    if score < 10.0:
+        return RelationshipStage.STRANGER
+    if score < 30.0:
+        return RelationshipStage.KNOWS
+    if score < 55.0:
+        return RelationshipStage.FAMILIAR
+    if score < 80.0:
+        return RelationshipStage.CLOSE
+    return RelationshipStage.IN_SYNC
+
+
+@dataclass(frozen=True)
+class PublicAffection:
+    value: float
+    stage: RelationshipStage
+
+    def __post_init__(self) -> None:
+        value = round(max(-100.0, min(100.0, float(self.value))), 1)
+        object.__setattr__(self, "value", value)
+        object.__setattr__(self, "stage", RelationshipStage(self.stage))
+
+    @classmethod
+    def from_projection(
+        cls, state: RelationshipProjection
+    ) -> "PublicAffection":
+        raw = (
+            state.familiarity * 0.15
+            + state.warmth * 0.18
+            + state.trust * 0.20
+            + state.reciprocity * 0.12
+            + state.play_acceptance * 0.08
+            + state.reliability * 0.12
+            + state.care_permission * 0.15
+            - state.boundary_pressure * 0.40
+        )
+        value = round(max(-100.0, min(100.0, raw)), 1)
+        return cls(value, relationship_stage(value))
 
 
 _EVIDENCE_DIMENSIONS = {
@@ -83,4 +139,11 @@ class RelationshipProjector:
         return RelationshipProjection(**values)
 
 
-__all__ = ("RelationshipEvidence", "RelationshipProjection", "RelationshipProjector")
+__all__ = (
+    "PublicAffection",
+    "RelationshipEvidence",
+    "RelationshipProjection",
+    "RelationshipProjector",
+    "RelationshipStage",
+    "relationship_stage",
+)
