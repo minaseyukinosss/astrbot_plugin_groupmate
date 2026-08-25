@@ -17,12 +17,12 @@ AFFECTION_CARD_TEMPLATE = r"""
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width={{ render_width }}, initial-scale=1">
+<meta name="viewport" content="width={{ render_width }}, height={{ render_height }}, initial-scale=1">
 <style>
   * { box-sizing: border-box; }
-  html { width: {{ render_width }}px; margin: 0; padding: 0; background: transparent; }
+  html { width: {{ render_width }}px; height: {{ render_height }}px; margin: 0; padding: 0; background: transparent; }
   body {
-    width: {{ render_width }}px; min-height: {{ render_height }}px;
+    width: {{ render_width }}px; height: {{ render_height }}px;
     margin: 0; padding: 20px;
     background:
       radial-gradient(circle at 8% 0%, rgba(255, 184, 211, .42), transparent 28%),
@@ -49,9 +49,9 @@ AFFECTION_CARD_TEMPLATE = r"""
     display: grid; place-items: center; width: 54px; height: 54px;
     border: 1px solid rgba(255, 255, 255, .82); border-radius: 16px;
     background: linear-gradient(145deg, #ff80aa, #ed3f77); color: #fff;
-    font-family: Arial, sans-serif; font-size: 36px; font-weight: 400;
     box-shadow: 0 8px 20px rgba(176, 22, 79, .22), inset 0 1px 2px rgba(255, 255, 255, .42);
   }
+  .heart svg { display: block; width: 31px; height: 31px; }
   .summary { min-width: 0; }
   .heading { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
   h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 31px; line-height: 1; font-weight: 880; letter-spacing: .03em; }
@@ -93,7 +93,7 @@ AFFECTION_CARD_TEMPLATE = r"""
 <body class="layout-{{ layout|e }}">
 <main>
   <header>
-    <span class="heart">♡</span>
+    <span class="heart" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     <div class="summary">
       <div class="heading"><h1>好感度</h1><span class="group-name">{{ group_name|e }}</span></div>
       <p class="meta">群 {{ group_id|e }}　·　群成员 {{ member_count }} 人　·　近 30 天互动 {{ recent_active_count }} 人　·　更新于 {{ updated_text|e }}{% if not roster_complete %}<span class="sync-note">名单暂未完全同步</span>{% endif %}</p>
@@ -174,29 +174,15 @@ class AffectionCardPresenter:
         layout = (
             "paged"
             if total_count > AffectionCardPresenter.PAGE_SIZE
-            else "large"
-            if total_count > 50
-            else "medium"
-            if total_count > 10
-            else "small"
+            else "fixed"
         )
-        column_count = (
-            1 if layout == "small" else 3 if layout == "medium" else 6
-        )
+        column_count = 6
         rows = max(1, math.ceil(len(entries) / column_count))
-        render_width = (
-            820 if layout == "small" else 1180 if layout == "medium" else 1380
-        )
-        row_height = (
-            38 if layout == "small" else 30 if layout == "medium" else 22
-        )
-        row_gap = 6 if layout == "small" else 5 if layout == "medium" else 3
-        column_gap = (
-            12 if layout == "small" else 10 if layout == "medium" else 8
-        )
-        item_font_size = (
-            15 if layout == "small" else 13 if layout == "medium" else 12
-        )
+        render_width = 1380
+        row_height = 22
+        row_gap = 3
+        column_gap = 8
+        item_font_size = 12
         render_height = (
             164
             + rows * row_height

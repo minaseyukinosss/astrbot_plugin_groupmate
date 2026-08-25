@@ -49,29 +49,33 @@ def test_card_keeps_one_requester_highlight_and_clear_member_counts():
     assert "member-pill" in AFFECTION_CARD_TEMPLATE
     assert "好感度" in AFFECTION_CARD_TEMPLATE
     assert "column-head" not in AFFECTION_CARD_TEMPLATE
+    assert "<svg" in AFFECTION_CARD_TEMPLATE
+    assert ">♡<" not in AFFECTION_CARD_TEMPLATE
     assert "|e" in AFFECTION_CARD_TEMPLATE
     assert "avatar" not in AFFECTION_CARD_TEMPLATE.lower()
 
 
-def test_small_board_uses_compact_content_sized_canvas():
-    page = AffectionCardPresenter().pages(_board(count=1, requester_rank=1))[0]
+def test_small_board_keeps_fixed_six_column_structure_with_empty_slots():
+    page = AffectionCardPresenter().pages(_board(count=2, requester_rank=1))[0]
 
-    assert page.context["column_count"] == 1
-    assert page.context["layout"] == "small"
-    assert page.context["render_width"] == 820
-    assert page.context["render_height"] <= 600
+    assert page.context["column_count"] == 6
+    assert page.context["layout"] == "fixed"
+    assert page.context["render_width"] == 1380
+    assert page.context["render_height"] < 240
+    assert [len(column) for column in page.context["columns"]] == [1, 1, 0, 0, 0, 0]
+    assert "height={{ render_height }}" in AFFECTION_CARD_TEMPLATE
 
 
 @pytest.mark.parametrize(
     ("count", "layout", "columns", "pages"),
     (
-        (10, "small", 1, 1),
-        (11, "medium", 3, 1),
-        (50, "medium", 3, 1),
-        (51, "large", 6, 1),
-        (100, "large", 6, 1),
-        (228, "large", 6, 1),
-        (240, "large", 6, 1),
+        (10, "fixed", 6, 1),
+        (11, "fixed", 6, 1),
+        (50, "fixed", 6, 1),
+        (51, "fixed", 6, 1),
+        (100, "fixed", 6, 1),
+        (228, "fixed", 6, 1),
+        (240, "fixed", 6, 1),
         (241, "paged", 6, 2),
     ),
 )

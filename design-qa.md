@@ -144,3 +144,12 @@ final result: passed
 - Targeted presenter, roster, query, and composition checks: 56 passed.
 
 final result: passed
+
+### Pass 4 — fixed six-column small-group layout passed
+
+- The final user direction fixes every group size to the reference's 1380 px six-column structure.
+- Two-member geometry is `[1, 1, 0, 0, 0, 0]`; the remaining columns stay empty instead of stretching two rows across the image.
+- The viewport metadata now declares both computed width and height. A two-member card measures 1380 × 186 CSS px instead of inheriting the renderer's 720 px default height.
+- Two members remain unique, the requester is highlighted once, and no body or main-content overflow is present.
+
+final result: passed
