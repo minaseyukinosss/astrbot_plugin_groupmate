@@ -75,3 +75,40 @@ def test_text_fallback_always_contains_requester_rank_score_and_stage():
         "查询者，你在本群好感度榜第 1/1 名：0.0（陌生）。\n"
         "榜单图片暂时生成失败，稍后再试也可以。"
     )
+
+
+def test_complete_roster_keeps_member_and_recent_activity_counts_separate():
+    result = AffectionLeaderboardService(FakeRelationships({})).build(
+        persona_id="aemeath",
+        group_id="g",
+        group_name="测试群",
+        requester_id="1",
+        members=tuple(
+            {"actor_id": str(index), "display_name": f"成员{index}", "updated_at": 100}
+            for index in range(1, 4)
+        ),
+        updated_at=100,
+        recent_active_count=1,
+        roster_complete=True,
+    )
+
+    assert len(result.entries) == 3
+    assert result.recent_active_count == 1
+    assert result.roster_complete is True
+    assert result.public_context()["member_count"] == 3
+    assert result.public_context()["recent_active_count"] == 1
+
+
+def test_incomplete_roster_is_named_in_text_fallback():
+    result = AffectionLeaderboardService(FakeRelationships({})).build(
+        persona_id="aemeath",
+        group_id="g",
+        group_name="测试群",
+        requester_id="1",
+        members=({"actor_id": "1", "display_name": "查询者", "updated_at": 100},),
+        updated_at=100,
+        recent_active_count=1,
+        roster_complete=False,
+    )
+
+    assert "成员名单暂未完全同步" in result.text_fallback()

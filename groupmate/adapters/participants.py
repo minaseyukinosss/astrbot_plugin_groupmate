@@ -147,6 +147,28 @@ class ParticipantDirectory:
             if str(row["actor_id"]) not in excluded
         )
 
+    def recent_actor_ids(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        since: int,
+    ) -> frozenset[str]:
+        """Return observed actor ids without changing their activity timestamps."""
+
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT actor_id FROM participant_directory "
+                "WHERE persona_id=? AND group_id=? AND updated_at>=? "
+                "AND actor_id<>''",
+                (
+                    str(persona_id),
+                    str(group_id),
+                    max(0, int(since)),
+                ),
+            ).fetchall()
+        return frozenset(str(row["actor_id"]) for row in rows)
+
     async def avatar_data(self, avatar_ref: str) -> dict[str, str]:
         normalized = str(avatar_ref or "").strip()
         cached = self._read_cache(normalized)

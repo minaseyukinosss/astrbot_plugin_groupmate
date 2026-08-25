@@ -40,6 +40,8 @@ class AffectionLeaderboard:
     group_name: str
     updated_at: int
     entries: tuple[AffectionLeaderboardEntry, ...]
+    recent_active_count: int = 0
+    roster_complete: bool = True
 
     @property
     def requester(self) -> AffectionLeaderboardEntry:
@@ -54,17 +56,24 @@ class AffectionLeaderboard:
             "group_id": self.group_id,
             "group_name": self.group_name,
             "updated_at": self.updated_at,
-            "active_count": len(self.entries),
+            "member_count": len(self.entries),
+            "recent_active_count": self.recent_active_count,
+            "active_count": self.recent_active_count,
+            "roster_complete": self.roster_complete,
             "requester": self.requester.public_mapping(),
             "entries": [item.public_mapping() for item in visible],
         }
 
     def text_fallback(self) -> str:
         member = self.requester
+        roster_note = (
+            "\n成员名单暂未完全同步。" if not self.roster_complete else ""
+        )
         return (
             f"{member.display_name}，你在本群好感度榜第 "
             f"{member.rank}/{len(self.entries)} 名：{_score_text(member.score)}"
-            f"（{member.stage}）。\n榜单图片暂时生成失败，稍后再试也可以。"
+            f"（{member.stage}）。{roster_note}\n"
+            "榜单图片暂时生成失败，稍后再试也可以。"
         )
 
 
@@ -81,6 +90,8 @@ class AffectionLeaderboardService:
         requester_id: str,
         members: tuple[Mapping[str, object], ...],
         updated_at: int,
+        recent_active_count: int | None = None,
+        roster_complete: bool = True,
     ) -> AffectionLeaderboard:
         persona = str(persona_id or "").strip()
         group = str(group_id or "").strip()
@@ -133,6 +144,16 @@ class AffectionLeaderboardService:
             or "当前群聊",
             updated_at=max(0, int(updated_at)),
             entries=entries,
+            recent_active_count=min(
+                len(entries),
+                max(
+                    0,
+                    len(entries)
+                    if recent_active_count is None
+                    else int(recent_active_count),
+                ),
+            ),
+            roster_complete=bool(roster_complete),
         )
 
 

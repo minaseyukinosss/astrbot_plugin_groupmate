@@ -80,6 +80,36 @@ def test_active_members_are_scoped_recent_and_can_exclude_bot(tmp_path):
     )
 
 
+def test_recent_actor_ids_are_read_only_and_keep_scope(tmp_path):
+    directory = ParticipantDirectory(tmp_path / "runtime.db", tmp_path / "avatars")
+    for actor_id, group_id, updated_at in (
+        ("recent", "g-1", 100),
+        ("old", "g-1", 20),
+        ("other-group", "g-2", 101),
+    ):
+        directory.remember_actor(
+            persona_id="groupmate:default",
+            group_id=group_id,
+            actor_id=actor_id,
+            display_name=actor_id,
+            updated_at=updated_at,
+        )
+
+    assert directory.recent_actor_ids(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        since=70,
+    ) == frozenset({"recent"})
+    assert directory.active_members(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        since=0,
+    ) == (
+        {"actor_id": "recent", "display_name": "recent", "updated_at": 100},
+        {"actor_id": "old", "display_name": "old", "updated_at": 20},
+    )
+
+
 def test_avatar_failure_returns_stable_generated_svg(tmp_path):
     async def failing_fetcher(_url):
         raise OSError("offline")
