@@ -912,6 +912,10 @@ class SocialRuntimeManager:
                             0.0,
                         )
                     )
+            except Exception:
+                # Relationship projection is supplementary and must never
+                # invalidate an already accepted participation decision.
+                continue
         return tuple(decisions)
 
     def _relationship_proposals(

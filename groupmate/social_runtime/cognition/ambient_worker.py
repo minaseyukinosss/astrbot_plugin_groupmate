@@ -32,6 +32,10 @@ _REQUIRED_VERDICT_FIELDS = {
     "novelty",
     "reason",
 }
+_MODEL_RELATIONSHIP_EVENT_KINDS = RELATIONSHIP_EVENT_KINDS - {
+    "interaction",
+    "reciprocal_action",
+}
 
 
 class _VerdictRejected(ValueError):
@@ -384,7 +388,7 @@ class DirectAmbientWorker:
             except _VerdictRejected:
                 continue
             if (
-                kind not in RELATIONSHIP_EVENT_KINDS
+                kind not in _MODEL_RELATIONSHIP_EVENT_KINDS
                 or subject_id not in frame.candidate_audiences
                 or severity not in RELATIONSHIP_SEVERITIES
                 or not summary

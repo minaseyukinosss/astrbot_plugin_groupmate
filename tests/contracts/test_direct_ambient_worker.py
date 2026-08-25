@@ -266,6 +266,33 @@ def test_invalid_relationship_entry_does_not_invalidate_participation():
     ]
 
 
+def test_model_cannot_propose_locally_deterministic_relationship_event():
+    worker = DirectAmbientWorker(
+        FakeClient(
+            _verdict(
+                relationship_events=[
+                    {
+                        "kind": "interaction",
+                        "subject_id": "u1",
+                        "severity": "minor",
+                        "confidence": 1.0,
+                        "summary": "普通互动",
+                        "evidence_event_ids": ["qq:12"],
+                        "repair_of": None,
+                        "sensitivity": "normal",
+                    }
+                ]
+            )
+        )
+    )
+
+    result = asyncio.run(worker.observe_with_result(_frame(), _context()))
+
+    assert not any(
+        item.kind == "relationship_event" for item in result.observations
+    )
+
+
 def test_valid_silence_verdict_produces_only_assessment():
     worker = DirectAmbientWorker(
         FakeClient(

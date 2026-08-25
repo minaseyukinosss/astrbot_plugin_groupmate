@@ -406,6 +406,31 @@ def test_shadow_model_event_is_visible_but_does_not_change_affection(tmp_path):
     assert pending[-1].evaluation.relationship_decisions[-1].outcome == "SUGGEST"
 
 
+def test_relationship_storage_failure_cannot_break_reply_decision(tmp_path):
+    class BrokenRelationshipService:
+        def process(self, proposal, *, mode):
+            raise RuntimeError("relationship store unavailable")
+
+    async def scenario():
+        manager = SocialRuntimeManager(
+            database_path=tmp_path / "groupmate-social-runtime-v2.db",
+            persona_id="aemeath",
+            mode=RuntimeMode.SHADOW,
+            enabled_groups=("885617919",),
+        )
+        manager.relationship_events = BrokenRelationshipService()
+        await manager.start()
+        await manager.ingest(_event("relationship-failure"))
+        evaluations = await manager.drain()
+        await manager.close()
+        return evaluations
+
+    evaluations = asyncio.run(scenario())
+
+    assert evaluations[0].governor_result.outcome == "ACT"
+    assert evaluations[0].relationship_decisions == ()
+
+
 def test_ambient_window_waits_then_combines_multiple_topics(tmp_path):
     async def scenario():
         worker = CombinedAmbientWorker()
