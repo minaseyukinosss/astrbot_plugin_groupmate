@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import asdict, replace
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
-from ..social_runtime.contracts import RuntimeMode
+from ..social_runtime.addressing import PersonaAddressResolver
+from ..social_runtime.contracts import RuntimeMode, SocialEventEnvelope
 from ..social_runtime.control.config_versions import ConfigVersionRepository
 from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
+from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
 from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
 from ..social_runtime.actions.contracts import OutboxStatus
@@ -45,14 +47,16 @@ class AstrBotSocialRuntimeBridge:
         self._cognition_client_factory = (
             cognition_client_factory or self._new_cognition_client
         )
+        self._external_trigger_policy = ExternalTriggerPolicy.from_entries(
+            command_prefixes=settings.external_command_prefixes,
+            link_domains=settings.external_link_domains,
+        )
         self.translator = AstrBotEventTranslator(
             settings.persona_id,
-            external_trigger_policy=ExternalTriggerPolicy.from_entries(
-                command_prefixes=settings.external_command_prefixes,
-                link_domains=settings.external_link_domains,
-            ),
+            external_trigger_policy=self._external_trigger_policy,
             clock=self.clock,
         )
+        self._config_repository: ConfigVersionRepository | None = None
         self._manager: SocialRuntimeManager | None = None
         self._cognition_client: object | None = None
         self._trace_repository: MessageTraceRepository | None = None
@@ -96,6 +100,7 @@ class AstrBotSocialRuntimeBridge:
             config_repository = ConfigVersionRepository(
                 self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             )
+            self._config_repository = config_repository
             reply_model = AstrBotModelPort(
                 self.context, self.settings.generation_provider
             )
@@ -159,7 +164,7 @@ class AstrBotSocialRuntimeBridge:
             await self.start()
         if self._manager is None:
             return None
-        translated = self.translator.translate(event)
+        translated = self._resolve_interaction(self.translator.translate(event))
         self._record_trace(
             self.trace_repository.record_received,
             translated,
@@ -186,13 +191,70 @@ class AstrBotSocialRuntimeBridge:
         if not self.settings.enabled_groups:
             return
 
-        translated = self.translator.translate(event)
+        translated = self._resolve_interaction(self.translator.translate(event))
         self._record_trace(
             self.trace_repository.record_received,
             translated,
             self.settings.runtime_mode,
             int(self.clock()),
         )
+
+    def _resolve_interaction(
+        self, event: SocialEventEnvelope
+    ) -> SocialEventEnvelope:
+        profile = self._profile_snapshot(str(event.group_id or ""))
+        identity = profile["identity"]
+        resolver = PersonaAddressResolver(
+            str(identity["name"]),
+            tuple(str(value) for value in identity.get("aliases", ())),
+        )
+        resolution = resolver.resolve(
+            text=str(event.payload.get("text") or ""),
+            mentions_bot=bool(event.payload.get("mentions_bot")),
+            reply_to_bot=bool(event.payload.get("reply_to_bot")),
+        )
+        ownership = self._external_trigger_policy.classify(
+            resolution.address_remainder
+        )
+        payload = dict(event.payload)
+        payload.update(asdict(resolution))
+        payload["direct_address"] = resolution.addressed_to_bot
+        if ownership is not None:
+            ownership_source = ownership.source
+            if resolution.matched_alias is not None:
+                ownership_source = f"alias_stripped_{ownership_source}"
+            payload.update(
+                {
+                    "interaction_owner": ownership.owner.value,
+                    "social_eligible": ownership.social_eligible,
+                    "owner_ref": ownership.owner_ref,
+                    "ownership_source": ownership_source,
+                    "external_trigger_kind": ownership.trigger_kind,
+                    "external_trigger_value": ownership.trigger_value,
+                }
+            )
+        values = event.to_dict()
+        values["payload"] = payload
+        return SocialEventEnvelope.create(**values)
+
+    def _profile_snapshot(self, group_id: str) -> dict[str, dict[str, object]]:
+        repository = self._config_repository
+        if repository is None:
+            repository = ConfigVersionRepository(
+                self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+            )
+            self._config_repository = repository
+        snapshot = repository.snapshot(
+            persona_id=self.settings.persona_id,
+            group_id=group_id or None,
+        )
+        configured = snapshot.config.get("persona_profile")
+        if isinstance(configured, Mapping):
+            return GroupmatePersonaProfile.from_mapping(configured).to_mapping()
+        profile = GroupmatePersonaProfile.default().to_mapping()
+        profile["identity"]["name"] = self.settings.persona_name
+        profile["identity"]["aliases"] = list(self.settings.persona_aliases)
+        return GroupmatePersonaProfile.from_mapping(profile).to_mapping()
 
     async def _attention_wakeup_loop(
         self, manager: SocialRuntimeManager

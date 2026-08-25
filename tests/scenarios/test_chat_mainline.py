@@ -98,6 +98,52 @@ def _event(message_id, text, *, mention_bot=False, actor_id="u1"):
     return Event()
 
 
+async def _run_alias_case(tmp_path, text):
+    context = _Context()
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "enabled_groups": ["885617919"],
+            "runtime_mode": "SOCIAL_RUNTIME",
+            "generation_provider": "provider:text",
+            "persona_name": "爱弥斯",
+            "persona_aliases": ["小爱"],
+            "external_command_prefixes": ["bq=astrbot.meme"],
+        }
+    )
+    bridge = AstrBotSocialRuntimeBridge(
+        context, settings, tmp_path, clock=lambda: 100
+    )
+    await bridge.start()
+    await bridge.handle_event(_event("alias-case", text))
+    trace = bridge.trace_repository.query(
+        persona_id=settings.persona_id,
+        group_id="885617919",
+    )["items"][0]["summary"]
+    await bridge.close()
+    return context, trace
+
+
+def test_alias_prefixed_external_command_stays_owned_by_astrbot(tmp_path):
+    context, trace = asyncio.run(_run_alias_case(tmp_path, "小爱 bq 开心"))
+
+    assert context.model_calls == []
+    assert trace["route"]["owner"] == "EXTERNAL_PLUGIN"
+    assert trace["route"]["reason"] == "匹配已配置的外部触发规则"
+
+
+def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):
+    context, trace = asyncio.run(_run_alias_case(tmp_path, "小爱说话"))
+
+    assert trace["decision"]["participation_lane"] == "DIRECT_FAST"
+    cognition_calls = [
+        call
+        for call in context.model_calls
+        if "结构化群聊观察器" in call["system_prompt"]
+    ]
+    assert cognition_calls == []
+    assert len(context.client.calls) == 1
+
+
 def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     async def scenario():
         context = _Context()
