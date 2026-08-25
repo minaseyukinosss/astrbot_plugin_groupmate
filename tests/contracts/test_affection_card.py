@@ -66,6 +66,27 @@ def test_small_board_keeps_fixed_six_column_structure_with_empty_slots():
     assert "height={{ render_height }}" in AFFECTION_CARD_TEMPLATE
 
 
+def test_card_uses_readable_roster_type_and_restrained_shadow():
+    page = AffectionCardPresenter().pages(_board(count=2, requester_rank=1))[0]
+
+    assert page.context["item_font_size"] == 13
+    assert page.context["row_height"] == 23
+    assert page.context["row_gap"] == 2
+    assert "0 0 0 7px" not in AFFECTION_CARD_TEMPLATE
+    assert "0 20px 46px" not in AFFECTION_CARD_TEMPLATE
+    assert "0 8px 20px" not in AFFECTION_CARD_TEMPLATE
+    assert "0 5px 14px" not in AFFECTION_CARD_TEMPLATE
+    assert "0 3px 8px rgba(128, 24, 63, .08)" in AFFECTION_CARD_TEMPLATE
+
+
+def test_card_title_uses_clean_compact_typography():
+    assert "font-size: 27px" in AFFECTION_CARD_TEMPLATE
+    assert "font-weight: 800" in AFFECTION_CARD_TEMPLATE
+    assert "letter-spacing: 0" in AFFECTION_CARD_TEMPLATE
+    assert "font-weight: 880" not in AFFECTION_CARD_TEMPLATE
+    assert "letter-spacing: .03em" not in AFFECTION_CARD_TEMPLATE
+
+
 @pytest.mark.parametrize(
     ("count", "layout", "columns", "pages"),
     (

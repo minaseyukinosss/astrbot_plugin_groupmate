@@ -332,6 +332,7 @@ def test_affection_query_is_claimed_before_chat_and_has_text_fallback():
     assert '"full_page": True' in composition
     assert '"clip": {' not in composition
     assert '"scale": "device"' in composition
+    assert '"device_scale_factor_level": "ultra"' in composition
     assert "event.image_result" in composition
     assert "event.plain_result(query.text_fallback)" in composition
 

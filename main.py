@@ -122,6 +122,7 @@ class GroupmatePlugin(Star):
                             "type": "png",
                             "full_page": True,
                             "scale": "device",
+                            "device_scale_factor_level": "ultra",
                             "animations": "disabled",
                             "caret": "hide",
                         },

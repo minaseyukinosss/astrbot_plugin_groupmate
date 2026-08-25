@@ -37,8 +37,7 @@ AFFECTION_CARD_TEMPLATE = r"""
     border: 1px solid rgba(219, 95, 139, .40); border-radius: 22px;
     background: rgba(255, 255, 255, .76);
     box-shadow:
-      0 0 0 7px rgba(142, 22, 66, .06),
-      0 20px 46px rgba(128, 24, 63, .12),
+      0 3px 8px rgba(128, 24, 63, .08),
       inset 0 1px 0 rgba(255, 255, 255, .96);
   }
   header {
@@ -49,19 +48,19 @@ AFFECTION_CARD_TEMPLATE = r"""
     display: grid; place-items: center; width: 54px; height: 54px;
     border: 1px solid rgba(255, 255, 255, .82); border-radius: 16px;
     background: linear-gradient(145deg, #ff80aa, #ed3f77); color: #fff;
-    box-shadow: 0 8px 20px rgba(176, 22, 79, .22), inset 0 1px 2px rgba(255, 255, 255, .42);
+    box-shadow: 0 4px 8px rgba(176, 22, 79, .18), inset 0 1px 2px rgba(255, 255, 255, .42);
   }
   .heart svg { display: block; width: 31px; height: 31px; }
   .summary { min-width: 0; }
   .heading { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
-  h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 31px; line-height: 1; font-weight: 880; letter-spacing: .03em; }
+  h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 27px; line-height: 1; font-weight: 800; letter-spacing: 0; }
   .group-name { min-width: 0; overflow: hidden; color: #725661; font-size: 14px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
   .meta, .sync-note { margin: 6px 0 0; color: #997581; font-size: 12px; line-height: 1.2; white-space: nowrap; }
   .sync-note { margin-left: 8px; color: #b46d26; font-weight: 700; }
   .mine-rank {
     min-width: 136px; padding: 9px 16px; border: 1px solid rgba(255, 255, 255, .86); border-radius: 999px;
     background: rgba(255, 255, 255, .78); color: #9c3158; text-align: center;
-    box-shadow: 0 5px 14px rgba(127, 27, 64, .08), inset 0 1px 0 #fff;
+    box-shadow: 0 3px 8px rgba(127, 27, 64, .07), inset 0 1px 0 #fff;
   }
   .mine-rank span { display: block; font-size: 10px; font-weight: 740; letter-spacing: .08em; }
   .mine-rank strong { display: block; margin-top: 2px; color: #7f173d; font-size: 14px; font-weight: 850; font-variant-numeric: tabular-nums; }
@@ -179,10 +178,10 @@ class AffectionCardPresenter:
         column_count = 6
         rows = max(1, math.ceil(len(entries) / column_count))
         render_width = 1380
-        row_height = 22
-        row_gap = 3
+        row_height = 23
+        row_gap = 2
         column_gap = 8
-        item_font_size = 12
+        item_font_size = 13
         render_height = (
             164
             + rows * row_height
