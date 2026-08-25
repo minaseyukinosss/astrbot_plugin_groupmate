@@ -8,6 +8,11 @@ from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
 from groupmate.social_runtime.governor import GovernorResult
 from groupmate.social_runtime.intentions import CandidateIntention
 from groupmate.social_runtime.persona.profile import GroupmatePersonaProfile
+from groupmate.social_runtime.persona.presets import AEMEATH_CURRENT_CANON
+from groupmate.social_runtime.society.relationships import (
+    PublicAffection,
+    RelationshipStage,
+)
 from groupmate.social_runtime.replying import (
     ReplyExecutor,
     ReplyPlanRepository,
@@ -17,7 +22,7 @@ from groupmate.social_runtime.delivery.outbox import OutboxService
 from tests.factories import social_event_values
 
 
-def _evaluation(trigger_kind="FAST"):
+def _evaluation(trigger_kind="FAST", text="这个报错怎么看"):
     candidate = CandidateIntention(
         intention_id="intention:help",
         kind="HELP",
@@ -48,7 +53,7 @@ def _evaluation(trigger_kind="FAST"):
             actor_id="u1",
             correlation_id="corr:m1",
             payload={
-                "text": "这个报错怎么看",
+                "text": text,
                 "platform": "qq",
                 "platform_id": "onebot-main",
                 "session": "aiocqhttp:GroupMessage:885617919",
@@ -83,6 +88,7 @@ def _evaluation(trigger_kind="FAST"):
 def _persona_profile():
     profile = GroupmatePersonaProfile.default().to_mapping()
     profile["identity"]["name"] = "爱弥斯"
+    profile["canon"] = AEMEATH_CURRENT_CANON.to_mapping()
     return profile
 
 
@@ -217,3 +223,21 @@ def test_expression_uses_persona_cues_without_reference_bot_phrases():
     assert "咪呀" not in prompt
     assert "花房" not in prompt
     assert "先接住对方的情绪和关系信号" in prompt
+
+
+def test_prompt_does_not_dump_the_full_persona_material_pool():
+    plan = ReplyPlanner().plan(
+        _evaluation(text="小爱，陪我聊会儿"),
+        now=100,
+        persona_profile=_persona_profile(),
+        relationship=PublicAffection(0.0, RelationshipStage.STRANGER),
+        recent_outputs=(),
+    )
+
+    prompt = ReplyExecutor._system_prompt(plan, _persona_profile())
+
+    assert '"explicit_material": null' in prompt
+    assert "已重归现世" in prompt
+    assert "隧者兵装" not in prompt
+    assert "写歌" not in prompt
+    assert "默认不要显式提及任何设定素材" in prompt

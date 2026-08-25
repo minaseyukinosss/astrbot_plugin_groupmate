@@ -35,8 +35,12 @@ from .intentions import CandidateIntention, IntentionEngine
 from .participation import ParticipationPolicy
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
-from .persistence.repositories import SQLitePersonaStateRepository
+from .persistence.repositories import (
+    SQLitePersonaStateRepository,
+    SQLiteSocietyRepository,
+)
 from .persona.profile import GroupmatePersonaProfile
+from .society.relationships import PublicAffection
 from .replying import ReplyPlan, ReplyPlanRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import (
@@ -290,6 +294,7 @@ class SocialRuntimeManager:
         self.supervisor = PersonaSupervisor(
             persona_id, SQLitePersonaStateRepository(database_path)
         )
+        self.society = SQLiteSocietyRepository(database_path)
         self.execution_port = NoSideEffectExecutionPort()
         self.cognition = CognitionService(
             workers=cognition_workers or {},
@@ -461,7 +466,7 @@ class SocialRuntimeManager:
 
     def persona_profile_mapping(
         self, group_id: str, config_version: int
-    ) -> dict[str, dict[str, object]]:
+    ) -> dict[str, object]:
         """Return only the Persona frozen into the matching evaluation."""
 
         profile = self._persona_profiles.get((str(group_id), int(config_version)))
@@ -471,6 +476,20 @@ class SocialRuntimeManager:
                 raise RuntimeError("persona profile changed after frozen evaluation")
             profile = loaded.profile
         return profile.to_mapping()
+
+    def relationship_affection(
+        self, group_id: str, subject_id: str
+    ) -> PublicAffection:
+        normalized_group = str(group_id).strip()
+        normalized_subject = str(subject_id).strip()
+        if normalized_group not in self.enabled_groups or not normalized_subject:
+            raise ValueError("relationship lookup requires an enabled group and subject")
+        _, affection = self.society.relationship_snapshot(
+            self.persona_id,
+            normalized_group,
+            normalized_subject,
+        )
+        return affection
 
     async def record_usable_reply(self, plan: ReplyPlan, *, now: int) -> bool:
         """Project a bounded dialogue lease after usable text exists."""

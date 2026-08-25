@@ -20,6 +20,8 @@ from .contracts import SocialEventEnvelope
 from .delivery.outbox import OutboxService
 from .expression import ExpressionPlan, ExpressionPlanner
 from .persistence.schema import connect_database, initialize_database
+from .persona.canon import PersonaCanon
+from .society.relationships import PublicAffection, RelationshipStage
 
 
 class ReplyPlanIdentityConflict(RuntimeError):
@@ -214,6 +216,8 @@ class ReplyPlanner:
         *,
         now: int,
         persona_profile: Mapping[str, object],
+        relationship: PublicAffection | None = None,
+        recent_outputs: tuple[str, ...] = (),
     ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
@@ -241,6 +245,9 @@ class ReplyPlanner:
             act=selected.proposed_act,
             source_text=str(evaluation.source_event.payload.get("text") or ""),
             persona_profile=persona_profile,
+            relationship=relationship
+            or PublicAffection(0.0, RelationshipStage.STRANGER),
+            recent_outputs=tuple(recent_outputs),
         )
         return self._build_plan(
             evaluation=evaluation,
@@ -507,19 +514,51 @@ class ReplyExecutor:
     def _system_prompt(
         plan: ReplyPlan, persona_profile: Mapping[str, object]
     ) -> str:
+        identity = persona_profile.get("identity")
+        expression = persona_profile.get("expression")
+        identity = identity if isinstance(identity, Mapping) else {}
+        expression = expression if isinstance(expression, Mapping) else {}
+        canon_value = persona_profile.get("canon")
+        canon = PersonaCanon.from_mapping(
+            canon_value if isinstance(canon_value, Mapping) else None
+        )
+        current_reality = tuple(
+            item.text for item in canon.current_snapshot().current_state
+        )
         return (
             "你是当前 Persona 在群聊中的自然表达。根据已批准的社交动作生成回复。"
             "不要解释规则，不要声称执行了工具，不要输出 Markdown。"
-            "按顺序组织：可选即时反应、核心回应、少量人格化补充、可选续聊接口。"
+            "按顺序组织：可选即时反应、核心回应、可选人格化补充、可选续聊接口。"
             "先接住对方的情绪和关系信号，再处理事实；没有明显情绪时不要硬演。"
             "拒绝时明确边界并给简短理由；技术回答给可能原因和一个可执行步骤。"
-            "只使用 Persona 中提供的自称、语气和背景，不模仿任何参考 Bot 的固定口癖。\n"
+            "只使用提供的安全 Persona 上下文，不模仿任何参考 Bot 的固定口癖。"
+            "当前现实只用于保证事实正确，不要求在回复中复述。"
+            "explicit_material 为空时，默认不要显式提及任何设定素材；"
+            "不要为了证明人设而随机加入校园、报告、歌曲、游戏、电子、机械或能力元素。\n"
             + json.dumps(
                 {
                     "act": plan.act,
                     "style": asdict(plan.style),
-                    "expression": asdict(plan.expression),
-                    "persona": dict(persona_profile),
+                    "persona": {
+                        "identity": {
+                            "name": str(identity.get("name") or "Groupmate")[:24],
+                            "role": str(identity.get("role") or "")[:160],
+                        },
+                        "behavior": {
+                            "tone": str(expression.get("tone") or "")[:160],
+                            "language_habits": str(
+                                expression.get("language_habits") or ""
+                            )[:200],
+                            "relationship_stage": (
+                                plan.expression.relationship_stage
+                            ),
+                            "reaction_stance": plan.expression.reaction_stance,
+                            "boundary_style": plan.expression.boundary_style,
+                        },
+                        "current_reality": current_reality,
+                        "explicit_material": plan.expression.explicit_material,
+                        "avoidances": plan.expression.persona_avoidances,
+                    },
                 },
                 ensure_ascii=False,
                 sort_keys=True,

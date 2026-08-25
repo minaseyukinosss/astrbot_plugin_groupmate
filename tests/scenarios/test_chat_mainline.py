@@ -236,6 +236,8 @@ def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):
     assert trace["route"]["matched_alias"] == "小爱"
     assert trace["judgement"]["reason"] == "命中人格别称：小爱"
     assert "爱弥斯" in context.model_calls[0]["system_prompt"]
+    assert "默认不要显式提及任何设定素材" in context.model_calls[0]["system_prompt"]
+    assert "接入频道" not in json.dumps(context.client.calls, ensure_ascii=False)
 
 
 def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):

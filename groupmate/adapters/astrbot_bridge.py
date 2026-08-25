@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from contextlib import suppress
 from dataclasses import asdict, replace
 import time
@@ -74,6 +75,7 @@ class AstrBotSocialRuntimeBridge:
         self._reply_executor: ReplyExecutor | None = None
         self._dispatcher: DeliveryDispatcher | None = None
         self._reply_lock = asyncio.Lock()
+        self._recent_outputs: dict[str, deque[str]] = {}
         self._attention_changed = asyncio.Event()
         self._attention_task: asyncio.Task[None] | None = None
         self._started = False
@@ -346,10 +348,20 @@ class AstrBotSocialRuntimeBridge:
                     group_id,
                     int(getattr(evaluation, "config_version", 0)),
                 )
+                source_event = getattr(evaluation, "source_event", None)
+                subject_id = str(getattr(source_event, "actor_id", "") or "")
+                relationship = self._manager.relationship_affection(
+                    group_id, subject_id
+                )
+                recent_outputs = tuple(
+                    self._recent_outputs.get(group_id, ())
+                )
                 plan = self._reply_planner.plan(
                     evaluation,
                     now=int(self.clock()),
                     persona_profile=persona_profile,
+                    relationship=relationship,
+                    recent_outputs=recent_outputs,
                 )
                 if plan is None:
                     self._record_trace(
@@ -374,12 +386,13 @@ class AstrBotSocialRuntimeBridge:
                         reply_diagnostic=preview.diagnostic_code,
                     )
                     self._manager.update_shadow_review_evidence(evaluation)
+                    if preview.status == "READY" and preview.text:
+                        self._remember_output(group_id, preview.text)
                 self._record_trace(
                     self.trace_repository.record_evaluation,
                     evaluation,
                     int(self.clock()),
                 )
-                source_event = getattr(evaluation, "source_event", None)
                 if source_event is not None:
                     self._record_trace(
                         self.trace_repository.record_plan,
@@ -403,6 +416,11 @@ class AstrBotSocialRuntimeBridge:
                         recent_outputs=(),
                     )
                     if execution.usable_for_lease:
+                        text = str(
+                            execution.part.part.payload.get("text") or ""
+                        ).strip()
+                        if text:
+                            self._remember_output(group_id, text)
                         await self._manager.record_usable_reply(
                             plan, now=int(self.clock())
                         )
@@ -410,6 +428,10 @@ class AstrBotSocialRuntimeBridge:
                     self.reply_error = None
                 except Exception as exc:
                     self.reply_error = f"{type(exc).__name__}: {exc}"
+
+    def _remember_output(self, group_id: str, text: str) -> None:
+        history = self._recent_outputs.setdefault(str(group_id), deque(maxlen=8))
+        history.append(str(text).strip())
 
     async def _dispatch_ready(self) -> None:
         if self._manager is None or self._dispatcher is None:
