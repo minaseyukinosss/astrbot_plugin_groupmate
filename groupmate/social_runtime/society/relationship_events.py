@@ -191,10 +191,52 @@ class RelationshipEventPolicy:
         )
 
 
+class RelationshipEventService:
+    def __init__(
+        self,
+        repository: object,
+        policy: RelationshipEventPolicy | None = None,
+    ) -> None:
+        self._repository = repository
+        self._policy = policy or RelationshipEventPolicy()
+
+    def process(
+        self, proposal: RelationshipEventProposal, *, mode: str
+    ) -> RelationshipEventDecision:
+        return self._repository.process_relationship_event(
+            proposal,
+            mode=mode,
+            policy=self._policy,
+        )
+
+    def snapshot(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> RelationshipProjection:
+        return self._repository.load_relationship(
+            persona_id, group_id, subject_id
+        )
+
+    def decisions(
+        self,
+        persona_id: str,
+        group_id: str,
+        subject_id: str,
+        *,
+        since: int | None = None,
+    ) -> tuple[RelationshipEventDecision, ...]:
+        return self._repository.relationship_decisions(
+            persona_id,
+            group_id,
+            subject_id,
+            since=since,
+        )
+
+
 __all__ = (
     "RELATIONSHIP_EVENT_KINDS",
     "RELATIONSHIP_SEVERITIES",
     "RelationshipEventDecision",
     "RelationshipEventPolicy",
     "RelationshipEventProposal",
+    "RelationshipEventService",
 )

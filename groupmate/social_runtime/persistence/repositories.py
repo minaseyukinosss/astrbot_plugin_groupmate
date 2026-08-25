@@ -7,14 +7,21 @@ import json
 import time
 from contextlib import closing
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..contracts import GlobalSelfState, GlobalStateEffect
 from .schema import connect_database, initialize_database
 from ..society.relationships import (
     PublicAffection,
+    RelationshipEvidence,
     RelationshipProjector,
     RelationshipProjection,
+)
+from ..society.relationship_events import (
+    RelationshipEventDecision,
+    RelationshipEventPolicy,
+    RelationshipEventProposal,
 )
 from ..society.impressions import Impression
 from ..society.culture import CultureArtifact
@@ -34,6 +41,10 @@ class InvalidGlobalStateEffect(ValueError):
 
 class ScopeRequiredError(ValueError):
     """Raised before SQL when a group-private query lacks its full scope."""
+
+
+class RelationshipEventIdentityConflict(RuntimeError):
+    """Raised when a relationship event ID is reused for different facts."""
 
 
 _RANGES = {
@@ -225,6 +236,232 @@ class SQLiteSocietyRepository:
         state = self.load_relationship(persona_id, group_id, subject_id)
         return state, PublicAffection.from_projection(state)
 
+    def process_relationship_event(
+        self,
+        proposal: RelationshipEventProposal,
+        *,
+        mode: str,
+        policy: RelationshipEventPolicy,
+    ) -> RelationshipEventDecision:
+        resolved_mode = str(mode).upper()
+        if resolved_mode not in {"SHADOW", "SOCIAL_RUNTIME"}:
+            raise ValueError("relationship mode must be SHADOW or SOCIAL_RUNTIME")
+        self._require_scope(
+            proposal.persona_id, proposal.group_id, proposal.subject_id
+        )
+        proposal_payload = self._relationship_proposal_payload(proposal)
+        proposal_json = _canonical_json(proposal_payload)
+        with closing(connect_database(self.path)) as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                existing = db.execute(
+                    "SELECT event_json FROM relationship_events WHERE event_id=?",
+                    (proposal.event_id,),
+                ).fetchone()
+                if existing is not None:
+                    stored = json.loads(str(existing["event_json"]))
+                    if _canonical_json(stored.get("proposal")) != proposal_json:
+                        raise RelationshipEventIdentityConflict(proposal.event_id)
+                    prior = self._relationship_decision_from_payload(stored["decision"])
+                    db.commit()
+                    return RelationshipEventDecision(
+                        "DUPLICATE",
+                        ("event_already_processed",),
+                        proposal,
+                        prior.evidence,
+                        0.0,
+                    )
+                row = db.execute(
+                    "SELECT projection_json FROM relationship_projection "
+                    "WHERE persona_id=? AND group_id=? AND subject_id=?",
+                    (proposal.persona_id, proposal.group_id, proposal.subject_id),
+                ).fetchone()
+                current = (
+                    self._projector.empty(
+                        proposal.persona_id,
+                        proposal.group_id,
+                        proposal.subject_id,
+                    )
+                    if row is None
+                    else self._projector.from_dict(json.loads(row["projection_json"]))
+                )
+                day_start, day_end = self._shanghai_day(proposal.occurred_at)
+                rows = db.execute(
+                    "SELECT event_json FROM relationship_events "
+                    "WHERE persona_id=? AND group_id=? AND subject_id=? "
+                    "AND occurred_at>=? AND occurred_at<?",
+                    (
+                        proposal.persona_id,
+                        proposal.group_id,
+                        proposal.subject_id,
+                        day_start,
+                        day_end,
+                    ),
+                ).fetchall()
+                positive_today = sum(
+                    max(
+                        0.0,
+                        self._relationship_decision_from_payload(
+                            json.loads(str(item["event_json"]))["decision"]
+                        ).public_delta,
+                    )
+                    for item in rows
+                    if json.loads(str(item["event_json"]))["decision"].get(
+                        "outcome"
+                    )
+                    == "ACCEPT"
+                )
+                policy_decision = policy.decide(
+                    proposal,
+                    current=current,
+                    positive_delta_today=positive_today,
+                )
+                decision = (
+                    RelationshipEventDecision(
+                        "SUGGEST",
+                        ("shadow_suggestion",),
+                        proposal,
+                        policy_decision.evidence,
+                        policy_decision.public_delta,
+                    )
+                    if resolved_mode == "SHADOW"
+                    and policy_decision.outcome == "ACCEPT"
+                    else policy_decision
+                )
+                event_json = _canonical_json(
+                    {
+                        "mode": resolved_mode,
+                        "proposal": proposal_payload,
+                        "decision": self._relationship_decision_payload(decision),
+                    }
+                )
+                db.execute(
+                    "INSERT INTO relationship_events(event_id, persona_id, group_id, "
+                    "subject_id, event_json, occurred_at) VALUES(?, ?, ?, ?, ?, ?)",
+                    (
+                        proposal.event_id,
+                        proposal.persona_id,
+                        proposal.group_id,
+                        proposal.subject_id,
+                        event_json,
+                        proposal.occurred_at,
+                    ),
+                )
+                if (
+                    resolved_mode == "SOCIAL_RUNTIME"
+                    and decision.outcome == "ACCEPT"
+                    and decision.evidence is not None
+                ):
+                    updated = self._projector.apply(current, decision.evidence)
+                    encoded = _canonical_json(self._projector.to_dict(updated))
+                    db.execute(
+                        "INSERT INTO relationship_projection(persona_id, group_id, "
+                        "subject_id, version, projection_json, updated_at) "
+                        "VALUES(?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(persona_id, group_id, subject_id) DO UPDATE SET "
+                        "version=excluded.version, projection_json=excluded.projection_json, "
+                        "updated_at=excluded.updated_at",
+                        (
+                            updated.persona_id,
+                            updated.group_id,
+                            updated.subject_id,
+                            updated.version,
+                            encoded,
+                            int(time.time()),
+                        ),
+                    )
+                db.commit()
+                return decision
+            except BaseException:
+                db.rollback()
+                raise
+
+    def relationship_decisions(
+        self,
+        persona_id: str,
+        group_id: str,
+        subject_id: str,
+        *,
+        since: int | None = None,
+    ) -> tuple[RelationshipEventDecision, ...]:
+        self._require_scope(persona_id, group_id, subject_id)
+        query = (
+            "SELECT event_json FROM relationship_events "
+            "WHERE persona_id=? AND group_id=? AND subject_id=?"
+        )
+        params: tuple[object, ...] = (persona_id, group_id, subject_id)
+        if since is not None:
+            query += " AND occurred_at>=?"
+            params += (int(since),)
+        query += " ORDER BY occurred_at, event_id"
+        with closing(connect_database(self.path)) as db:
+            rows = db.execute(query, params).fetchall()
+        return tuple(
+            self._relationship_decision_from_payload(
+                json.loads(str(row["event_json"]))["decision"]
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    def _relationship_proposal_payload(
+        proposal: RelationshipEventProposal,
+    ) -> dict[str, object]:
+        payload = asdict(proposal)
+        payload["source_event_ids"] = list(proposal.source_event_ids)
+        return payload
+
+    @staticmethod
+    def _relationship_decision_payload(
+        decision: RelationshipEventDecision,
+    ) -> dict[str, object]:
+        return {
+            "outcome": decision.outcome,
+            "reason_codes": list(decision.reason_codes),
+            "proposal": SQLiteSocietyRepository._relationship_proposal_payload(
+                decision.proposal
+            ),
+            "evidence": (
+                asdict(decision.evidence)
+                if decision.evidence is not None
+                else None
+            ),
+            "public_delta": decision.public_delta,
+        }
+
+    @staticmethod
+    def _relationship_decision_from_payload(
+        payload: dict[str, object],
+    ) -> RelationshipEventDecision:
+        proposal = RelationshipEventProposal(
+            **{
+                **dict(payload["proposal"]),
+                "source_event_ids": tuple(
+                    dict(payload["proposal"]).get("source_event_ids", ())
+                ),
+            }
+        )
+        evidence_payload = payload.get("evidence")
+        evidence = (
+            RelationshipEvidence(**dict(evidence_payload))
+            if isinstance(evidence_payload, dict)
+            else None
+        )
+        return RelationshipEventDecision(
+            str(payload["outcome"]),
+            tuple(payload.get("reason_codes", ())),
+            proposal,
+            evidence,
+            float(payload.get("public_delta", 0.0)),
+        )
+
+    @staticmethod
+    def _shanghai_day(timestamp: int) -> tuple[int, int]:
+        zone = timezone(timedelta(hours=8))
+        local = datetime.fromtimestamp(int(timestamp), zone)
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        return int(start.timestamp()), int((start + timedelta(days=1)).timestamp())
+
     def save_impression(self, impression: Impression) -> None:
         self._require_scope(
             impression.persona_id, impression.group_id, impression.subject_id
@@ -323,6 +560,7 @@ class SQLiteSocietyRepository:
 __all__ = (
     "EffectIdentityConflict",
     "InvalidGlobalStateEffect",
+    "RelationshipEventIdentityConflict",
     "SQLiteSocietyRepository",
     "SQLitePersonaStateRepository",
     "ScopeRequiredError",

@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
+from groupmate.social_runtime.persistence.repositories import (
+    RelationshipEventIdentityConflict,
+    SQLiteSocietyRepository,
+)
 from groupmate.social_runtime.society.relationship_events import (
+    RelationshipEventService,
     RelationshipEventPolicy,
     RelationshipEventProposal,
 )
@@ -91,3 +98,54 @@ def test_repair_confirmed_reduces_boundary_pressure_locally():
     assert decision.evidence is not None
     assert decision.evidence.kind == "boundary_pressure"
     assert decision.evidence.amount == -4
+
+
+def _service(tmp_path):
+    return RelationshipEventService(
+        SQLiteSocietyRepository(tmp_path / "runtime.db")
+    )
+
+
+def test_same_relationship_event_is_applied_once(tmp_path):
+    service = _service(tmp_path)
+
+    first = service.process(_proposal(event_id="r1"), mode="SOCIAL_RUNTIME")
+    second = service.process(_proposal(event_id="r1"), mode="SOCIAL_RUNTIME")
+
+    assert first.outcome == "ACCEPT"
+    assert second.outcome == "DUPLICATE"
+    assert service.snapshot("p", "g", "u").version == 1
+
+
+def test_shadow_records_suggestion_without_changing_projection(tmp_path):
+    service = _service(tmp_path)
+
+    decision = service.process(_proposal(event_id="r2"), mode="SHADOW")
+
+    assert decision.outcome == "SUGGEST"
+    assert service.snapshot("p", "g", "u").version == 0
+    assert service.decisions("p", "g", "u")[0].outcome == "SUGGEST"
+
+
+def test_same_event_id_with_different_content_is_rejected(tmp_path):
+    service = _service(tmp_path)
+    service.process(_proposal(event_id="r3"), mode="SOCIAL_RUNTIME")
+
+    with pytest.raises(RelationshipEventIdentityConflict):
+        service.process(
+            _proposal(event_id="r3", summary="不同的关系事实"),
+            mode="SOCIAL_RUNTIME",
+        )
+
+
+def test_daily_positive_budget_is_based_on_committed_events(tmp_path):
+    service = _service(tmp_path)
+
+    first = service.process(_proposal(event_id="r4"), mode="SOCIAL_RUNTIME")
+    second = service.process(_proposal(event_id="r5"), mode="SOCIAL_RUNTIME")
+    third = service.process(_proposal(event_id="r6"), mode="SOCIAL_RUNTIME")
+
+    assert first.outcome == "ACCEPT"
+    assert second.outcome == "ACCEPT"
+    assert third.outcome == "REJECT"
+    assert third.reason_codes == ("positive_daily_budget_exhausted",)

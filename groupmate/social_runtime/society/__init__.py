@@ -5,6 +5,7 @@ from .relationship_events import (
     RelationshipEventDecision,
     RelationshipEventPolicy,
     RelationshipEventProposal,
+    RelationshipEventService,
 )
 
 __all__ = (
@@ -12,6 +13,7 @@ __all__ = (
     "RelationshipEventDecision",
     "RelationshipEventPolicy",
     "RelationshipEventProposal",
+    "RelationshipEventService",
     "RelationshipProjection",
     "RelationshipStage",
 )
