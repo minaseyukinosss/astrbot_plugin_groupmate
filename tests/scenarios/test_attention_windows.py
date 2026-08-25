@@ -108,6 +108,29 @@ def test_undispatched_ambient_frame_refreshes_when_fast_event_advances_scene():
     assert ambient_frame.focus_event_ids == ("qq:m1",)
 
 
+def test_confirmed_alias_is_fast_without_ambient_worker():
+    event = _message(1, 100, "u1")
+    event = SocialEventEnvelope.create(
+        **{
+            **event.to_dict(),
+            "payload": {
+                **dict(event.payload),
+                "direct_address": True,
+                "address_kind": "ALIAS_PREFIX",
+                "matched_alias": "小爱",
+                "address_remainder": "说话",
+            },
+        }
+    )
+    projector = GroupWorldProjector()
+    world = projector.apply(projector.empty(event.group_id), event)
+
+    frame = AttentionScheduler().on_event(event, world, _persona(), now=100)[0]
+
+    assert frame.trigger_kind == "FAST"
+    assert frame.requested_workers == ()
+
+
 def test_busy_ambient_window_keeps_only_recent_bounded_context():
     scheduler = AttentionScheduler()
     projector = GroupWorldProjector()

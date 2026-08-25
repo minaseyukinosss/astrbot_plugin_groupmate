@@ -49,6 +49,25 @@ _STAGE_ORDER = {
     "PLANNED": 60,
     "DELIVERED": 70,
 }
+_ADDRESS_KINDS = {
+    "AT",
+    "REPLY",
+    "PURE_ALIAS",
+    "ALIAS_PREFIX",
+    "ALIAS_SUFFIX",
+}
+
+
+def _direct_reason(event: SocialEventEnvelope) -> str:
+    kind = str(event.payload.get("address_kind") or "").upper()
+    if kind == "AT":
+        return "明确 @ 机器人"
+    if kind == "REPLY":
+        return "回复了 Bot 的上一条消息"
+    alias = " ".join(str(event.payload.get("matched_alias") or "").split())[:24]
+    if kind in {"PURE_ALIAS", "ALIAS_PREFIX", "ALIAS_SUFFIX"} and alias:
+        return f"命中人格别称：{alias}"
+    return "明确对 Bot 发起互动"
 
 
 class MessageTraceRepository:
@@ -94,6 +113,11 @@ class MessageTraceRepository:
                 "reason": "消息已到达，等待插件处理顺序确认",
             }
         )
+        address_evidence = self._address_evidence(event)
+        if address_evidence:
+            route.update(address_evidence)
+            if not external:
+                route["reason"] = str(address_evidence["address_reason"])
         delivery = (
             {
                 "mode": mode,
@@ -177,10 +201,26 @@ class MessageTraceRepository:
 
     def mark_entered(self, event_id: str, now: int) -> None:
         def mutate(summary: dict[str, object]) -> None:
+            current = summary.get("route")
+            current_route = current if isinstance(current, Mapping) else {}
+            evidence = {
+                key: current_route[key]
+                for key in (
+                    "address_kind",
+                    "matched_alias",
+                    "addressed_to_bot",
+                    "alias_candidate",
+                    "address_reason",
+                )
+                if key in current_route
+            }
             summary["route"] = {
                 "owner": "GROUPMATE",
                 "label": "进入 Groupmate",
-                "reason": "未被前置命令或外部插件截获",
+                "reason": evidence.get(
+                    "address_reason", "未被前置命令或外部插件截获"
+                ),
+                **evidence,
             }
 
         self._mutate(
@@ -361,13 +401,20 @@ class MessageTraceRepository:
     ) -> dict[str, object]:
         would_reply = outcome == "ACT"
         if lane != "AMBIENT":
-            return {
+            judgement = {
                 "source": "policy",
                 "status": "not_required",
                 "decision": "speak" if would_reply else "silence",
                 "would_reply": would_reply,
                 "label": _OUTCOME_LABELS.get(outcome, "已完成判断"),
             }
+            source_event = getattr(evaluation, "source_event", None)
+            if isinstance(source_event, SocialEventEnvelope):
+                evidence = self._address_evidence(source_event)
+                if evidence:
+                    judgement.update(evidence)
+                    judgement["reason"] = evidence["address_reason"]
+            return judgement
         observations = tuple(
             getattr(evaluation, "cognitive_observations", ()) or ()
         )
@@ -782,6 +829,24 @@ class MessageTraceRepository:
     @staticmethod
     def _safe_text(value: object, limit: int) -> str:
         return " ".join(str(value or "").split())[:limit]
+
+    @classmethod
+    def _address_evidence(
+        cls, event: SocialEventEnvelope
+    ) -> dict[str, object]:
+        kind = cls._safe_text(event.payload.get("address_kind"), 24).upper()
+        addressed = bool(event.payload.get("addressed_to_bot"))
+        if not addressed or kind not in _ADDRESS_KINDS:
+            return {}
+        alias = cls._safe_text(event.payload.get("matched_alias"), 24)
+        candidate = cls._safe_text(event.payload.get("alias_candidate"), 24)
+        return {
+            "address_kind": kind,
+            "matched_alias": alias or None,
+            "addressed_to_bot": True,
+            "alias_candidate": candidate or None,
+            "address_reason": _direct_reason(event),
+        }
 
     @classmethod
     def _message_summary(cls, value: object) -> str:

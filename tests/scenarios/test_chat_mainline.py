@@ -142,6 +142,10 @@ def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):
     ]
     assert cognition_calls == []
     assert len(context.client.calls) == 1
+    assert trace["route"]["reason"] == "命中人格别称：小爱"
+    assert trace["route"]["address_kind"] == "ALIAS_PREFIX"
+    assert trace["route"]["matched_alias"] == "小爱"
+    assert trace["judgement"]["reason"] == "命中人格别称：小爱"
 
 
 def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
