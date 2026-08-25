@@ -3,6 +3,7 @@
 from .constitution import ConstitutionVersion
 from .modes import PersonaModeState
 from .profile import GroupmatePersonaProfile, PERSONA_PROFILE_CONFIG_KEY
+from .canon import PersonaCanon, PersonaCanonSnapshot, PersonaFact
 from ..contracts import GlobalSelfState
 
 __all__ = (
@@ -11,4 +12,7 @@ __all__ = (
     "GroupmatePersonaProfile",
     "PERSONA_PROFILE_CONFIG_KEY",
     "PersonaModeState",
+    "PersonaCanon",
+    "PersonaCanonSnapshot",
+    "PersonaFact",
 )
