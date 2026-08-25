@@ -1,28 +1,39 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.settings import SocialRuntimeSettings
+from groupmate.social_runtime.contracts import RuntimeMode
 
 
 class _MessageObject:
     self_id = "bot-1"
 
-    def __init__(self, message_id: str, text: str) -> None:
+    def __init__(
+        self, message_id: str, text: str, *, segments: list[dict] | None = None
+    ) -> None:
         self.raw_message = {
             "message_id": message_id,
             "group_id": "g-1",
             "user_id": "42",
             "time": 10,
             "sender": {"nickname": "小夏", "card": "夏夏"},
-            "message": [{"type": "text", "data": {"text": text}}],
+            "message": segments or [{"type": "text", "data": {"text": text}}],
         }
 
 
 class _FakeAstrEvent:
-    def __init__(self, message_id: str, text: str) -> None:
-        self.message_obj = _MessageObject(message_id, text)
+    def __init__(
+        self, message_id: str, text: str, *, segments: list[dict] | None = None
+    ) -> None:
+        self.message_obj = _MessageObject(message_id, text, segments=segments)
         self.message_str = text
+        self.stop_calls = 0
+
+    def stop_event(self):
+        self.stop_calls += 1
 
     @staticmethod
     def get_group_id():
@@ -38,28 +49,75 @@ class _FakeAstrEvent:
 
 
 class _FakeManager:
-    def __init__(self) -> None:
+    def __init__(self, mode: RuntimeMode = RuntimeMode.SHADOW) -> None:
         self.ingested = []
+        self.mode = mode
 
     async def ingest(self, event):
         self.ingested.append(event)
         return SimpleNamespace(inserted=False)
 
+    def group_mode(self, _group_id):
+        return self.mode
 
-def _bridge_for(tmp_path):
+
+def _bridge_for(tmp_path, *, mode: RuntimeMode = RuntimeMode.SHADOW):
     settings = SocialRuntimeSettings(
         enabled_groups=("g-1",),
         social_runtime_test_groups=(),
-        runtime_mode="SHADOW",
+        runtime_mode=mode.value,
         generation_provider="fake-provider",
         vision_provider="",
         persona_id="groupmate:default",
+        persona_name="爱弥斯",
+        persona_aliases=("小爱",),
         external_command_prefixes=("bq=astrbot.meme",),
     )
     bridge = AstrBotSocialRuntimeBridge(object(), settings, tmp_path, clock=lambda: 20)
-    bridge._manager = _FakeManager()
+    bridge._manager = _FakeManager(mode)
     bridge._started = True
     return bridge
+
+
+def _text(text: str) -> list[dict]:
+    return [{"type": "text", "data": {"text": text}}]
+
+
+def _at_bot(text: str) -> list[dict]:
+    return [
+        {"type": "at", "data": {"qq": "bot-1"}},
+        *_text(text),
+    ]
+
+
+def _reply_to_bot(text: str) -> list[dict]:
+    return [
+        {"type": "reply", "data": {"id": "previous", "sender_id": "bot-1"}},
+        *_text(text),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "message", "segments", "expected_stops"),
+    (
+        (RuntimeMode.SOCIAL_RUNTIME, "你好", _at_bot("你好"), 1),
+        (RuntimeMode.SOCIAL_RUNTIME, "小爱在吗", _text("小爱在吗"), 1),
+        (RuntimeMode.SOCIAL_RUNTIME, "然后呢", _reply_to_bot("然后呢"), 1),
+        (RuntimeMode.SHADOW, "你好", _at_bot("你好"), 0),
+        (RuntimeMode.OFF, "你好", _at_bot("你好"), 0),
+        (RuntimeMode.SOCIAL_RUNTIME, "bq 开心", _at_bot("bq 开心"), 0),
+        (RuntimeMode.SOCIAL_RUNTIME, "大家好", _text("大家好"), 0),
+    ),
+)
+def test_bridge_claims_only_production_direct_groupmate_messages(
+    tmp_path, mode, message, segments, expected_stops
+):
+    bridge = _bridge_for(tmp_path, mode=mode)
+    event = _FakeAstrEvent("claim", message, segments=segments)
+
+    asyncio.run(bridge.handle_event(event))
+
+    assert event.stop_calls == expected_stops
 
 
 def test_early_observer_records_facts_without_ingesting(tmp_path):

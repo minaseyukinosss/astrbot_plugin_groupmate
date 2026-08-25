@@ -165,6 +165,10 @@ class AstrBotSocialRuntimeBridge:
         if self._manager is None:
             return None
         translated = self._resolve_interaction(self.translator.translate(event))
+        if self._owns_host_response(translated):
+            stop_event = getattr(event, "stop_event", None)
+            if callable(stop_event):
+                stop_event()
         self._record_trace(
             self.trace_repository.record_received,
             translated,
@@ -184,6 +188,18 @@ class AstrBotSocialRuntimeBridge:
             self._attention_changed.set()
         self._reconcile_shadow_reviews()
         return result
+
+    def _owns_host_response(self, event: SocialEventEnvelope) -> bool:
+        if self._manager is None:
+            return False
+        payload = event.payload
+        return bool(
+            self._manager.group_mode(str(event.group_id or ""))
+            is RuntimeMode.SOCIAL_RUNTIME
+            and payload.get("direct_address")
+            and payload.get("social_eligible") is not False
+            and payload.get("interaction_owner") != "EXTERNAL_PLUGIN"
+        )
 
     async def observe_event(self, event: object) -> None:
         """Record arrival and route facts without entering Social Runtime."""
