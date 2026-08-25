@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from .canon import PersonaCanon
+
 
 PERSONA_PROFILE_CONFIG_KEY = "persona_profile"
 
@@ -85,6 +87,7 @@ _DEFAULT = {
 @dataclass(frozen=True)
 class GroupmatePersonaProfile:
     sections: Mapping[str, Mapping[str, object]]
+    canon: PersonaCanon
 
     @classmethod
     def default(cls) -> "GroupmatePersonaProfile":
@@ -96,7 +99,7 @@ class GroupmatePersonaProfile:
     ) -> "GroupmatePersonaProfile":
         if not isinstance(value, Mapping):
             raise ValueError("persona profile must be an object")
-        unknown_sections = set(value) - set(_SECTIONS)
+        unknown_sections = set(value) - set(_SECTIONS) - {"canon"}
         if unknown_sections:
             raise ValueError(
                 f"unknown persona sections: {sorted(unknown_sections)}"
@@ -141,7 +144,10 @@ class GroupmatePersonaProfile:
                     section_values["name"],
                 )
             normalized[section] = MappingProxyType(section_values)
-        return cls(MappingProxyType(normalized))
+        return cls(
+            MappingProxyType(normalized),
+            PersonaCanon.from_mapping(value.get("canon")),
+        )
 
     @staticmethod
     def _aliases(
@@ -176,12 +182,13 @@ class GroupmatePersonaProfile:
             raise ValueError("persona profile config must be an object")
         return cls.from_mapping(raw)
 
-    def to_mapping(self) -> dict[str, dict[str, object]]:
+    def to_mapping(self) -> dict[str, object]:
         result = copy.deepcopy(
             {section: dict(values) for section, values in self.sections.items()}
         )
         identity = result["identity"]
         identity["aliases"] = list(identity.get("aliases", ()))
+        result["canon"] = self.canon.to_mapping()
         return result
 
 

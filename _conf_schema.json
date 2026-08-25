@@ -25,6 +25,14 @@
     "default": [],
     "hint": "每行一个别称。只有管理员确认的别称会触发直接互动。"
   },
+  "persona_preset": {
+    "description": "人格资料预设",
+    "type": "string",
+    "options": ["aemeath_current", "custom"],
+    "labels": ["爱弥斯（当前剧情）", "自定义 Persona"],
+    "default": "aemeath_current",
+    "hint": "预设只提供人格资料，不硬编码别称；名称和别称仍使用上方配置。"
+  },
   "generation_provider": {
     "description": "Groupmate 最终回复模型",
     "type": "string",

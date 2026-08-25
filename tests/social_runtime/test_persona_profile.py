@@ -40,6 +40,26 @@ def test_old_persona_profile_without_aliases_remains_valid():
     assert restored["identity"]["aliases"] == []
 
 
+def test_old_persona_profile_without_canon_remains_valid():
+    payload = GroupmatePersonaProfile.default().to_mapping()
+    payload.pop("canon", None)
+
+    restored = GroupmatePersonaProfile.from_mapping(payload)
+
+    assert restored.canon.current_snapshot().current_state == ()
+
+
+def test_persona_profile_round_trips_current_canon():
+    from groupmate.social_runtime.persona.presets import AEMEATH_CURRENT_CANON
+
+    payload = GroupmatePersonaProfile.default().to_mapping()
+    payload["canon"] = AEMEATH_CURRENT_CANON.to_mapping()
+
+    restored = GroupmatePersonaProfile.from_mapping(payload)
+
+    assert restored.canon == AEMEATH_CURRENT_CANON
+
+
 def test_persona_profile_rejects_ambiguous_aliases():
     payload = GroupmatePersonaProfile.default().to_mapping()
     payload["identity"]["name"] = "爱弥斯"

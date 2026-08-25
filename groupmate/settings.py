@@ -23,6 +23,7 @@ class SocialRuntimeSettings:
     persona_id: str
     persona_name: str = "Groupmate"
     persona_aliases: tuple[str, ...] = ()
+    persona_preset: str = "aemeath_current"
     cognition_api_key: str = field(default="", repr=False)
     cognition_api_base: str = DEFAULT_COGNITION_API_BASE
     cognition_model: str = DEFAULT_COGNITION_MODEL
@@ -69,6 +70,13 @@ class SocialRuntimeSettings:
             raise ValueError("persona_name must not be empty")
         if len(persona_name) > 24:
             raise ValueError("persona_name must contain at most 24 characters")
+        persona_preset = str(
+            source.get("persona_preset", "aemeath_current") or ""
+        ).strip()
+        if persona_preset not in {"aemeath_current", "custom"}:
+            raise ValueError(
+                "persona_preset must be aemeath_current or custom"
+            )
         return cls(
             enabled_groups=enabled_groups,
             social_runtime_test_groups=social_runtime_groups,
@@ -81,6 +89,7 @@ class SocialRuntimeSettings:
                 persona_name,
                 source.get("persona_aliases", ()),
             ),
+            persona_preset=persona_preset,
             cognition_api_key=str(
                 source.get("cognition_api_key", "") or ""
             ).strip(),

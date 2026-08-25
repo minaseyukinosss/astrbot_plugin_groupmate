@@ -21,6 +21,7 @@ from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
+from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
 from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
 from ..social_runtime.actions.contracts import OutboxStatus
@@ -253,7 +254,7 @@ class AstrBotSocialRuntimeBridge:
         values["payload"] = payload
         return SocialEventEnvelope.create(**values)
 
-    def _profile_snapshot(self, group_id: str) -> dict[str, dict[str, object]]:
+    def _profile_snapshot(self, group_id: str) -> dict[str, object]:
         snapshot = self._persona_config_snapshot(group_id)
         configured = snapshot.config["persona_profile"]
         return GroupmatePersonaProfile.from_mapping(configured).to_mapping()
@@ -271,11 +272,19 @@ class AstrBotSocialRuntimeBridge:
         )
         configured = snapshot.config.get("persona_profile")
         if isinstance(configured, Mapping):
-            profile = GroupmatePersonaProfile.from_mapping(configured).to_mapping()
+            values = dict(configured)
+            if "canon" not in values:
+                values["canon"] = PERSONA_CANON_PRESETS[
+                    self.settings.persona_preset
+                ].to_mapping()
+            profile = GroupmatePersonaProfile.from_mapping(values).to_mapping()
         else:
             profile = GroupmatePersonaProfile.default().to_mapping()
             profile["identity"]["name"] = self.settings.persona_name
             profile["identity"]["aliases"] = list(self.settings.persona_aliases)
+            profile["canon"] = PERSONA_CANON_PRESETS[
+                self.settings.persona_preset
+            ].to_mapping()
             profile = GroupmatePersonaProfile.from_mapping(profile).to_mapping()
         config = dict(snapshot.config)
         config["persona_profile"] = profile

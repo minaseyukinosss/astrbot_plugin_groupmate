@@ -34,6 +34,7 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.cognition_model == "deepseek-v4-flash"
     assert settings.persona_name == "Groupmate"
     assert settings.persona_aliases == ()
+    assert settings.persona_preset == "aemeath_current"
 
 
 def test_persona_identity_settings_normalize_confirmed_aliases():
@@ -46,6 +47,11 @@ def test_persona_identity_settings_normalize_confirmed_aliases():
 
     assert settings.persona_name == "爱弥斯"
     assert settings.persona_aliases == ("小爱",)
+
+
+def test_unknown_persona_preset_is_rejected():
+    with pytest.raises(ValueError, match="persona_preset"):
+        SocialRuntimeSettings.from_mapping({"persona_preset": "unknown"})
 
 
 def test_astrbot_config_only_exposes_groupmate_deployment_choices():
@@ -71,6 +77,7 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "external_link_domains",
         "persona_name",
         "persona_aliases",
+        "persona_preset",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
@@ -83,6 +90,7 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     assert schema["cognition_api_key"]["obvious_hint"] is True
     assert schema["cognition_api_base"]["default"] == "https://api.deepseek.com"
     assert schema["cognition_model"]["default"] == "deepseek-v4-flash"
+    assert schema["persona_preset"]["default"] == "aemeath_current"
     assert "persona_id" not in schema
     assert "bot_qq" not in schema
     assert "database_name" not in schema
