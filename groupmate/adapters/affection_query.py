@@ -13,7 +13,7 @@ def is_affection_query(text: object) -> bool:
     """Claim only the explicit public leaderboard command."""
 
     normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
-    return normalized == "查看好感度"
+    return normalized in {"查看好感度", "查询好感度"}
 
 
 @dataclass(frozen=True)

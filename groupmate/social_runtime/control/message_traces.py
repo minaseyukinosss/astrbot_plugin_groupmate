@@ -254,7 +254,7 @@ class MessageTraceRepository:
             summary["route"] = {
                 "owner": "GROUPMATE",
                 "label": "Groupmate 内置查询",
-                "reason": "精确命中“查看好感度”",
+                "reason": "精确命中好感度查询命令",
             }
             summary["understanding"] = {
                 "status": "READY",

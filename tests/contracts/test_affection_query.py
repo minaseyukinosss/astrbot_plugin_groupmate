@@ -28,7 +28,15 @@ class FakeManager:
         return RuntimeMode.SHADOW if group_id == "g-1" else RuntimeMode.OFF
 
 
-@pytest.mark.parametrize("text", ("查看好感度", "  查看好感度\n", "查看好感度　"))
+@pytest.mark.parametrize(
+    "text",
+    (
+        "查看好感度",
+        "查询好感度",
+        "  查看好感度\n",
+        "查询好感度　",
+    ),
+)
 def test_affection_query_match_is_exact_after_platform_normalization(text):
     assert is_affection_query(text) is True
 
