@@ -120,13 +120,8 @@ class GroupmatePlugin(Star):
                         page.context,
                         options={
                             "type": "png",
-                            "full_page": False,
-                            "clip": {
-                                "x": 0,
-                                "y": 0,
-                                "width": page.context["render_width"],
-                                "height": page.context["render_height"],
-                            },
+                            "full_page": True,
+                            "scale": "device",
                             "animations": "disabled",
                             "caret": "hide",
                         },

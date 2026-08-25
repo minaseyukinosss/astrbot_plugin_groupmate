@@ -329,10 +329,9 @@ def test_affection_query_is_claimed_before_chat_and_has_text_fallback():
     assert "await self.bridge.prepare_affection_query(event)" in composition
     assert "event.stop_event()" in composition
     assert "await self.html_render(" in composition
-    assert '"full_page": False' in composition
-    assert '"clip": {' in composition
-    assert 'page.context["render_width"]' in composition
-    assert 'page.context["render_height"]' in composition
+    assert '"full_page": True' in composition
+    assert '"clip": {' not in composition
+    assert '"scale": "device"' in composition
     assert "event.image_result" in composition
     assert "event.plain_result(query.text_fallback)" in composition
 

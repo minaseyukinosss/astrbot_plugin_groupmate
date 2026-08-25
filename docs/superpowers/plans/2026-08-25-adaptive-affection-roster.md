@@ -4,7 +4,9 @@
 
 **Goal:** Build the affection leaderboard from the complete NapCat group roster and render complete, readable images for 1–10, 11–50, 51–100, and 100+ member groups.
 
-**Architecture:** Make the affection query boundary asynchronous so it can call AstrBot `event.get_group()`, normalize the returned members, and merge them with Groupmate relationship projections while preserving a separate local recent-interaction count. Extend the leaderboard projection with roster completeness metadata, then let the presenter select a safe layout and pagination scheme whose declared canvas never exceeds 760 × 560 CSS px.
+**Architecture:** Make the affection query boundary asynchronous so it can call AstrBot `event.get_group()`, normalize the returned members, and merge them with Groupmate relationship projections while preserving a separate local recent-interaction count. Extend the leaderboard projection with roster completeness metadata, then let the presenter select a complete full-page layout for 820 / 1180 / 1380 px canvases.
+
+> 2026-08-25 final visual revision: the user supplied a higher-fidelity six-column capsule reference after the original safe-viewport plan was written. Task 3's old 760 × 560 clipped-table details below are superseded by the final spec: 1 / 3 / 6 columns, 240 members per page, no table headers, and AstrBot `full_page=True` without `clip`.
 
 **Tech Stack:** Python 3, AstrBot `AstrMessageEvent`, aiocqhttp/NapCat OneBot group APIs through `event.get_group()`, SQLite participant directory, Jinja-compatible HTML/CSS, pytest.
 

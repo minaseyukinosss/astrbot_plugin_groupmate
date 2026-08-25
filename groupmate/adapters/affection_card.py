@@ -17,112 +17,98 @@ AFFECTION_CARD_TEMPLATE = r"""
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width={{ render_width }}, initial-scale=1">
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html { width: {{ render_width }}px; margin: 0; padding: 0; background: transparent; }
   body {
-    width: {{ render_width }}px;
-    min-height: {{ render_height }}px;
-    padding: 18px 16px 20px;
-    background: #fff7fa;
-    color: #3e2630;
+    width: {{ render_width }}px; min-height: {{ render_height }}px;
+    margin: 0; padding: 20px;
+    background:
+      radial-gradient(circle at 8% 0%, rgba(255, 184, 211, .42), transparent 28%),
+      radial-gradient(circle at 92% 8%, rgba(255, 226, 238, .86), transparent 34%),
+      linear-gradient(145deg, #fffafd 0%, #fff1f6 56%, #fff8fb 100%);
+    color: #432b35;
     font-family: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   main {
-    width: 100%;
+    width: 100%; padding: 20px;
+    border: 1px solid rgba(219, 95, 139, .40); border-radius: 22px;
+    background: rgba(255, 255, 255, .76);
+    box-shadow:
+      0 0 0 7px rgba(142, 22, 66, .06),
+      0 20px 46px rgba(128, 24, 63, .12),
+      inset 0 1px 0 rgba(255, 255, 255, .96);
   }
   header {
-    display: flex; align-items: center; gap: 16px;
-    min-height: 42px; padding: 0 8px 12px;
+    display: grid; grid-template-columns: 58px minmax(0, 1fr) auto;
+    align-items: center; gap: 16px; height: 70px; margin-bottom: 14px;
   }
-  .title { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
   .heart {
-    display: grid; place-items: center; width: 42px; height: 42px;
-    border-radius: 12px; background: #ff5c8d; color: #fff;
-    font-family: Arial, sans-serif; font-size: 29px; font-weight: 400;
-    box-shadow: 0 4px 12px rgba(176, 22, 79, .12);
+    display: grid; place-items: center; width: 54px; height: 54px;
+    border: 1px solid rgba(255, 255, 255, .82); border-radius: 16px;
+    background: linear-gradient(145deg, #ff80aa, #ed3f77); color: #fff;
+    font-family: Arial, sans-serif; font-size: 36px; font-weight: 400;
+    box-shadow: 0 8px 20px rgba(176, 22, 79, .22), inset 0 1px 2px rgba(255, 255, 255, .42);
   }
-  h1 { margin: 0; color: #730d33; font-size: 27px; line-height: 1; font-weight: 850; letter-spacing: .02em; }
-  .meta, .updated { margin: 0; color: #896e78; font-size: 13px; white-space: nowrap; }
-  .meta { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .updated { flex: 0 0 auto; margin-left: auto; text-align: right; }
-  .mine {
-    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto;
-    align-items: center; gap: 12px 20px; min-height: 48px;
-    margin: 0 8px 10px; padding: 8px 14px;
-    background: rgba(255, 255, 255, .72); border: 1.5px solid #ff5c8d; border-radius: 7px;
+  .summary { min-width: 0; }
+  .heading { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
+  h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 31px; line-height: 1; font-weight: 880; letter-spacing: .03em; }
+  .group-name { min-width: 0; overflow: hidden; color: #725661; font-size: 14px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+  .meta, .sync-note { margin: 6px 0 0; color: #997581; font-size: 12px; line-height: 1.2; white-space: nowrap; }
+  .sync-note { margin-left: 8px; color: #b46d26; font-weight: 700; }
+  .mine-rank {
+    min-width: 136px; padding: 9px 16px; border: 1px solid rgba(255, 255, 255, .86); border-radius: 999px;
+    background: rgba(255, 255, 255, .78); color: #9c3158; text-align: center;
+    box-shadow: 0 5px 14px rgba(127, 27, 64, .08), inset 0 1px 0 #fff;
   }
-  .mine-label { padding: 5px 10px; border-radius: 4px; background: #ff5c8d; color: #fff; font-size: 13px; font-weight: 750; }
-  .mine-rank { color: #8b173f; font-size: 19px; font-weight: 850; font-variant-numeric: tabular-nums; }
-  .mine-name { min-width: 0; overflow: hidden; color: #8b173f; font-size: 18px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-  .you { margin-left: 7px; padding: 2px 6px; border-radius: 999px; background: #ffdae5; color: #b0164f; font-size: 11px; font-style: normal; font-weight: 800; vertical-align: 2px; }
-  .mine-stage { color: #7b5d68; font-size: 14px; }
-  .mine-score { color: #b0164f; font-size: 18px; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .mine-rank span { display: block; font-size: 10px; font-weight: 740; letter-spacing: .08em; }
+  .mine-rank strong { display: block; margin-top: 2px; color: #7f173d; font-size: 14px; font-weight: 850; font-variant-numeric: tabular-nums; }
   .columns {
     display: grid; grid-template-columns: repeat({{ column_count }}, minmax(0, 1fr));
-    margin: 0; padding: 0 8px;
+    align-items: start; gap: {{ column_gap }}px; margin: 0; padding: 0;
   }
-  .rank-column { min-width: 0; border-top: 1px solid #f1ccd8; border-right: 1px solid #f1ccd8; border-bottom: 1px solid #f1ccd8; }
-  .rank-column:first-child { border-left: 1px solid #f1ccd8; border-radius: 6px 0 0 6px; }
-  .rank-column:last-child { border-radius: 0 6px 6px 0; }
-  .column-head, .rank-row {
-    display: grid; grid-template-columns: 26px minmax(0, 1fr) 50px 38px;
-    align-items: center; gap: 6px;
+  .rank-column { display: flex; min-width: 0; flex-direction: column; gap: {{ row_gap }}px; }
+  .member-pill {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
+    height: {{ row_height }}px; min-width: 0; padding: 0 11px;
+    border: 1px solid rgba(255, 255, 255, .90); border-radius: 10px;
+    background: rgba(255, 255, 255, .69);
+    box-shadow: 0 1px 3px rgba(107, 24, 55, .04), inset 0 1px 0 rgba(255, 255, 255, .86);
   }
-  .column-head {
-    min-height: 27px; padding: 4px 7px; background: #fff0f5; color: #8d6675;
-    border-bottom: 1px solid #efc5d3; font-size: 10px; font-weight: 750;
+  .member-pill.me {
+    border-color: #ff5c8d; background: linear-gradient(90deg, #ffe1eb, #fff5f8);
+    box-shadow: 0 0 0 2px rgba(255, 92, 141, .12), 0 3px 9px rgba(151, 25, 72, .10);
   }
-  .column-head span:nth-child(1), .column-head span:nth-child(3) { text-align: right; }
-  .rank-row {
-    position: relative; min-height: 29px; padding: 3px 7px;
-    border-bottom: 1px solid #f6e1e8; background: rgba(255, 255, 255, .54); font-size: 12px;
-  }
-  .cols-4 .rank-row, .cols-5 .rank-row { min-height: 21px; padding-top: 1px; padding-bottom: 1px; font-size: 11px; }
-  .cols-4 .column-head, .cols-5 .column-head { min-height: 25px; padding-top: 3px; padding-bottom: 3px; font-size: 10px; }
-  .rank-row:last-child { border-bottom: 0; }
-  .rank-row.me { z-index: 1; margin: -1px 3px 0; border: 1.5px solid #ff5c8d; border-radius: 5px; background: #fff9fb; }
-  .rank { color: #5f4b53; font-weight: 750; text-align: right; font-variant-numeric: tabular-nums; }
-  .rank.top { color: #b0164f; }
-  .identity { display: flex; min-width: 0; align-items: baseline; gap: 5px; }
-  .name { min-width: 0; overflow: hidden; color: #30232a; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-  .tail { flex: 0 0 auto; color: #a08c94; font-size: .86em; font-variant-numeric: tabular-nums; }
-  .stage { color: #725d65; font-size: .9em; white-space: nowrap; }
-  .score { text-align: right; color: #5e5056; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .score.positive { color: #df2c65; }
-  .score.negative { color: #df453c; }
-  footer { margin: 8px 10px 0; color: #9b7c88; font-size: 11px; text-align: right; }
+  .identity { display: flex; min-width: 0; align-items: center; gap: 4px; }
+  .name { min-width: 0; overflow: hidden; color: #4a3540; font-size: {{ item_font_size }}px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
+  .tail { flex: 0 0 auto; color: #ad979f; font-size: calc({{ item_font_size }}px - 2px); font-variant-numeric: tabular-nums; }
+  .score { color: #b12355; font-size: {{ item_font_size }}px; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .score.negative { color: #dc433e; }
+  .you { flex: 0 0 auto; padding: 1px 5px; border-radius: 999px; background: #ff5c8d; color: #fff; font-size: 9px; font-style: normal; font-weight: 800; }
+  footer { height: 18px; padding: 6px 4px 0; color: #9b7c88; font-size: 10px; text-align: right; }
 </style>
 </head>
-<body>
+<body class="layout-{{ layout|e }}">
 <main>
   <header>
-    <div class="title">
-      <span class="heart">♡</span>
-      <h1>好感度</h1>
+    <span class="heart">♡</span>
+    <div class="summary">
+      <div class="heading"><h1>好感度</h1><span class="group-name">{{ group_name|e }}</span></div>
+      <p class="meta">群 {{ group_id|e }}　·　群成员 {{ member_count }} 人　·　近 30 天互动 {{ recent_active_count }} 人　·　更新于 {{ updated_text|e }}{% if not roster_complete %}<span class="sync-note">名单暂未完全同步</span>{% endif %}</p>
     </div>
-    <p class="meta">{{ group_name|e }}　·　{{ group_id|e }}　·　近 30 天活跃 {{ active_count }} 人</p>
-    <p class="updated">更新于 {{ updated_text|e }}</p>
+    <div class="mine-rank">
+      <span>我的排名</span><strong>{{ requester.rank }} / {{ member_count }}</strong>
+    </div>
   </header>
-  <section class="mine">
-    <span class="mine-label">我的位置</span>
-    <span class="mine-rank">{{ requester.rank }} 名</span>
-    <span class="mine-name">{{ requester.display_name|e }}<b class="you">你</b></span>
-    <strong class="mine-score">{{ requester.score_text|e }}</strong>
-    <span class="mine-stage">{{ requester.stage|e }}</span>
-  </section>
   <div class="columns cols-{{ column_count }}">
   {% for column in columns %}
     <section class="rank-column">
-      <div class="column-head"><span>排名</span><span>昵称（QQ末四位）</span><span>好感度</span><span>阶段</span></div>
     {% for item in column %}
-      <div class="rank-row{% if item.is_requester %} me{% endif %}">
-        <span class="rank{% if item.rank <= 3 %} top{% endif %}">{{ item.rank }}</span>
+      <div class="member-pill{% if item.is_requester %} me{% endif %}">
         <span class="identity"><span class="name">{{ item.display_name|e }}</span><span class="tail">{{ item.platform_tail|e }}</span>{% if item.is_requester %}<b class="you">你</b>{% endif %}</span>
         <strong class="score {{ item.score_tone|e }}">{{ item.score_text|e }}</strong>
-        <span class="stage">{{ item.stage|e }}</span>
       </div>
     {% endfor %}
     </section>
@@ -171,7 +157,11 @@ class AffectionCardPresenter:
         )
         if requester_page == 0:
             return pages
-        return (pages[requester_page],) + pages[:requester_page] + pages[requester_page + 1 :]
+        return (
+            (pages[requester_page],)
+            + pages[:requester_page]
+            + pages[requester_page + 1 :]
+        )
 
     @staticmethod
     def _page(
@@ -180,31 +170,56 @@ class AffectionCardPresenter:
         page_number: int,
         page_count: int,
     ) -> AffectionCardPage:
-        entry_count = len(entries)
+        total_count = len(leaderboard.entries)
+        layout = (
+            "paged"
+            if total_count > AffectionCardPresenter.PAGE_SIZE
+            else "large"
+            if total_count > 50
+            else "medium"
+            if total_count > 10
+            else "small"
+        )
         column_count = (
-            5
-            if entry_count >= 161
-            else 4
-            if entry_count >= 97
-            else 3
-            if entry_count >= 49
-            else 2
-            if entry_count >= 17
-            else 1
+            1 if layout == "small" else 3 if layout == "medium" else 6
         )
         rows = max(1, math.ceil(len(entries) / column_count))
-        render_width = (920, 1080, 1240, 1300, 1340)[column_count - 1]
-        row_height = (29, 26, 23, 21, 21)[column_count - 1]
-        render_height = 179 + rows * row_height + (18 if page_count > 1 else 0)
+        render_width = (
+            820 if layout == "small" else 1180 if layout == "medium" else 1380
+        )
+        row_height = (
+            38 if layout == "small" else 30 if layout == "medium" else 22
+        )
+        row_gap = 6 if layout == "small" else 5 if layout == "medium" else 3
+        column_gap = (
+            12 if layout == "small" else 10 if layout == "medium" else 8
+        )
+        item_font_size = (
+            15 if layout == "small" else 13 if layout == "medium" else 12
+        )
+        render_height = (
+            164
+            + rows * row_height
+            + max(0, rows - 1) * row_gap
+            + (18 if page_count > 1 else 0)
+        )
         columns = tuple(
-            tuple(item.public_mapping() for item in entries[index : index + rows])
-            for index in range(0, len(entries), rows)
+            tuple(
+                item.public_mapping()
+                for item in entries[index * rows : (index + 1) * rows]
+            )
+            for index in range(column_count)
         )
         context = leaderboard.public_context(entries)
         context.update(
             {
                 "columns": columns,
+                "layout": layout,
                 "column_count": column_count,
+                "row_height": row_height,
+                "row_gap": row_gap,
+                "column_gap": column_gap,
+                "item_font_size": item_font_size,
                 "page_number": page_number,
                 "page_count": page_count,
                 "render_width": render_width,

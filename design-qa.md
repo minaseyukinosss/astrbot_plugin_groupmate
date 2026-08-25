@@ -132,3 +132,15 @@ Browser geometry confirms a 920 × 208 one-member image and a 1340 × 1145 228-m
 - Browser console: no application warnings or errors observed.
 
 final result: passed
+
+### Pass 3 — final six-column capsule reference passed
+
+- Final visual truth: `/var/folders/2h/qwsmbj8x7ts6d5hykdppnvvw0000gn/T/codex-clipboard-7b19c9cb-e254-4236-bc49-1155dddbcf94.png`.
+- Replaced the traditional ranked table with the reference's borderless six-column capsule roster.
+- Removed repeated column headers, visible rank numbers, and stage cells from each member row; identity, QQ suffix, and score now carry the row.
+- Moved the requester summary to a compact top-right rank capsule while retaining a single highlighted member row.
+- Restored the reference-scale 1380 px canvas and 240-member page capacity. AstrBot now captures the full page with device scaling instead of a fixed clip rectangle.
+- Browser geometry for 228 members: 1380 × 1113 CSS px, six columns, 228 unique rows, requester highlighted once, final column ending at member 228, and no horizontal content overflow.
+- Targeted presenter, roster, query, and composition checks: 56 passed.
+
+final result: passed
