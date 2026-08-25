@@ -75,3 +75,60 @@ The runtime center now uses the requested neutral gray/white light theme, with g
 - P3: real QQ avatar sharpness and cache behavior can only be judged against a live NapCat account; the preview intentionally exercised the initials fallback.
 
 final result: passed
+
+---
+
+# Affection Leaderboard Image QA
+
+- Source visual truth: `/Users/minase/.codex/generated_images/01a022e6-b653-7a11-9c6b-0927b93baeb0/exec-5a31b87c-8e3e-404b-8f5d-cd6853dc4259.png`
+- Browser-rendered implementation: `/private/tmp/groupmate-affection-preview/large-final2.png`
+- Density-normalized implementation: `/private/tmp/groupmate-affection-preview/large-normalized.png`
+- Full-view comparison: `/private/tmp/groupmate-affection-preview/comparison.png`
+- Focused header/table comparison: `/private/tmp/groupmate-affection-preview/comparison-focus.png`
+- Viewport: 1400 × 1200 CSS px; captured content: 1340 × 1145 CSS px.
+- Pixel dimensions: source 1339 × 1173; implementation 1340 × 1145 after normalizing the in-app preview surface's half-density capture to the DOM-reported CSS extent.
+- State: 228-member public leaderboard, requester at rank 95; supplemental one-member state at 920 × 208 CSS px.
+
+## Full-view comparison evidence
+
+The revised image uses the reference's compact blush canvas, inline title metadata, outlined personal-position strip, five-column dense ranking table, column headers, restrained pink borders, and outlined requester row. The previous large rounded shell, solid-pink content blocks, four-column limit, and empty 1280 × 720 minimum canvas are removed.
+
+## Focused comparison evidence
+
+The focused comparison verifies the title/meta rhythm, the order and emphasis of the requester summary, readable column labels, compact row density, and requester outline. A focused region was required because the 228-member table text is too small to judge reliably from the full image alone.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Chinese system UI stack with antialiasing, tabular numeric scores, stronger title/requester weights, and 11 px dense-table text. Passed.
+- Spacing and layout rhythm: 16–18 px canvas margins, 42 px title mark, 48 px requester strip, 21 px large-board rows, and content-sized capture. Passed.
+- Colors and visual tokens: near-white blush background, warm white row surfaces, restrained pink rules, dark-plum headings, and distinct positive/negative score colors. Passed.
+- Image quality and assets: lossless PNG output, no remote image dependency, and no avatar downscaling or broken-image fallback. The small heart mark is intentionally typographic so it remains sharp at every capture density. Passed.
+- Copy and content: group identity, 30-day active count, update time, personal rank, nickname, score, stage, QQ suffix, and column labels remain visible. Passed.
+
+## Comparison history
+
+### Pass 1 — blocked
+
+- P1: one-member output inherited the renderer's 1280 × 720 minimum canvas, leaving most of the image blank.
+- P1: the table lacked headers and stopped at four columns, so it did not reproduce the reference's readable information architecture or density.
+- P2: the requester strip was a large solid fill and the outer rounded shell weakened the reference's light, precise hierarchy.
+
+Fixes:
+
+- Added content-aware render width and height plus screenshot clipping.
+- Added five-column layout for 161–240 members and compact density tiers for smaller boards.
+- Added column headers and grouped nickname/QQ suffix into one identity cell.
+- Rebuilt the requester strip, row borders, typography, and palette around the supplied reference.
+
+### Pass 2 — passed
+
+Browser geometry confirms a 920 × 208 one-member image and a 1340 × 1145 228-member image. The dense board fits five equal 258.4 px columns with no horizontal overflow, while the small board no longer carries a 720 px minimum height. No actionable P0/P1/P2 mismatch remains.
+
+## Interactions and runtime checks
+
+- Rendered one-member and 228-member states from the production template and presenter context.
+- Verified requester highlighting in both the summary strip and ranking row.
+- Verified measured canvas size, column count, equal column widths, and content clipping.
+- Browser console: no application warnings or errors observed.
+
+final result: passed
