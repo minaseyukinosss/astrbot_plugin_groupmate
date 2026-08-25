@@ -29,7 +29,7 @@ AFFECTION_CARD_TEMPLATE = r"""
       radial-gradient(circle at 92% 8%, rgba(255, 226, 238, .86), transparent 34%),
       linear-gradient(145deg, #fffafd 0%, #fff1f6 56%, #fff8fb 100%);
     color: #432b35;
-    font-family: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   main {
@@ -53,8 +53,8 @@ AFFECTION_CARD_TEMPLATE = r"""
   .heart svg { display: block; width: 31px; height: 31px; }
   .summary { min-width: 0; }
   .heading { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
-  h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 27px; line-height: 1; font-weight: 800; letter-spacing: 0; }
-  .group-name { min-width: 0; overflow: hidden; color: #725661; font-size: 14px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+  h1 { flex: 0 0 auto; margin: 0; color: #761039; font-size: 26px; line-height: 1; font-weight: 700; letter-spacing: 0; }
+  .group-name { min-width: 0; overflow: hidden; color: #725661; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
   .meta, .sync-note { margin: 6px 0 0; color: #997581; font-size: 12px; line-height: 1.2; white-space: nowrap; }
   .sync-note { margin-left: 8px; color: #b46d26; font-weight: 700; }
   .mine-rank {
@@ -70,9 +70,9 @@ AFFECTION_CARD_TEMPLATE = r"""
   }
   .rank-column { display: flex; min-width: 0; flex-direction: column; gap: {{ row_gap }}px; }
   .member-pill {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
-    height: {{ row_height }}px; min-width: 0; padding: 0 11px;
-    border: 1px solid rgba(255, 255, 255, .90); border-radius: 10px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 12px;
+    height: {{ row_height }}px; min-width: 0; padding: 0 10px;
+    border: 1px solid rgba(255, 255, 255, .90); border-radius: 8px;
     background: rgba(255, 255, 255, .69);
     box-shadow: 0 1px 3px rgba(107, 24, 55, .04), inset 0 1px 0 rgba(255, 255, 255, .86);
   }
@@ -80,12 +80,11 @@ AFFECTION_CARD_TEMPLATE = r"""
     border-color: #ff5c8d; background: linear-gradient(90deg, #ffe1eb, #fff5f8);
     box-shadow: 0 0 0 2px rgba(255, 92, 141, .12), 0 3px 9px rgba(151, 25, 72, .10);
   }
-  .identity { display: flex; min-width: 0; align-items: center; gap: 4px; }
-  .name { min-width: 0; overflow: hidden; color: #4a3540; font-size: {{ item_font_size }}px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
-  .tail { flex: 0 0 auto; color: #ad979f; font-size: calc({{ item_font_size }}px - 2px); font-variant-numeric: tabular-nums; }
-  .score { color: #b12355; font-size: {{ item_font_size }}px; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .identity { display: flex; min-width: 0; align-items: center; gap: 6px; line-height: 1; }
+  .name { min-width: 0; overflow: hidden; color: #4a3540; font-size: {{ item_font_size }}px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .tail { flex: 0 0 auto; color: #ad979f; font-size: calc({{ item_font_size }}px - 2px); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
+  .score { min-width: 44px; color: #b12355; font-size: {{ item_font_size }}px; font-weight: 700; line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
   .score.negative { color: #dc433e; }
-  .you { flex: 0 0 auto; padding: 1px 5px; border-radius: 999px; background: #ff5c8d; color: #fff; font-size: 9px; font-style: normal; font-weight: 800; }
   footer { height: 18px; padding: 6px 4px 0; color: #9b7c88; font-size: 10px; text-align: right; }
 </style>
 </head>
@@ -106,7 +105,7 @@ AFFECTION_CARD_TEMPLATE = r"""
     <section class="rank-column">
     {% for item in column %}
       <div class="member-pill{% if item.is_requester %} me{% endif %}">
-        <span class="identity"><span class="name">{{ item.display_name|e }}</span><span class="tail">{{ item.platform_tail|e }}</span>{% if item.is_requester %}<b class="you">你</b>{% endif %}</span>
+        <span class="identity"><span class="name">{{ item.display_name|e }}</span><span class="tail">{{ item.platform_tail|e }}</span></span>
         <strong class="score {{ item.score_tone|e }}">{{ item.score_text|e }}</strong>
       </div>
     {% endfor %}

@@ -80,11 +80,21 @@ def test_card_uses_readable_roster_type_and_restrained_shadow():
 
 
 def test_card_title_uses_clean_compact_typography():
-    assert "font-size: 27px" in AFFECTION_CARD_TEMPLATE
-    assert "font-weight: 800" in AFFECTION_CARD_TEMPLATE
+    assert "font-size: 26px" in AFFECTION_CARD_TEMPLATE
+    assert "font-weight: 700" in AFFECTION_CARD_TEMPLATE
     assert "letter-spacing: 0" in AFFECTION_CARD_TEMPLATE
     assert "font-weight: 880" not in AFFECTION_CARD_TEMPLATE
     assert "letter-spacing: .03em" not in AFFECTION_CARD_TEMPLATE
+
+
+def test_member_row_matches_reference_spacing_without_you_badge():
+    assert '<b class="you">' not in AFFECTION_CARD_TEMPLATE
+    assert ".you {" not in AFFECTION_CARD_TEMPLATE
+    assert "gap: 6px" in AFFECTION_CARD_TEMPLATE
+    assert "min-width: 44px" in AFFECTION_CARD_TEMPLATE
+    assert "text-align: right" in AFFECTION_CARD_TEMPLATE
+    assert "font-weight: 500" in AFFECTION_CARD_TEMPLATE
+    assert "font-weight: 700; line-height: 1; text-align: right" in AFFECTION_CARD_TEMPLATE
 
 
 @pytest.mark.parametrize(
