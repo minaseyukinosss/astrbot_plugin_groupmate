@@ -247,6 +247,52 @@ class MessageTraceRepository:
             },
         )
 
+    def record_affection_query(self, event_id: str, now: int) -> None:
+        """Close the trace for the local, model-free affection command."""
+
+        def mutate(summary: dict[str, object]) -> None:
+            summary["route"] = {
+                "owner": "GROUPMATE",
+                "label": "Groupmate 内置查询",
+                "reason": "精确命中“查看好感度”",
+            }
+            summary["understanding"] = {
+                "status": "READY",
+                "summary": "读取当前群已提交的关系快照",
+                "diagnostics": [],
+            }
+            summary["decision"] = {
+                "outcome": "ACT",
+                "would_reply": True,
+                "label": "生成好感度榜单",
+                "reasons": [],
+            }
+            summary["delivery"] = {
+                "mode": "QUERY",
+                "status": "READY",
+                "label": "好感度榜单已生成",
+            }
+
+        self._mutate(
+            event_id,
+            now,
+            mutate,
+            stages=(
+                {
+                    "kind": "ROUTED",
+                    "label": "AstrBot 已路由至 Groupmate 内置查询",
+                    "at": int(now),
+                    "status": "DONE",
+                },
+                {
+                    "kind": "DECIDED",
+                    "label": "已生成好感度榜单",
+                    "at": int(now),
+                    "status": "DONE",
+                },
+            ),
+        )
+
     def record_evaluation(self, evaluation: object, now: int) -> None:
         event = getattr(evaluation, "source_event", None)
         if not isinstance(event, SocialEventEnvelope):

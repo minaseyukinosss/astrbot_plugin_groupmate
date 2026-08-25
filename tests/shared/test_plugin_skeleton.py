@@ -319,6 +319,19 @@ def test_control_administrators_are_internal_governance_state():
     assert "EventMessageType.GROUP_MESSAGE, priority=-100" in composition
 
 
+def test_affection_query_is_claimed_before_chat_and_has_text_fallback():
+    root = Path(__file__).parents[2]
+    composition = (root / "main.py").read_text(encoding="utf-8")
+
+    assert composition.index("prepare_affection_query") < composition.index(
+        "await self.bridge.handle_event(event)"
+    )
+    assert "event.stop_event()" in composition
+    assert "await self.html_render(" in composition
+    assert "event.image_result" in composition
+    assert "event.plain_result(query.text_fallback)" in composition
+
+
 def test_external_trigger_rules_are_native_deployment_configuration():
     settings = SocialRuntimeSettings.from_mapping(
         {

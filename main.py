@@ -9,6 +9,7 @@ from astrbot.api.star import Context, Star
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from .groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
+from .groupmate.adapters.affection_card import AFFECTION_CARD_TEMPLATE
 from .groupmate.adapters.web_api import (
     AstrBotControlPlaneRoutes,
     ControlPlaneWebAPI,
@@ -108,6 +109,31 @@ class GroupmatePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-100)
     async def observe_group_message(self, event: AstrMessageEvent):
+        query = self.bridge.prepare_affection_query(event)
+        if query is not None:
+            event.stop_event()
+            try:
+                rendered_pages = []
+                for page in query.pages:
+                    url = await self.html_render(
+                        AFFECTION_CARD_TEMPLATE,
+                        page.context,
+                        options={
+                            "type": "png",
+                            "full_page": True,
+                            "animations": "disabled",
+                            "caret": "hide",
+                        },
+                    )
+                    if not url:
+                        raise RuntimeError("affection card renderer returned no image")
+                    rendered_pages.append(url)
+                for url in rendered_pages:
+                    yield event.image_result(url)
+            except Exception:
+                yield event.plain_result(query.text_fallback)
+            self._refresh_projections()
+            return
         await self.bridge.handle_event(event)
         self._refresh_projections()
 

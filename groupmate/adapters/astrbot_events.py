@@ -149,6 +149,8 @@ class AstrBotEventTranslator:
                 "platform_id": platform_id,
                 "session": session,
                 "bot_id": bot_id,
+                "group_name": str(raw.get("group_name") or "").strip()[:60]
+                or None,
                 "text": message_text,
                 "segments": segments,
                 "reply_to": reply_to or None,

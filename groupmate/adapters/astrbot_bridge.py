@@ -29,8 +29,13 @@ from ..social_runtime.actions.contracts import OutboxStatus
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
+from .affection_card import AffectionCardPresenter
+from .affection_query import AffectionQuery, is_affection_query
 from .deepseek_cognition import DeepSeekCognitionClient
 from .onebot_delivery import OneBotDeliveryAdapter
+from ..social_runtime.society.affection_leaderboard import (
+    AffectionLeaderboardService,
+)
 
 
 class AstrBotSocialRuntimeBridge:
@@ -79,6 +84,45 @@ class AstrBotSocialRuntimeBridge:
         self._attention_changed = asyncio.Event()
         self._attention_task: asyncio.Task[None] | None = None
         self._started = False
+
+    def prepare_affection_query(self, event: object) -> AffectionQuery | None:
+        """Build the local query result without entering chat or cognition."""
+
+        if not self._started or self._manager is None:
+            return None
+        translated = self.translator.translate(event)
+        if not is_affection_query(translated.payload.get("text")):
+            return None
+        group_id = str(translated.group_id or "").strip()
+        if not group_id or self._manager.group_mode(group_id) is RuntimeMode.OFF:
+            return None
+
+        now = int(self.clock())
+        participants = self.trace_repository.participants
+        participants.remember(translated)
+        members = participants.active_members(
+            persona_id=self.settings.persona_id,
+            group_id=group_id,
+            since=now - 30 * 24 * 60 * 60,
+            exclude_actor_ids=(str(translated.payload.get("bot_id") or ""),),
+        )
+        leaderboard = AffectionLeaderboardService(self._manager.society).build(
+            persona_id=self.settings.persona_id,
+            group_id=group_id,
+            group_name=str(translated.payload.get("group_name") or "当前群聊"),
+            requester_id=translated.actor_id,
+            members=members,
+            updated_at=now,
+        )
+        self._record_trace(
+            self.trace_repository.record_affection_query,
+            translated.event_id,
+            now,
+        )
+        return AffectionQuery(
+            leaderboard=leaderboard,
+            pages=AffectionCardPresenter().pages(leaderboard),
+        )
 
     @property
     def trace_repository(self) -> MessageTraceRepository:
