@@ -110,7 +110,7 @@ def test_published_plugin_persona_is_frozen_into_cognition_context(tmp_path):
     profile["identity"]["name"] = "小群友"
 
     class InspectingWorker:
-        name = "direct_interaction"
+        name = "ambient_social_assessor"
 
         def __init__(self):
             self.context = None
@@ -143,11 +143,11 @@ def test_published_plugin_persona_is_frozen_into_cognition_context(tmp_path):
                     occurred_at=100,
                     received_at=100,
                     correlation_id="corr:profile",
-                    payload={"text": "在吗", "direct_address": True},
+                    payload={"text": "今天群里挺安静"},
                 )
             )
         )
-        await manager.drain(now=100)
+        await manager.drain(now=102)
         await manager.close()
         return worker.context
 

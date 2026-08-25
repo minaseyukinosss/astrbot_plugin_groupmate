@@ -12,7 +12,10 @@ from typing import Callable, Mapping
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.addressing import PersonaAddressResolver
 from ..social_runtime.contracts import RuntimeMode, SocialEventEnvelope
-from ..social_runtime.control.config_versions import ConfigVersionRepository
+from ..social_runtime.control.config_versions import (
+    ConfigSnapshot,
+    ConfigVersionRepository,
+)
 from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
@@ -120,10 +123,7 @@ class AstrBotSocialRuntimeBridge:
                 },
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
                 worker_timeout_seconds=self.settings.cognition_timeout_seconds,
-                persona_profile_loader=lambda group_id: config_repository.snapshot(
-                    persona_id=self.settings.persona_id,
-                    group_id=group_id,
-                ),
+                persona_profile_loader=self._persona_config_snapshot,
                 clock=self.clock,
             )
             try:
@@ -238,6 +238,11 @@ class AstrBotSocialRuntimeBridge:
         return SocialEventEnvelope.create(**values)
 
     def _profile_snapshot(self, group_id: str) -> dict[str, dict[str, object]]:
+        snapshot = self._persona_config_snapshot(group_id)
+        configured = snapshot.config["persona_profile"]
+        return GroupmatePersonaProfile.from_mapping(configured).to_mapping()
+
+    def _persona_config_snapshot(self, group_id: str) -> ConfigSnapshot:
         repository = self._config_repository
         if repository is None:
             repository = ConfigVersionRepository(
@@ -250,11 +255,15 @@ class AstrBotSocialRuntimeBridge:
         )
         configured = snapshot.config.get("persona_profile")
         if isinstance(configured, Mapping):
-            return GroupmatePersonaProfile.from_mapping(configured).to_mapping()
-        profile = GroupmatePersonaProfile.default().to_mapping()
-        profile["identity"]["name"] = self.settings.persona_name
-        profile["identity"]["aliases"] = list(self.settings.persona_aliases)
-        return GroupmatePersonaProfile.from_mapping(profile).to_mapping()
+            profile = GroupmatePersonaProfile.from_mapping(configured).to_mapping()
+        else:
+            profile = GroupmatePersonaProfile.default().to_mapping()
+            profile["identity"]["name"] = self.settings.persona_name
+            profile["identity"]["aliases"] = list(self.settings.persona_aliases)
+            profile = GroupmatePersonaProfile.from_mapping(profile).to_mapping()
+        config = dict(snapshot.config)
+        config["persona_profile"] = profile
+        return ConfigSnapshot(snapshot.version, config)
 
     async def _attention_wakeup_loop(
         self, manager: SocialRuntimeManager
@@ -308,8 +317,14 @@ class AstrBotSocialRuntimeBridge:
                         int(self.clock()),
                     )
                     continue
+                persona_profile = self._manager.persona_profile_mapping(
+                    group_id,
+                    int(getattr(evaluation, "config_version", 0)),
+                )
                 plan = self._reply_planner.plan(
-                    evaluation, now=int(self.clock())
+                    evaluation,
+                    now=int(self.clock()),
+                    persona_profile=persona_profile,
                 )
                 if plan is None:
                     self._record_trace(
@@ -325,7 +340,7 @@ class AstrBotSocialRuntimeBridge:
                         context_events=tuple(
                             getattr(evaluation, "context_events", ())
                         ),
-                        persona_profile={"persona_id": self.settings.persona_id},
+                        persona_profile=persona_profile,
                         recent_outputs=(),
                     )
                     evaluation = replace(
@@ -359,7 +374,7 @@ class AstrBotSocialRuntimeBridge:
                         context_events=tuple(
                             getattr(evaluation, "context_events", ())
                         ),
-                        persona_profile={"persona_id": self.settings.persona_id},
+                        persona_profile=persona_profile,
                         recent_outputs=(),
                     )
                     if execution.usable_for_lease:

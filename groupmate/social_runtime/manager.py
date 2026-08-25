@@ -459,6 +459,19 @@ class SocialRuntimeManager:
         finally:
             await self._end_drain()
 
+    def persona_profile_mapping(
+        self, group_id: str, config_version: int
+    ) -> dict[str, dict[str, object]]:
+        """Return only the Persona frozen into the matching evaluation."""
+
+        profile = self._persona_profiles.get((str(group_id), int(config_version)))
+        if profile is None:
+            loaded = self._load_persona_profile(str(group_id))
+            if loaded.version != int(config_version):
+                raise RuntimeError("persona profile changed after frozen evaluation")
+            profile = loaded.profile
+        return profile.to_mapping()
+
     async def record_usable_reply(self, plan: ReplyPlan, *, now: int) -> bool:
         """Project a bounded dialogue lease after usable text exists."""
 

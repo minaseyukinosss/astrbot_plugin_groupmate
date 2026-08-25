@@ -18,6 +18,7 @@ from .actions.generation import GeneratedDraft, GenerationRequest, OutputFirewal
 from .actions.style import StyleDirective
 from .contracts import SocialEventEnvelope
 from .delivery.outbox import OutboxService
+from .expression import ExpressionPlan, ExpressionPlanner
 from .persistence.schema import connect_database, initialize_database
 
 
@@ -50,6 +51,7 @@ class ReplyPlan:
     style: StyleDirective
     created_at: int
     expires_at: int
+    expression: ExpressionPlan
     status: str = "planned"
     participation_lane: str = "AMBIENT"
 
@@ -193,11 +195,26 @@ class ReplyPlanRepository:
         values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
         values["style"] = StyleDirective(**values["style"])
         values.setdefault("participation_lane", "AMBIENT")
+        expression = values.get("expression")
+        values["expression"] = (
+            ExpressionPlan(**expression)
+            if isinstance(expression, Mapping)
+            else ExpressionPlan.conservative()
+        )
         return ReplyPlan(**values)
 
 
 class ReplyPlanner:
-    def plan(self, evaluation: object, *, now: int) -> ReplyPlan | None:
+    def __init__(self, expression_planner: ExpressionPlanner | None = None) -> None:
+        self._expression_planner = expression_planner or ExpressionPlanner()
+
+    def plan(
+        self,
+        evaluation: object,
+        *,
+        now: int,
+        persona_profile: Mapping[str, object],
+    ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
         if (
@@ -219,6 +236,31 @@ class ReplyPlanner:
         )
         if selected is None or selected.expires_at <= int(now):
             return None
+        expression = self._expression_planner.plan(
+            lane=str(getattr(evaluation, "participation_lane", "AMBIENT")),
+            act=selected.proposed_act,
+            source_text=str(evaluation.source_event.payload.get("text") or ""),
+            persona_profile=persona_profile,
+        )
+        return self._build_plan(
+            evaluation=evaluation,
+            frame=frame,
+            selected=selected,
+            intention_id=intention_id,
+            expression=expression,
+            now=int(now),
+        )
+
+    def _build_plan(
+        self,
+        *,
+        evaluation: object,
+        frame: object,
+        selected: object,
+        intention_id: str,
+        expression: ExpressionPlan,
+        now: int,
+    ) -> ReplyPlan:
         source = evaluation.source_event
         payload = source.payload
         target_id = selected.target_id or self._first(frame.candidate_audiences)
@@ -259,8 +301,9 @@ class ReplyPlanner:
                 media_policy="text_only",
                 avoid_patterns=(),
             ),
-            created_at=int(now),
-            expires_at=min(int(selected.expires_at), int(now) + 30),
+            created_at=now,
+            expires_at=min(int(selected.expires_at), now + 30),
+            expression=expression,
             participation_lane=str(
                 getattr(evaluation, "participation_lane", "AMBIENT")
                 or "AMBIENT"
@@ -465,12 +508,17 @@ class ReplyExecutor:
         plan: ReplyPlan, persona_profile: Mapping[str, object]
     ) -> str:
         return (
-            "你是群聊成员 Groupmate。根据已批准的社交动作生成一条自然回复。"
-            "不要解释规则，不要声称执行了工具，不要输出 Markdown。\n"
+            "你是当前 Persona 在群聊中的自然表达。根据已批准的社交动作生成回复。"
+            "不要解释规则，不要声称执行了工具，不要输出 Markdown。"
+            "按顺序组织：可选即时反应、核心回应、少量人格化补充、可选续聊接口。"
+            "先接住对方的情绪和关系信号，再处理事实；没有明显情绪时不要硬演。"
+            "拒绝时明确边界并给简短理由；技术回答给可能原因和一个可执行步骤。"
+            "只使用 Persona 中提供的自称、语气和背景，不模仿任何参考 Bot 的固定口癖。\n"
             + json.dumps(
                 {
                     "act": plan.act,
                     "style": asdict(plan.style),
+                    "expression": asdict(plan.expression),
                     "persona": dict(persona_profile),
                 },
                 ensure_ascii=False,
@@ -504,6 +552,7 @@ class ReplyExecutor:
 
 
 __all__ = (
+    "ExpressionPlan",
     "ReplyExecutor",
     "ReplyExecutionResult",
     "ReplyPlan",

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
 from groupmate.social_runtime.governor import GovernorResult
 from groupmate.social_runtime.intentions import CandidateIntention
+from groupmate.social_runtime.persona.profile import GroupmatePersonaProfile
 from groupmate.social_runtime.replying import (
     ReplyExecutor,
     ReplyPlanRepository,
@@ -79,8 +80,16 @@ def _evaluation(trigger_kind="FAST"):
     )
 
 
+def _persona_profile():
+    profile = GroupmatePersonaProfile.default().to_mapping()
+    profile["identity"]["name"] = "爱弥斯"
+    return profile
+
+
 def test_reply_planner_builds_one_short_text_plan():
-    plan = ReplyPlanner().plan(_evaluation(), now=100)
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile()
+    )
 
     assert plan is not None
     assert plan.target_id == "u1"
@@ -89,16 +98,21 @@ def test_reply_planner_builds_one_short_text_plan():
     assert plan.participation_lane == "DIRECT_FAST"
     assert plan.style.max_chars == 120
     assert plan.style.max_segments == 2
+    assert plan.expression.persona_cues[0] == "爱弥斯"
 
 
 def test_old_serialized_reply_plan_defaults_to_ambient_lane():
-    plan = ReplyPlanner().plan(_evaluation(), now=100)
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile()
+    )
     values = json.loads(ReplyPlanRepository._encode(plan))
     values.pop("participation_lane")
+    values.pop("expression")
 
     restored = ReplyPlanRepository._decode(json.dumps(values))
 
     assert restored.participation_lane == "AMBIENT"
+    assert restored.expression.reaction_stance == "attentive"
 
 
 def test_optional_generation_failure_stays_silent(tmp_path):
@@ -111,7 +125,11 @@ def test_optional_generation_failure_stays_silent(tmp_path):
         tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
     )
     executor = ReplyExecutor(repository, outbox, FailingModel())
-    plan = ReplyPlanner().plan(_evaluation(trigger_kind="AMBIENT"), now=100)
+    plan = ReplyPlanner().plan(
+        _evaluation(trigger_kind="AMBIENT"),
+        now=100,
+        persona_profile=_persona_profile(),
+    )
 
     part = asyncio.run(
         executor.execute(
@@ -140,7 +158,9 @@ def test_required_generation_fallback_is_not_usable_for_a_dialogue_lease(
     )
     executor = ReplyExecutor(repository, outbox, FailingModel())
     evaluation = _evaluation()
-    plan = ReplyPlanner().plan(evaluation, now=100)
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile()
+    )
 
     result = asyncio.run(
         executor.execute_with_result(
@@ -167,7 +187,9 @@ def test_shadow_preview_generates_reviewed_text_without_outbox(tmp_path):
     )
     executor = ReplyExecutor(repository, outbox, Model())
     evaluation = _evaluation()
-    plan = ReplyPlanner().plan(evaluation, now=100)
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile()
+    )
 
     preview = asyncio.run(
         executor.preview(
@@ -182,3 +204,16 @@ def test_shadow_preview_generates_reviewed_text_without_outbox(tmp_path):
     assert preview.text == "这个报错先看最上面一行原因。"
     assert preview.diagnostic_code is None
     assert outbox.count() == 0
+
+
+def test_expression_uses_persona_cues_without_reference_bot_phrases():
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile()
+    )
+
+    prompt = ReplyExecutor._system_prompt(plan, _persona_profile())
+
+    assert "爱弥斯" in prompt
+    assert "咪呀" not in prompt
+    assert "花房" not in prompt
+    assert "先接住对方的情绪和关系信号" in prompt
