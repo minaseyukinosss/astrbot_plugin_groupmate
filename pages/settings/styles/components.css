@@ -1052,7 +1052,7 @@ h1 { font-size: 1.2rem; }
 }
 
 /* Member cognition — identity-first master/detail workspace. */
-.profile-workspace { min-width: 0; }
+.profile-workspace { min-width: 0; min-height: 0; }
 .profile-group-summary {
   display: grid;
   grid-template-columns: minmax(18rem, 1fr) auto minmax(10rem, auto);
@@ -1083,12 +1083,15 @@ h1 { font-size: 1.2rem; }
 .profile-browser {
   display: grid;
   grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr);
+  height: max(35rem, calc(100dvh - 15.875rem));
   min-height: 35rem;
   overflow: hidden;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
+.profile-directory,
+.profile-detail-host { min-height: 0; }
 .profile-directory {
   display: flex;
   min-width: 0;
@@ -1152,7 +1155,13 @@ h1 { font-size: 1.2rem; }
 .profile-member-meta b { color: var(--color-primary); font-size: 0.62rem; font-weight: 600; }
 .profile-member-meta small { color: var(--color-muted); font-size: 0.6rem; white-space: nowrap; }
 .profile-list-empty { margin: 1.5rem 0.75rem; color: var(--color-muted); font-size: 0.68rem; text-align: center; }
-.profile-detail-host { min-width: 0; background: var(--color-bg); }
+.profile-detail-host {
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--color-bg);
+}
 .profile-detail { min-height: 100%; padding: 1.15rem 1.35rem 1.5rem; }
 .profile-identity {
   display: grid;
@@ -1213,12 +1222,17 @@ h1 { font-size: 1.2rem; }
   .profile-relation-list { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 60rem) and (min-width: 44.01rem) {
+  .profile-browser { height: max(35rem, calc(100dvh - 19rem)); }
+}
+
 @media (max-width: 44rem) {
   .profile-group-summary { grid-template-columns: 1fr; align-items: start; }
   .profile-group-summary dl { justify-content: space-between; }
-  .profile-browser { display: block; min-height: 0; overflow: visible; }
+  .profile-browser { display: block; height: auto; min-height: 0; overflow: visible; }
   .profile-directory { max-height: 22rem; border-inline-end: 0; border-block-end: 1px solid var(--color-border); }
   .profile-member-list { max-height: 15rem; }
+  .profile-detail-host { overflow: visible; overscroll-behavior: auto; scrollbar-gutter: auto; }
   .profile-detail { padding: 1rem; }
   .profile-teaching-state { min-height: 18rem; }
   .profile-evidence-row { grid-template-columns: 1fr; gap: 0.25rem; }

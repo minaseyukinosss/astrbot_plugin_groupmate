@@ -244,6 +244,7 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
       ]),
     ]);
     row.addEventListener("click", async () => {
+      detailHost.scrollTop = 0;
       activeButton?.classList.remove("is-active");
       row.classList.add("is-active");
       activeButton = row;
