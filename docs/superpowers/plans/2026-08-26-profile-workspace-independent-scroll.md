@@ -26,7 +26,7 @@ def test_profile_workspace_scrolls_directory_and_detail_independently():
     source = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
     styles = (PAGE / "styles" / "components.css").read_text(encoding="utf-8")
 
-    assert "height: max(35rem, calc(100vh - 13.25rem));" in styles
+    assert "height: max(35rem, calc(100dvh - 15.875rem));" in styles
     assert ".profile-directory" in styles and "min-height: 0" in styles
     assert ".profile-detail-host" in styles and "overflow-y: auto" in styles
     assert "detailHost.scrollTop = 0" in source
@@ -48,7 +48,7 @@ Update the existing profile rules without changing colors or component structure
 ```css
 .profile-workspace { min-width: 0; min-height: 0; }
 .profile-browser {
-  height: max(35rem, calc(100vh - 13.25rem));
+  height: max(35rem, calc(100dvh - 15.875rem));
   min-height: 35rem;
 }
 .profile-directory,
