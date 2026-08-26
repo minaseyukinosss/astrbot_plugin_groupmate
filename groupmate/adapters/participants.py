@@ -14,6 +14,8 @@ from typing import Awaitable, Callable, Mapping
 
 from ..social_runtime.contracts import SocialEventEnvelope
 from ..social_runtime.persistence.schema import connect_database, initialize_database
+from ..social_runtime.profile.identity import IdentityService
+from ..social_runtime.profile.repository import ProfileRepository
 
 
 AvatarFetcher = Callable[[str], Awaitable[tuple[bytes, str]] | tuple[bytes, str]]
@@ -37,6 +39,7 @@ class ParticipantDirectory:
         initialize_database(self.path)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_table()
+        self.identity_service = IdentityService(ProfileRepository(self.path))
 
     def remember(self, event: SocialEventEnvelope) -> dict[str, str]:
         if not event.group_id:
@@ -84,6 +87,16 @@ class ParticipantDirectory:
                     normalized_name,
                     int(updated_at),
                 ),
+            )
+        if normalized_actor_id:
+            self.identity_service.remember_actor(
+                persona_id=str(persona_id),
+                group_id=str(group_id),
+                platform="qq",
+                actor_id=normalized_actor_id,
+                display_name=normalized_name,
+                updated_at=int(updated_at),
+                avatar_ref=avatar_ref,
             )
         return {
             "member_ref": member_ref,

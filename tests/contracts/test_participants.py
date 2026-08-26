@@ -52,6 +52,19 @@ def test_participant_can_be_resolved_inside_the_same_group(tmp_path):
     ) is None
 
 
+def test_participant_remember_also_preserves_nickname_history(tmp_path):
+    path = tmp_path / "runtime.db"
+    directory = ParticipantDirectory(path, tmp_path / "avatars")
+    directory.remember(_event(card="玲151"))
+    directory.remember(_event(card="玲151🍅（已离线）"))
+
+    aliases = directory.identity_service.aliases(
+        "groupmate:default", "g-1", "42"
+    )
+
+    assert [item.alias for item in aliases] == ["玲151", "玲151🍅（已离线）"]
+
+
 def test_active_members_are_scoped_recent_and_can_exclude_bot(tmp_path):
     directory = ParticipantDirectory(tmp_path / "runtime.db", tmp_path / "avatars")
     for actor_id, group_id, updated_at in (

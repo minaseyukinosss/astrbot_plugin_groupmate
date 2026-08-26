@@ -10,10 +10,12 @@ from .contracts import (
     SocialEdge,
 )
 from .repository import ProfileIdentityConflict, ProfileRepository
+from .identity import IdentityService
 
 __all__ = (
     "MemberAlias",
     "MemberIdentity",
+    "IdentityService",
     "ProfileEpisode",
     "ProfileFact",
     "ProfileIdentityConflict",

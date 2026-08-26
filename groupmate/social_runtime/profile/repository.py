@@ -54,6 +54,31 @@ class ProfileRepository:
             )
         return identity
 
+    def identity(
+        self, persona_id: str, platform: str, actor_id: str
+    ) -> MemberIdentity | None:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT * FROM member_identities "
+                "WHERE persona_id=? AND platform=? AND actor_id=?",
+                (str(persona_id), str(platform), str(actor_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        return MemberIdentity(
+            persona_id=str(row["persona_id"]),
+            platform=str(row["platform"]),
+            actor_id=str(row["actor_id"]),
+            display_name=str(row["display_name"]),
+            avatar_ref=(
+                str(row["avatar_ref"])
+                if row["avatar_ref"] is not None
+                else None
+            ),
+            system_roles=tuple(json.loads(row["system_roles_json"])),
+            updated_at=int(row["updated_at"]),
+        )
+
     def remember_alias(self, alias: MemberAlias) -> MemberAlias:
         with connect_database(self.path) as db:
             db.execute(
@@ -78,6 +103,36 @@ class ProfileRepository:
                 ),
             )
         return alias
+
+    def aliases(
+        self, persona_id: str, group_id: str, actor_id: str
+    ) -> tuple[MemberAlias, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT rowid,* FROM member_aliases "
+                "WHERE persona_id=? AND group_id=? AND actor_id=? "
+                "ORDER BY first_seen_at,rowid",
+                (str(persona_id), str(group_id), str(actor_id)),
+            ).fetchall()
+        return tuple(
+            MemberAlias(
+                persona_id=str(row["persona_id"]),
+                group_id=str(row["group_id"]),
+                actor_id=str(row["actor_id"]),
+                alias=str(row["alias"]),
+                alias_type=str(row["alias_type"]),
+                confidence=float(row["confidence"]),
+                source_event_id=(
+                    str(row["source_event_id"])
+                    if row["source_event_id"] is not None
+                    else None
+                ),
+                status=str(row["status"]),
+                first_seen_at=int(row["first_seen_at"]),
+                last_seen_at=int(row["last_seen_at"]),
+            )
+            for row in rows
+        )
 
     def enqueue_observation(self, observation: ProfileObservation) -> bool:
         with connect_database(self.path) as db:
