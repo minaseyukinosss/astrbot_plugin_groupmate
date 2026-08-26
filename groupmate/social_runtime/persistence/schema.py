@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ForeignDatabaseError(RuntimeError):
@@ -28,6 +28,10 @@ _REQUIRED_TABLES = {
     "relationship_projection", "impressions", "culture", "memories",
     "memory_tombstones", "config_versions", "governance_actions",
     "projection_cursors", "evaluation_labels",
+    "member_identities", "member_aliases", "profile_observations",
+    "profile_facts", "profile_episodes", "social_edges",
+    "profile_snapshots", "group_portraits", "profile_preferences",
+    "profile_audit",
 }
 
 
@@ -58,15 +62,32 @@ def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with connect_database(path) as db:
         if existed_with_data:
+            row = db.execute(
+                "SELECT version FROM social_runtime_schema WHERE singleton=1"
+            ).fetchone()
+            version = int(row[0]) if row is not None else 0
+            if version == 1:
+                _migrate_v1_to_v2(db)
             verify_schema(db)
             return
-        db.executescript(_SCHEMA_SQL)
+        db.executescript(_SCHEMA_SQL + _PROFILE_SCHEMA_SQL)
         db.execute(
             "INSERT INTO social_runtime_schema(singleton, version, created_at) "
             "VALUES(1, ?, ?)",
             (SCHEMA_VERSION, int(time.time())),
         )
         verify_schema(db)
+
+
+def _migrate_v1_to_v2(db: sqlite3.Connection) -> None:
+    """Upgrade an owned v1 database without rebuilding runtime tables."""
+
+    db.executescript(
+        "BEGIN IMMEDIATE;\n"
+        + _PROFILE_SCHEMA_SQL
+        + "\nUPDATE social_runtime_schema SET version=2 WHERE singleton=1;\n"
+        + "COMMIT;"
+    )
 
 
 def verify_schema(db: sqlite3.Connection) -> None:
@@ -266,4 +287,147 @@ CREATE TABLE evaluation_labels (
     label_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL, group_id TEXT NOT NULL,
     source_event_id TEXT NOT NULL, label_json TEXT NOT NULL, created_at INTEGER NOT NULL
 );
+"""
+
+
+_PROFILE_SCHEMA_SQL = """
+CREATE TABLE member_identities (
+    persona_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    avatar_ref TEXT,
+    system_roles_json TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(persona_id, platform, actor_id)
+);
+CREATE TABLE member_aliases (
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    source_event_id TEXT,
+    status TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY(persona_id, group_id, actor_id, alias)
+);
+CREATE INDEX idx_member_aliases_scope
+    ON member_aliases(persona_id, group_id, actor_id, status);
+CREATE TABLE profile_observations (
+    event_id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    observation_json TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+      ('pending','processing','retry','completed','discarded')),
+    attempt INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    diagnostic_code TEXT
+);
+CREATE INDEX idx_profile_observations_due
+    ON profile_observations(persona_id, group_id, status, next_attempt_at, occurred_at);
+CREATE TABLE profile_facts (
+    fact_id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_actor_id TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL,
+    evidence_count INTEGER NOT NULL,
+    valid_from INTEGER NOT NULL,
+    valid_until INTEGER,
+    supersedes_fact_id TEXT,
+    injectable INTEGER NOT NULL CHECK(injectable IN (0,1)),
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_profile_facts_scope
+    ON profile_facts(persona_id, group_id, subject_id, status, injectable);
+CREATE TABLE profile_episodes (
+    episode_id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    participants_json TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL,
+    episode_type TEXT NOT NULL,
+    valence REAL NOT NULL,
+    importance REAL NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    last_reinforced_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_profile_episodes_scope
+    ON profile_episodes(persona_id, group_id, status, occurred_at);
+CREATE TABLE social_edges (
+    edge_id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    source_member_id TEXT NOT NULL,
+    target_member_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    strength REAL NOT NULL,
+    confidence REAL NOT NULL,
+    source_event_ids_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    valid_from INTEGER NOT NULL,
+    valid_until INTEGER,
+    last_observed_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_social_edges_scope
+    ON social_edges(persona_id, group_id, source_member_id, target_member_id, status);
+CREATE TABLE profile_snapshots (
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
+    generated_at INTEGER NOT NULL,
+    PRIMARY KEY(persona_id, group_id, subject_id)
+);
+CREATE TABLE group_portraits (
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    portrait_json TEXT NOT NULL,
+    source_revision INTEGER NOT NULL,
+    generated_at INTEGER NOT NULL,
+    PRIMARY KEY(persona_id, group_id)
+);
+CREATE TABLE profile_preferences (
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    personalization_enabled INTEGER NOT NULL CHECK(personalization_enabled IN (0,1)),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(persona_id, group_id, subject_id)
+);
+CREATE TABLE profile_audit (
+    audit_id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    subject_id TEXT,
+    actor_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    target_id TEXT,
+    audit_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_profile_audit_scope
+    ON profile_audit(persona_id, group_id, subject_id, created_at);
 """
