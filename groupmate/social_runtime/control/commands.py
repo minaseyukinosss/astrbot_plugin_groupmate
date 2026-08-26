@@ -186,6 +186,23 @@ class InvalidateProfileFact:
     command_id: str | None = None
 
 
+@dataclass(frozen=True)
+class MergeProfileIdentity:
+    source_member_ref: str
+    target_member_ref: str
+    stable_target_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SplitProfileIdentity:
+    source_member_ref: str
+    new_stable_id: str
+    new_display_name: str
+    fact_refs: tuple[str, ...]
+    command_id: str | None = None
+
+
 ControlCommand = (
     PauseRuntime
     | SetRuntimeMode
@@ -205,6 +222,8 @@ ControlCommand = (
     | ApproveCalibration
     | CorrectProfileFact
     | InvalidateProfileFact
+    | MergeProfileIdentity
+    | SplitProfileIdentity
 )
 
 
@@ -231,6 +250,8 @@ _HIGH_IMPACT = (
     ReviewShadowDecision,
     CorrectProfileFact,
     InvalidateProfileFact,
+    MergeProfileIdentity,
+    SplitProfileIdentity,
 )
 _CONFIG_COMMANDS = (
     CreateConfigDraft,
@@ -239,7 +260,12 @@ _CONFIG_COMMANDS = (
     PublishConfig,
     RestoreConfig,
 )
-_PROFILE_COMMANDS = (CorrectProfileFact, InvalidateProfileFact)
+_PROFILE_COMMANDS = (
+    CorrectProfileFact,
+    InvalidateProfileFact,
+    MergeProfileIdentity,
+    SplitProfileIdentity,
+)
 _ALL_PROJECTIONS = (
     "runtime",
     "activity",
@@ -733,6 +759,126 @@ class CommandService:
                 "profile_revision": revision,
                 "status": "invalidated",
             }, "control.profile_fact_invalidated"
+        if isinstance(command, MergeProfileIdentity):
+            source_id = self._profile_subject_on(
+                db, context, command.source_member_ref
+            )
+            target_id = self._profile_subject_on(
+                db, context, command.target_member_ref
+            )
+            stable_target_id = self._required_text(
+                command.stable_target_id, "stable target id"
+            )
+            if source_id == target_id or stable_target_id != target_id:
+                raise CommandValidationError(
+                    "identity merge requires the explicit stable target id"
+                )
+            revision = context.expected_version + 1
+            self._merge_profile_identity_on(
+                db, context, source_id=source_id, target_id=target_id
+            )
+            self._record_profile_audit(
+                db,
+                context,
+                subject_id=target_id,
+                action_type="profile_identity_merged",
+                target_id=str(command.source_member_ref),
+                details={"source_member_ref": str(command.source_member_ref)},
+                now=now,
+            )
+            self._advance_profile_snapshot(
+                db, context, target_id, revision=revision, now=now
+            )
+            return {
+                "member_ref": str(command.target_member_ref),
+                "profile_revision": revision,
+                "status": "merged",
+            }, "control.profile_identity_merged"
+        if isinstance(command, SplitProfileIdentity):
+            source_id = self._profile_subject_on(
+                db, context, command.source_member_ref
+            )
+            new_actor_id = self._required_text(command.new_stable_id, "new stable id")
+            new_name = " ".join(str(command.new_display_name or "").split())
+            fact_refs = tuple(
+                dict.fromkeys(
+                    str(value or "").strip()
+                    for value in command.fact_refs
+                    if str(value or "").strip()
+                )
+            )
+            if new_actor_id == source_id or not new_name or len(new_name) > 48 or not fact_refs:
+                raise CommandValidationError(
+                    "identity split requires a distinct stable id, display name and selected facts"
+                )
+            if db.execute(
+                "SELECT 1 FROM participant_directory WHERE persona_id=? AND group_id=? "
+                "AND actor_id=?",
+                (context.persona_id, context.group_id, new_actor_id),
+            ).fetchone() is not None:
+                raise CommandValidationError("new stable id already exists in this group")
+            for fact_ref in fact_refs:
+                self._profile_fact_on(db, context, source_id, fact_ref)
+            digest = hashlib.sha256(
+                f"{context.group_id}\0{new_actor_id}".encode("utf-8")
+            ).hexdigest()[:20]
+            member_ref = f"member:{digest}"
+            avatar_ref = f"participant:{digest}"
+            db.execute(
+                "INSERT INTO participant_directory(avatar_ref,member_ref,persona_id,"
+                "group_id,actor_id,display_name,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    avatar_ref,
+                    member_ref,
+                    context.persona_id,
+                    context.group_id,
+                    new_actor_id,
+                    new_name,
+                    now,
+                ),
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO member_identities(persona_id,platform,actor_id,"
+                "display_name,avatar_ref,system_roles_json,first_seen_at,last_seen_at,updated_at) "
+                "VALUES(?,?,?,?,?,'[]',?,?,?)",
+                (
+                    context.persona_id,
+                    "qq",
+                    new_actor_id,
+                    new_name,
+                    avatar_ref,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            placeholders = ",".join("?" for _ in fact_refs)
+            db.execute(
+                f"UPDATE profile_facts SET subject_id=?,updated_at=? "
+                f"WHERE fact_id IN ({placeholders})",
+                (new_actor_id, now, *fact_refs),
+            )
+            self._record_profile_audit(
+                db,
+                context,
+                subject_id=new_actor_id,
+                action_type="profile_identity_split",
+                target_id=member_ref,
+                details={"moved_fact_count": len(fact_refs)},
+                now=now,
+            )
+            self._advance_profile_snapshot(
+                db,
+                context,
+                source_id,
+                revision=context.expected_version + 1,
+                now=now,
+            )
+            return {
+                "member_ref": member_ref,
+                "profile_revision": 0,
+                "status": "split",
+            }, "control.profile_identity_split"
         raise CommandValidationError("unsupported control command")
 
     def _validate_context(
@@ -771,7 +917,14 @@ class CommandService:
                 group_id=context.group_id,
             )
         if isinstance(command, _PROFILE_COMMANDS):
-            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            member_ref = (
+                command.target_member_ref
+                if isinstance(command, MergeProfileIdentity)
+                else command.source_member_ref
+                if isinstance(command, SplitProfileIdentity)
+                else command.member_ref
+            )
+            actor_id = self._profile_subject_on(db, context, member_ref)
             row = db.execute(
                 "SELECT source_revision FROM profile_snapshots WHERE persona_id=? "
                 "AND group_id=? AND subject_id=?",
@@ -884,6 +1037,92 @@ class CommandService:
                 context.group_id,
                 actor_id,
             ),
+        )
+
+    @classmethod
+    def _merge_profile_identity_on(
+        cls,
+        db: sqlite3.Connection,
+        context: CommandContext,
+        *,
+        source_id: str,
+        target_id: str,
+    ) -> None:
+        db.execute(
+            "UPDATE profile_facts SET subject_id=? WHERE persona_id=? AND group_id=? "
+            "AND subject_id=?",
+            (target_id, context.persona_id, context.group_id, source_id),
+        )
+        episodes = db.execute(
+            "SELECT episode_id,participants_json FROM profile_episodes "
+            "WHERE persona_id=? AND group_id=?",
+            (context.persona_id, context.group_id),
+        ).fetchall()
+        for episode in episodes:
+            participants = list(
+                dict.fromkeys(
+                    target_id if value == source_id else value
+                    for value in json.loads(str(episode["participants_json"]))
+                )
+            )
+            db.execute(
+                "UPDATE profile_episodes SET participants_json=? WHERE episode_id=?",
+                (cls._canonical_json(participants), str(episode["episode_id"])),
+            )
+        db.execute(
+            "UPDATE social_edges SET source_member_id=? WHERE persona_id=? "
+            "AND group_id=? AND source_member_id=?",
+            (target_id, context.persona_id, context.group_id, source_id),
+        )
+        db.execute(
+            "UPDATE social_edges SET target_member_id=? WHERE persona_id=? "
+            "AND group_id=? AND target_member_id=?",
+            (target_id, context.persona_id, context.group_id, source_id),
+        )
+        db.execute(
+            "DELETE FROM social_edges WHERE persona_id=? AND group_id=? "
+            "AND source_member_id=target_member_id",
+            (context.persona_id, context.group_id),
+        )
+        aliases = db.execute(
+            "SELECT alias,alias_type,confidence,source_event_id,status,first_seen_at,"
+            "last_seen_at FROM member_aliases WHERE persona_id=? AND group_id=? "
+            "AND actor_id=?",
+            (context.persona_id, context.group_id, source_id),
+        ).fetchall()
+        for alias in aliases:
+            db.execute(
+                "INSERT OR IGNORE INTO member_aliases(persona_id,group_id,actor_id,"
+                "alias,alias_type,confidence,source_event_id,status,first_seen_at,last_seen_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    context.persona_id,
+                    context.group_id,
+                    target_id,
+                    alias["alias"],
+                    alias["alias_type"],
+                    alias["confidence"],
+                    alias["source_event_id"],
+                    alias["status"],
+                    alias["first_seen_at"],
+                    alias["last_seen_at"],
+                ),
+            )
+        db.execute(
+            "DELETE FROM member_aliases WHERE persona_id=? AND group_id=? AND actor_id=?",
+            (context.persona_id, context.group_id, source_id),
+        )
+        db.execute(
+            "DELETE FROM profile_snapshots WHERE persona_id=? AND group_id=? AND subject_id=?",
+            (context.persona_id, context.group_id, source_id),
+        )
+        db.execute(
+            "DELETE FROM profile_preferences WHERE persona_id=? AND group_id=? AND subject_id=?",
+            (context.persona_id, context.group_id, source_id),
+        )
+        db.execute(
+            "DELETE FROM participant_directory WHERE persona_id=? AND group_id=? AND actor_id=?",
+            (context.persona_id, context.group_id, source_id),
         )
 
     @staticmethod
@@ -1053,11 +1292,13 @@ __all__ = (
     "ForgetMemory",
     "InvalidateProfileFact",
     "LinkIdentity",
+    "MergeProfileIdentity",
     "PauseRuntime",
     "PublishConfig",
     "ResetState",
     "RestoreConfig",
     "ReviewEvidence",
     "ReviewShadowDecision",
+    "SplitProfileIdentity",
     "ValidateConfig",
 )

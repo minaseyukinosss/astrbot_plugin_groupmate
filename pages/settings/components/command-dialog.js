@@ -12,6 +12,8 @@ const HIGH_IMPACT = new Set([
   "shadow_review",
   "profile_fact_correct",
   "profile_fact_invalidate",
+  "profile_identity_merge",
+  "profile_identity_split",
 ]);
 
 export function requiresConfirmation(type) {
@@ -159,5 +161,7 @@ function labelFor(type) {
     shadow_review: "复核 SHADOW 决策",
     profile_fact_correct: "纠正画像事实",
     profile_fact_invalidate: "使画像事实失效",
+    profile_identity_merge: "合并成员身份",
+    profile_identity_split: "拆分成员身份",
   })[type] || "提交受治理命令";
 }

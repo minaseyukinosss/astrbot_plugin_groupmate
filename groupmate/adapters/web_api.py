@@ -24,6 +24,7 @@ from ..social_runtime.control.commands import (
     ForgetMemory,
     InvalidateProfileFact,
     LinkIdentity,
+    MergeProfileIdentity,
     PauseRuntime,
     PublishConfig,
     ResetState,
@@ -31,6 +32,7 @@ from ..social_runtime.control.commands import (
     ReviewEvidence,
     ReviewShadowDecision,
     SetRuntimeMode,
+    SplitProfileIdentity,
     ValidateConfig,
 )
 from ..social_runtime.control.queries import ProjectionQueries
@@ -451,6 +453,19 @@ class ControlPlaneWebAPI:
             "profile_fact_invalidate": lambda: InvalidateProfileFact(
                 str(payload.get("member_ref") or ""),
                 str(payload.get("fact_ref") or ""),
+                command_id=command_id,
+            ),
+            "profile_identity_merge": lambda: MergeProfileIdentity(
+                str(payload.get("source_member_ref") or ""),
+                str(payload.get("target_member_ref") or ""),
+                str(payload.get("stable_target_id") or ""),
+                command_id=command_id,
+            ),
+            "profile_identity_split": lambda: SplitProfileIdentity(
+                str(payload.get("source_member_ref") or ""),
+                str(payload.get("new_stable_id") or ""),
+                str(payload.get("new_display_name") or ""),
+                tuple(payload.get("fact_refs") or ()),
                 command_id=command_id,
             ),
         }

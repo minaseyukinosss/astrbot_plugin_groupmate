@@ -17,9 +17,11 @@ from groupmate.social_runtime.control.commands import (
     ExpectedVersionConflict,
     ForgetMemory,
     InvalidateProfileFact,
+    MergeProfileIdentity,
     LinkIdentity,
     PauseRuntime,
     ResetState,
+    SplitProfileIdentity,
     ReviewEvidence,
 )
 from groupmate.adapters.participants import ParticipantDirectory
@@ -365,3 +367,77 @@ def test_profile_fact_invalidation_is_group_scoped_and_rejects_stale_revision(tm
     assert result.data["status"] == "invalidated"
     assert fact.status == "rejected"
     assert fact.injectable is False
+
+
+def test_profile_identity_merge_requires_explicit_stable_target_and_moves_scoped_facts(tmp_path):
+    path = tmp_path / "runtime.db"
+    source, repository = _seed_profile_fact(path, tmp_path)
+    target = ParticipantDirectory(path, tmp_path / "avatars").remember_actor(
+        persona_id="aemeath",
+        group_id="group-1",
+        actor_id="member-target",
+        display_name="玲151（新身份）",
+        updated_at=110,
+    )
+    repository.put_snapshot(
+        ProfileSnapshot(
+            persona_id="aemeath", group_id="group-1", subject_id="member-target",
+            one_line_portrait="画像正在形成", group_roles=(), individual_fingerprints=(),
+            preferences_and_boundaries=(), representative_episode_ids=(),
+            relationship_summary="正在了解", maturity="new", source_revision=2, generated_at=110,
+        )
+    )
+    service = _service(path)
+
+    with pytest.raises(CommandValidationError):
+        service.execute(
+            MergeProfileIdentity(
+                source["member_ref"], target["member_ref"], "",
+                command_id="cmd:merge-without-stable-id",
+            ),
+            _context(expected_version=2),
+        )
+
+    result = service.execute(
+        MergeProfileIdentity(
+            source["member_ref"], target["member_ref"], "member-target",
+            command_id="cmd:merge-profile",
+        ),
+        _context(expected_version=2),
+    )
+
+    assert result.data["status"] == "merged"
+    assert repository.facts("aemeath", "group-1", "member-151") == ()
+    assert repository.facts("aemeath", "group-1", "member-target")[0].summary == "不喜欢清晰说明"
+    with connect_database(path) as db:
+        assert db.execute(
+            "SELECT 1 FROM participant_directory WHERE member_ref=?", (source["member_ref"],)
+        ).fetchone() is None
+
+
+def test_profile_identity_split_moves_only_selected_facts_to_explicit_new_identity(tmp_path):
+    path = tmp_path / "runtime.db"
+    source, repository = _seed_profile_fact(path, tmp_path)
+    service = _service(path)
+
+    result = service.execute(
+        SplitProfileIdentity(
+            source["member_ref"], "member-split", "独立成员", ("fact:old",),
+            command_id="cmd:split-profile",
+        ),
+        _context(expected_version=3),
+    )
+
+    assert result.data["status"] == "split"
+    assert repository.facts("aemeath", "group-1", "member-151") == ()
+    assert repository.facts("aemeath", "group-1", "member-split")[0].summary == "不喜欢清晰说明"
+    with connect_database(path) as db:
+        member = db.execute(
+            "SELECT display_name FROM participant_directory WHERE member_ref=?",
+            (result.data["member_ref"],),
+        ).fetchone()
+        audit = db.execute(
+            "SELECT action_type FROM profile_audit WHERE subject_id='member-split'"
+        ).fetchone()
+    assert member[0] == "独立成员"
+    assert audit[0] == "profile_identity_split"
