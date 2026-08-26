@@ -9,6 +9,8 @@ from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.adapters.deepseek_cognition import DirectCognitionResponse
 from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import OutboxStatus
+from groupmate.social_runtime.profile.contracts import MemberAlias, ProfileFact
+from groupmate.social_runtime.profile.repository import ProfileRepository
 
 
 class _Response:
@@ -78,12 +80,14 @@ class _MatrixCognition:
 
     def __init__(self):
         self.calls = 0
+        self.last_facts = None
 
     def input_bytes(self, facts):
         return len(json.dumps(facts, ensure_ascii=False).encode("utf-8"))
 
     async def classify(self, facts):
         self.calls += 1
+        self.last_facts = facts
         evidence = facts["events"][-1]["id"]
         return DirectCognitionResponse(
             verdict={
@@ -354,3 +358,104 @@ def test_shadow_preview_never_opens_a_dialogue_lease(tmp_path):
     assert ready_state.conversation_lease is None
     assert failed_state.conversation_lease is None
     assert ready_context.client.calls == failed_context.client.calls == []
+
+
+def _put_profile_context(path, persona_id):
+    repo = ProfileRepository(path)
+    repo.remember_alias(
+        MemberAlias(
+            persona_id=persona_id,
+            group_id="885617919",
+            actor_id="u1",
+            alias="复读斥候",
+            alias_type="platform_name",
+            confidence=1.0,
+            first_seen_at=90,
+            last_seen_at=100,
+        )
+    )
+    repo.put_fact(
+        ProfileFact(
+            fact_id="fact-profile-context",
+            persona_id=persona_id,
+            group_id="885617919",
+            subject_id="u1",
+            category="speech_style",
+            summary="会持续追问到问题真正落地",
+            source_kind="observed_pattern",
+            source_actor_id="u1",
+            source_event_ids=("old-1", "old-2", "old-3"),
+            confidence=0.93,
+            status="confirmed",
+            evidence_count=3,
+            valid_from=90,
+            injectable=True,
+        )
+    )
+
+
+def test_existing_profile_context_reaches_ambient_judgement(tmp_path):
+    async def scenario():
+        context = _Context()
+        cognition = _MatrixCognition()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+                "profile_enabled": False,
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path,
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: cognition,
+        )
+        await bridge.start()
+        _put_profile_context(
+            tmp_path / "groupmate-social-runtime-v2.db", settings.persona_id
+        )
+        await bridge.handle_event(_event("profile-ambient", "我觉得这个名字不错"))
+        await bridge.manager.drain(now=102)
+        facts = cognition.last_facts
+        await bridge.close()
+        return facts
+
+    facts = asyncio.run(scenario())
+
+    member = facts["member_context"]["members"][0]
+    assert member["subject_id"] == "u1"
+    assert "复读斥候" in member["aliases"]
+    assert member["addressing_habits"] == ["会持续追问到问题真正落地"]
+
+
+def test_existing_profile_context_reaches_reply_expression(tmp_path):
+    async def scenario():
+        context = _Context()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SOCIAL_RUNTIME",
+                "generation_provider": "provider:text",
+                "profile_enabled": False,
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context, settings, tmp_path, clock=lambda: 100
+        )
+        await bridge.start()
+        _put_profile_context(
+            tmp_path / "groupmate-social-runtime-v2.db", settings.persona_id
+        )
+        await bridge.handle_event(
+            _event("profile-reply", "这个方案怎么看", mention_bot=True)
+        )
+        await bridge.close()
+        return context.model_calls
+
+    calls = asyncio.run(scenario())
+
+    assert "会持续追问到问题真正落地" in calls[0]["system_prompt"]

@@ -575,6 +575,11 @@ class AstrBotSocialRuntimeBridge:
                     relationship=relationship,
                     recent_outputs=recent_outputs,
                     relationship_memory_cues=relationship_memory_cues,
+                    member_context=self._manager.member_profile_context(
+                        source_event, max_chars=1200
+                    )
+                    if source_event is not None
+                    else "",
                 )
                 if plan is None:
                     self._record_trace(

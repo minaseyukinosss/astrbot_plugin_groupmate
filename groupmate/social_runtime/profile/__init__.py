@@ -20,6 +20,7 @@ from .service import ProfileService
 from .snapshot import SnapshotBuilder
 from .graph import SocialGraph
 from .group_portrait import GroupPortrait, GroupPortraitBuilder
+from .retrieval import ProfileRetrieval, ProfileRetriever, RetrievedMember
 
 __all__ = (
     "MemberAlias",
@@ -41,6 +42,9 @@ __all__ = (
     "SocialGraph",
     "GroupPortrait",
     "GroupPortraitBuilder",
+    "ProfileRetrieval",
+    "ProfileRetriever",
+    "RetrievedMember",
     "SocialEdge",
     "SocialEdgeCandidate",
 )

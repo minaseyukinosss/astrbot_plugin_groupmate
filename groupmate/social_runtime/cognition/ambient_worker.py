@@ -166,6 +166,10 @@ class DirectAmbientWorker:
             if cls._text(item.get("subject_id"), 80)
             in set(frame.candidate_audiences)
         ][-8:]
+        member_context = cls._member_context_fact(
+            world.get("member_context"),
+            allowed_subjects=set(frame.candidate_audiences),
+        )
         profile = world.get("persona_profile")
         persona = {}
         if isinstance(profile, Mapping):
@@ -185,6 +189,7 @@ class DirectAmbientWorker:
             "lease": lease_fact,
             "persona": persona,
             "relationship_memories": relationship_memories,
+            "member_context": member_context,
         }
 
     @classmethod
@@ -218,7 +223,7 @@ class DirectAmbientWorker:
             "id": cls._text(event.get("event_id"), 160),
             "actor_id": cls._text(event.get("actor_id"), 80) or None,
             "actor_name": actor_name or None,
-            "text": cls._text(payload.get("text"), 36),
+            "text": cls._text(payload.get("text"), 32),
             "reply_to": cls._text(payload.get("reply_to"), 120) or None,
             "reply_to_actor_id": cls._text(
                 payload.get("reply_to_actor_id"), 80
@@ -273,6 +278,74 @@ class DirectAmbientWorker:
             "summary": cls._text(memory.get("summary"), 120),
             "occurred_at": cls._optional_int(memory.get("occurred_at")),
         }
+
+    @classmethod
+    def _member_context_fact(
+        cls,
+        value: object,
+        *,
+        allowed_subjects: set[str],
+    ) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            return {"members": [], "relations": []}
+        members = []
+        for item in cls._mapping_items(value.get("members")):
+            subject_id = cls._text(item.get("subject_id"), 80)
+            if subject_id not in allowed_subjects:
+                continue
+            aliases = item.get("aliases")
+            habits = item.get("addressing_habits")
+            members.append(
+                {
+                    "subject_id": subject_id,
+                    "aliases": [
+                        text
+                        for text in (
+                            cls._text(raw, 48)
+                            for raw in (
+                                aliases
+                                if isinstance(aliases, (list, tuple))
+                                else ()
+                            )
+                        )
+                        if text
+                    ][:3],
+                    "addressing_habits": [
+                        text
+                        for text in (
+                            cls._text(raw, 100)
+                            for raw in (
+                                habits
+                                if isinstance(habits, (list, tuple))
+                                else ()
+                            )
+                        )
+                        if text
+                    ][:2],
+                }
+            )
+            if len(members) >= 3:
+                break
+        relations = []
+        for item in cls._mapping_items(value.get("relations")):
+            source = cls._text(item.get("source_member_id"), 80)
+            target = cls._text(item.get("target_member_id"), 80)
+            relation = cls._text(item.get("relation_type"), 40)
+            if (
+                source in allowed_subjects
+                and target in allowed_subjects
+                and relation
+            ):
+                relations.append(
+                    {
+                        "source_member_id": source,
+                        "target_member_id": target,
+                        "relation_type": relation,
+                    }
+                )
+            if len(relations) >= 3:
+                break
+        return {"members": members, "relations": relations}
 
     @classmethod
     def _observations(

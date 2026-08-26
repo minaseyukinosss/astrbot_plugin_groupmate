@@ -42,6 +42,8 @@ from .persistence.repositories import (
     SQLiteSocietyRepository,
 )
 from .persona.profile import GroupmatePersonaProfile
+from .profile.repository import ProfileRepository
+from .profile.retrieval import ProfileRetriever
 from .memory.relationship_memory import RelationshipMemorySelector
 from .society.relationship_events import (
     RelationshipEventDecision,
@@ -333,6 +335,9 @@ class SocialRuntimeManager:
             persona_id, SQLitePersonaStateRepository(database_path)
         )
         self.society = SQLiteSocietyRepository(database_path)
+        self.profile_retriever = ProfileRetriever(
+            ProfileRepository(database_path)
+        )
         self.relationship_events = RelationshipEventService(self.society)
         self._relationship_memory_selector = RelationshipMemorySelector()
         self.execution_port = NoSideEffectExecutionPort()
@@ -559,6 +564,19 @@ class SocialRuntimeManager:
             stage=affection.stage,
             now=int(now),
         )
+
+    def member_profile_context(
+        self,
+        event: SocialEventEnvelope,
+        *,
+        max_chars: int = 1200,
+    ) -> str:
+        try:
+            return self.profile_retriever.for_message(
+                event, max_chars=max_chars
+            ).prompt_text
+        except Exception:
+            return ""
 
     async def record_usable_reply(self, plan: ReplyPlan, *, now: int) -> bool:
         """Project a bounded dialogue lease after usable text exists."""
@@ -1098,6 +1116,12 @@ class SocialRuntimeManager:
             )[-8:]
         except Exception:
             relationship_memories = ()
+        try:
+            member_context = self.profile_retriever.for_message(
+                request.event, max_chars=800
+            ).ambient_context
+        except Exception:
+            member_context = {"members": [], "relations": []}
         return {
             "topics": topics,
             "audiences": audiences,
@@ -1110,6 +1134,7 @@ class SocialRuntimeManager:
             ),
             "persona_profile": profile.to_mapping(),
             "relationship_memories": relationship_memories,
+            "member_context": member_context,
         }
 
     @staticmethod

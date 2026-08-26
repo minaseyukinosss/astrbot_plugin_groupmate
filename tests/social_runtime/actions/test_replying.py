@@ -114,11 +114,13 @@ def test_old_serialized_reply_plan_defaults_to_ambient_lane():
     values = json.loads(ReplyPlanRepository._encode(plan))
     values.pop("participation_lane")
     values.pop("expression")
+    values.pop("member_context")
 
     restored = ReplyPlanRepository._decode(json.dumps(values))
 
     assert restored.participation_lane == "AMBIENT"
     assert restored.expression.reaction_stance == "attentive"
+    assert restored.member_context == ""
 
 
 def test_optional_generation_failure_stays_silent(tmp_path):
@@ -259,3 +261,21 @@ def test_prompt_gets_only_selected_relationship_memory_cues():
     assert "成员上次明确辱骂爱弥斯" in prompt
     assert "只有当前语境相关时才可简短引用" in prompt
     assert "relationship:boundary-1" not in prompt
+
+
+def test_reply_prompt_gets_compact_member_context_without_label_recitation():
+    plan = ReplyPlanner().plan(
+        _evaluation(text="这个方案你觉得怎么样"),
+        now=100,
+        persona_profile=_persona_profile(),
+        member_context=(
+            "当前成员：会持续追问到问题真正落地\n"
+            "相关事实：不接受只有技术完成但用户看不懂的结果"
+        ),
+    )
+
+    prompt = ReplyExecutor._system_prompt(plan, _persona_profile())
+
+    assert "会持续追问到问题真正落地" in prompt
+    assert "不接受只有技术完成" in prompt
+    assert "不要复述画像标签" in prompt

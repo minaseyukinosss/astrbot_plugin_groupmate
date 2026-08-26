@@ -131,6 +131,23 @@ def _context():
                     "occurred_at": 90,
                 }
             ],
+            "member_context": {
+                "members": [
+                    {
+                        "subject_id": "u1",
+                        "aliases": ["夏夏", "小夏"],
+                        "addressing_habits": ["被叫小夏时通常是在直接呼唤"],
+                        "private_portrait": "这是不该进入参与判断的完整个人画像",
+                    }
+                ],
+                "relations": [
+                    {
+                        "source_member_id": "u1",
+                        "target_member_id": "u2",
+                        "relation_type": "technical_peer",
+                    }
+                ],
+            },
             "database_path": "/private/runtime.db",
         },
         constraints=("no_side_effects", "evidence_required"),
@@ -172,6 +189,22 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
             "occurred_at": 90,
         }
     ]
+    assert facts["member_context"] == {
+        "members": [
+            {
+                "subject_id": "u1",
+                "aliases": ["夏夏", "小夏"],
+                "addressing_habits": ["被叫小夏时通常是在直接呼唤"],
+            }
+        ],
+        "relations": [
+            {
+                "source_member_id": "u1",
+                "target_member_id": "u2",
+                "relation_type": "technical_peer",
+            }
+        ],
+    }
     assert facts["events"][0]["id"] == "qq:2"
     assert facts["events"][-1]["parts"] == ["image", "at"]
     assert facts["persona"].keys() == {"presence", "participation"}
@@ -185,6 +218,7 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
         "private-message-id",
         "scene_version",
         "config_version",
+        "这是不该进入参与判断的完整个人画像",
     ):
         assert excluded not in rendered
     assert result.input_bytes < 6_500

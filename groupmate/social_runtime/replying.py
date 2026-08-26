@@ -56,6 +56,7 @@ class ReplyPlan:
     expression: ExpressionPlan
     status: str = "planned"
     participation_lane: str = "AMBIENT"
+    member_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,7 @@ class ReplyPlanner:
         relationship: PublicAffection | None = None,
         recent_outputs: tuple[str, ...] = (),
         relationship_memory_cues: tuple[str, ...] = (),
+        member_context: str = "",
     ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
@@ -257,6 +259,7 @@ class ReplyPlanner:
             selected=selected,
             intention_id=intention_id,
             expression=expression,
+            member_context=str(member_context)[:1200],
             now=int(now),
         )
 
@@ -268,6 +271,7 @@ class ReplyPlanner:
         selected: object,
         intention_id: str,
         expression: ExpressionPlan,
+        member_context: str,
         now: int,
     ) -> ReplyPlan:
         source = evaluation.source_event
@@ -317,6 +321,7 @@ class ReplyPlanner:
                 getattr(evaluation, "participation_lane", "AMBIENT")
                 or "AMBIENT"
             ),
+            member_context=str(member_context)[:1200],
         )
 
     @staticmethod
@@ -539,6 +544,8 @@ class ReplyExecutor:
             "不要为了证明人设而随机加入校园、报告、歌曲、游戏、电子、机械或能力元素。\n"
             "关系记忆只有当前语境相关时才可简短引用；不得泄露内部ID或敏感内容，"
             "不得根据关系分数凭空编造旧事。关系记忆为空时禁止翻旧账。\n"
+            "成员画像只用于调整理解、称呼和表达，不要复述画像标签，不要逐条报告；"
+            "仅在当前消息确实相关时自然使用，证据不足时以当前消息为准。\n"
             + json.dumps(
                 {
                     "act": plan.act,
@@ -566,6 +573,7 @@ class ReplyExecutor:
                         "explicit_material": plan.expression.explicit_material,
                         "avoidances": plan.expression.persona_avoidances,
                     },
+                    "relevant_member_context": plan.member_context,
                 },
                 ensure_ascii=False,
                 sort_keys=True,
