@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 from groupmate.social_runtime.attention import AttentionFrame
@@ -199,6 +200,80 @@ def test_query_orders_newest_message_first(tmp_path):
 
     items = repo.query(persona_id="groupmate:default", group_id="g-1")["items"]
     assert [item["summary"]["timing"]["received_at"] for item in items] == [20, 10]
+
+
+def test_ambient_evaluation_closes_all_pending_focus_messages(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    context = _platform_event("ambient-context")
+    source = _platform_event("ambient-source")
+    repo.record_received(context, runtime_mode="SHADOW", now=10)
+    repo.record_received(source, runtime_mode="SHADOW", now=11)
+    evaluation = _evaluation(source, outcome="SILENCE")
+    evaluation.frame = replace(
+        evaluation.frame,
+        focus_event_ids=(context.event_id, source.event_id),
+    )
+
+    repo.record_evaluation(evaluation, now=12)
+
+    by_ref = {
+        item["entity_ref"]: item["summary"]
+        for item in repo.query(
+            persona_id="groupmate:default", group_id="g-1"
+        )["items"]
+    }
+    context_summary = by_ref[
+        repo._opaque_ref("traces", "groupmate:default", "g-1", context.event_id)
+    ]
+    assert context_summary["understanding"] == {
+        "status": "READY",
+        "summary": "已纳入同一轮群聊理解",
+        "diagnostics": [],
+    }
+    assert context_summary["decision"] == {
+        "outcome": "OBSERVE",
+        "would_reply": False,
+        "label": "作为上下文参与判断",
+        "reasons": [],
+    }
+    assert context_summary["delivery"] == {
+        "mode": "SHADOW",
+        "status": "OBSERVED",
+        "label": "已纳入群聊上下文",
+    }
+    assert [stage["kind"] for stage in context_summary["stages"]] == [
+        "RECEIVED",
+        "ATTENDED",
+        "UNDERSTOOD",
+        "DECIDED",
+    ]
+
+
+def test_ambient_evaluation_does_not_overwrite_terminal_context_trace(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    context = _platform_event("external-context", owner="EXTERNAL_PLUGIN")
+    source = _platform_event("ambient-source-after-external")
+    repo.record_received(context, runtime_mode="SHADOW", now=10)
+    repo.record_received(source, runtime_mode="SHADOW", now=11)
+    evaluation = _evaluation(source, outcome="SILENCE")
+    evaluation.frame = replace(
+        evaluation.frame,
+        focus_event_ids=(context.event_id, source.event_id),
+    )
+
+    repo.record_evaluation(evaluation, now=12)
+
+    items = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"]
+    context_ref = repo._opaque_ref(
+        "traces", "groupmate:default", "g-1", context.event_id
+    )
+    context_summary = next(
+        item["summary"] for item in items if item["entity_ref"] == context_ref
+    )
+    assert context_summary["route"]["owner"] == "EXTERNAL_PLUGIN"
+    assert context_summary["delivery"]["status"] == "HANDED_OFF"
 
 
 def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):

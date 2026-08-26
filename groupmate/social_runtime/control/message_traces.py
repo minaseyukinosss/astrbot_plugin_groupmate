@@ -68,6 +68,15 @@ _RELATIONSHIP_KIND_LABELS = {
     "repair_attempt": "尝试修复关系",
     "repair_confirmed": "关系修复成立",
 }
+_TERMINAL_DELIVERY_STATUSES = {
+    "SENT",
+    "SILENT",
+    "OBSERVED",
+    "BLOCKED_BY_SHADOW",
+    "HANDED_OFF",
+    "FAILED",
+    "UNKNOWN",
+}
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -468,6 +477,79 @@ class MessageTraceRepository:
             }
         )
         self._mutate(event.event_id, now, mutate, stages=tuple(stages))
+        self._close_ambient_context_traces(evaluation, now)
+
+    def _close_ambient_context_traces(
+        self, evaluation: object, now: int
+    ) -> None:
+        frame = getattr(evaluation, "frame", None)
+        source = getattr(evaluation, "source_event", None)
+        trigger = str(getattr(frame, "trigger_kind", "") or "").upper()
+        if (
+            trigger != "AMBIENT"
+            or not isinstance(source, SocialEventEnvelope)
+            or not source.group_id
+        ):
+            return
+        mode = self._mode_value(getattr(evaluation, "runtime_mode", "OFF"))
+
+        def pending(summary: dict[str, object]) -> bool:
+            delivery = summary.get("delivery")
+            status = (
+                str(delivery.get("status") or "").upper()
+                if isinstance(delivery, Mapping)
+                else ""
+            )
+            return status not in _TERMINAL_DELIVERY_STATUSES
+
+        def close(summary: dict[str, object]) -> None:
+            summary["understanding"] = {
+                "status": "READY",
+                "summary": "已纳入同一轮群聊理解",
+                "diagnostics": [],
+            }
+            summary["decision"] = {
+                "outcome": "OBSERVE",
+                "would_reply": False,
+                "label": "作为上下文参与判断",
+                "reasons": [],
+            }
+            summary["delivery"] = {
+                "mode": mode,
+                "status": "OBSERVED",
+                "label": "已纳入群聊上下文",
+            }
+
+        for event_id in tuple(getattr(frame, "focus_event_ids", ()) or ()):
+            if str(event_id) == source.event_id:
+                continue
+            self._mutate(
+                str(event_id),
+                now,
+                close,
+                stages=(
+                    {
+                        "kind": "ATTENDED",
+                        "label": "纳入本轮群聊注意窗口",
+                        "at": int(now),
+                        "status": "DONE",
+                    },
+                    {
+                        "kind": "UNDERSTOOD",
+                        "label": "已作为群聊上下文完成理解",
+                        "at": int(now),
+                        "status": "DONE",
+                    },
+                    {
+                        "kind": "DECIDED",
+                        "label": "作为上下文参与判断",
+                        "at": int(now),
+                        "status": "DONE",
+                    },
+                ),
+                predicate=pending,
+                expected_scope=(source.persona_id, source.group_id),
+            )
 
     @staticmethod
     def _relationship_summary(
@@ -781,7 +863,9 @@ class MessageTraceRepository:
         mutate,
         stage: dict[str, object] | None = None,
         stages: tuple[dict[str, object], ...] = (),
-    ) -> None:
+        predicate=None,
+        expected_scope: tuple[str, str] | None = None,
+    ) -> bool:
         with connect_database(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -791,8 +875,16 @@ class MessageTraceRepository:
             ).fetchone()
             if row is None:
                 db.rollback()
-                return
+                return False
+            if expected_scope is not None and (
+                str(row["persona_id"]), str(row["group_id"])
+            ) != expected_scope:
+                db.rollback()
+                return False
             summary = json.loads(str(row["state_json"]))
+            if predicate is not None and not predicate(summary):
+                db.rollback()
+                return False
             mutate(summary)
             for item in ((stage,) if stage is not None else stages):
                 self._upsert_stage(db, str(event_id), item)
@@ -814,6 +906,7 @@ class MessageTraceRepository:
                 now,
             )
             db.commit()
+            return True
 
     def _publish(
         self,
