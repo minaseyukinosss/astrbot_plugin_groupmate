@@ -22,6 +22,19 @@ Projection/SSE 故障不阻塞 GroupSceneActor、TaskRuntime 或 Outbox。页面
 - SSE 事件只含 `cursor/kind/scope/entity/projection_version/summary`。重连携带 `Last-Event-ID`；Cursor 已超出保留窗口时，客户端重新加载 Snapshot。
 - SSE 断开后页面降级为 15 秒有界轮询，并明确显示最多延迟。轮询不是健康状态，不得显示为实时已连接。
 - Inspector 通过作用域内 Entity ref Query 获取单个隐私裁剪 Projection；不存在或越界统一返回 404。
+- `/profiles`、`/profile` 与 `/group-portrait` 继续复用同一管理员门禁和 `persona_id × group_id` 作用域。详情只返回不透明成员引用、整理后的事实、经历、关系和审计摘要；外群成员引用统一返回 404。
+
+## 成员画像后台链路
+
+群消息进入主链路时只做稳定身份记录和轻量观察入队，不同步调用画像模型。后台任务按配置的批量大小或间隔领取观察，模型返回结构化候选后再由本地证据策略确认、保留待确认或拒绝。画像模型不可用时，观察记录进入有界退避重试并保存安全诊断码；消息参与判断、回复交付和成员自查仍可继续。
+
+画像状态包括：
+
+- `confirmed`：证据达到本地规则，可进入有界回复上下文；
+- `proposed`：证据不足或属于第三方说法，仅保留观察，不注入回复；
+- `superseded` / `stale` / `rejected`：已被纠正、过时或失效，不再注入但保留审计历史。
+
+成员画像和群友关系默认只在当前群生效。同一平台成员在另一个群不会自动继承事实、经历或关系；跨群身份处理必须由管理员执行明确的治理流程。
 
 ## 管理命令
 
@@ -35,6 +48,8 @@ Projection/SSE 故障不阻塞 GroupSceneActor、TaskRuntime 或 Outbox。页面
 4. 管理员复核新状态后，以新的 Expected Version 创建新的 command ID。
 
 命令被 HTTP 202 接受只表示进入 Event Fabric；页面必须等待更高版本 Projection Event，不能乐观显示领域成功。
+
+画像事实纠正与失效使用该成员当前的 `profile_revision`，不是全局 `control_version`。两者都是高影响命令，必须填写原因并二次确认。服务端再次验证管理员、群作用域、成员引用和事实引用；成功后旧事实立即停止注入、画像版本递增并写入 `profile_audit`。HTTP 409 时应重新读取该成员详情后再决定是否提交新命令。
 
 ## 故障处置
 
