@@ -182,6 +182,29 @@ class ProfileRepository:
                 )
         return tuple(self._observation(row, status="processing") for row in rows)
 
+    def pending_observation_count(
+        self, persona_id: str, group_id: str
+    ) -> int:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM profile_observations "
+                "WHERE persona_id=? AND group_id=? AND status IN ('pending','retry')",
+                (str(persona_id), str(group_id)),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def observation_diagnostics(
+        self, persona_id: str, group_id: str
+    ) -> tuple[str, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT diagnostic_code FROM profile_observations "
+                "WHERE persona_id=? AND group_id=? AND diagnostic_code IS NOT NULL "
+                "ORDER BY occurred_at DESC,event_id DESC LIMIT 20",
+                (str(persona_id), str(group_id)),
+            ).fetchall()
+        return tuple(dict.fromkeys(str(row[0]) for row in rows))
+
     def complete_observations(
         self,
         event_ids: tuple[str, ...],

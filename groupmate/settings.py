@@ -32,6 +32,10 @@ class SocialRuntimeSettings:
     control_admin_ids: tuple[str, ...] = ()
     external_command_prefixes: tuple[str, ...] = ()
     external_link_domains: tuple[str, ...] = ()
+    profile_enabled: bool = True
+    profile_batch_messages: int = 20
+    profile_batch_interval_seconds: int = 600
+    profile_timeout_seconds: int = 30
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -117,6 +121,27 @@ class SocialRuntimeSettings:
                 for value in source.get("external_link_domains", ())
                 if str(value).strip()
             ),
+            profile_enabled=cls._boolean(
+                source.get("profile_enabled", True), "profile_enabled"
+            ),
+            profile_batch_messages=cls._bounded_int(
+                source.get("profile_batch_messages", 20),
+                "profile_batch_messages",
+                minimum=1,
+                maximum=20,
+            ),
+            profile_batch_interval_seconds=cls._bounded_int(
+                source.get("profile_batch_interval_seconds", 600),
+                "profile_batch_interval_seconds",
+                minimum=60,
+                maximum=86_400,
+            ),
+            profile_timeout_seconds=cls._bounded_int(
+                source.get("profile_timeout_seconds", 30),
+                "profile_timeout_seconds",
+                minimum=5,
+                maximum=120,
+            ),
         )
 
     @staticmethod
@@ -149,6 +174,27 @@ class SocialRuntimeSettings:
         if normalized < 1:
             raise ValueError(f"{field} must be a positive integer")
         return normalized
+
+    @staticmethod
+    def _bounded_int(
+        value: object,
+        field: str,
+        *,
+        minimum: int,
+        maximum: int,
+    ) -> int:
+        normalized = SocialRuntimeSettings._positive_int(value, field)
+        if not minimum <= normalized <= maximum:
+            raise ValueError(
+                f"{field} must be between {minimum} and {maximum}"
+            )
+        return normalized
+
+    @staticmethod
+    def _boolean(value: object, field: str) -> bool:
+        if not isinstance(value, bool):
+            raise ValueError(f"{field} must be a boolean")
+        return value
 
     @staticmethod
     def _cognition_timeout(value: object) -> int:

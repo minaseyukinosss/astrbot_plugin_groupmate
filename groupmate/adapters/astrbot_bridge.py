@@ -33,7 +33,12 @@ from .astrbot_models import AstrBotModelPort
 from .affection_card import AffectionCardPresenter
 from .affection_query import AffectionQuery, is_affection_query
 from .deepseek_cognition import DeepSeekCognitionClient
+from .deepseek_profile import DeepSeekProfileClient
 from .onebot_delivery import OneBotDeliveryAdapter
+from ..social_runtime.profile.extractor import ProfileExtractor
+from ..social_runtime.profile.policy import ProfileEvidencePolicy
+from ..social_runtime.profile.repository import ProfileRepository
+from ..social_runtime.profile.service import ProfileService
 from ..social_runtime.society.affection_leaderboard import (
     AffectionLeaderboardService,
 )
@@ -50,6 +55,8 @@ class AstrBotSocialRuntimeBridge:
         clock: Callable[[], float] | None = None,
         cognition_client_factory: Callable[[SocialRuntimeSettings], object]
         | None = None,
+        profile_client_factory: Callable[[SocialRuntimeSettings], object]
+        | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
@@ -57,6 +64,9 @@ class AstrBotSocialRuntimeBridge:
         self.clock = time.time if clock is None else clock
         self._cognition_client_factory = (
             cognition_client_factory or self._new_cognition_client
+        )
+        self._profile_client_factory = (
+            profile_client_factory or self._new_profile_client
         )
         self._external_trigger_policy = ExternalTriggerPolicy.from_entries(
             command_prefixes=settings.external_command_prefixes,
@@ -70,6 +80,8 @@ class AstrBotSocialRuntimeBridge:
         self._config_repository: ConfigVersionRepository | None = None
         self._manager: SocialRuntimeManager | None = None
         self._cognition_client: object | None = None
+        self._profile_client: object | None = None
+        self._profile_service: ProfileService | None = None
         self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
         self.shadow_review_error: str | None = None
@@ -231,6 +243,12 @@ class AstrBotSocialRuntimeBridge:
             raise RuntimeError("Social Runtime is disabled")
         return self._manager
 
+    @property
+    def profile_service(self) -> ProfileService:
+        if self._profile_service is None:
+            raise RuntimeError("member profiling is disabled")
+        return self._profile_service
+
     async def start(self) -> None:
         if self._started:
             return
@@ -265,10 +283,35 @@ class AstrBotSocialRuntimeBridge:
                 persona_profile_loader=self._persona_config_snapshot,
                 clock=self.clock,
             )
+            profile_client = None
+            profile_service = None
+            if self.settings.profile_enabled:
+                profile_client = self._profile_client_factory(self.settings)
+                if profile_client is None:
+                    raise RuntimeError("direct profile client is unavailable")
+                profile_service = ProfileService(
+                    repository=ProfileRepository(
+                        self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+                    ),
+                    extractor=ProfileExtractor(
+                        profile_client, ProfileEvidencePolicy()
+                    ),
+                    persona_id=self.settings.persona_id,
+                    group_ids=self.settings.enabled_groups,
+                    batch_size=self.settings.profile_batch_messages,
+                    interval_seconds=(
+                        self.settings.profile_batch_interval_seconds
+                    ),
+                    clock=self.clock,
+                )
             try:
                 await manager.start()
+                if profile_service is not None:
+                    await profile_service.start()
                 self._manager = manager
                 self._cognition_client = cognition_client
+                self._profile_client = profile_client
+                self._profile_service = profile_service
                 self._reply_executor = ReplyExecutor(
                     manager.reply_plans,
                     manager.outbox,
@@ -288,12 +331,21 @@ class AstrBotSocialRuntimeBridge:
             except BaseException:
                 self._manager = None
                 self._cognition_client = None
+                self._profile_client = None
+                self._profile_service = None
+                if profile_service is not None:
+                    with suppress(Exception):
+                        await profile_service.close()
                 with suppress(Exception):
                     await manager.close()
                 close = getattr(cognition_client, "close", None)
                 if callable(close):
                     with suppress(Exception):
                         await close()
+                profile_close = getattr(profile_client, "close", None)
+                if callable(profile_close):
+                    with suppress(Exception):
+                        await profile_close()
                 raise
         self._started = True
         self._reconcile_shadow_reviews()
@@ -314,6 +366,7 @@ class AstrBotSocialRuntimeBridge:
             self.settings.runtime_mode,
             int(self.clock()),
         )
+        await self._observe_profile(translated)
         if translated.payload.get("social_eligible") is not False:
             self._record_trace(
                 self.trace_repository.mark_entered,
@@ -353,6 +406,12 @@ class AstrBotSocialRuntimeBridge:
             self.settings.runtime_mode,
             int(self.clock()),
         )
+        await self._observe_profile(translated)
+
+    async def _observe_profile(self, event: SocialEventEnvelope) -> None:
+        service = self._profile_service
+        if service is not None:
+            await service.observe(event)
 
     def _resolve_interaction(
         self, event: SocialEventEnvelope
@@ -657,15 +716,24 @@ class AstrBotSocialRuntimeBridge:
                 await task
         manager = self._manager
         cognition_client = self._cognition_client
+        profile_service = self._profile_service
+        profile_client = self._profile_client
         self._manager = None
         self._cognition_client = None
+        self._profile_service = None
+        self._profile_client = None
         try:
+            if profile_service is not None:
+                await profile_service.close()
             if manager is not None:
                 await manager.close()
         finally:
             close = getattr(cognition_client, "close", None)
             if callable(close):
                 await close()
+            profile_close = getattr(profile_client, "close", None)
+            if callable(profile_close):
+                await profile_close()
             self._reply_executor = None
             self._dispatcher = None
             self._started = False
@@ -678,4 +746,15 @@ class AstrBotSocialRuntimeBridge:
             api_key=settings.cognition_api_key,
             api_base=settings.cognition_api_base,
             model=settings.cognition_model,
+        )
+
+    @staticmethod
+    def _new_profile_client(
+        settings: SocialRuntimeSettings,
+    ) -> DeepSeekProfileClient:
+        return DeepSeekProfileClient(
+            api_key=settings.cognition_api_key,
+            api_base=settings.cognition_api_base,
+            model=settings.cognition_model,
+            timeout_seconds=settings.profile_timeout_seconds,
         )

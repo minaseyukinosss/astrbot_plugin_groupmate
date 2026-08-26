@@ -35,6 +35,10 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.persona_name == "Groupmate"
     assert settings.persona_aliases == ()
     assert settings.persona_preset == "aemeath_current"
+    assert settings.profile_enabled is True
+    assert settings.profile_batch_messages == 20
+    assert settings.profile_batch_interval_seconds == 600
+    assert settings.profile_timeout_seconds == 30
 
 
 def test_persona_identity_settings_normalize_confirmed_aliases():
@@ -78,6 +82,10 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "persona_name",
         "persona_aliases",
         "persona_preset",
+        "profile_enabled",
+        "profile_batch_messages",
+        "profile_batch_interval_seconds",
+        "profile_timeout_seconds",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
@@ -100,6 +108,35 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "max": 15,
         "step": 1,
     }
+    assert schema["profile_enabled"]["default"] is True
+    assert schema["profile_batch_messages"]["default"] == 20
+    assert schema["profile_batch_interval_seconds"]["default"] == 600
+    assert schema["profile_timeout_seconds"]["default"] == 30
+
+
+def test_profile_background_settings_use_safe_bounds():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "profile_enabled": False,
+            "profile_batch_messages": 8,
+            "profile_batch_interval_seconds": 300,
+            "profile_timeout_seconds": 45,
+        }
+    )
+
+    assert settings.profile_enabled is False
+    assert settings.profile_batch_messages == 8
+    assert settings.profile_batch_interval_seconds == 300
+    assert settings.profile_timeout_seconds == 45
+
+    for values in (
+        {"profile_batch_messages": 0},
+        {"profile_batch_messages": 21},
+        {"profile_batch_interval_seconds": 59},
+        {"profile_timeout_seconds": 121},
+    ):
+        with pytest.raises(ValueError):
+            SocialRuntimeSettings.from_mapping(values)
 
 
 def test_direct_cognition_settings_are_normalized_and_secret_repr_is_redacted():

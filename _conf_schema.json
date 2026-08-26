@@ -66,6 +66,33 @@
     "slider": {"min": 3, "max": 15, "step": 1},
     "hint": "普通群聊认知的安全上限；实际等待不会超过当前场景剩余的 8 秒参与判断预算。超时后继续观察。"
   },
+  "profile_enabled": {
+    "description": "持续学习群成员画像",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后只在后台批量提取有证据的成员信息，不阻塞群聊消息与回复。"
+  },
+  "profile_batch_messages": {
+    "description": "画像后台批次消息数",
+    "type": "int",
+    "default": 20,
+    "slider": {"min": 1, "max": 20, "step": 1},
+    "hint": "累计到该数量时唤醒一次后台画像提取；单次最多处理 20 条。"
+  },
+  "profile_batch_interval_seconds": {
+    "description": "画像后台处理间隔（秒）",
+    "type": "int",
+    "default": 600,
+    "slider": {"min": 60, "max": 3600, "step": 60},
+    "hint": "消息不足一个批次时的定时处理间隔，默认 10 分钟。"
+  },
+  "profile_timeout_seconds": {
+    "description": "画像模型等待时间（秒）",
+    "type": "int",
+    "default": 30,
+    "slider": {"min": 5, "max": 120, "step": 5},
+    "hint": "仅影响后台画像提取；超时会安全重试，不影响群聊回复。"
+  },
   "vision_provider": {
     "description": "Groupmate 视觉模型（可选）",
     "type": "string",
