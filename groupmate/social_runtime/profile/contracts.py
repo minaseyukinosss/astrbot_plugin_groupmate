@@ -141,6 +141,54 @@ class ProfileFact:
 
 
 @dataclass(frozen=True)
+class ProfileFactCandidate:
+    candidate_id: str
+    persona_id: str
+    group_id: str
+    subject_id: str
+    category: str
+    summary: str
+    source_kind: str
+    source_actor_id: str
+    source_event_ids: tuple[str, ...]
+    confidence: float
+    evidence_count: int
+    observed_at: int
+
+    def __post_init__(self) -> None:
+        values = _scope(
+            (
+                self.candidate_id,
+                self.persona_id,
+                self.group_id,
+                self.subject_id,
+            )
+        )
+        for field, value in zip(
+            ("candidate_id", "persona_id", "group_id", "subject_id"), values
+        ):
+            object.__setattr__(self, field, value)
+        object.__setattr__(self, "category", _required(self.category, "category", maximum=40))
+        object.__setattr__(self, "summary", _required(self.summary, "summary"))
+        object.__setattr__(
+            self, "source_kind", _required(self.source_kind, "source_kind", maximum=40)
+        )
+        object.__setattr__(
+            self,
+            "source_actor_id",
+            _required(self.source_actor_id, "source_actor_id", maximum=120),
+        )
+        object.__setattr__(
+            self,
+            "source_event_ids",
+            _identifiers(self.source_event_ids, "source_event_id"),
+        )
+        object.__setattr__(self, "confidence", _unit(self.confidence, "confidence"))
+        object.__setattr__(self, "evidence_count", max(1, int(self.evidence_count)))
+        object.__setattr__(self, "observed_at", max(0, int(self.observed_at)))
+
+
+@dataclass(frozen=True)
 class ProfileEpisode:
     episode_id: str
     persona_id: str
@@ -177,6 +225,27 @@ class SocialEdge:
 
 
 @dataclass(frozen=True)
+class SocialEdgeCandidate:
+    candidate_id: str
+    persona_id: str
+    group_id: str
+    source_member_id: str
+    target_member_id: str
+    relation_type: str
+    direction: str
+    strength: float
+    confidence: float
+    source_event_ids: tuple[str, ...]
+    observed_at: int
+
+
+@dataclass(frozen=True)
+class ProfileCorrection:
+    old: ProfileFact
+    new: ProfileFact
+
+
+@dataclass(frozen=True)
 class ProfileSnapshot:
     persona_id: str
     group_id: str
@@ -197,7 +266,10 @@ __all__ = (
     "MemberIdentity",
     "ProfileEpisode",
     "ProfileFact",
+    "ProfileFactCandidate",
+    "ProfileCorrection",
     "ProfileObservation",
     "ProfileSnapshot",
     "SocialEdge",
+    "SocialEdgeCandidate",
 )

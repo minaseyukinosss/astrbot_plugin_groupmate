@@ -12,6 +12,7 @@ from .contracts import (
     MemberAlias,
     MemberIdentity,
     ProfileEpisode,
+    ProfileCorrection,
     ProfileFact,
     ProfileObservation,
     ProfileSnapshot,
@@ -243,6 +244,133 @@ class ProfileRepository:
         with connect_database(self.path) as db:
             rows = db.execute(query, parameters).fetchall()
         return tuple(self._fact(row) for row in rows)
+
+    def replace_fact(
+        self,
+        correction: ProfileCorrection,
+        *,
+        audit_id: str,
+        actor_id: str,
+        created_at: int,
+    ) -> None:
+        if (
+            correction.old.persona_id,
+            correction.old.group_id,
+            correction.old.subject_id,
+        ) != (
+            correction.new.persona_id,
+            correction.new.group_id,
+            correction.new.subject_id,
+        ):
+            raise ValueError("profile correction scope mismatch")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM profile_facts WHERE fact_id=?",
+                (correction.old.fact_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(correction.old.fact_id)
+            current = self._fact(row)
+            if (
+                current.persona_id,
+                current.group_id,
+                current.subject_id,
+            ) != (
+                correction.old.persona_id,
+                correction.old.group_id,
+                correction.old.subject_id,
+            ):
+                raise ValueError("profile correction target mismatch")
+            db.execute(
+                "UPDATE profile_facts SET status='superseded',injectable=0,"
+                "valid_until=?,updated_at=? WHERE fact_id=?",
+                (
+                    correction.old.valid_until,
+                    int(created_at),
+                    correction.old.fact_id,
+                ),
+            )
+            db.execute(
+                "INSERT INTO profile_facts("
+                "fact_id,persona_id,group_id,subject_id,category,summary,source_kind,"
+                "source_actor_id,source_event_ids_json,confidence,status,evidence_count,"
+                "valid_from,valid_until,supersedes_fact_id,injectable,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                self._fact_values(correction.new),
+            )
+            db.execute(
+                "INSERT INTO profile_audit("
+                "audit_id,persona_id,group_id,subject_id,actor_id,action_type,"
+                "target_id,audit_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    str(audit_id),
+                    correction.new.persona_id,
+                    correction.new.group_id,
+                    correction.new.subject_id,
+                    str(actor_id),
+                    "profile_fact_corrected",
+                    correction.old.fact_id,
+                    self._json(
+                        {
+                            "old_fact_id": correction.old.fact_id,
+                            "new_fact_id": correction.new.fact_id,
+                        }
+                    ),
+                    int(created_at),
+                ),
+            )
+
+    def change_fact_status(
+        self,
+        fact_id: str,
+        *,
+        persona_id: str,
+        group_id: str,
+        subject_id: str,
+        status: str,
+        audit_id: str,
+        actor_id: str,
+        created_at: int,
+    ) -> ProfileFact:
+        if status not in {"stale", "rejected"}:
+            raise ValueError("fact status change must be stale or rejected")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM profile_facts WHERE fact_id=? AND persona_id=? "
+                "AND group_id=? AND subject_id=?",
+                (str(fact_id), str(persona_id), str(group_id), str(subject_id)),
+            ).fetchone()
+            if row is None:
+                raise KeyError(fact_id)
+            db.execute(
+                "UPDATE profile_facts SET status=?,injectable=0,valid_until=?,"
+                "updated_at=? WHERE fact_id=?",
+                (status, int(created_at), int(created_at), str(fact_id)),
+            )
+            db.execute(
+                "INSERT INTO profile_audit("
+                "audit_id,persona_id,group_id,subject_id,actor_id,action_type,"
+                "target_id,audit_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    str(audit_id),
+                    str(persona_id),
+                    str(group_id),
+                    str(subject_id),
+                    str(actor_id),
+                    "profile_fact_stale"
+                    if status == "stale"
+                    else "profile_fact_invalidated",
+                    str(fact_id),
+                    self._json({"status": status}),
+                    int(created_at),
+                ),
+            )
+            updated = db.execute(
+                "SELECT * FROM profile_facts WHERE fact_id=?", (str(fact_id),)
+            ).fetchone()
+        return self._fact(updated)
 
     def put_episode(self, episode: ProfileEpisode) -> ProfileEpisode:
         with connect_database(self.path) as db:
