@@ -80,6 +80,18 @@ def test_runtime_is_the_single_message_trace_product_view():
     assert "projectionList(runtime)" not in runtime
 
 
+def test_runtime_dashboard_prefers_effective_mode_and_resolved_persona():
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+
+    assert "export function runtimeStatus" in runtime
+    assert "bootstrap?.effective_runtime_mode || configured" in runtime
+    assert "配置为 ${status.configured}，实际仍以 ${status.effective} 运行" in runtime
+    assert "当前人格：${persona.preset_label}" in runtime
+    assert "bootstrap.resolved_persona?.name" in app
+    assert "bootstrap.effective_runtime_mode" in app
+
+
 def test_message_presenter_uses_non_text_parts_instead_of_generic_placeholder():
     result = _run_presenter(
         "console.log(JSON.stringify({"

@@ -97,6 +97,23 @@ def _reply_to_bot(text: str) -> list[dict]:
     ]
 
 
+def test_bridge_exposes_live_runtime_and_resolved_persona(tmp_path):
+    bridge = _bridge_for(tmp_path, mode=RuntimeMode.SOCIAL_RUNTIME)
+
+    assert bridge.runtime_status("g-1") == {
+        "effective_runtime_mode": "SOCIAL_RUNTIME",
+        "runtime_state": "RUNNING",
+        "runtime_ready": True,
+        "runtime_blockers": [],
+    }
+    assert bridge.resolved_persona_status("g-1") == {
+        "name": "爱弥斯",
+        "aliases": ["小爱"],
+        "preset": "aemeath_current",
+        "preset_label": "爱弥斯（当前剧情）",
+    }
+
+
 @pytest.mark.parametrize(
     ("mode", "message", "segments", "expected_stops"),
     (

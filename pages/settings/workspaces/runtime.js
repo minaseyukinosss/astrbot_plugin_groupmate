@@ -276,29 +276,42 @@ function messageBrowser(items, refreshData) {
   return browser;
 }
 
-function configuredMode(bootstrap, runtime) {
-  if (bootstrap?.configured_runtime_mode) return bootstrap.configured_runtime_mode;
+function historicMode(runtime) {
   const current = [...(runtime?.items || [])].reverse().find((item) => item.summary?.runtime_mode);
   return current?.summary?.runtime_mode || "OFF";
+}
+
+export function runtimeStatus(bootstrap, runtime) {
+  const configured = bootstrap?.configured_runtime_mode || historicMode(runtime);
+  const effective = bootstrap?.effective_runtime_mode || configured;
+  return {
+    configured,
+    effective,
+    running: bootstrap?.runtime_state === "RUNNING" && effective !== "OFF",
+    mismatch: configured !== effective,
+  };
 }
 
 function isPaused(runtime) {
   return (runtime?.items || []).some((item) => item.summary?.paused === true);
 }
 
-function modeCopy(mode, ready, paused) {
-  if (paused) return ["已暂停", "Groupmate 暂停处理新消息；NapCat 与 AstrBot 的到达事实仍会保留。"];
-  if (mode === "OFF") return ["Groupmate 当前未运行", "消息不会进入闲聊判断链路。完成配置并启用后才会开始处理。"];
-  if (!ready) return ["尚未就绪", "配置还不完整，Groupmate 暂时不会参与群聊。"];
+function modeCopy(mode, ready, paused, personaName) {
+  if (paused) return ["已暂停", `${personaName} 暂停处理新消息；NapCat 与 AstrBot 的到达事实仍会保留。`];
+  if (mode === "OFF") return [`${personaName} 当前未运行`, "消息不会进入闲聊判断链路。完成配置并启用后才会开始处理。"];
+  if (!ready) return ["尚未就绪", `配置还不完整，${personaName} 暂时不会参与群聊。`];
   if (mode === "SHADOW") return ["SHADOW 正在观察", "会完成理解和参与判断，但不会向群里发送消息。"];
-  return ["Groupmate 正在运行", "符合条件的回复会经过治理后发送到群里。"];
+  return [`${personaName} 正在运行`, "符合条件的回复会经过治理后发送到群里。"];
 }
 
 function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
-  const mode = configuredMode(bootstrap, runtime);
+  const status = runtimeStatus(bootstrap, runtime);
+  const mode = status.effective;
   const ready = bootstrap?.runtime_ready ?? mode !== "OFF";
   const paused = isPaused(runtime);
-  const [title, description] = modeCopy(mode, ready, paused);
+  const persona = bootstrap?.resolved_persona || {};
+  const personaName = persona.name || "Groupmate";
+  const [title, description] = modeCopy(mode, ready, paused, personaName);
   const groupmateCount = items.filter((item) => item.summary?.route?.owner === "GROUPMATE").length;
   const sentCount = items.filter((item) => item.summary?.delivery?.status === "SENT").length;
   const wouldReplyCount = items.filter((item) => traceWouldReply(item.summary)).length;
@@ -308,6 +321,15 @@ function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
       element("span", { text: "运行概览" }),
       element("strong", { text: title }),
       element("small", { text: description }),
+      ...(persona.preset_label
+        ? [element("small", { className: "runtime-persona", text: `当前人格：${persona.preset_label}` })]
+        : []),
+      ...(status.mismatch
+        ? [element("p", {
+          className: "runtime-blockers",
+          text: `配置为 ${status.configured}，实际仍以 ${status.effective} 运行；重载插件后生效。`,
+        })]
+        : []),
       ...(bootstrap?.runtime_blockers?.length
         ? [element("p", { className: "runtime-blockers", text: bootstrap.runtime_blockers.join("；") })]
         : []),
@@ -331,7 +353,12 @@ function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
   }
   return element("section", {
     className: "mode-banner",
-    dataset: { mode, paused: String(paused), ready: String(ready) },
+    dataset: {
+      mode,
+      configuredMode: status.configured,
+      paused: String(paused),
+      ready: String(ready),
+    },
   }, children);
 }
 

@@ -447,6 +447,46 @@ class AstrBotSocialRuntimeBridge:
             raise RuntimeError("member profiling is disabled")
         return self._profile_service
 
+    def runtime_status(self, group_id: str) -> dict[str, object]:
+        """Return the bridge state that is effective for this group now."""
+
+        manager = self._manager
+        if manager is None:
+            blockers = (
+                ["运行模式为 OFF"]
+                if self.settings.runtime_mode == "OFF"
+                else ["运行管理器尚未启动"]
+            )
+            return {
+                "effective_runtime_mode": "OFF",
+                "runtime_state": "STOPPED",
+                "runtime_ready": False,
+                "runtime_blockers": blockers,
+            }
+        return {
+            "effective_runtime_mode": manager.group_mode(str(group_id)).value,
+            "runtime_state": "RUNNING",
+            "runtime_ready": True,
+            "runtime_blockers": [],
+        }
+
+    def resolved_persona_status(self, group_id: str) -> dict[str, object]:
+        """Expose identity labels without publishing private persona canon."""
+
+        identity = self._profile_snapshot(str(group_id))["identity"]
+        preset_labels = {
+            "aemeath_current": "爱弥斯（当前剧情）",
+            "custom": "兼容的自定义人格资料",
+        }
+        return {
+            "name": str(identity["name"]),
+            "aliases": [str(value) for value in identity.get("aliases", ())],
+            "preset": self.settings.persona_preset,
+            "preset_label": preset_labels.get(
+                self.settings.persona_preset, "当前人格资料"
+            ),
+        }
+
     async def start(self) -> None:
         if self._started:
             return

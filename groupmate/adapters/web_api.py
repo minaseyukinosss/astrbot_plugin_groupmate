@@ -93,6 +93,10 @@ class ControlPlaneWebAPI:
         runtime_mode: str = "OFF",
         runtime_ready: bool | None = None,
         runtime_blockers: tuple[str, ...] = (),
+        runtime_status_provider: Callable[[str], Mapping[str, object]]
+        | None = None,
+        persona_status_provider: Callable[[str], Mapping[str, object]]
+        | None = None,
     ) -> None:
         self.queries = queries
         self.stream = stream
@@ -117,9 +121,82 @@ class ControlPlaneWebAPI:
         self.runtime_blockers = tuple(
             str(item).strip() for item in runtime_blockers if str(item).strip()
         )
+        self._runtime_status_provider = runtime_status_provider
+        self._persona_status_provider = persona_status_provider
         if not self.persona_id or not self.group_ids:
             raise ValueError("control API requires persona and group scope")
         self._degraded: dict[str, str] = {}
+
+    def _live_runtime_status(self, group_id: str) -> dict[str, object]:
+        fallback = {
+            "effective_runtime_mode": self.runtime_mode,
+            "runtime_state": (
+                "RUNNING"
+                if self.runtime_ready and self.runtime_mode != "OFF"
+                else "STOPPED"
+            ),
+            "runtime_ready": self.runtime_ready,
+            "runtime_blockers": list(self.runtime_blockers),
+        }
+        provider = self._runtime_status_provider
+        if provider is None:
+            return fallback
+        try:
+            status = dict(provider(group_id))
+        except Exception as exc:
+            self._degraded["runtime_status"] = type(exc).__name__
+            return {
+                **fallback,
+                "runtime_ready": False,
+                "runtime_blockers": [
+                    *fallback["runtime_blockers"],
+                    "实时运行状态暂时不可用",
+                ],
+            }
+        self._degraded.pop("runtime_status", None)
+        return {
+            "effective_runtime_mode": str(
+                status.get("effective_runtime_mode") or self.runtime_mode
+            ).upper(),
+            "runtime_state": str(
+                status.get("runtime_state") or "STOPPED"
+            ).upper(),
+            "runtime_ready": bool(status.get("runtime_ready")),
+            "runtime_blockers": [
+                str(item).strip()
+                for item in status.get("runtime_blockers", ())
+                if str(item).strip()
+            ],
+        }
+
+    def _resolved_persona_status(self, group_id: str) -> dict[str, object]:
+        provider = self._persona_status_provider
+        fallback = {
+            "name": "Groupmate",
+            "aliases": [],
+            "preset": "",
+            "preset_label": "当前人格资料",
+        }
+        if provider is None:
+            return fallback
+        try:
+            status = dict(provider(group_id))
+        except Exception as exc:
+            self._degraded["persona_status"] = type(exc).__name__
+            return fallback
+        self._degraded.pop("persona_status", None)
+        return {
+            "name": str(status.get("name") or fallback["name"]),
+            "aliases": [
+                str(value)
+                for value in status.get("aliases", ())
+                if str(value).strip()
+            ],
+            "preset": str(status.get("preset") or ""),
+            "preset_label": str(
+                status.get("preset_label") or fallback["preset_label"]
+            ),
+        }
 
     def mark_degraded(self, component: str, reason: str) -> None:
         name = str(component).strip()
@@ -177,14 +254,16 @@ class ControlPlaneWebAPI:
                     return self._error(404, "entity_not_found")
                 body = {**body, "items": items}
             if endpoint == "bootstrap":
+                runtime_status = self._live_runtime_status(group_id)
+                persona_status = self._resolved_persona_status(group_id)
                 body = {
                     **body,
                     "persona_id": persona_id,
                     "available_groups": list(self._group_order),
                     "selected_group_id": group_id,
                     "configured_runtime_mode": self.runtime_mode,
-                    "runtime_ready": self.runtime_ready,
-                    "runtime_blockers": list(self.runtime_blockers),
+                    **runtime_status,
+                    "resolved_persona": persona_status,
                 }
             if endpoint == "health":
                 body = {

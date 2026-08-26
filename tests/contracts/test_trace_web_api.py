@@ -28,7 +28,12 @@ def _event(message_id="1", group_id="g-1"):
     )
 
 
-def _api(tmp_path):
+def _api(
+    tmp_path,
+    *,
+    runtime_status_provider=None,
+    persona_status_provider=None,
+):
     path = tmp_path / "runtime.db"
     repository = MessageTraceRepository(path)
     repository.record_received(_event(), runtime_mode="SHADOW", now=10)
@@ -52,6 +57,8 @@ def _api(tmp_path):
         admin_ids=("admin:root",),
         participants=repository.participants,
         runtime_mode="SHADOW",
+        runtime_status_provider=runtime_status_provider,
+        persona_status_provider=persona_status_provider,
     )
 
 
@@ -108,6 +115,40 @@ def test_bootstrap_reports_configured_runtime_instead_of_historic_projection(tmp
     assert response.body["configured_runtime_mode"] == "SHADOW"
     assert response.body["runtime_ready"] is True
     assert response.body["runtime_blockers"] == []
+
+
+def test_bootstrap_reads_live_runtime_and_resolved_persona_on_each_request(tmp_path):
+    state = {
+        "effective_runtime_mode": "SHADOW",
+        "runtime_state": "RUNNING",
+        "runtime_ready": True,
+        "runtime_blockers": [],
+    }
+    api = _api(
+        tmp_path,
+        runtime_status_provider=lambda _group_id: dict(state),
+        persona_status_provider=lambda _group_id: {
+            "name": "爱弥斯",
+            "aliases": ["小爱"],
+            "preset": "aemeath_current",
+            "preset_label": "爱弥斯（当前剧情）",
+        },
+    )
+
+    shadow = asyncio.run(api.handle(_get("/bootstrap")))
+    state["effective_runtime_mode"] = "SOCIAL_RUNTIME"
+    production = asyncio.run(api.handle(_get("/bootstrap")))
+
+    assert shadow.body["configured_runtime_mode"] == "SHADOW"
+    assert shadow.body["effective_runtime_mode"] == "SHADOW"
+    assert production.body["effective_runtime_mode"] == "SOCIAL_RUNTIME"
+    assert production.body["runtime_state"] == "RUNNING"
+    assert production.body["resolved_persona"] == {
+        "name": "爱弥斯",
+        "aliases": ["小爱"],
+        "preset": "aemeath_current",
+        "preset_label": "爱弥斯（当前剧情）",
+    }
 
 
 def test_media_endpoint_resolves_only_registered_scoped_preview(tmp_path):

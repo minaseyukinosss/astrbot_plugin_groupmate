@@ -98,6 +98,8 @@ class GroupmatePlugin(Star):
                     )
                     if blocked
                 ),
+                runtime_status_provider=self.bridge.runtime_status,
+                persona_status_provider=self.bridge.resolved_persona_status,
             )
             self._refresh_projections()
 

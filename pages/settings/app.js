@@ -249,15 +249,20 @@ function render(snapshot) {
   renderError(snapshot.error);
   const profile = (snapshot.views.persona?.items || [])
     .find((item) => item.kind === "persona.profile")?.summary;
-  elements.persona.textContent = profile?.profile?.identity?.name || "Groupmate";
+  const bootstrap = snapshot.views.bootstrap || {};
+  elements.persona.textContent = bootstrap.resolved_persona?.name
+    || profile?.profile?.identity?.name
+    || "Groupmate";
   const version = Number(profile?.config_version ?? Math.max(0, ...(snapshot.views.governance?.items || [])
     .filter((item) => item.summary?.status === "PUBLISHED")
     .map((item) => Number(item.summary?.config_version || 0))));
   elements.version.textContent = `v${version}`;
-  const bootstrap = snapshot.views.bootstrap || {};
   const runtimeItems = snapshot.views.runtime?.items || [];
   const runtimeSummary = [...runtimeItems].reverse().find((item) => item.summary?.runtime_mode)?.summary || {};
-  const mode = bootstrap.configured_runtime_mode || runtimeSummary.runtime_mode || "OFF";
+  const mode = bootstrap.effective_runtime_mode
+    || bootstrap.configured_runtime_mode
+    || runtimeSummary.runtime_mode
+    || "OFF";
   const traceItems = snapshot.views.traces?.items || [];
   const waiting = traceItems.filter((item) =>
     ["RECEIVED", "PLANNING", "READY", "DEFERRED"].includes(String(item.summary?.delivery?.status || "").toUpperCase()),
