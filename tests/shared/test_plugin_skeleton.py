@@ -32,8 +32,8 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.cognition_api_key == ""
     assert settings.cognition_api_base == "https://api.deepseek.com"
     assert settings.cognition_model == "deepseek-v4-flash"
-    assert settings.persona_name == "Groupmate"
-    assert settings.persona_aliases == ()
+    assert settings.persona_name == "爱弥斯"
+    assert settings.persona_aliases == ("小爱",)
     assert settings.persona_preset == "aemeath_current"
     assert settings.profile_enabled is True
     assert settings.profile_batch_messages == 20
@@ -51,6 +51,20 @@ def test_persona_identity_settings_normalize_confirmed_aliases():
 
     assert settings.persona_name == "爱弥斯"
     assert settings.persona_aliases == ("小爱",)
+
+
+def test_explicit_legacy_persona_settings_remain_compatible():
+    settings = SocialRuntimeSettings.from_mapping(
+        {
+            "persona_name": "旧人格",
+            "persona_aliases": [],
+            "persona_preset": "custom",
+        }
+    )
+
+    assert settings.persona_name == "旧人格"
+    assert settings.persona_aliases == ()
+    assert settings.persona_preset == "custom"
 
 
 def test_unknown_persona_preset_is_rejected():
@@ -81,7 +95,6 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "external_link_domains",
         "persona_name",
         "persona_aliases",
-        "persona_preset",
         "profile_enabled",
         "profile_batch_messages",
         "profile_batch_interval_seconds",
@@ -99,6 +112,12 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     assert schema["cognition_api_base"]["default"] == "https://api.deepseek.com"
     assert schema["cognition_model"]["default"] == "deepseek-v4-flash"
     assert schema["persona_preset"]["default"] == "aemeath_current"
+    assert schema["persona_preset"]["invisible"] is True
+    assert schema["runtime_mode"]["description"] == "运行方式"
+    assert schema["persona_name"]["description"] == "正式名称"
+    assert schema["persona_name"]["default"] == "爱弥斯"
+    assert schema["persona_aliases"]["description"] == "其他称呼"
+    assert schema["persona_aliases"]["default"] == ["小爱"]
     assert "persona_id" not in schema
     assert "bot_qq" not in schema
     assert "database_name" not in schema

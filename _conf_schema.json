@@ -6,7 +6,7 @@
     "hint": "填写 AstrBot 已接入平台中的群 ID。运行模式会应用到这里列出的群。"
   },
   "runtime_mode": {
-    "description": "Groupmate 运行模式",
+    "description": "运行方式",
     "type": "string",
     "options": ["SHADOW", "SOCIAL_RUNTIME"],
     "labels": ["SHADOW 观察（不发送）", "正式运行（允许发送）"],
@@ -14,16 +14,16 @@
     "hint": "SHADOW 只观察并记录决策，不发送消息；正式运行允许 Groupmate 在已启用的群中参与对话。"
   },
   "persona_name": {
-    "description": "Groupmate 人格名称",
+    "description": "正式名称",
     "type": "string",
-    "default": "Groupmate",
-    "hint": "用于自称和直接呼唤识别。"
+    "default": "爱弥斯",
+    "hint": "爱弥斯在群聊中的正式名称，也用于直接呼唤识别。"
   },
   "persona_aliases": {
-    "description": "已确认的人格别称",
+    "description": "其他称呼",
     "type": "list",
-    "default": [],
-    "hint": "每行一个别称。只有管理员确认的别称会触发直接互动。"
+    "default": ["小爱"],
+    "hint": "群友可以用这些称呼呼唤爱弥斯，每行一个。"
   },
   "persona_preset": {
     "description": "人格资料预设",
@@ -31,7 +31,8 @@
     "options": ["aemeath_current", "custom"],
     "labels": ["爱弥斯（当前剧情）", "自定义 Persona"],
     "default": "aemeath_current",
-    "hint": "预设只提供人格资料，不硬编码别称；名称和别称仍使用上方配置。"
+    "hint": "预设只提供人格资料，不硬编码别称；名称和别称仍使用上方配置。",
+    "invisible": true
   },
   "generation_provider": {
     "description": "Groupmate 最终回复模型",

@@ -21,8 +21,8 @@ class SocialRuntimeSettings:
     generation_provider: str
     vision_provider: str
     persona_id: str
-    persona_name: str = "Groupmate"
-    persona_aliases: tuple[str, ...] = ()
+    persona_name: str = "爱弥斯"
+    persona_aliases: tuple[str, ...] = ("小爱",)
     persona_preset: str = "aemeath_current"
     cognition_api_key: str = field(default="", repr=False)
     cognition_api_base: str = DEFAULT_COGNITION_API_BASE
@@ -69,7 +69,7 @@ class SocialRuntimeSettings:
         ).strip()
         if not cognition_model:
             raise ValueError("cognition_model must not be empty")
-        persona_name = str(source.get("persona_name", "Groupmate") or "").strip()
+        persona_name = str(source.get("persona_name", "爱弥斯") or "").strip()
         if not persona_name:
             raise ValueError("persona_name must not be empty")
         if len(persona_name) > 24:
@@ -91,7 +91,11 @@ class SocialRuntimeSettings:
             persona_name=persona_name,
             persona_aliases=cls._persona_aliases(
                 persona_name,
-                source.get("persona_aliases", ()),
+                (
+                    source["persona_aliases"]
+                    if "persona_aliases" in source
+                    else ("小爱",)
+                ),
             ),
             persona_preset=persona_preset,
             cognition_api_key=str(
