@@ -56,7 +56,11 @@ class ProfileEvidencePolicy:
         )
         if candidate.category not in FACT_CATEGORIES or not evidence_allowed:
             status, injectable = "rejected", False
-        elif candidate.source_kind in {"system", "admin_correction"}:
+        elif candidate.source_kind in {
+            "system",
+            "admin_correction",
+            "self_correction",
+        }:
             status, injectable = "confirmed", True
         elif (
             candidate.source_kind == "self_statement"

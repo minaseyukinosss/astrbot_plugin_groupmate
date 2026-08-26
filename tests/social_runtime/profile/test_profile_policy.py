@@ -142,6 +142,26 @@ def test_admin_correction_supersedes_old_fact_immediately(tmp_path):
     assert correction.new.supersedes_fact_id == old.fact_id
 
 
+def test_member_self_correction_is_authoritative_for_own_scope():
+    policy = ProfileEvidencePolicy()
+    old = policy.decide(_candidate(), allowed_event_ids={"event-1"})
+    correction = policy.correct(
+        old,
+        _candidate(
+            candidate_id="candidate-self-corrected",
+            summary="现在不喝冷饮",
+            source_kind="self_correction",
+            source_actor_id="member-1",
+            source_event_ids=("correction-1",),
+            observed_at=200,
+            confidence=1.0,
+        ),
+    )
+
+    assert correction.new.status == "confirmed"
+    assert correction.new.injectable is True
+
+
 def test_stale_or_invalidated_fact_stops_injection_but_keeps_history(tmp_path):
     policy = ProfileEvidencePolicy()
     repository = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")

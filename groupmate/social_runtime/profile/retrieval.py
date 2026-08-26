@@ -42,6 +42,12 @@ class ProfileRetriever:
         if not group_id or max_chars < 1:
             return ProfileRetrieval((), (), (), (), "", {"members": [], "relations": []})
         subject_ids = self._subject_ids(event)
+        if not subject_ids or not self.repository.personalization_enabled(
+            event.persona_id, group_id, subject_ids[0]
+        ):
+            return ProfileRetrieval(
+                (), (), (), (), "", {"members": [], "relations": []}
+            )
         now = int(event.received_at)
         facts = tuple(
             sorted(

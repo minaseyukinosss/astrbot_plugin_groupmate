@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections import deque
 from contextlib import suppress
 from dataclasses import asdict, replace
@@ -32,13 +33,18 @@ from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
 from .affection_card import AffectionCardPresenter
 from .affection_query import AffectionQuery, is_affection_query
+from .profile_query import (
+    ProfileQueryResult,
+    parse_profile_command,
+)
 from .deepseek_cognition import DeepSeekCognitionClient
 from .deepseek_profile import DeepSeekProfileClient
 from .onebot_delivery import OneBotDeliveryAdapter
 from ..social_runtime.profile.extractor import ProfileExtractor
-from ..social_runtime.profile.policy import ProfileEvidencePolicy
 from ..social_runtime.profile.repository import ProfileRepository
 from ..social_runtime.profile.service import ProfileService
+from ..social_runtime.profile.contracts import ProfileFactCandidate
+from ..social_runtime.profile.policy import ProfileEvidencePolicy
 from ..social_runtime.society.affection_leaderboard import (
     AffectionLeaderboardService,
 )
@@ -176,6 +182,198 @@ class AstrBotSocialRuntimeBridge:
             leaderboard=leaderboard,
             pages=AffectionCardPresenter().pages(leaderboard),
         )
+
+    async def prepare_profile_command(
+        self, event: object
+    ) -> ProfileQueryResult | None:
+        """Handle one member's exact local profile command without a model."""
+
+        if not self._started or self._manager is None:
+            return None
+        translated = self.translator.translate(event)
+        command = parse_profile_command(translated.payload.get("text"))
+        if command is None:
+            return None
+        group_id = str(translated.group_id or "").strip()
+        subject_id = str(translated.actor_id or "").strip()
+        if (
+            not group_id
+            or not subject_id
+            or self._manager.group_mode(group_id) is RuntimeMode.OFF
+        ):
+            return None
+        self.trace_repository.participants.remember(translated)
+        repository = self._manager.profile_retriever.repository
+        now = int(self.clock())
+        facts = tuple(
+            item
+            for item in repository.facts(
+                self.settings.persona_id, group_id, subject_id
+            )
+            if item.status in {"confirmed", "proposed"}
+            and (item.valid_until is None or item.valid_until > now)
+        )
+        if command.kind == "show_self":
+            return ProfileQueryResult(
+                self._render_own_profile(
+                    repository,
+                    group_id=group_id,
+                    subject_id=subject_id,
+                    facts=facts,
+                )
+            )
+        if command.kind in {"disable_personalization", "enable_personalization"}:
+            enabled = command.kind == "enable_personalization"
+            repository.set_personalization(
+                self.settings.persona_id,
+                group_id,
+                subject_id,
+                enabled=enabled,
+                updated_at=now,
+            )
+            return ProfileQueryResult(
+                "已恢复画像个性化。之后只会使用有证据且与你当前消息相关的画像。"
+                if enabled
+                else "已停止画像个性化。已有记录仍可查看和纠正，但不会用于判断或回复。"
+            )
+        number = int(command.fact_number or 0)
+        if number < 1 or number > len(facts):
+            return ProfileQueryResult("没有这个事实编号，请先发送“查看我的画像”。")
+        selected = facts[number - 1]
+        if command.kind == "delete_fact":
+            repository.change_fact_status(
+                selected.fact_id,
+                persona_id=self.settings.persona_id,
+                group_id=group_id,
+                subject_id=subject_id,
+                status="rejected",
+                audit_id=f"profile-self-delete:{translated.event_id}",
+                actor_id=subject_id,
+                created_at=now,
+            )
+            self._refresh_snapshot_fact(
+                repository,
+                group_id=group_id,
+                subject_id=subject_id,
+                old_summary=selected.summary,
+                new_summary=None,
+                now=now,
+            )
+            return ProfileQueryResult(f"已删除第 {number} 条画像事实。")
+        content = str(command.content or "").strip()
+        digest = hashlib.sha256(
+            f"{translated.event_id}:{selected.fact_id}:{content}".encode("utf-8")
+        ).hexdigest()
+        candidate = ProfileFactCandidate(
+            candidate_id=f"profile-self-correction:{digest}",
+            persona_id=self.settings.persona_id,
+            group_id=group_id,
+            subject_id=subject_id,
+            category=selected.category,
+            summary=content,
+            source_kind="self_correction",
+            source_actor_id=subject_id,
+            source_event_ids=(translated.event_id,),
+            confidence=1.0,
+            evidence_count=1,
+            observed_at=now,
+        )
+        correction = ProfileEvidencePolicy().correct(selected, candidate)
+        repository.replace_fact(
+            correction,
+            audit_id=f"profile-self-correct:{translated.event_id}",
+            actor_id=subject_id,
+            created_at=now,
+        )
+        self._refresh_snapshot_fact(
+            repository,
+            group_id=group_id,
+            subject_id=subject_id,
+            old_summary=selected.summary,
+            new_summary=content,
+            now=now,
+        )
+        return ProfileQueryResult(f"已纠正第 {number} 条画像事实：{content}")
+
+    def _refresh_snapshot_fact(
+        self,
+        repository: ProfileRepository,
+        *,
+        group_id: str,
+        subject_id: str,
+        old_summary: str,
+        new_summary: str | None,
+        now: int,
+    ) -> None:
+        snapshot = repository.snapshot(
+            self.settings.persona_id, group_id, subject_id
+        )
+        if snapshot is None:
+            return
+
+        def updated(values: tuple[str, ...]) -> tuple[str, ...]:
+            result = []
+            for value in values:
+                if value == old_summary:
+                    if new_summary:
+                        result.append(new_summary)
+                else:
+                    result.append(value)
+            return tuple(dict.fromkeys(result))
+
+        portrait = snapshot.one_line_portrait
+        if portrait == old_summary:
+            portrait = new_summary or "正在形成画像"
+        repository.put_snapshot(
+            replace(
+                snapshot,
+                one_line_portrait=portrait,
+                group_roles=updated(snapshot.group_roles),
+                individual_fingerprints=updated(
+                    snapshot.individual_fingerprints
+                ),
+                preferences_and_boundaries=updated(
+                    snapshot.preferences_and_boundaries
+                ),
+                source_revision=snapshot.source_revision + 1,
+                generated_at=now,
+            )
+        )
+
+    def _render_own_profile(
+        self,
+        repository: ProfileRepository,
+        *,
+        group_id: str,
+        subject_id: str,
+        facts: tuple,
+    ) -> str:
+        snapshot = repository.snapshot(
+            self.settings.persona_id, group_id, subject_id
+        )
+        lines = ["我的画像"]
+        if snapshot is None:
+            lines.append("一句话：正在形成画像")
+        else:
+            lines.append(f"一句话：{snapshot.one_line_portrait}")
+            if snapshot.group_roles:
+                lines.append("群内角色：" + "、".join(snapshot.group_roles))
+            if snapshot.preferences_and_boundaries:
+                lines.append(
+                    "偏好与边界："
+                    + "；".join(snapshot.preferences_and_boundaries)
+                )
+        lines.append("我记得的事实：")
+        if facts:
+            lines.extend(
+                f"[{index}] {fact.summary}"
+                + ("（待确认）" if fact.status == "proposed" else "")
+                for index, fact in enumerate(facts, start=1)
+            )
+        else:
+            lines.append("暂无足够证据。")
+        lines.append("可用：纠正画像 <编号> <新内容> / 删除画像 <编号>")
+        return "\n".join(lines)[:1800]
 
     @staticmethod
     def _normalize_group_members(
@@ -410,7 +608,9 @@ class AstrBotSocialRuntimeBridge:
 
     async def _observe_profile(self, event: SocialEventEnvelope) -> None:
         service = self._profile_service
-        if service is not None:
+        if service is not None and parse_profile_command(
+            event.payload.get("text")
+        ) is None:
             await service.observe(event)
 
     def _resolve_interaction(

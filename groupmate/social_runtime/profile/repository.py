@@ -587,6 +587,42 @@ class ProfileRepository:
         }
         return GroupPortrait(**values)
 
+    def set_personalization(
+        self,
+        persona_id: str,
+        group_id: str,
+        subject_id: str,
+        *,
+        enabled: bool,
+        updated_at: int,
+    ) -> None:
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO profile_preferences("
+                "persona_id,group_id,subject_id,personalization_enabled,updated_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(persona_id,group_id,subject_id) "
+                "DO UPDATE SET personalization_enabled=excluded.personalization_enabled,"
+                "updated_at=excluded.updated_at",
+                (
+                    str(persona_id),
+                    str(group_id),
+                    str(subject_id),
+                    int(bool(enabled)),
+                    max(0, int(updated_at)),
+                ),
+            )
+
+    def personalization_enabled(
+        self, persona_id: str, group_id: str, subject_id: str
+    ) -> bool:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT personalization_enabled FROM profile_preferences "
+                "WHERE persona_id=? AND group_id=? AND subject_id=?",
+                (str(persona_id), str(group_id), str(subject_id)),
+            ).fetchone()
+        return True if row is None else bool(row[0])
+
     @staticmethod
     def _json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

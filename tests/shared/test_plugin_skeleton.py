@@ -374,6 +374,16 @@ def test_affection_query_is_claimed_before_chat_and_has_text_fallback():
     assert "event.plain_result(query.text_fallback)" in composition
 
 
+def test_profile_command_is_checked_before_affection_and_social_runtime():
+    root = Path(__file__).parents[2]
+    composition = (root / "main.py").read_text(encoding="utf-8")
+
+    assert composition.index("prepare_profile_command") < composition.index(
+        "prepare_affection_query"
+    )
+    assert "yield event.plain_result(profile_query.text)" in composition
+
+
 def test_external_trigger_rules_are_native_deployment_configuration():
     settings = SocialRuntimeSettings.from_mapping(
         {

@@ -109,6 +109,12 @@ class GroupmatePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-100)
     async def observe_group_message(self, event: AstrMessageEvent):
+        profile_query = await self.bridge.prepare_profile_command(event)
+        if profile_query is not None:
+            event.stop_event()
+            yield event.plain_result(profile_query.text)
+            self._refresh_projections()
+            return
         query = await self.bridge.prepare_affection_query(event)
         if query is not None:
             event.stop_event()
