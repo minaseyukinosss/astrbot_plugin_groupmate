@@ -42,6 +42,56 @@ export class ProjectionStore {
     return true;
   }
 
+  mergeTracePage(view, { append = false } = {}) {
+    if (!view || view.projection !== "traces") return false;
+    if (
+      view.scope
+      && (
+        String(view.scope.persona_id || "") !== String(this.scope.persona_id || "")
+        || String(view.scope.group_id || "") !== String(this.scope.group_id || "")
+      )
+    ) return false;
+    const current = this.views.get("traces");
+    const incomingVersion = Number(view.projection_version || 0);
+    if (current && Number(current.projection_version || 0) > incomingVersion) {
+      return false;
+    }
+    const currentItems = current?.items || [];
+    const incomingItems = view.items || [];
+    const ordered = append
+      ? [...currentItems, ...incomingItems]
+      : [...incomingItems, ...currentItems];
+    const seen = new Set();
+    const items = ordered.filter((item) => {
+      const ref = String(item?.entity_ref || "");
+      if (!ref || seen.has(ref)) return false;
+      seen.add(ref);
+      return true;
+    });
+    const keepLoadedTail = !append && currentItems.length > 0;
+    const merged = {
+      ...(current || {}),
+      ...clone(view),
+      projection: "traces",
+      projection_version: Math.max(
+        Number(current?.projection_version || 0),
+        incomingVersion,
+      ),
+      total_count: Math.max(
+        Number(current?.total_count || 0),
+        Number(view.total_count || 0),
+        items.length,
+      ),
+      has_more: keepLoadedTail ? Boolean(current?.has_more) : Boolean(view.has_more),
+      next_cursor: keepLoadedTail ? (current?.next_cursor || null) : (view.next_cursor || null),
+      items,
+    };
+    this.views.set("traces", merged);
+    for (const item of incomingItems) this.mergeEntity(item);
+    this.emit();
+    return true;
+  }
+
   mergeBootstrap(bootstrap) {
     this.setScope({
       persona_id: bootstrap.persona_id || null,
@@ -75,6 +125,7 @@ export class ProjectionStore {
       || String(scope.persona_id || "") !== String(this.scope.persona_id || "")
       || String(scope.group_id || "") !== String(this.scope.group_id || "")
     ) return false;
+    const knownEntity = this.entities.has(String(event.entity));
     const entity = {
       entity_ref: event.entity,
       kind: event.kind,
@@ -94,6 +145,9 @@ export class ProjectionStore {
         this.views.set(projection, {
           ...view,
           items,
+          ...(projection === "traces" && !knownEntity
+            ? { total_count: Number(view.total_count || items.length - 1) + 1 }
+            : {}),
           cursor: Math.max(Number(view.cursor || 0), Number(event.cursor || 0)),
           projection_version: Math.max(
             Number(view.projection_version || 0),

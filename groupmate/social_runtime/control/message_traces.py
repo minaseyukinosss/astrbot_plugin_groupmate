@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -773,19 +775,55 @@ class MessageTraceRepository:
                 },
             )
 
-    def query(self, *, persona_id: str, group_id: str) -> dict[str, object]:
+    def query(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        limit: int = 100,
+        before: str | None = None,
+    ) -> dict[str, object]:
         persona, group = self._scope(persona_id, group_id)
+        page_size = int(limit)
+        if not 1 <= page_size <= 200:
+            raise ValueError("trace limit must be between 1 and 200")
+        boundary = self._decode_page_cursor(before) if before else None
         with connect_database(self.path) as db:
-            rows = db.execute(
+            total_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM message_traces "
+                    "WHERE persona_id=? AND group_id=?",
+                    (persona, group),
+                ).fetchone()[0]
+            )
+            sql = (
                 "SELECT entity_ref, revision, state_json, received_at, updated_at "
                 "FROM message_traces WHERE persona_id=? AND group_id=? "
-                "ORDER BY received_at DESC, entity_ref DESC LIMIT 200",
-                (persona, group),
-            ).fetchall()
+            )
+            parameters: list[object] = [persona, group]
+            if boundary is not None:
+                sql += (
+                    "AND (received_at < ? OR "
+                    "(received_at = ? AND entity_ref < ?)) "
+                )
+                parameters.extend(
+                    [boundary[0], boundary[0], boundary[1]]
+                )
+            sql += "ORDER BY received_at DESC, entity_ref DESC LIMIT ?"
+            parameters.append(page_size + 1)
+            rows = db.execute(sql, tuple(parameters)).fetchall()
             cursor_row = db.execute(
                 "SELECT version, updated_at FROM projection_cursors "
                 "WHERE projection_name='traces'"
             ).fetchone()
+        has_more = len(rows) > page_size
+        page_rows = rows[:page_size]
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = self._encode_page_cursor(
+                int(last["received_at"]), str(last["entity_ref"])
+            )
         version = int(cursor_row[0]) if cursor_row else 0
         as_of = int(cursor_row[1]) if cursor_row else None
         return {
@@ -794,8 +832,43 @@ class MessageTraceRepository:
             "cursor": version,
             "projection_version": version,
             "stale": False,
-            "items": [self._public_item(row) for row in rows],
+            "total_count": total_count,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+            "items": [self._public_item(row) for row in page_rows],
         }
+
+    @staticmethod
+    def _encode_page_cursor(received_at: int, entity_ref: str) -> str:
+        payload = json.dumps(
+            {"received_at": int(received_at), "entity_ref": str(entity_ref)},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_page_cursor(value: str) -> tuple[int, str]:
+        encoded = str(value or "").strip()
+        try:
+            payload = base64.urlsafe_b64decode(
+                encoded + "=" * (-len(encoded) % 4)
+            )
+            data = json.loads(payload.decode("utf-8"))
+            received_at = int(data["received_at"])
+            entity_ref = str(data["entity_ref"]).strip()
+        except (
+            binascii.Error,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise ValueError("invalid trace cursor") from exc
+        if not entity_ref:
+            raise ValueError("invalid trace cursor")
+        return received_at, entity_ref
 
     def detail(
         self, *, persona_id: str, group_id: str, trace_ref: str

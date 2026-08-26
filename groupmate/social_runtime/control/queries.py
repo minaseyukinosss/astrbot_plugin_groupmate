@@ -49,10 +49,19 @@ class ProjectionQueries:
     def runtime(self, *, persona_id: str, group_id: str) -> dict[str, object]:
         return self._query("runtime", persona_id=persona_id, group_id=group_id)
 
-    def traces(self, *, persona_id: str, group_id: str) -> dict[str, object]:
+    def traces(
+        self,
+        *,
+        persona_id: str,
+        group_id: str,
+        limit: int = 100,
+        before: str | None = None,
+    ) -> dict[str, object]:
         return MessageTraceRepository(self.path).query(
             persona_id=persona_id,
             group_id=group_id,
+            limit=limit,
+            before=before,
         )
 
     def activity(self, *, persona_id: str, group_id: str) -> dict[str, object]:

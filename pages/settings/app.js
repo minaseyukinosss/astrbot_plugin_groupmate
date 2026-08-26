@@ -85,13 +85,16 @@ function renderError(error) {
 
 function renderWorkspace(route = activeRoute) {
   const renderer = WORKSPACE_RENDERERS[route.path] || renderRuntime;
+  const workspaceQuery = route.path === "/runtime"
+    ? loadMoreTraces
+    : queryWorkspaceData;
   elements.workspace.replaceChildren();
   elements.workspace.setAttribute("aria-busy", "false");
   elements.workspace.append(renderer(
     (projection) => store.selectView(projection),
     submitWorkspaceCommand,
     refreshWorkspaceData,
-    queryWorkspaceData,
+    workspaceQuery,
     hydrateAvatars,
   ));
   hydrateAvatars(elements.workspace);
@@ -263,7 +266,8 @@ function render(snapshot) {
     || bootstrap.configured_runtime_mode
     || runtimeSummary.runtime_mode
     || "OFF";
-  const traceItems = snapshot.views.traces?.items || [];
+  const traceView = snapshot.views.traces || {};
+  const traceItems = traceView.items || [];
   const waiting = traceItems.filter((item) =>
     ["RECEIVED", "PLANNING", "READY", "DEFERRED"].includes(String(item.summary?.delivery?.status || "").toUpperCase()),
   ).length;
@@ -271,7 +275,9 @@ function render(snapshot) {
   elements.runtimeMode.dataset.mode = mode;
   elements.sidebarMode.textContent = mode === "SHADOW" ? "仅观察" : mode;
   elements.sidebarGroup.textContent = snapshot.scope.group_id || "—";
-  elements.visibleEvents.textContent = String(traceItems.length);
+  elements.visibleEvents.textContent = String(
+    Math.max(Number(traceView.total_count || 0), traceItems.length),
+  );
   elements.pendingTasks.textContent = String(waiting);
   renderWorkspace(activeRoute);
 }
@@ -280,7 +286,9 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
   const projections = WORKSPACE_PROJECTIONS[route.path] || [route.endpoint];
   const results = await Promise.all(projections.map(async (projection) => {
     try {
-      store.merge(await bridge.query(projection, scopeParams(), { timeoutMs }));
+      const view = await bridge.query(projection, scopeParams(), { timeoutMs });
+      if (projection === "traces") store.mergeTracePage(view);
+      else store.merge(view);
       return { projection, error: null };
     } catch (error) {
       return { projection, error };
@@ -298,6 +306,18 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
     store.setError(null);
   }
   return { failedProjections };
+}
+
+async function loadMoreTraces(before) {
+  const cursor = String(before || "").trim();
+  if (!cursor) return null;
+  const view = await bridge.query(
+    "traces",
+    { ...scopeParams(), limit: 100, before: cursor },
+    { timeoutMs: 4_000 },
+  );
+  store.mergeTracePage(view, { append: true });
+  return view;
 }
 
 async function refreshWorkspaceData() {

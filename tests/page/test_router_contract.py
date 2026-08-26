@@ -110,6 +110,37 @@ def test_polling_snapshot_reconciles_only_its_matching_command_id():
     assert result == {"afterOther": 1, "afterMatch": 0}
 
 
+def test_store_merges_trace_pages_without_losing_head_or_duplicating_rows():
+    result = _run_module(
+        "store.js",
+        "const store = new module.ProjectionStore();"
+        "store.setScope({persona_id:'aemeath',group_id:'group-1',available_groups:['group-1']});"
+        "store.mergeTracePage({projection:'traces',projection_version:1,total_count:3,"
+        "next_cursor:'page-2',has_more:true,items:["
+        "{entity_ref:'traces:new',projection_version:1,summary:{}},"
+        "{entity_ref:'traces:middle',projection_version:1,summary:{}}]});"
+        "store.mergeTracePage({projection:'traces',projection_version:1,total_count:3,"
+        "next_cursor:null,has_more:false,items:["
+        "{entity_ref:'traces:middle',projection_version:1,summary:{}},"
+        "{entity_ref:'traces:old',projection_version:1,summary:{}}]}, {append:true});"
+        "store.mergeTracePage({projection:'traces',projection_version:2,total_count:4,"
+        "next_cursor:'page-2-new',has_more:true,items:["
+        "{entity_ref:'traces:newest',projection_version:2,summary:{}},"
+        "{entity_ref:'traces:new',projection_version:1,summary:{}}]});"
+        "console.log(JSON.stringify(store.selectView('traces')));",
+    )
+
+    assert [item["entity_ref"] for item in result["items"]] == [
+        "traces:newest",
+        "traces:new",
+        "traces:middle",
+        "traces:old",
+    ]
+    assert result["total_count"] == 4
+    assert result["has_more"] is False
+    assert result["next_cursor"] is None
+
+
 def test_scope_change_clears_old_group_state_and_rejects_late_sse_events():
     result = _run_module(
         "store.js",

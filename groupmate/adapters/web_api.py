@@ -230,11 +230,23 @@ class ControlPlaneWebAPI:
                         persona_id=persona_id,
                         group_id=group_id,
                     )
+                elif endpoint == "traces":
+                    raw_limit = request.query.get("limit", 100)
+                    limit = min(200, max(1, int(raw_limit or 100)))
+                    before = str(request.query.get("before") or "").strip()
+                    body = self.queries.traces(
+                        persona_id=persona_id,
+                        group_id=group_id,
+                        limit=limit,
+                        before=before or None,
+                    )
                 else:
                     query = getattr(self.queries, endpoint)
                     body = query(persona_id=persona_id, group_id=group_id)
             except LookupError:
                 return self._error(404, "scope_not_found")
+            except ValueError:
+                return self._error(400, "invalid_query")
             except Exception as exc:
                 self._degraded["query"] = str(exc)
                 return self._error(503, "projection_query_unavailable", detail=str(exc))

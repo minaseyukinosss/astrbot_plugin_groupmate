@@ -202,6 +202,38 @@ def test_query_orders_newest_message_first(tmp_path):
     assert [item["summary"]["timing"]["received_at"] for item in items] == [20, 10]
 
 
+def test_trace_query_reports_total_and_paginates_without_duplicates(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    for index in range(7):
+        repo.record_received(
+            _platform_event(f"page-{index}"),
+            runtime_mode="SHADOW",
+            now=10 + index,
+        )
+
+    first = repo.query(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        limit=3,
+    )
+    second = repo.query(
+        persona_id="groupmate:default",
+        group_id="g-1",
+        limit=3,
+        before=first["next_cursor"],
+    )
+
+    assert first["total_count"] == 7
+    assert len(first["items"]) == 3
+    assert first["has_more"] is True
+    assert first["next_cursor"]
+    assert second["total_count"] == 7
+    assert len(second["items"]) == 3
+    assert {item["entity_ref"] for item in first["items"]}.isdisjoint(
+        item["entity_ref"] for item in second["items"]
+    )
+
+
 def test_ambient_evaluation_closes_all_pending_focus_messages(tmp_path):
     repo = MessageTraceRepository(tmp_path / "runtime.db")
     context = _platform_event("ambient-context")

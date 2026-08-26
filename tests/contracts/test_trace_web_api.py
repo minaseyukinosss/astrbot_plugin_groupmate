@@ -90,6 +90,27 @@ def test_trace_endpoint_is_group_scoped(tmp_path):
     assert unavailable.status == 404
 
 
+def test_trace_endpoint_accepts_cursor_pagination_and_caps_page_size(tmp_path):
+    api = _api(tmp_path)
+    MessageTraceRepository(api.queries.path).record_received(
+        _event("2"), runtime_mode="SHADOW", now=20
+    )
+
+    first = asyncio.run(api.handle(_get("/traces", limit="1")))
+    second = asyncio.run(
+        api.handle(_get("/traces", limit="500", before=first.body["next_cursor"]))
+    )
+
+    assert first.status == 200
+    assert first.body["total_count"] == 2
+    assert len(first.body["items"]) == 1
+    assert first.body["has_more"] is True
+    assert second.status == 200
+    assert second.body["total_count"] == 2
+    assert len(second.body["items"]) == 1
+    assert second.body["has_more"] is False
+
+
 def test_avatar_endpoint_only_resolves_registered_opaque_reference(tmp_path):
     api = _api(tmp_path)
     traces = asyncio.run(api.handle(_get("/traces")))

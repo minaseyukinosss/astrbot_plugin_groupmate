@@ -44,7 +44,18 @@ def test_runtime_console_supports_immediate_refresh_without_losing_filters():
     assert "refreshWorkspaceData" in app
     assert "立即刷新" in runtime
     assert "runtimeViewState" in runtime
-    assert "renderRuntime(select, command, refreshData)" in runtime
+    assert "renderRuntime(select, command, refreshData, loadMoreData)" in runtime
+
+
+def test_runtime_console_loads_server_pages_and_labels_counts_honestly():
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+
+    assert "mergeTracePage" in app
+    assert "loadMoreTraces" in app
+    assert "累计收到" in runtime
+    assert "已加载" in runtime and "共" in runtime
+    assert "搜索已加载的成员、消息或处理结果" in runtime
 
 
 def test_manual_refresh_keeps_existing_data_visible_and_reports_partial_failure():

@@ -167,7 +167,7 @@ function filterTraces(items, state) {
   });
 }
 
-function messageBrowser(items, refreshData) {
+function messageBrowser(items, refreshData, page, loadMoreData) {
   const state = runtimeViewState;
   const body = element("tbody");
   const count = element("span", { className: "result-count" });
@@ -186,9 +186,10 @@ function messageBrowser(items, refreshData) {
     const matched = filterTraces(items, state);
     const visible = matched.slice(0, state.limit);
     body.replaceChildren(...visible.map(traceRow));
-    count.textContent = `${matched.length} 条消息`;
+    const total = Math.max(Number(page?.total_count || 0), items.length);
+    count.textContent = `已加载 ${items.length} / 共 ${total}`;
     empty.hidden = visible.length > 0;
-    loadMore.hidden = visible.length >= matched.length;
+    loadMore.hidden = visible.length >= matched.length && !page?.has_more;
     filters.querySelectorAll("button").forEach((node) => {
       const active = node.dataset.filter === state.filter;
       node.classList.toggle("is-active", active);
@@ -211,7 +212,7 @@ function messageBrowser(items, refreshData) {
   const search = element("input", {
     attrs: {
       type: "search",
-      placeholder: "搜索成员、消息或处理结果",
+      placeholder: "搜索已加载的成员、消息或处理结果",
       "aria-label": "搜索消息链路",
     },
   });
@@ -221,9 +222,25 @@ function messageBrowser(items, refreshData) {
     state.limit = 16;
     refresh();
   });
-  loadMore.addEventListener("click", () => {
+  loadMore.addEventListener("click", async () => {
+    const matched = filterTraces(items, state);
     state.limit += 16;
-    refresh();
+    if (state.limit <= matched.length || !page?.has_more) {
+      refresh();
+      return;
+    }
+    if (typeof loadMoreData === "function") {
+      loadMore.disabled = true;
+      loadMore.textContent = "加载中…";
+      try {
+        await loadMoreData(page.next_cursor);
+      } finally {
+        if (loadMore.isConnected) {
+          loadMore.disabled = false;
+          loadMore.textContent = "加载更多";
+        }
+      }
+    }
   });
 
   const refreshButton = button("立即刷新", {
@@ -304,7 +321,7 @@ function modeCopy(mode, ready, paused, personaName) {
   return [`${personaName} 正在运行`, "符合条件的回复会经过治理后发送到群里。"];
 }
 
-function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
+function modeBanner(bootstrap, runtime, traces, items, expectedVersion, command) {
   const status = runtimeStatus(bootstrap, runtime);
   const mode = status.effective;
   const ready = bootstrap?.runtime_ready ?? mode !== "OFF";
@@ -335,7 +352,10 @@ function modeBanner(bootstrap, runtime, items, expectedVersion, command) {
         : []),
     ]),
     element("dl", { className: "mode-facts" }, [
-      element("div", {}, [element("dt", { text: "已收到" }), element("dd", { text: String(items.length) })]),
+      element("div", {}, [
+        element("dt", { text: "累计收到" }),
+        element("dd", { text: String(Math.max(Number(traces?.total_count || 0), items.length)) }),
+      ]),
       element("div", {}, [element("dt", { text: "进入 Groupmate" }), element("dd", { text: String(groupmateCount) })]),
       element("div", {}, [element("dt", { text: "会回复" }), element("dd", { text: String(wouldReplyCount) })]),
       element("div", {}, [element("dt", { text: "已发送" }), element("dd", { text: String(sentCount) })]),
@@ -378,7 +398,7 @@ function chainGuide(health) {
   ]);
 }
 
-export function renderRuntime(select, command, refreshData) {
+export function renderRuntime(select, command, refreshData, loadMoreData) {
   const bootstrap = select("bootstrap");
   const runtime = select("runtime");
   const traces = select("traces");
@@ -390,8 +410,8 @@ export function renderRuntime(select, command, refreshData) {
   const expectedVersion = controlVersion(select("governance"));
 
   return element("div", { className: "workspace-stack runtime-workspace" }, [
-    modeBanner(bootstrap, runtime, items, expectedVersion, command),
-    messageBrowser(items, refreshData),
+    modeBanner(bootstrap, runtime, traces, items, expectedVersion, command),
+    messageBrowser(items, refreshData, traces, loadMoreData),
     chainGuide(health),
   ]);
 }
