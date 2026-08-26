@@ -17,6 +17,9 @@ from .identity import IdentityService
 from .policy import ProfileEvidencePolicy
 from .extractor import ProfileExtractionResult, ProfileExtractor
 from .service import ProfileService
+from .snapshot import SnapshotBuilder
+from .graph import SocialGraph
+from .group_portrait import GroupPortrait, GroupPortraitBuilder
 
 __all__ = (
     "MemberAlias",
@@ -34,6 +37,10 @@ __all__ = (
     "ProfileExtractor",
     "ProfileSnapshot",
     "ProfileService",
+    "SnapshotBuilder",
+    "SocialGraph",
+    "GroupPortrait",
+    "GroupPortraitBuilder",
     "SocialEdge",
     "SocialEdgeCandidate",
 )

@@ -111,6 +111,9 @@ def test_due_batch_persists_valid_fact(tmp_path):
         )
     ] == ["喜欢冷饮"]
     assert service.pending_count("group-1") == 0
+    snapshot = service.repository.snapshot("persona", "group-1", "member-1")
+    assert snapshot is not None
+    assert snapshot.one_line_portrait == "喜欢冷饮"
 
 
 def test_provider_failure_keeps_observation_for_safe_retry(tmp_path):

@@ -18,6 +18,7 @@ from .contracts import (
     ProfileSnapshot,
     SocialEdge,
 )
+from .group_portrait import GroupPortrait
 
 
 class ProfileIdentityConflict(RuntimeError):
@@ -543,6 +544,48 @@ class ProfileRepository:
         ):
             values[name] = tuple(values.get(name) or ())
         return ProfileSnapshot(**values)
+
+    def put_group_portrait(self, portrait: GroupPortrait) -> GroupPortrait:
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO group_portraits("
+                "persona_id,group_id,portrait_json,source_revision,generated_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(persona_id,group_id) "
+                "DO UPDATE SET portrait_json=excluded.portrait_json,"
+                "source_revision=excluded.source_revision,generated_at=excluded.generated_at "
+                "WHERE excluded.source_revision>=source_revision",
+                (
+                    portrait.persona_id,
+                    portrait.group_id,
+                    self._json(asdict(portrait)),
+                    portrait.source_revision,
+                    portrait.generated_at,
+                ),
+            )
+        return portrait
+
+    def group_portrait(
+        self, persona_id: str, group_id: str
+    ) -> GroupPortrait | None:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT portrait_json FROM group_portraits "
+                "WHERE persona_id=? AND group_id=?",
+                (str(persona_id), str(group_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        values = dict(json.loads(row["portrait_json"]))
+        values["common_topics"] = tuple(values.get("common_topics") or ())
+        values["role_counts"] = {
+            str(key): int(value)
+            for key, value in dict(values.get("role_counts") or {}).items()
+        }
+        values["relation_counts"] = {
+            str(key): int(value)
+            for key, value in dict(values.get("relation_counts") or {}).items()
+        }
+        return GroupPortrait(**values)
 
     @staticmethod
     def _json(value: object) -> str:

@@ -13,6 +13,7 @@ from .contracts import ProfileObservation
 from .extractor import ProfileExtractor
 from .identity import IdentityService
 from .repository import ProfileRepository
+from .snapshot import SnapshotBuilder
 
 
 class ProfileService:
@@ -26,6 +27,7 @@ class ProfileService:
         batch_size: int = 20,
         interval_seconds: int = 600,
         clock: Callable[[], float] | None = None,
+        snapshot_builder: SnapshotBuilder | None = None,
     ) -> None:
         self.repository = repository
         self.extractor = extractor
@@ -35,6 +37,7 @@ class ProfileService:
         self.batch_size = max(1, min(20, int(batch_size)))
         self.interval_seconds = max(10, int(interval_seconds))
         self.clock = time.time if clock is None else clock
+        self.snapshot_builder = snapshot_builder or SnapshotBuilder()
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -90,6 +93,15 @@ class ProfileService:
                 continue
             for fact in result.facts:
                 self.repository.put_fact(fact)
+            for episode in result.episodes:
+                self.repository.put_episode(episode)
+            for edge in result.edges:
+                self.repository.put_edge(edge)
+            self._refresh_snapshots(
+                observations,
+                result=result,
+                generated_at=decision_now,
+            )
             self.repository.complete_observations(
                 event_ids,
                 status=(
@@ -99,6 +111,59 @@ class ProfileService:
                 ),
                 diagnostic_code=result.diagnostic_code,
             )
+
+    def _refresh_snapshots(
+        self,
+        observations: tuple[ProfileObservation, ...],
+        *,
+        result,
+        generated_at: int,
+    ) -> None:
+        subject_ids = {
+            item.subject_id for item in result.facts
+        } | {
+            participant
+            for item in result.episodes
+            for participant in item.participants
+        } | {
+            actor_id
+            for item in result.edges
+            for actor_id in (item.source_member_id, item.target_member_id)
+        }
+        observations_by_actor = {
+            item.actor_id: item for item in observations
+        }
+        source_revision = max(
+            (item.occurred_at for item in observations),
+            default=generated_at,
+        )
+        for subject_id in subject_ids:
+            observation = observations_by_actor.get(subject_id)
+            if observation is None:
+                continue
+            platform = str(observation.payload.get("platform") or "qq")
+            identity = self.identity_service.resolve(
+                self.persona_id, platform, subject_id
+            )
+            if identity is None:
+                continue
+            group_id = observation.group_id
+            snapshot = self.snapshot_builder.build(
+                identity,
+                group_id=group_id,
+                facts=self.repository.facts(
+                    self.persona_id, group_id, subject_id
+                ),
+                episodes=self.repository.episodes(
+                    self.persona_id, group_id, subject_id
+                ),
+                edges=self.repository.edges(
+                    self.persona_id, group_id, subject_id
+                ),
+                source_revision=source_revision,
+                generated_at=generated_at,
+            )
+            self.repository.put_snapshot(snapshot)
 
     def pending_count(self, group_id: str) -> int:
         return self.repository.pending_observation_count(

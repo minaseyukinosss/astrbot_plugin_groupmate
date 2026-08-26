@@ -26,19 +26,24 @@ class _Client:
         )
 
 
-def _observation():
+def _observation(
+    event_id="event-1",
+    actor_id="member-1",
+    text="我喜欢冷饮",
+    occurred_at=100,
+):
     return ProfileObservation(
-        event_id="event-1",
+        event_id=event_id,
         persona_id="persona",
         group_id="group-1",
-        actor_id="member-1",
+        actor_id=actor_id,
         payload={
-            "text": "我喜欢冷饮",
-            "sender": {"id": "member-1", "name": "群友甲"},
+            "text": text,
+            "sender": {"id": actor_id, "name": actor_id},
             "mentions": [],
             "reply_to_actor_id": None,
         },
-        occurred_at=100,
+        occurred_at=occurred_at,
     )
 
 
@@ -100,3 +105,49 @@ def test_extractor_rejects_unknown_category_without_partial_fact():
 
     assert result.facts == ()
     assert result.diagnostic_code == "profile_output_invalid"
+
+
+def test_extractor_validates_episode_and_repeated_social_edge_evidence():
+    observations = (
+        _observation("event-1", "member-1", "这个问题我来看看", 100),
+        _observation("event-2", "member-2", "我也一起排查", 110),
+        _observation("event-3", "member-1", "已经修好了", 120),
+    )
+    client = _Client(
+        {
+            "facts": [],
+            "episodes": [
+                {
+                    "title": "一起修复问题",
+                    "summary": "两位成员共同排查并修复了问题",
+                    "participants": ["member-1", "member-2"],
+                    "episode_type": "shared_achievement",
+                    "valence": 0.7,
+                    "importance": 0.85,
+                    "confidence": 0.94,
+                    "evidence_event_ids": ["event-1", "event-2", "event-3"],
+                }
+            ],
+            "edges": [
+                {
+                    "source_member_id": "member-1",
+                    "target_member_id": "member-2",
+                    "relation_type": "technical_peer",
+                    "direction": "bidirectional",
+                    "strength": 0.72,
+                    "confidence": 0.92,
+                    "evidence_event_ids": ["event-1", "event-2", "event-3"],
+                }
+            ],
+        }
+    )
+
+    result = asyncio.run(
+        ProfileExtractor(client, ProfileEvidencePolicy()).extract(observations)
+    )
+
+    assert result.episodes[0].title == "一起修复问题"
+    assert result.episodes[0].status == "confirmed"
+    assert result.edges[0].relation_type == "technical_peer"
+    assert result.edges[0].status == "confirmed"
+    assert result.diagnostic_code is None

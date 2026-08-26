@@ -20,7 +20,11 @@ _SYSTEM_MESSAGE = (
     "不得生成回复，不得推断敏感关系，不得把第三方说法当事实。只输出JSON对象，"
     "顶层必须包含facts、episodes、edges三个数组。facts每项仅含subject_id、category、"
     "summary、source_kind、source_actor_id、evidence_event_ids、confidence。subject_id、"
-    "source_actor_id和证据ID必须原样复制输入；不确定就不输出。"
+    "source_actor_id和证据ID必须原样复制输入。episodes每项仅含title、summary、"
+    "participants、episode_type、valence、importance、confidence、evidence_event_ids；"
+    "edges每项仅含source_member_id、target_member_id、relation_type、direction、"
+    "strength、confidence、evidence_event_ids。成员ID与证据ID必须原样复制输入，"
+    "经历至少需要两条证据，关系至少需要三条重复证据；不确定就不输出。"
 )
 
 
