@@ -13,13 +13,18 @@ from groupmate.social_runtime.control.commands import (
     CommandService,
     CommandValidationError,
     CorrectSocialState,
+    CorrectProfileFact,
     ExpectedVersionConflict,
     ForgetMemory,
+    InvalidateProfileFact,
     LinkIdentity,
     PauseRuntime,
     ResetState,
     ReviewEvidence,
 )
+from groupmate.adapters.participants import ParticipantDirectory
+from groupmate.social_runtime.profile.contracts import ProfileFact, ProfileSnapshot
+from groupmate.social_runtime.profile.repository import ProfileRepository
 from groupmate.social_runtime.control.projections import ProjectionConsumer
 from groupmate.social_runtime.persistence.schema import connect_database
 
@@ -267,3 +272,96 @@ def test_cross_group_entity_reference_returns_404_without_audit(tmp_path):
 
     assert hidden.value.status_code == 404
     assert _action_count(path) == 0
+
+
+def _seed_profile_fact(path, tmp_path):
+    member = ParticipantDirectory(path, tmp_path / "avatars").remember_actor(
+        persona_id="aemeath",
+        group_id="group-1",
+        actor_id="member-151",
+        display_name="玲151",
+        updated_at=100,
+    )
+    repository = ProfileRepository(path)
+    repository.put_fact(
+        ProfileFact(
+            fact_id="fact:old",
+            persona_id="aemeath",
+            group_id="group-1",
+            subject_id="member-151",
+            category="preference",
+            summary="不喜欢清晰说明",
+            source_kind="observed_pattern",
+            source_actor_id="member-151",
+            source_event_ids=("event:1", "event:2"),
+            confidence=0.9,
+            status="confirmed",
+            evidence_count=2,
+            valid_from=90,
+            injectable=True,
+        )
+    )
+    repository.put_snapshot(
+        ProfileSnapshot(
+            persona_id="aemeath",
+            group_id="group-1",
+            subject_id="member-151",
+            one_line_portrait="不喜欢清晰说明",
+            group_roles=(),
+            individual_fingerprints=(),
+            preferences_and_boundaries=("不喜欢清晰说明",),
+            representative_episode_ids=(),
+            relationship_summary="正在了解",
+            maturity="forming",
+            source_revision=3,
+            generated_at=100,
+        )
+    )
+    return member, repository
+
+
+def test_admin_can_correct_profile_fact_with_profile_revision_and_audit(tmp_path):
+    path = tmp_path / "runtime.db"
+    member, repository = _seed_profile_fact(path, tmp_path)
+    service = _service(path)
+
+    result = service.execute(
+        CorrectProfileFact(
+            member["member_ref"],
+            "fact:old",
+            "重视清晰且可验证的说明",
+            command_id="cmd:profile-correct",
+        ),
+        _context(expected_version=3),
+    )
+
+    facts = repository.facts("aemeath", "group-1", "member-151")
+    assert result.data["profile_revision"] == 4
+    assert [(fact.summary, fact.status, fact.injectable) for fact in facts] == [
+        ("不喜欢清晰说明", "superseded", False),
+        ("重视清晰且可验证的说明", "confirmed", True),
+    ]
+    assert repository.snapshot("aemeath", "group-1", "member-151").source_revision == 4
+    with connect_database(path) as db:
+        audit = db.execute(
+            "SELECT action_type FROM profile_audit WHERE subject_id='member-151'"
+        ).fetchone()
+    assert audit[0] == "profile_fact_corrected"
+
+
+def test_profile_fact_invalidation_is_group_scoped_and_rejects_stale_revision(tmp_path):
+    path = tmp_path / "runtime.db"
+    member, repository = _seed_profile_fact(path, tmp_path)
+    service = _service(path)
+    command = InvalidateProfileFact(
+        member["member_ref"], "fact:old", command_id="cmd:profile-invalidate"
+    )
+
+    with pytest.raises(ExpectedVersionConflict):
+        service.execute(command, _context(expected_version=2))
+
+    result = service.execute(command, _context(expected_version=3))
+    fact = repository.facts("aemeath", "group-1", "member-151")[0]
+    assert result.data["status"] == "invalidated"
+    assert fact.status == "rejected"
+    assert fact.injectable is False

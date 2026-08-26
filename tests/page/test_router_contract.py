@@ -26,20 +26,20 @@ def _run_module(filename: str, body: str):
     return json.loads(result.stdout)
 
 
-def test_router_has_only_runtime_route_and_safe_fallback():
+def test_router_has_runtime_and_profile_routes_with_safe_fallback():
     result = _run_module(
         "router.js",
         "console.log(JSON.stringify({"
         "routes: module.ROUTES.map((item) => item.path),"
-        "known: module.normalizeHash('#/runtime?subject=x'),"
+        "known: module.normalizeHash('#/profiles?subject=x'),"
         "unknown: module.normalizeHash('#/not-a-route'),"
         "empty: module.normalizeHash('')"
         "}));",
     )
 
     assert result == {
-        "routes": ["/runtime"],
-        "known": "/runtime",
+        "routes": ["/runtime", "/profiles"],
+        "known": "/profiles",
         "unknown": "/runtime",
         "empty": "/runtime",
     }

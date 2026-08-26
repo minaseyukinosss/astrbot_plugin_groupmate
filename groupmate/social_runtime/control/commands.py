@@ -171,6 +171,21 @@ class ApproveCalibration:
     command_id: str | None = None
 
 
+@dataclass(frozen=True)
+class CorrectProfileFact:
+    member_ref: str
+    fact_ref: str
+    new_summary: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class InvalidateProfileFact:
+    member_ref: str
+    fact_ref: str
+    command_id: str | None = None
+
+
 ControlCommand = (
     PauseRuntime
     | SetRuntimeMode
@@ -188,6 +203,8 @@ ControlCommand = (
     | LinkIdentity
     | CancelTask
     | ApproveCalibration
+    | CorrectProfileFact
+    | InvalidateProfileFact
 )
 
 
@@ -212,6 +229,8 @@ _HIGH_IMPACT = (
     CancelTask,
     ApproveCalibration,
     ReviewShadowDecision,
+    CorrectProfileFact,
+    InvalidateProfileFact,
 )
 _CONFIG_COMMANDS = (
     CreateConfigDraft,
@@ -220,6 +239,7 @@ _CONFIG_COMMANDS = (
     PublishConfig,
     RestoreConfig,
 )
+_PROFILE_COMMANDS = (CorrectProfileFact, InvalidateProfileFact)
 _ALL_PROJECTIONS = (
     "runtime",
     "activity",
@@ -617,6 +637,102 @@ class CommandService:
                     ("governance", "evaluation"),
                 )
             }, "control.calibration_approved"
+        if isinstance(command, CorrectProfileFact):
+            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            row = self._profile_fact_on(db, context, actor_id, command.fact_ref)
+            summary = " ".join(str(command.new_summary or "").split())
+            if not summary or len(summary) > 160:
+                raise CommandValidationError(
+                    "profile fact correction must contain 1-160 characters"
+                )
+            revision = context.expected_version + 1
+            new_fact_ref = self._opaque_id(
+                "profile-fact", str(command.fact_ref), summary, str(now)
+            )
+            evidence_ref = self._opaque_id(
+                "profile-admin", context.admin_id, new_fact_ref
+            )
+            db.execute(
+                "UPDATE profile_facts SET status='superseded',injectable=0,"
+                "valid_until=?,updated_at=? WHERE fact_id=?",
+                (now, now, str(command.fact_ref)),
+            )
+            db.execute(
+                "INSERT INTO profile_facts(fact_id,persona_id,group_id,subject_id,"
+                "category,summary,source_kind,source_actor_id,source_event_ids_json,"
+                "confidence,status,evidence_count,valid_from,valid_until,"
+                "supersedes_fact_id,injectable,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    new_fact_ref,
+                    context.persona_id,
+                    context.group_id,
+                    actor_id,
+                    str(row["category"]),
+                    summary,
+                    "admin_correction",
+                    context.admin_id,
+                    self._canonical_json([evidence_ref]),
+                    1.0,
+                    "confirmed",
+                    1,
+                    now,
+                    None,
+                    str(command.fact_ref),
+                    1,
+                    now,
+                ),
+            )
+            self._record_profile_audit(
+                db,
+                context,
+                subject_id=actor_id,
+                action_type="profile_fact_corrected",
+                target_id=str(command.fact_ref),
+                details={"new_fact_ref": new_fact_ref},
+                now=now,
+            )
+            self._advance_profile_snapshot(
+                db,
+                context,
+                actor_id,
+                revision=revision,
+                now=now,
+                replace=(str(row["summary"]), summary),
+            )
+            return {
+                "member_ref": str(command.member_ref),
+                "fact_ref": new_fact_ref,
+                "profile_revision": revision,
+                "status": "corrected",
+            }, "control.profile_fact_corrected"
+        if isinstance(command, InvalidateProfileFact):
+            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            self._profile_fact_on(db, context, actor_id, command.fact_ref)
+            revision = context.expected_version + 1
+            db.execute(
+                "UPDATE profile_facts SET status='rejected',injectable=0,"
+                "valid_until=?,updated_at=? WHERE fact_id=?",
+                (now, now, str(command.fact_ref)),
+            )
+            self._record_profile_audit(
+                db,
+                context,
+                subject_id=actor_id,
+                action_type="profile_fact_invalidated",
+                target_id=str(command.fact_ref),
+                details={"status": "rejected"},
+                now=now,
+            )
+            self._advance_profile_snapshot(
+                db, context, actor_id, revision=revision, now=now
+            )
+            return {
+                "member_ref": str(command.member_ref),
+                "fact_ref": str(command.fact_ref),
+                "profile_revision": revision,
+                "status": "invalidated",
+            }, "control.profile_fact_invalidated"
         raise CommandValidationError("unsupported control command")
 
     def _validate_context(
@@ -654,7 +770,121 @@ class CommandService:
                 persona_id=context.persona_id,
                 group_id=context.group_id,
             )
+        if isinstance(command, _PROFILE_COMMANDS):
+            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            row = db.execute(
+                "SELECT source_revision FROM profile_snapshots WHERE persona_id=? "
+                "AND group_id=? AND subject_id=?",
+                (context.persona_id, context.group_id, actor_id),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
         return self._control_version_on(db, context)
+
+    @classmethod
+    def _profile_subject_on(
+        cls, db: sqlite3.Connection, context: CommandContext, member_ref: object
+    ) -> str:
+        normalized = cls._required_text(member_ref, "member reference")
+        row = db.execute(
+            "SELECT actor_id FROM participant_directory WHERE persona_id=? "
+            "AND group_id=? AND member_ref=?",
+            (context.persona_id, context.group_id, normalized),
+        ).fetchone()
+        if row is None:
+            raise CommandNotFound("profile member is not available")
+        return str(row[0])
+
+    @classmethod
+    def _profile_fact_on(
+        cls,
+        db: sqlite3.Connection,
+        context: CommandContext,
+        actor_id: str,
+        fact_ref: object,
+    ):
+        normalized = cls._required_text(fact_ref, "profile fact reference")
+        row = db.execute(
+            "SELECT * FROM profile_facts WHERE fact_id=? AND persona_id=? "
+            "AND group_id=? AND subject_id=?",
+            (normalized, context.persona_id, context.group_id, actor_id),
+        ).fetchone()
+        if row is None:
+            raise CommandNotFound("profile fact is not available")
+        return row
+
+    @classmethod
+    def _record_profile_audit(
+        cls,
+        db: sqlite3.Connection,
+        context: CommandContext,
+        *,
+        subject_id: str,
+        action_type: str,
+        target_id: str,
+        details: Mapping[str, object],
+        now: int,
+    ) -> None:
+        audit_id = cls._opaque_id(
+            "profile-audit", context.admin_id, action_type, target_id, str(now)
+        )
+        db.execute(
+            "INSERT INTO profile_audit(audit_id,persona_id,group_id,subject_id,"
+            "actor_id,action_type,target_id,audit_json,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                audit_id,
+                context.persona_id,
+                context.group_id,
+                subject_id,
+                context.admin_id,
+                action_type,
+                target_id,
+                cls._canonical_json(dict(details)),
+                now,
+            ),
+        )
+
+    @classmethod
+    def _advance_profile_snapshot(
+        cls,
+        db: sqlite3.Connection,
+        context: CommandContext,
+        actor_id: str,
+        *,
+        revision: int,
+        now: int,
+        replace: tuple[str, str] | None = None,
+    ) -> None:
+        row = db.execute(
+            "SELECT snapshot_json FROM profile_snapshots WHERE persona_id=? "
+            "AND group_id=? AND subject_id=?",
+            (context.persona_id, context.group_id, actor_id),
+        ).fetchone()
+        if row is None:
+            return
+        payload = dict(json.loads(str(row[0])))
+        if replace is not None:
+            old, new = replace
+            for key in ("individual_fingerprints", "preferences_and_boundaries"):
+                payload[key] = [
+                    new if value == old else value for value in payload.get(key, [])
+                ]
+            if payload.get("one_line_portrait") == old:
+                payload["one_line_portrait"] = new
+        payload["source_revision"] = revision
+        payload["generated_at"] = now
+        db.execute(
+            "UPDATE profile_snapshots SET snapshot_json=?,source_revision=?,"
+            "generated_at=? WHERE persona_id=? AND group_id=? AND subject_id=?",
+            (
+                cls._canonical_json(payload),
+                revision,
+                now,
+                context.persona_id,
+                context.group_id,
+                actor_id,
+            ),
+        )
 
     @staticmethod
     def _control_version_on(
@@ -816,10 +1046,12 @@ __all__ = (
     "CommandService",
     "CommandValidationError",
     "CorrectSocialState",
+    "CorrectProfileFact",
     "CreateConfigDraft",
     "DryRunConfig",
     "ExpectedVersionConflict",
     "ForgetMemory",
+    "InvalidateProfileFact",
     "LinkIdentity",
     "PauseRuntime",
     "PublishConfig",

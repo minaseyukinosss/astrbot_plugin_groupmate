@@ -318,6 +318,72 @@
       summary: { status: "PUBLISHED", config_version: 3 },
       evidence_refs: [],
     }],
+    profiles: [
+      {
+        entity_ref: "profiles:member:a1", kind: "member.profile", projection_version: 8, as_of: now,
+        evidence_refs: [], summary: {
+          ...actor("玲151", "a1"), one_line_portrait: "会持续追问到问题真正落地",
+          maturity: "established", group_roles: ["体验把关者"], fact_count: 9,
+          episode_count: 3, relation_count: 2, personalization_enabled: true, updated_at: now,
+        },
+      },
+      {
+        entity_ref: "profiles:member:b2", kind: "member.profile", projection_version: 5, as_of: now - 120,
+        evidence_refs: [], summary: {
+          ...actor("小赛151", "b2"), one_line_portrait: "擅长把复杂技术问题拆成可执行步骤",
+          maturity: "forming", group_roles: ["技术同伴"], fact_count: 5,
+          episode_count: 2, relation_count: 1, personalization_enabled: true, updated_at: now - 120,
+        },
+      },
+      {
+        entity_ref: "profiles:member:c3", kind: "member.profile", projection_version: 1, as_of: now - 300,
+        evidence_refs: [], summary: {
+          ...actor("青禾", "c3"), one_line_portrait: "画像正在形成", maturity: "new",
+          group_roles: [], fact_count: 1, episode_count: 0, relation_count: 0,
+          personalization_enabled: true, updated_at: now - 300,
+        },
+      },
+    ],
+    "group-portrait": [{
+      entity_ref: "group-portrait:current", kind: "group.profile", projection_version: 8,
+      as_of: now, evidence_refs: [], summary: {
+        summary: "这个群重视问题落地、习惯直接反馈",
+        common_topics: ["插件开发", "群聊体验", "上线问题"], activity_rhythm: "晚间活跃",
+        role_counts: { 体验把关者: 1, 技术同伴: 1 }, relation_counts: { technical_peer: 1 },
+        member_count: 3, source_revision: 8, generated_at: now,
+      },
+    }],
+  };
+  const profileDetail = {
+    projection: "profile", scope: { persona_id: "groupmate:default", group_id: "72819823" },
+    as_of: now, cursor: 8, projection_version: 8, stale: false, items: [{
+      entity_ref: "profile:member:a1", kind: "member.profile.detail", projection_version: 8,
+      as_of: now, evidence_refs: [], summary: {
+        member: actor("玲151", "a1"), personalization_enabled: true, profile_revision: 8,
+        snapshot: {
+          one_line_portrait: "会持续追问到问题真正落地",
+          group_roles: ["体验把关者"],
+          individual_fingerprints: ["对模糊结论会继续追问", "能快速发现线上体验与设计预期的差距", "更看重真实可用而不是技术自证"],
+          preferences_and_boundaries: ["喜欢直接、清楚、能验证的说明", "不接受只展示过程却没有明确结论"],
+          relationship_summary: "长期共同打磨 Groupmate 的开发同伴",
+          maturity: "established", source_revision: 8, generated_at: now,
+        },
+        facts: [
+          { fact_ref: "fact:1", category: "沟通偏好", summary: "喜欢直接、清楚、能验证的说明", status: "confirmed", evidence_count: 4, confidence: 0.96 },
+          { fact_ref: "fact:2", category: "行为模式", summary: "对没有落地的问题会持续跟进", status: "confirmed", evidence_count: 6, confidence: 0.94 },
+        ],
+        episodes: [
+          { episode_ref: "episode:1", title: "一起修复线上图片错行", summary: "持续对比真实群聊与预览效果，直到字体和间距问题落地。", occurred_at: now - 86400 },
+          { episode_ref: "episode:2", title: "确定策略优先、模型增强", summary: "在两天 SHADOW 数据后推动参与判断从单纯模型调用转为可靠策略主线。", occurred_at: now - 172800 },
+        ],
+        relations: [{
+          other_member_ref: "member:b2", other_display_name: "小赛151", other_avatar_ref: "participant:b2",
+          relation_type: "technical_peer", direction: "bidirectional", strength: 0.78,
+          confidence: 0.91, status: "confirmed", last_observed_at: now,
+        }],
+        audit: [{ action_type: "画像快照已更新", created_at: now }],
+      },
+    }],
   };
   const response = (projection) => ({
     projection,
@@ -371,6 +437,7 @@
         };
       }
       if (endpoint === "media") throw new Error("preview unavailable");
+      if (endpoint === "profile") return profileDetail;
       const value = response(endpoint);
       if (!params.entity_ref) return value;
       return { ...value, items: value.items.filter((item) => item.entity_ref === params.entity_ref) };

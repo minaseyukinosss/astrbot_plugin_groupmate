@@ -1,5 +1,6 @@
 export const ROUTES = Object.freeze([
   { path: "/runtime", label: "运行中心", endpoint: "runtime" },
+  { path: "/profiles", label: "群成员画像", endpoint: "profiles" },
 ]);
 
 const ROUTE_PATHS = new Set(ROUTES.map((route) => route.path));

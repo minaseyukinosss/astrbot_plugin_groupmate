@@ -4,6 +4,7 @@ import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
 import { ProjectionStore } from "./store.js";
 import { renderRuntime } from "./workspaces/runtime.js";
+import { renderProfiles } from "./workspaces/profiles.js";
 import { safeMediaPreview } from "./components/security.js";
 
 const bridge = new ApiBridge();
@@ -20,10 +21,12 @@ const mediaRequests = new Map();
 
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
+  "/profiles": renderProfiles,
 });
 
 const WORKSPACE_PROJECTIONS = Object.freeze({
   "/runtime": ["runtime", "traces", "health", "persona", "governance"],
+  "/profiles": ["profiles", "group-portrait"],
 });
 
 const elements = {
@@ -40,6 +43,7 @@ const elements = {
   pendingTasks: document.getElementById("pending-tasks"),
   themeToggle: document.getElementById("theme-toggle"),
   title: document.getElementById("workspace-title"),
+  context: document.getElementById("workspace-context"),
   description: document.getElementById("workspace-description"),
   workspace: document.getElementById("workspace"),
   error: document.getElementById("error-banner"),
@@ -61,6 +65,9 @@ function renderNavigation(route) {
   const [title, description] = workspaceCopy(route.path, locale);
   elements.title.textContent = title;
   elements.description.textContent = description;
+  elements.context.textContent = route.path === "/profiles"
+    ? "持续认知 · 当前群组成员与关系"
+    : "此刻 · 当前群组实时消息链路";
 }
 
 function renderConnection(connection) {
@@ -84,9 +91,15 @@ function renderWorkspace(route = activeRoute) {
     (projection) => store.selectView(projection),
     submitWorkspaceCommand,
     refreshWorkspaceData,
+    queryWorkspaceData,
+    hydrateAvatars,
   ));
   hydrateAvatars(elements.workspace);
   hydrateMedia(elements.workspace);
+}
+
+function queryWorkspaceData(endpoint, params = {}, options = {}) {
+  return bridge.query(endpoint, { ...scopeParams(), ...params }, options);
 }
 
 async function avatarSource(avatarRef) {

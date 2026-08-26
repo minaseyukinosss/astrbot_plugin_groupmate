@@ -16,11 +16,13 @@ from ..social_runtime.control.commands import (
     CommandError,
     CommandService,
     CommandValidationError,
+    CorrectProfileFact,
     CorrectSocialState,
     CreateConfigDraft,
     DryRunConfig,
     ExpectedVersionConflict,
     ForgetMemory,
+    InvalidateProfileFact,
     LinkIdentity,
     PauseRuntime,
     PublishConfig,
@@ -67,6 +69,9 @@ class ControlPlaneWebAPI:
         "governance",
         "evaluation",
         "health",
+        "profiles",
+        "profile",
+        "group-portrait",
     )
 
     def __init__(
@@ -135,8 +140,20 @@ class ControlPlaneWebAPI:
                 persona_id, group_id = self._scope(
                     request, allow_default=endpoint == "bootstrap"
                 )
-                query = getattr(self.queries, endpoint)
-                body = query(persona_id=persona_id, group_id=group_id)
+                if endpoint == "profile":
+                    body = self.queries.profile(
+                        persona_id=persona_id,
+                        group_id=group_id,
+                        member_ref=str(request.query.get("member_ref") or ""),
+                    )
+                elif endpoint == "group-portrait":
+                    body = self.queries.group_portrait(
+                        persona_id=persona_id,
+                        group_id=group_id,
+                    )
+                else:
+                    query = getattr(self.queries, endpoint)
+                    body = query(persona_id=persona_id, group_id=group_id)
             except LookupError:
                 return self._error(404, "scope_not_found")
             except Exception as exc:
@@ -425,6 +442,17 @@ class ControlPlaneWebAPI:
             "approve_calibration": lambda: ApproveCalibration(
                 str(payload.get("entity_ref") or ""), command_id=command_id
             ),
+            "profile_fact_correct": lambda: CorrectProfileFact(
+                str(payload.get("member_ref") or ""),
+                str(payload.get("fact_ref") or ""),
+                str(payload.get("new_summary") or ""),
+                command_id=command_id,
+            ),
+            "profile_fact_invalidate": lambda: InvalidateProfileFact(
+                str(payload.get("member_ref") or ""),
+                str(payload.get("fact_ref") or ""),
+                command_id=command_id,
+            ),
         }
         constructor = constructors.get(kind)
         if constructor is None:
@@ -522,6 +550,7 @@ class AstrBotControlPlaneRoutes:
                 "entity_ref": request.query.get("entity_ref"),
                 "avatar_ref": request.query.get("avatar_ref"),
                 "media_ref": request.query.get("media_ref"),
+                "member_ref": request.query.get("member_ref"),
             }
             response = await api.handle(
                 WebRequest(

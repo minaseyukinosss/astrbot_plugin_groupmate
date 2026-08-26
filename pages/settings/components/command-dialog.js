@@ -10,6 +10,8 @@ const HIGH_IMPACT = new Set([
   "cancel",
   "approve_calibration",
   "shadow_review",
+  "profile_fact_correct",
+  "profile_fact_invalidate",
 ]);
 
 export function requiresConfirmation(type) {
@@ -155,5 +157,7 @@ function labelFor(type) {
     cancel: "取消任务",
     approve_calibration: "批准校准",
     shadow_review: "复核 SHADOW 决策",
+    profile_fact_correct: "纠正画像事实",
+    profile_fact_invalidate: "使画像事实失效",
   })[type] || "提交受治理命令";
 }
