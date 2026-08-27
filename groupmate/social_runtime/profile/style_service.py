@@ -45,6 +45,7 @@ class MemberStyleService:
         self.clock = time.time if clock is None else clock
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._client_closed = False
         self._diagnostics: dict[tuple[str, str], str | None] = {}
 
     def wake(self) -> None:
@@ -142,6 +143,28 @@ class MemberStyleService:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        if not self._client_closed:
+            close = getattr(self.client, "close", None)
+            if callable(close):
+                await close()
+            self._client_closed = True
+
+    @property
+    def task_running(self) -> bool:
+        task = self._task
+        return bool(task is not None and not task.done())
+
+    def health(self, group_id: str) -> dict[str, object]:
+        diagnostics = tuple(
+            code
+            for (group, _member), code in self._diagnostics.items()
+            if group == str(group_id) and code
+        )
+        return {
+            "enabled": True,
+            "task_running": self.task_running,
+            "last_diagnostic": diagnostics[-1] if diagnostics else None,
+        }
 
     async def _run(self) -> None:
         while True:

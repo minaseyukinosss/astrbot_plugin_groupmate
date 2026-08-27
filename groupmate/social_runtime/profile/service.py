@@ -26,6 +26,7 @@ class ProfileService:
         group_ids: tuple[str, ...],
         batch_size: int = 20,
         interval_seconds: int = 600,
+        style_service: object | None = None,
         clock: Callable[[], float] | None = None,
         snapshot_builder: SnapshotBuilder | None = None,
     ) -> None:
@@ -36,6 +37,7 @@ class ProfileService:
         self.group_ids = tuple(dict.fromkeys(str(item) for item in group_ids))
         self.batch_size = max(1, min(20, int(batch_size)))
         self.interval_seconds = max(10, int(interval_seconds))
+        self.style_service = style_service
         self.clock = time.time if clock is None else clock
         self.snapshot_builder = snapshot_builder or SnapshotBuilder()
         self._wake = asyncio.Event()
@@ -63,6 +65,10 @@ class ProfileService:
         )
         if inserted and self.pending_count(event.group_id) >= self.batch_size:
             self._wake.set()
+        if inserted and self.style_service is not None:
+            wake = getattr(self.style_service, "wake", None)
+            if callable(wake):
+                wake()
         return inserted
 
     async def process_due(self, *, now: int | None = None) -> None:
@@ -178,8 +184,16 @@ class ProfileService:
     async def start(self) -> None:
         if self._task is None:
             self._task = asyncio.create_task(self._run())
+        if self.style_service is not None:
+            start = getattr(self.style_service, "start", None)
+            if callable(start):
+                await start()
 
     async def close(self) -> None:
+        if self.style_service is not None:
+            close = getattr(self.style_service, "close", None)
+            if callable(close):
+                await close()
         task = self._task
         self._task = None
         if task is None:

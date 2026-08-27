@@ -129,6 +129,21 @@ class ControlPlaneWebAPI:
         self._degraded: dict[str, str] = {}
 
     def _live_runtime_status(self, group_id: str) -> dict[str, object]:
+        empty_profile_status = {
+            "enabled": False,
+            "task_running": False,
+            "pending_count": 0,
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "last_diagnostic": None,
+        }
+        empty_member_style_status = {
+            "enabled": False,
+            "task_running": False,
+            "active_session": False,
+            "session_expires_at": None,
+            "last_diagnostic": None,
+        }
         fallback = {
             "effective_runtime_mode": self.runtime_mode,
             "runtime_state": (
@@ -138,6 +153,8 @@ class ControlPlaneWebAPI:
             ),
             "runtime_ready": self.runtime_ready,
             "runtime_blockers": list(self.runtime_blockers),
+            "profile_status": empty_profile_status,
+            "member_style_status": empty_member_style_status,
         }
         provider = self._runtime_status_provider
         if provider is None:
@@ -155,6 +172,18 @@ class ControlPlaneWebAPI:
                 ],
             }
         self._degraded.pop("runtime_status", None)
+        raw_profile = status.get("profile_status")
+        profile = (
+            dict(raw_profile)
+            if isinstance(raw_profile, Mapping)
+            else empty_profile_status
+        )
+        raw_member_style = status.get("member_style_status")
+        member_style = (
+            dict(raw_member_style)
+            if isinstance(raw_member_style, Mapping)
+            else empty_member_style_status
+        )
         return {
             "effective_runtime_mode": str(
                 status.get("effective_runtime_mode") or self.runtime_mode
@@ -168,6 +197,29 @@ class ControlPlaneWebAPI:
                 for item in status.get("runtime_blockers", ())
                 if str(item).strip()
             ],
+            "profile_status": {
+                "enabled": bool(profile.get("enabled")),
+                "task_running": bool(profile.get("task_running")),
+                "pending_count": max(0, int(profile.get("pending_count") or 0)),
+                "last_attempt_at": profile.get("last_attempt_at"),
+                "last_success_at": profile.get("last_success_at"),
+                "last_diagnostic": (
+                    str(profile.get("last_diagnostic"))
+                    if profile.get("last_diagnostic")
+                    else None
+                ),
+            },
+            "member_style_status": {
+                "enabled": bool(member_style.get("enabled")),
+                "task_running": bool(member_style.get("task_running")),
+                "active_session": bool(member_style.get("active_session")),
+                "session_expires_at": member_style.get("session_expires_at"),
+                "last_diagnostic": (
+                    str(member_style.get("last_diagnostic"))
+                    if member_style.get("last_diagnostic")
+                    else None
+                ),
+            },
         }
 
     def _resolved_persona_status(self, group_id: str) -> dict[str, object]:
@@ -279,8 +331,13 @@ class ControlPlaneWebAPI:
                     "resolved_persona": persona_status,
                 }
             if endpoint == "health":
+                live_status = self._live_runtime_status(group_id)
                 body = {
                     **body,
+                    "profile_status": live_status["profile_status"],
+                    "member_style_status": live_status[
+                        "member_style_status"
+                    ],
                     "degraded": bool(self._degraded),
                     "degraded_reasons": list(self._degraded.values()),
                     "fallback_poll_seconds": 15,

@@ -172,6 +172,53 @@ def test_bootstrap_reads_live_runtime_and_resolved_persona_on_each_request(tmp_p
     }
 
 
+def test_health_exposes_safe_profile_worker_status(tmp_path):
+    api = _api(
+        tmp_path,
+        runtime_status_provider=lambda _group_id: {
+            "effective_runtime_mode": "SHADOW",
+            "runtime_state": "RUNNING",
+            "runtime_ready": True,
+            "runtime_blockers": [],
+            "profile_status": {
+                "enabled": True,
+                "task_running": True,
+                "pending_count": 4,
+                "last_attempt_at": 100,
+                "last_success_at": 90,
+                "last_diagnostic": "profile_no_candidates",
+                "raw_error": "must not leak",
+            },
+            "member_style_status": {
+                "enabled": True,
+                "task_running": True,
+                "active_session": True,
+                "session_expires_at": 200,
+                "last_diagnostic": "member_style_rate_limited",
+                "target_member_id": "must-not-leak",
+            },
+        },
+    )
+
+    response = asyncio.run(api.handle(_get("/health")))
+
+    assert response.body["profile_status"] == {
+        "enabled": True,
+        "task_running": True,
+        "pending_count": 4,
+        "last_attempt_at": 100,
+        "last_success_at": 90,
+        "last_diagnostic": "profile_no_candidates",
+    }
+    assert response.body["member_style_status"] == {
+        "enabled": True,
+        "task_running": True,
+        "active_session": True,
+        "session_expires_at": 200,
+        "last_diagnostic": "member_style_rate_limited",
+    }
+
+
 def test_media_endpoint_resolves_only_registered_scoped_preview(tmp_path):
     path = tmp_path / "runtime.db"
     repository = MessageTraceRepository(path)

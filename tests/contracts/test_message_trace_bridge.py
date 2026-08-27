@@ -105,6 +105,21 @@ def test_bridge_exposes_live_runtime_and_resolved_persona(tmp_path):
         "runtime_state": "RUNNING",
         "runtime_ready": True,
         "runtime_blockers": [],
+        "profile_status": {
+            "enabled": True,
+            "task_running": False,
+            "pending_count": 0,
+            "last_attempt_at": None,
+            "last_success_at": None,
+            "last_diagnostic": None,
+        },
+        "member_style_status": {
+            "enabled": False,
+            "task_running": False,
+            "active_session": False,
+            "session_expires_at": None,
+            "last_diagnostic": None,
+        },
     }
     assert bridge.resolved_persona_status("g-1") == {
         "name": "爱弥斯",

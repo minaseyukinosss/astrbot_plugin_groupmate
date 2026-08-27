@@ -60,6 +60,7 @@ from .profile_query import (
 )
 from .deepseek_cognition import DeepSeekCognitionClient
 from .deepseek_profile import DeepSeekProfileClient
+from .deepseek_member_style import DeepSeekMemberStyleClient
 from .imitation_commands import (
     ImitationCommandInterpreter,
     ImitationCommandResult,
@@ -70,6 +71,7 @@ from ..social_runtime.profile.extractor import ProfileExtractor
 from ..social_runtime.profile.repository import ProfileRepository
 from ..social_runtime.profile.service import ProfileService
 from ..social_runtime.profile.style_repository import MemberStyleRepository
+from ..social_runtime.profile.style_service import MemberStyleService
 from ..social_runtime.profile.contracts import ProfileFactCandidate
 from ..social_runtime.profile.policy import ProfileEvidencePolicy
 from ..social_runtime.society.affection_leaderboard import (
@@ -90,6 +92,8 @@ class AstrBotSocialRuntimeBridge:
         | None = None,
         profile_client_factory: Callable[[SocialRuntimeSettings], object]
         | None = None,
+        member_style_client_factory: Callable[[SocialRuntimeSettings], object]
+        | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
@@ -100,6 +104,9 @@ class AstrBotSocialRuntimeBridge:
         )
         self._profile_client_factory = (
             profile_client_factory or self._new_profile_client
+        )
+        self._member_style_client_factory = (
+            member_style_client_factory or self._new_member_style_client
         )
         self._external_trigger_policy = ExternalTriggerPolicy.from_entries(
             command_prefixes=settings.external_command_prefixes,
@@ -116,6 +123,7 @@ class AstrBotSocialRuntimeBridge:
         self._profile_client: object | None = None
         self._profile_service: ProfileService | None = None
         self._member_style_repository: MemberStyleRepository | None = None
+        self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
         self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
@@ -124,6 +132,7 @@ class AstrBotSocialRuntimeBridge:
         self.cognition_diagnostics: list[str] = []
         self.reply_error: str | None = None
         self.member_style_overlay_error: str | None = None
+        self.member_style_worker_error: str | None = None
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._scene_context_builder = SceneContextBuilder()
@@ -518,7 +527,6 @@ class AstrBotSocialRuntimeBridge:
             )
         else:
             lines.append("暂无足够证据。")
-        lines.append("可用：纠正画像 <编号> <新内容> / 删除画像 <编号>")
         return "\n".join(lines)[:1800]
 
     @staticmethod
@@ -603,6 +611,13 @@ class AstrBotSocialRuntimeBridge:
             self._member_style_repository = repository
         return repository
 
+    @property
+    def member_style_service(self) -> MemberStyleService:
+        service = self._member_style_service
+        if service is None:
+            raise RuntimeError("member style distillation is disabled")
+        return service
+
     def _member_style_overlay(self, group_id: str, *, now: int):
         """Resolve the session's frozen style version for this group only."""
 
@@ -637,6 +652,49 @@ class AstrBotSocialRuntimeBridge:
         """Return the bridge state that is effective for this group now."""
 
         manager = self._manager
+        service = self._profile_service
+        profile_health = getattr(service, "health", None)
+        profile_status = (
+            profile_health(str(group_id))
+            if callable(profile_health)
+            else {
+                "enabled": bool(self.settings.profile_enabled),
+                "task_running": False,
+                "pending_count": 0,
+                "last_attempt_at": None,
+                "last_success_at": None,
+                "last_diagnostic": None,
+            }
+        )
+        style_service = self._member_style_service
+        active_session = (
+            self.member_style_repository.active_session(
+                str(group_id), now=int(self.clock())
+            )
+            if manager is not None
+            else None
+        )
+        style_health = (
+            style_service.health(str(group_id))
+            if style_service is not None
+            else {
+                "enabled": False,
+                "task_running": False,
+                "last_diagnostic": None,
+            }
+        )
+        member_style_status = {
+            **style_health,
+            "active_session": active_session is not None,
+            "session_expires_at": (
+                active_session.expires_at if active_session is not None else None
+            ),
+            "last_diagnostic": (
+                self.member_style_overlay_error
+                or self.member_style_worker_error
+                or style_health.get("last_diagnostic")
+            ),
+        }
         if manager is None:
             blockers = (
                 ["运行模式为 OFF"]
@@ -648,12 +706,16 @@ class AstrBotSocialRuntimeBridge:
                 "runtime_state": "STOPPED",
                 "runtime_ready": False,
                 "runtime_blockers": blockers,
+                "profile_status": profile_status,
+                "member_style_status": member_style_status,
             }
         return {
             "effective_runtime_mode": manager.group_mode(str(group_id)).value,
             "runtime_state": "RUNNING",
             "runtime_ready": True,
             "runtime_blockers": [],
+            "profile_status": profile_status,
+            "member_style_status": member_style_status,
         }
 
     def resolved_persona_status(self, group_id: str) -> dict[str, object]:
@@ -710,6 +772,7 @@ class AstrBotSocialRuntimeBridge:
             )
             profile_client = None
             profile_service = None
+            member_style_service = None
             member_style_repository = self.member_style_repository
             imitation_controller = ImitationSessionController(
                 ImitationCommandInterpreter(
@@ -722,6 +785,27 @@ class AstrBotSocialRuntimeBridge:
                 profile_client = self._profile_client_factory(self.settings)
                 if profile_client is None:
                     raise RuntimeError("direct profile client is unavailable")
+                try:
+                    member_style_client = self._member_style_client_factory(
+                        self.settings
+                    )
+                    if member_style_client is None:
+                        raise RuntimeError(
+                            "direct member style client is unavailable"
+                        )
+                    member_style_service = MemberStyleService(
+                        repository=member_style_repository,
+                        client=member_style_client,
+                        interval_seconds=(
+                            self.settings.profile_batch_interval_seconds
+                        ),
+                        clock=self.clock,
+                    )
+                    self.member_style_worker_error = None
+                except Exception:
+                    # 旧风格资产仍可供会话读取；只暂停新版本蒸馏。
+                    member_style_service = None
+                    self.member_style_worker_error = "style_worker_unavailable"
                 profile_service = ProfileService(
                     repository=ProfileRepository(
                         self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
@@ -736,6 +820,7 @@ class AstrBotSocialRuntimeBridge:
                         self.settings.profile_batch_interval_seconds
                     ),
                     clock=self.clock,
+                    style_service=member_style_service,
                 )
             try:
                 await manager.start()
@@ -745,6 +830,7 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = cognition_client
                 self._profile_client = profile_client
                 self._profile_service = profile_service
+                self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
                 self._reply_executor = ReplyExecutor(
@@ -769,6 +855,7 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = None
                 self._profile_client = None
                 self._profile_service = None
+                self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
                 self._reply_model = None
@@ -849,10 +936,19 @@ class AstrBotSocialRuntimeBridge:
 
     async def _observe_profile(self, event: SocialEventEnvelope) -> None:
         service = self._profile_service
-        if service is not None and parse_profile_command(
-            event.payload.get("text")
-        ) is None:
-            await service.observe(event)
+        if service is None:
+            return
+        payload = event.payload
+        # Commands belong to their command owner. They are operational input,
+        # not evidence about the member's personality or preferences.
+        if (
+            payload.get("social_eligible") is False
+            or str(payload.get("interaction_owner") or "").upper()
+            == "EXTERNAL_PLUGIN"
+            or parse_profile_command(payload.get("text")) is not None
+        ):
+            return
+        await service.observe(event)
 
     def _resolve_interaction(
         self, event: SocialEventEnvelope
@@ -1398,6 +1494,7 @@ class AstrBotSocialRuntimeBridge:
         self._manager = None
         self._cognition_client = None
         self._profile_service = None
+        self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None
         try:
@@ -1426,6 +1523,17 @@ class AstrBotSocialRuntimeBridge:
             api_key=settings.cognition_api_key,
             api_base=settings.cognition_api_base,
             model=settings.cognition_model,
+        )
+
+    @staticmethod
+    def _new_member_style_client(
+        settings: SocialRuntimeSettings,
+    ) -> DeepSeekMemberStyleClient:
+        return DeepSeekMemberStyleClient(
+            api_key=settings.cognition_api_key,
+            api_base=settings.cognition_api_base,
+            model=settings.cognition_model,
+            timeout_seconds=settings.profile_timeout_seconds,
         )
 
     @staticmethod
