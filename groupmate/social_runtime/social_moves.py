@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
+from .social_scenes import ChorusTarget, ChorusTone, SocialScene, TargetScope
+from .stances import Boundary, StanceDecision, Willingness
+
 
 MAX_MOVE_REFERENCES = 32
 
@@ -216,6 +219,234 @@ class SocialMovePlan:
         return cls(**normalized)
 
 
+class SocialMovePlanner:
+    """Turn a frozen scene and stance into one observable social action."""
+
+    _DEFAULT_AVOIDANCES = (
+        "不要编造没有证据的旧事",
+        "不要泄漏内部关系分数",
+        "不要追加通用服务邀请",
+    )
+
+    def plan(
+        self,
+        scene: SocialScene,
+        stance: StanceDecision,
+        *,
+        profile: object | None,
+        memories: Iterable[object],
+    ) -> SocialMovePlan:
+        if stance.willingness is Willingness.REQUIRED_MINIMUM:
+            return self._safety_minimum(scene)
+        if scene.chorus_chain_id is not None:
+            return self._chorus(scene, stance)
+        if stance.boundary in {Boundary.FIRM, Boundary.FINAL}:
+            return self._firm_boundary(scene)
+        if scene.scene_kind in {"proactive_no_entry", "observe_only"}:
+            return self._silence(scene)
+        if scene.scene_kind in {"proactive_specific_topic", "proactive_join"}:
+            if stance.willingness is Willingness.UNWILLING:
+                return self._silence(scene)
+            return self._generated(scene, SocialMove.PROACTIVE_JOIN)
+        if scene.target_scope is TargetScope.GROUP:
+            return self._generated(scene, SocialMove.GROUP_RESPONSE)
+        if scene.scene_kind == "self_correction":
+            return self._correct_self(scene)
+        if scene.information_gaps:
+            return self._request_evidence(scene)
+        if stance.willingness is Willingness.LIMITED:
+            return self._generated(
+                scene,
+                SocialMove.LIMITED_ACCEPT,
+                profile=profile,
+                memories=memories,
+            )
+        if stance.willingness is Willingness.UNWILLING:
+            return self._generated(scene, SocialMove.REFUSE)
+        return self._direct_or_play(scene, profile=profile, memories=memories)
+
+    def _chorus(
+        self, scene: SocialScene, stance: StanceDecision
+    ) -> SocialMovePlan:
+        # 复读分流必须早于通用 GROUP；否则针对群友和针对爱弥斯会被混成一种回应。
+        if scene.chorus_already_joined:
+            return self._silence(scene)
+        if scene.chorus_target is ChorusTarget.SELF:
+            if stance.willingness is Willingness.UNWILLING:
+                return self._silence(scene)
+            return self._generated(
+                scene,
+                SocialMove.GROUP_RESPONSE,
+                must_not_say=("不要逐字复读针对爱弥斯的原句",),
+            )
+        if scene.chorus_target in {ChorusTarget.MEMBER, ChorusTarget.OTHER}:
+            if (
+                scene.chorus_tone is ChorusTone.SAFE_BANTER
+                and stance.willingness in {Willingness.WILLING, Willingness.EAGER}
+            ):
+                return SocialMovePlan.create(
+                    primary_move=SocialMove.JOIN_CHORUS,
+                    mention_event_ids=scene.chorus_event_ids,
+                    realization_mode=RealizationMode.EXACT_CHORUS,
+                    verbatim_payload=scene.chorus_payload,
+                    chorus_chain_id=scene.chorus_chain_id,
+                )
+        return self._silence(scene)
+
+    def _firm_boundary(self, scene: SocialScene) -> SocialMovePlan:
+        count = max(1, scene.repetition_count)
+        ordinal = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五"}.get(
+            count, str(count)
+        )
+        fact = self._fact(
+            "boundary",
+            f"这是第{ordinal}次提出同类请求，爱弥斯明确拒绝。",
+            scene,
+        )
+        return self._generated(
+            scene,
+            SocialMove.FIRM_BOUNDARY,
+            must_say=(fact,),
+        )
+
+    def _request_evidence(self, scene: SocialScene) -> SocialMovePlan:
+        fact = self._fact(
+            "required_input",
+            "需要" + "和".join(scene.information_gaps) + "才能继续判断。",
+            scene,
+        )
+        return self._generated(
+            scene,
+            SocialMove.REQUEST_NEEDED_EVIDENCE,
+            must_say=(fact,),
+            ask_for=scene.information_gaps,
+            ending=Ending.QUESTION,
+        )
+
+    def _correct_self(self, scene: SocialScene) -> SocialMovePlan:
+        fact = self._fact(
+            "correction",
+            f"承认关于{scene.literal_subject}的上一判断不适用并立即改正。",
+            scene,
+        )
+        return self._generated(scene, SocialMove.CORRECT_SELF, must_say=(fact,))
+
+    def _safety_minimum(self, scene: SocialScene) -> SocialMovePlan:
+        fact = self._fact(
+            "safety",
+            "给出当前处境下立即可执行的最低安全行动。",
+            scene,
+        )
+        return self._generated(
+            scene,
+            SocialMove.SAFETY_MINIMUM,
+            must_say=(fact,),
+            ending=Ending.OPEN_ACTION,
+        )
+
+    def _direct_or_play(
+        self,
+        scene: SocialScene,
+        *,
+        profile: object | None,
+        memories: Iterable[object],
+    ) -> SocialMovePlan:
+        move = {
+            "intimacy_request": SocialMove.PLAYFUL_RESISTANCE,
+            "playful_negotiation": SocialMove.ACCEPT,
+            "contextual_teasing": SocialMove.TEASE_FROM_CONTEXT,
+            "identity_continuity": SocialMove.COUNTER,
+            "care_signal": SocialMove.CONCRETE_CARE,
+            "technical_constraint": SocialMove.DIRECT_ANSWER,
+        }.get(scene.scene_kind, SocialMove.DIRECT_ANSWER)
+        ending = Ending.COUNTER if move is SocialMove.COUNTER else Ending.STOP
+        return self._generated(
+            scene,
+            move,
+            may_say=self._supported_optional_facts(scene, profile, memories),
+            ending=ending,
+        )
+
+    def _generated(
+        self,
+        scene: SocialScene,
+        move: SocialMove,
+        *,
+        must_say: tuple[DecisionFact, ...] = (),
+        may_say: tuple[DecisionFact, ...] = (),
+        must_not_say: tuple[str, ...] = (),
+        ask_for: tuple[str, ...] = (),
+        ending: Ending = Ending.STOP,
+        profile: object | None = None,
+        memories: Iterable[object] = (),
+    ) -> SocialMovePlan:
+        optional = may_say or self._supported_optional_facts(scene, profile, memories)
+        return SocialMovePlan.create(
+            primary_move=move,
+            must_say=must_say,
+            may_say=optional,
+            must_not_say=(*self._DEFAULT_AVOIDANCES, *must_not_say),
+            mention_event_ids=scene.continuity_event_ids,
+            ask_for=ask_for,
+            ending=ending,
+            media_intent=MediaIntent.NONE,
+        )
+
+    @staticmethod
+    def _silence(scene: SocialScene) -> SocialMovePlan:
+        return SocialMovePlan.create(
+            primary_move=SocialMove.SILENCE,
+            mention_event_ids=scene.continuity_event_ids,
+        )
+
+    @staticmethod
+    def _fact(category: str, text: str, scene: SocialScene) -> DecisionFact:
+        return DecisionFact.create(
+            category=category,
+            text=text,
+            source_event_ids=scene.continuity_event_ids,
+        )
+
+    def _supported_optional_facts(
+        self,
+        scene: SocialScene,
+        profile: object | None,
+        memories: Iterable[object],
+    ) -> tuple[DecisionFact, ...]:
+        optional: list[DecisionFact] = []
+        subject_chars = set(scene.literal_subject.casefold())
+        for fact in tuple(getattr(profile, "facts", ()) or ())[:3]:
+            summary = str(getattr(fact, "summary", "")).strip()
+            sources = tuple(getattr(fact, "source_event_ids", ()) or ())
+            status = str(getattr(fact, "status", ""))
+            if not summary or not sources or status != "confirmed":
+                continue
+            # 只让与当前具体主语有字符交集的画像进入可选材料，避免无关熟人梗乱入。
+            if subject_chars and not (subject_chars & set(summary.casefold())):
+                continue
+            optional.append(DecisionFact.create(
+                category="profile_fact", text=summary, source_event_ids=sources
+            ))
+        if scene.scene_kind in {
+            "intimacy_request",
+            "playful_negotiation",
+            "identity_continuity",
+            "apology_and_relationship_repair",
+        }:
+            for memory in tuple(memories)[:2]:
+                if getattr(memory, "resolved_at", None) is not None:
+                    continue
+                summary = str(getattr(memory, "summary", "")).strip()
+                source = str(getattr(memory, "relationship_event_id", "")).strip()
+                if summary and source:
+                    optional.append(DecisionFact.create(
+                        category="relationship_memory",
+                        text=summary,
+                        source_event_ids=(source,),
+                    ))
+        return tuple(optional[:3])
+
+
 __all__ = (
     "DecisionFact",
     "Ending",
@@ -223,4 +454,5 @@ __all__ = (
     "RealizationMode",
     "SocialMove",
     "SocialMovePlan",
+    "SocialMovePlanner",
 )
