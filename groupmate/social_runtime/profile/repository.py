@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -278,6 +279,58 @@ class ProfileRepository:
                     raise ProfileIdentityConflict(fact.fact_id) from None
         return fact
 
+    def fact(self, fact_id: str) -> ProfileFact | None:
+        """Look up one stable fact before applying cross-batch evidence."""
+
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT * FROM profile_facts WHERE fact_id=?", (str(fact_id),)
+            ).fetchone()
+        return None if row is None else self._fact(row)
+
+    def upsert_fact(self, fact: ProfileFact) -> ProfileFact:
+        """Persist a policy-merged fact without weakening its stable scope."""
+
+        existing = self.fact(fact.fact_id)
+        if existing is None:
+            return self.put_fact(fact)
+        if (
+            existing.persona_id,
+            existing.group_id,
+            existing.subject_id,
+            existing.category,
+            existing.source_kind,
+        ) != (
+            fact.persona_id,
+            fact.group_id,
+            fact.subject_id,
+            fact.category,
+            fact.source_kind,
+        ):
+            raise ProfileIdentityConflict(fact.fact_id)
+        with connect_database(self.path) as db:
+            db.execute(
+                "UPDATE profile_facts SET summary=?,source_actor_id=?,"
+                "source_event_ids_json=?,confidence=?,status=?,evidence_count=?,"
+                "valid_from=?,valid_until=?,supersedes_fact_id=?,injectable=?,updated_at=? "
+                "WHERE fact_id=?",
+                (
+                    fact.summary,
+                    fact.source_actor_id,
+                    self._json(fact.source_event_ids),
+                    fact.confidence,
+                    fact.status,
+                    fact.evidence_count,
+                    fact.valid_from,
+                    fact.valid_until,
+                    fact.supersedes_fact_id,
+                    int(fact.injectable),
+                    fact.valid_from,
+                    fact.fact_id,
+                ),
+            )
+        return fact
+
     def facts(
         self,
         persona_id: str,
@@ -519,6 +572,15 @@ class ProfileRepository:
             )
         return edge
 
+    def edge(self, edge_id: str) -> SocialEdge | None:
+        """Look up one stable relationship before reinforcing it."""
+
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT * FROM social_edges WHERE edge_id=?", (str(edge_id),)
+            ).fetchone()
+        return None if row is None else self._edge(row)
+
     def edges(
         self,
         persona_id: str,
@@ -576,6 +638,44 @@ class ProfileRepository:
         ):
             values[name] = tuple(values.get(name) or ())
         return ProfileSnapshot(**values)
+
+    def snapshots_for_group(
+        self, persona_id: str, group_id: str
+    ) -> tuple[ProfileSnapshot, ...]:
+        """Return member snapshots from exactly one persona/group scope."""
+
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT snapshot_json FROM profile_snapshots "
+                "WHERE persona_id=? AND group_id=? ORDER BY subject_id",
+                (str(persona_id), str(group_id)),
+            ).fetchall()
+        snapshots = []
+        for row in rows:
+            values = dict(json.loads(row["snapshot_json"]))
+            for name in (
+                "group_roles",
+                "individual_fingerprints",
+                "preferences_and_boundaries",
+                "representative_episode_ids",
+            ):
+                values[name] = tuple(values.get(name) or ())
+            snapshots.append(ProfileSnapshot(**values))
+        return tuple(snapshots)
+
+    def observation_hours(
+        self, persona_id: str, group_id: str, *, limit: int = 2000
+    ) -> tuple[int, ...]:
+        """Return a bounded local-hour sample for aggregate activity rhythm."""
+
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT occurred_at FROM profile_observations "
+                "WHERE persona_id=? AND group_id=? "
+                "ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
+                (str(persona_id), str(group_id), max(1, int(limit))),
+            ).fetchall()
+        return tuple(time.localtime(int(row[0])).tm_hour for row in rows)
 
     def put_group_portrait(self, portrait: GroupPortrait) -> GroupPortrait:
         with connect_database(self.path) as db:

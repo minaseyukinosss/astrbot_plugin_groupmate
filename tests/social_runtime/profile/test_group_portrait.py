@@ -87,6 +87,23 @@ def test_group_portrait_rejects_cross_scope_member_snapshots():
     assert result.member_count == 0
 
 
+def test_group_portrait_has_readable_progress_summary_for_known_members():
+    result = GroupPortraitBuilder().build(
+        persona_id="persona",
+        group_id="group-1",
+        member_snapshots=(_snapshot("u1", "技术解答者", "具体但私有"),),
+        culture=(),
+        topic_counts={},
+        activity_hours=(9,),
+        edges=(),
+        source_revision=1,
+        generated_at=200,
+    )
+
+    assert result.summary == "已形成1位成员画像，群体认知持续更新"
+    assert "具体但私有" not in result.summary
+
+
 def test_group_portrait_round_trips_in_its_own_group_scope(tmp_path):
     portrait = GroupPortraitBuilder().build(
         persona_id="persona",

@@ -26,7 +26,7 @@ const WORKSPACE_RENDERERS = Object.freeze({
 
 const WORKSPACE_PROJECTIONS = Object.freeze({
   "/runtime": ["runtime", "traces", "health", "persona", "governance"],
-  "/profiles": ["profiles", "group-portrait"],
+  "/profiles": ["profiles", "group-portrait", "health"],
 });
 
 const elements = {

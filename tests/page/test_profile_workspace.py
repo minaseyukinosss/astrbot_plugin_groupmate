@@ -43,3 +43,30 @@ def test_profile_workspace_scrolls_directory_and_detail_independently():
         r"\.profile-detail-host\s*\{([^}]*)\}", mobile
     )
     assert any("overflow: visible;" in rule for rule in mobile_detail_rules)
+
+
+def test_profile_workspace_shows_compact_worker_health():
+    source = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+
+    assert 'selectView("health")' in source
+    assert "画像后台" in source
+    assert '"profiles", "group-portrait", "health"' in app
+
+
+def test_profile_workspace_covers_backend_maturity_and_relation_enums():
+    source = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
+
+    assert 'stable: "相对稳定"' in source
+    assert "established:" not in source
+    for relation in (
+        "frequent_interaction",
+        "familiar",
+        "supportive",
+        "technical_peer",
+        "teasing",
+        "conflict",
+        "avoidance",
+        "custom",
+    ):
+        assert f"{relation}:" in source

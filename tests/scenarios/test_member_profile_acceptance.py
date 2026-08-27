@@ -31,6 +31,21 @@ class _Client:
         )
 
 
+class _SequenceClient(_Client):
+    def __init__(self, payloads):
+        super().__init__()
+        self.payloads = list(payloads)
+
+    async def extract(self, _batch):
+        return ProfileModelResponse(
+            payload=self.payloads.pop(0),
+            latency_ms=1,
+            request_bytes=128,
+            backend="acceptance",
+            model=self.model,
+        )
+
+
 def _event(event_id: str, actor_id: str, text: str, *, group_id="group-1", at=100):
     return SocialEventEnvelope.create(
         event_id=event_id,
@@ -162,3 +177,76 @@ def test_same_actor_profile_facts_remain_group_local(tmp_path):
     repository = ProfileRepository(path)
     assert repository.facts("persona", "group-1", "member-1")
     assert repository.facts("persona", "group-2", "member-1") == ()
+
+
+def test_clean_database_grows_fact_edge_snapshots_portrait_and_health(tmp_path):
+    path = tmp_path / "fresh" / "groupmate-social-runtime-v2.db"
+    assert not path.exists()
+    payloads = []
+    for index in range(1, 4):
+        payloads.append(
+            {
+                "facts": [
+                    {
+                        "subject_id": "member-1",
+                        "category": "behavior_pattern",
+                        "summary": "经常主动帮群友处理问题",
+                        "source_kind": "observed_pattern",
+                        "source_actor_id": "member-1",
+                        "evidence_event_ids": [f"round-{index}-a"],
+                        "confidence": 0.91,
+                    }
+                ],
+                "episodes": [],
+                "edges": [
+                    {
+                        "source_member_id": "member-1",
+                        "target_member_id": "member-2",
+                        "relation_type": "supportive",
+                        "direction": "directed",
+                        "strength": 0.75,
+                        "confidence": 0.91,
+                        "evidence_event_ids": [f"round-{index}-a"],
+                    }
+                ],
+            }
+        )
+    service = _service(path, _SequenceClient(payloads), batch_size=2)
+
+    for index in range(1, 4):
+        asyncio.run(
+            service.observe(
+                _event(
+                    f"round-{index}-a",
+                    "member-1",
+                    "我来帮你处理",
+                    at=100 + index * 2,
+                )
+            )
+        )
+        asyncio.run(
+            service.observe(
+                _event(
+                    f"round-{index}-b",
+                    "member-2",
+                    "谢谢",
+                    at=101 + index * 2,
+                )
+            )
+        )
+        asyncio.run(service.process_due(now=150 + index))
+
+    facts = service.repository.facts("persona", "group-1", "member-1")
+    edges = service.repository.edges("persona", "group-1")
+    portrait = service.repository.group_portrait("persona", "group-1")
+
+    assert path.exists()
+    assert len(facts) == 1 and facts[0].status == "confirmed"
+    assert len(edges) == 1 and edges[0].status == "confirmed"
+    assert service.repository.snapshot("persona", "group-1", "member-1")
+    assert service.repository.snapshot("persona", "group-1", "member-2")
+    assert portrait is not None and portrait.member_count == 2
+    assert service.status("group-1")["last_success_at"] == 153
+    assert parse_profile_command("查看我的画像").kind == "show_self"
+    assert parse_profile_command("纠正画像 1 新内容") is None
+    assert parse_profile_command("删除画像 1") is None

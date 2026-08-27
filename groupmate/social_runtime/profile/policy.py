@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ...profile_vocabulary import FACT_CATEGORIES, RELATION_TYPES
 from .contracts import (
     ProfileCorrection,
     ProfileFact,
@@ -13,37 +14,20 @@ from .contracts import (
 )
 
 
-FACT_CATEGORIES = frozenset(
-    {
-        "identity",
-        "preference",
-        "dislike",
-        "boundary",
-        "interest",
-        "skill",
-        "speech_style",
-        "behavior_pattern",
-        "group_role",
-    }
-)
-RELATION_TYPES = frozenset(
-    {
-        "frequent_interaction",
-        "familiar",
-        "supportive",
-        "technical_peer",
-        "teasing",
-        "conflict",
-        "avoidance",
-        "custom",
-    }
-)
-
-
 class ProfileEvidencePolicy:
     SELF_CONFIRM_THRESHOLD = 0.86
     PATTERN_CONFIRM_THRESHOLD = 0.88
     PATTERN_MIN_EVIDENCE = 3
+    MAX_STORED_EVIDENCE = 16
+
+    @classmethod
+    def _merge_evidence(
+        cls, old: tuple[str, ...], new: tuple[str, ...]
+    ) -> tuple[tuple[str, ...], int]:
+        """Merge independent event references while honoring contract bounds."""
+
+        all_ids = tuple(dict.fromkeys((*old, *new)))
+        return all_ids[-cls.MAX_STORED_EVIDENCE :], len(all_ids)
 
     def decide(
         self,
@@ -135,6 +119,116 @@ class ProfileEvidencePolicy:
             valid_until=None,
             last_observed_at=candidate.observed_at,
         )
+
+    def reinforce_fact(
+        self, old: ProfileFact, incoming: ProfileFact
+    ) -> ProfileFact:
+        """Combine a stable claim seen in separate model batches."""
+
+        if (
+            old.fact_id,
+            old.persona_id,
+            old.group_id,
+            old.subject_id,
+            old.category,
+            old.source_kind,
+        ) != (
+            incoming.fact_id,
+            incoming.persona_id,
+            incoming.group_id,
+            incoming.subject_id,
+            incoming.category,
+            incoming.source_kind,
+        ):
+            raise ValueError("profile fact reinforcement scope mismatch")
+        evidence, total_count = self._merge_evidence(
+            old.source_event_ids, incoming.source_event_ids
+        )
+        candidate = ProfileFactCandidate(
+            candidate_id=old.fact_id,
+            persona_id=old.persona_id,
+            group_id=old.group_id,
+            subject_id=old.subject_id,
+            category=old.category,
+            # Keep the first accepted wording; only the identity key is normalized.
+            summary=old.summary,
+            source_kind=old.source_kind,
+            source_actor_id=old.source_actor_id,
+            source_event_ids=evidence,
+            confidence=max(old.confidence, incoming.confidence),
+            evidence_count=max(
+                old.evidence_count
+                + len(
+                    set(incoming.source_event_ids)
+                    - set(old.source_event_ids)
+                ),
+                incoming.evidence_count,
+                total_count,
+            ),
+            observed_at=min(old.valid_from, incoming.valid_from),
+        )
+        reinforced = self.decide(candidate, allowed_event_ids=set(evidence))
+        if old.status in {"stale", "rejected", "superseded"}:
+            return replace(
+                reinforced,
+                status=old.status,
+                injectable=False,
+                valid_until=old.valid_until,
+                supersedes_fact_id=old.supersedes_fact_id,
+            )
+        if old.status == "confirmed" and reinforced.status != "confirmed":
+            return replace(reinforced, status="confirmed", injectable=True)
+        return reinforced
+
+    def reinforce_edge(
+        self, old: SocialEdge, incoming: SocialEdge
+    ) -> SocialEdge:
+        """Combine repeated observations of the same scoped relationship."""
+
+        if (
+            old.edge_id,
+            old.persona_id,
+            old.group_id,
+            old.source_member_id,
+            old.target_member_id,
+            old.relation_type,
+            old.direction,
+        ) != (
+            incoming.edge_id,
+            incoming.persona_id,
+            incoming.group_id,
+            incoming.source_member_id,
+            incoming.target_member_id,
+            incoming.relation_type,
+            incoming.direction,
+        ):
+            raise ValueError("social edge reinforcement scope mismatch")
+        evidence, _ = self._merge_evidence(
+            old.source_event_ids, incoming.source_event_ids
+        )
+        candidate = SocialEdgeCandidate(
+            candidate_id=old.edge_id,
+            persona_id=old.persona_id,
+            group_id=old.group_id,
+            source_member_id=old.source_member_id,
+            target_member_id=old.target_member_id,
+            relation_type=old.relation_type,
+            direction=old.direction,
+            strength=max(old.strength, incoming.strength),
+            confidence=max(old.confidence, incoming.confidence),
+            source_event_ids=evidence,
+            observed_at=max(old.last_observed_at, incoming.last_observed_at),
+        )
+        reinforced = replace(
+            self.decide_edge(candidate, allowed_event_ids=set(evidence)),
+            valid_from=min(old.valid_from, incoming.valid_from),
+            valid_until=old.valid_until,
+        )
+        if old.status in {"rejected", "stale"}:
+            return replace(reinforced, status=old.status)
+        if old.status == "confirmed" and reinforced.status != "confirmed":
+            return replace(reinforced, status="confirmed")
+        return reinforced
 
     def correct(
         self, old: ProfileFact, replacement: ProfileFactCandidate

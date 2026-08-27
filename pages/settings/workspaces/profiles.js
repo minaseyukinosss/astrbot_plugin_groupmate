@@ -4,15 +4,18 @@ import { governedAction } from "../components/command-dialog.js";
 const MATURITY_LABELS = Object.freeze({
   new: "刚开始了解",
   forming: "逐步形成",
-  established: "相对稳定",
+  stable: "相对稳定",
 });
 
 const RELATION_LABELS = Object.freeze({
+  frequent_interaction: "经常互动",
+  familiar: "熟悉",
+  supportive: "彼此支持",
   technical_peer: "技术同伴",
-  close_friend: "亲近朋友",
-  frequent_partner: "常互动",
-  playful_rival: "玩笑对手",
-  mentor: "经验引导",
+  teasing: "会互相打趣",
+  conflict: "存在冲突",
+  avoidance: "倾向回避",
+  custom: "有稳定互动",
 });
 
 function avatar(member, large = false) {
@@ -281,6 +284,23 @@ function portraitHeader(view) {
   ]);
 }
 
+function profileWorkerHealth(view) {
+  const status = view?.profile_status || {};
+  let detail = "画像后台未启用";
+  if (status.enabled && status.task_running) {
+    detail = Number(status.pending_count || 0) > 0
+      ? `画像后台运行中 · 待处理 ${Number(status.pending_count)} 条`
+      : "画像后台运行中 · 当前无积压";
+  } else if (status.enabled) {
+    detail = "画像后台正在等待恢复";
+  }
+  return element("p", {
+    className: "profile-empty-copy",
+    text: detail,
+    attrs: { title: status.last_diagnostic || "" },
+  });
+}
+
 export function renderProfiles(selectView, submitCommand, refresh, query, hydrateAvatars) {
   const view = selectView("profiles");
   const members = Array.isArray(view?.items) ? view.items : [];
@@ -371,6 +391,7 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
   });
 
   const root = element("div", { className: "profile-workspace workspace-stack" }, [
+    profileWorkerHealth(selectView("health")),
     portraitHeader(selectView("group-portrait")),
     element("section", { className: "profile-browser" }, [
       element("aside", { className: "profile-directory", attrs: { "aria-label": "群成员列表" } }, [

@@ -74,11 +74,13 @@ class GroupPortraitBuilder:
                 if " ".join(str(item).split())
             )
         )[:4]
-        summary = (
-            "这个群" + "、".join(safe_culture)
-            if safe_culture
-            else "群体画像正在形成"
-        )
+        if safe_culture:
+            summary = "这个群" + "、".join(safe_culture)
+        elif scoped:
+            # Report aggregate progress without copying private member details.
+            summary = f"已形成{len(scoped)}位成员画像，群体认知持续更新"
+        else:
+            summary = "群体画像正在形成"
         return GroupPortrait(
             persona_id=str(persona_id),
             group_id=str(group_id),

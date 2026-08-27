@@ -22,11 +22,17 @@ class ProfileQueryResult:
 _CORRECT = re.compile(r"^纠正画像\s+([1-9]\d*)\s+(.+)$")
 _DELETE = re.compile(r"^删除画像\s+([1-9]\d*)$")
 
+# Keep the parser and downstream mutation contracts available for a future
+# governed profile card, but do not expose member-side writes today.
+_MEMBER_PROFILE_WRITE_COMMANDS_ENABLED = False
+
 
 def parse_profile_command(text: object) -> ProfileCommand | None:
     normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
-    if normalized in {"查看我的画像", "我的画像"}:
+    if normalized == "查看我的画像":
         return ProfileCommand("show_self")
+    if not _MEMBER_PROFILE_WRITE_COMMANDS_ENABLED:
+        return None
     if normalized == "停止画像个性化":
         return ProfileCommand("disable_personalization")
     if normalized == "恢复画像个性化":

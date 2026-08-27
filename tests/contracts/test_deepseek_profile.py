@@ -79,6 +79,42 @@ def test_profile_model_request_uses_separate_prompt_and_bounded_parameters():
     assert response.payload == {"facts": [], "episodes": [], "edges": []}
 
 
+def test_profile_model_request_declares_the_exact_candidate_vocabulary():
+    """The model must not have to invent enum values rejected by local policy."""
+
+    client = DeepSeekProfileClient(
+        api_key="sk-test",
+        api_base="https://api.deepseek.com",
+        model="deepseek-profile-test",
+        transport=_Transport(),
+    )
+
+    system_message = client.request_payload(_batch())["messages"][0]["content"]
+
+    for value in (
+        "identity",
+        "preference",
+        "dislike",
+        "boundary",
+        "interest",
+        "skill",
+        "speech_style",
+        "behavior_pattern",
+        "group_role",
+        "self_statement",
+        "observed_pattern",
+        "shared_achievement",
+        "running_joke",
+        "frequent_interaction",
+        "technical_peer",
+        "bidirectional",
+    ):
+        assert value in system_message
+    assert "不要因为尚未达到确认门槛而省略有直接证据的候选" in system_message
+    assert '"category":"preference"' in system_message
+    assert '"source_kind":"self_statement"' in system_message
+
+
 def test_profile_model_timeout_has_safe_diagnostic_code():
     client = DeepSeekProfileClient(
         api_key="sk-test",

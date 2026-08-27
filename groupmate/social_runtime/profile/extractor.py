@@ -7,6 +7,12 @@ import json
 from dataclasses import dataclass
 from typing import Mapping
 
+from ...profile_vocabulary import (
+    EDGE_DIRECTIONS,
+    EPISODE_TYPES,
+    MODEL_FACT_SOURCE_KINDS,
+    normalize_profile_claim,
+)
 from .contracts import (
     ProfileEpisode,
     ProfileFact,
@@ -15,21 +21,15 @@ from .contracts import (
     SocialEdge,
     SocialEdgeCandidate,
 )
-from .policy import FACT_CATEGORIES, ProfileEvidencePolicy
+from .policy import FACT_CATEGORIES, RELATION_TYPES, ProfileEvidencePolicy
 
 
-_EPISODE_TYPES = frozenset(
-    {
-        "shared_achievement",
-        "conflict",
-        "support",
-        "running_joke",
-        "milestone",
-        "notable_interaction",
-        "custom",
-    }
-)
-_EDGE_DIRECTIONS = frozenset({"directed", "bidirectional"})
+class _CandidateInvalid(ValueError):
+    """Expected model-contract rejection carrying a privacy-safe code."""
+
+    def __init__(self, code: str) -> None:
+        self.code = str(code)
+        super().__init__(self.code)
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class ProfileExtractionResult:
     episodes: tuple[ProfileEpisode, ...] = ()
     edges: tuple[SocialEdge, ...] = ()
     diagnostic_code: str | None = None
+    diagnostic_codes: tuple[str, ...] = ()
     provider_latency_ms: int = 0
     request_bytes: int = 0
     backend: str = ""
@@ -64,26 +65,29 @@ class ProfileExtractor:
         facts: list[ProfileFact] = []
         episodes: list[ProfileEpisode] = []
         edges: list[SocialEdge] = []
-        invalid = False
+        diagnostics: list[str] = []
         for raw in payload["facts"]:
             try:
                 if not isinstance(raw, Mapping):
-                    raise ValueError
+                    raise _CandidateInvalid("profile_fact_shape_invalid")
                 category = str(raw.get("category") or "")
+                source_kind = str(raw.get("source_kind") or "")
                 subject_id = str(raw.get("subject_id") or "")
                 source_actor_id = str(raw.get("source_actor_id") or "")
                 evidence_ids = tuple(
                     str(value)
                     for value in raw.get("evidence_event_ids", ())
                 )
-                if (
-                    category not in FACT_CATEGORIES
-                    or subject_id not in allowed_subjects
-                    or source_actor_id not in allowed_subjects
-                    or not evidence_ids
-                    or not set(evidence_ids) <= allowed_events
-                ):
-                    raise ValueError
+                if category not in FACT_CATEGORIES:
+                    raise _CandidateInvalid("profile_fact_category_invalid")
+                if source_kind not in MODEL_FACT_SOURCE_KINDS:
+                    raise _CandidateInvalid("profile_fact_source_kind_invalid")
+                if subject_id not in allowed_subjects:
+                    raise _CandidateInvalid("profile_fact_subject_invalid")
+                if source_actor_id not in allowed_subjects:
+                    raise _CandidateInvalid("profile_fact_source_actor_invalid")
+                if not evidence_ids or not set(evidence_ids) <= allowed_events:
+                    raise _CandidateInvalid("profile_fact_evidence_invalid")
                 candidate = ProfileFactCandidate(
                     candidate_id=self._candidate_id(raw, observations[0]),
                     persona_id=observations[0].persona_id,
@@ -91,7 +95,7 @@ class ProfileExtractor:
                     subject_id=subject_id,
                     category=category,
                     summary=str(raw.get("summary") or ""),
-                    source_kind=str(raw.get("source_kind") or ""),
+                    source_kind=source_kind,
                     source_actor_id=source_actor_id,
                     source_event_ids=evidence_ids,
                     confidence=float(raw.get("confidence")),
@@ -106,10 +110,12 @@ class ProfileExtractor:
                     candidate, allowed_event_ids=allowed_events
                 )
                 if fact.status == "rejected":
-                    raise ValueError
+                    raise _CandidateInvalid("profile_fact_policy_rejected")
                 facts.append(fact)
+            except _CandidateInvalid as exc:
+                diagnostics.append(exc.code)
             except (TypeError, ValueError):
-                invalid = True
+                diagnostics.append("profile_fact_shape_invalid")
         for raw in payload["episodes"]:
             try:
                 episodes.append(
@@ -120,8 +126,10 @@ class ProfileExtractor:
                         allowed_subjects=allowed_subjects,
                     )
                 )
+            except _CandidateInvalid as exc:
+                diagnostics.append(exc.code)
             except (TypeError, ValueError):
-                invalid = True
+                diagnostics.append("profile_episode_shape_invalid")
         for raw in payload["edges"]:
             try:
                 edge = self._edge(
@@ -131,15 +139,19 @@ class ProfileExtractor:
                     allowed_subjects=allowed_subjects,
                 )
                 if edge.status == "rejected":
-                    raise ValueError
+                    raise _CandidateInvalid("profile_edge_policy_rejected")
                 edges.append(edge)
+            except _CandidateInvalid as exc:
+                diagnostics.append(exc.code)
             except (TypeError, ValueError):
-                invalid = True
+                diagnostics.append("profile_edge_shape_invalid")
+        diagnostic_codes = tuple(dict.fromkeys(diagnostics))
         return ProfileExtractionResult(
             facts=tuple(facts),
             episodes=tuple(episodes),
             edges=tuple(edges),
-            diagnostic_code="profile_output_invalid" if invalid else None,
+            diagnostic_code=(diagnostic_codes[0] if diagnostic_codes else None),
+            diagnostic_codes=diagnostic_codes,
             provider_latency_ms=int(response.latency_ms),
             request_bytes=int(response.request_bytes),
             backend=str(response.backend),
@@ -155,7 +167,7 @@ class ProfileExtractor:
         allowed_subjects: set[str],
     ) -> ProfileEpisode:
         if not isinstance(raw, Mapping):
-            raise ValueError
+            raise _CandidateInvalid("profile_episode_shape_invalid")
         participants = tuple(
             dict.fromkeys(str(value) for value in raw.get("participants", ()))
         )
@@ -170,19 +182,20 @@ class ProfileExtractor:
         confidence = self._unit(raw.get("confidence"))
         importance = self._unit(raw.get("importance"))
         valence = float(raw.get("valence"))
+        if episode_type not in EPISODE_TYPES:
+            raise _CandidateInvalid("profile_episode_type_invalid")
+        if not participants or not set(participants) <= allowed_subjects:
+            raise _CandidateInvalid("profile_episode_participants_invalid")
+        if not evidence_ids or not set(evidence_ids) <= allowed_events:
+            raise _CandidateInvalid("profile_episode_evidence_invalid")
         if (
-            not participants
-            or not set(participants) <= allowed_subjects
-            or not evidence_ids
-            or not set(evidence_ids) <= allowed_events
-            or episode_type not in _EPISODE_TYPES
-            or not title
+            not title
             or len(title) > 80
             or not summary
             or len(summary) > 240
             or not -1.0 <= valence <= 1.0
         ):
-            raise ValueError
+            raise _CandidateInvalid("profile_episode_shape_invalid")
         occurred_at = min(
             item.occurred_at
             for item in observations
@@ -231,7 +244,7 @@ class ProfileExtractor:
         allowed_subjects: set[str],
     ) -> SocialEdge:
         if not isinstance(raw, Mapping):
-            raise ValueError
+            raise _CandidateInvalid("profile_edge_shape_invalid")
         source_id = str(raw.get("source_member_id") or "")
         target_id = str(raw.get("target_member_id") or "")
         direction = str(raw.get("direction") or "")
@@ -240,15 +253,19 @@ class ProfileExtractor:
                 str(value) for value in raw.get("evidence_event_ids", ())
             )
         )
+        relation_type = str(raw.get("relation_type") or "")
+        if relation_type not in RELATION_TYPES:
+            raise _CandidateInvalid("profile_edge_relation_type_invalid")
+        if direction not in EDGE_DIRECTIONS:
+            raise _CandidateInvalid("profile_edge_direction_invalid")
         if (
             source_id not in allowed_subjects
             or target_id not in allowed_subjects
             or source_id == target_id
-            or direction not in _EDGE_DIRECTIONS
-            or not evidence_ids
-            or not set(evidence_ids) <= allowed_events
         ):
-            raise ValueError
+            raise _CandidateInvalid("profile_edge_members_invalid")
+        if not evidence_ids or not set(evidence_ids) <= allowed_events:
+            raise _CandidateInvalid("profile_edge_evidence_invalid")
         candidate = SocialEdgeCandidate(
             candidate_id=self._stable_id(
                 "social-edge",
@@ -264,7 +281,7 @@ class ProfileExtractor:
             group_id=observations[0].group_id,
             source_member_id=source_id,
             target_member_id=target_id,
-            relation_type=str(raw.get("relation_type") or ""),
+            relation_type=relation_type,
             direction=direction,
             strength=self._unit(raw.get("strength")),
             confidence=self._unit(raw.get("confidence")),
@@ -329,8 +346,8 @@ class ProfileExtractor:
             "group_id": observation.group_id,
             "subject_id": raw.get("subject_id"),
             "category": raw.get("category"),
-            "summary": raw.get("summary"),
-            "evidence": raw.get("evidence_event_ids"),
+            "source_kind": raw.get("source_kind"),
+            "summary": normalize_profile_claim(raw.get("summary")),
         }
         digest = hashlib.sha256(
             json.dumps(
@@ -367,6 +384,7 @@ class ProfileExtractor:
     def _invalid(response) -> ProfileExtractionResult:
         return ProfileExtractionResult(
             diagnostic_code="profile_output_invalid",
+            diagnostic_codes=("profile_output_invalid",),
             provider_latency_ms=int(response.latency_ms),
             request_bytes=int(response.request_bytes),
             backend=str(response.backend),

@@ -85,9 +85,11 @@ def test_profile_query_reads_only_current_member_without_model(tmp_path):
     assert "我的画像" in result.text
     assert "会持续追问到问题真正落地" in result.text
     assert "[1] 喜欢冷饮" in result.text
+    assert "纠正画像" not in result.text
+    assert "删除画像" not in result.text
 
 
-def test_member_can_correct_delete_and_disable_own_profile(tmp_path):
+def test_former_member_write_commands_do_not_mutate_profile(tmp_path):
     async def scenario():
         bridge = _bridge(tmp_path)
         await bridge.start()
@@ -97,40 +99,23 @@ def test_member_can_correct_delete_and_disable_own_profile(tmp_path):
         corrected = await bridge.prepare_profile_command(
             _Event("纠正画像 1 现在不喝冷饮", "correct-1")
         )
-        view_after_correction = await bridge.prepare_profile_command(
-            _Event("查看我的画像", "query-after-correction")
-        )
-        facts_after_correction = repository.facts(
-            "groupmate:default", "group-1", "member-1"
-        )
         disabled = await bridge.prepare_profile_command(
             _Event("停止画像个性化", "disable-1")
-        )
-        context_while_disabled = bridge.manager.member_profile_context(
-            bridge.translator.translate(_Event("普通消息", "message-1"))
         )
         deletion = await bridge.prepare_profile_command(
             _Event("删除画像 1", "delete-1")
         )
-        await bridge.close()
-        return (
-            corrected,
-            view_after_correction,
-            facts_after_correction,
-            disabled,
-            context_while_disabled,
-            deletion,
+        facts = repository.facts("groupmate:default", "group-1", "member-1")
+        personalization_enabled = repository.personalization_enabled(
+            "groupmate:default", "group-1", "member-1"
         )
+        await bridge.close()
+        return corrected, disabled, deletion, facts, personalization_enabled
 
-    corrected, view, facts, disabled, context, deletion = asyncio.run(scenario())
+    corrected, disabled, deletion, facts, enabled = asyncio.run(scenario())
 
-    assert "已纠正" in corrected.text
-    assert "现在不喝冷饮" in view.text
-    assert "偏好与边界：喜欢冷饮" not in view.text
+    assert corrected is disabled is deletion is None
     assert [(item.summary, item.status) for item in facts] == [
-        ("喜欢冷饮", "superseded"),
-        ("现在不喝冷饮", "confirmed"),
+        ("喜欢冷饮", "confirmed")
     ]
-    assert "已停止" in disabled.text
-    assert context == ""
-    assert "已删除" in deletion.text
+    assert enabled is True

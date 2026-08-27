@@ -104,7 +104,81 @@ def test_extractor_rejects_unknown_category_without_partial_fact():
     )
 
     assert result.facts == ()
-    assert result.diagnostic_code == "profile_output_invalid"
+    assert result.diagnostic_code == "profile_fact_category_invalid"
+    assert result.diagnostic_codes == ("profile_fact_category_invalid",)
+
+
+def test_extractor_reports_the_invalid_candidate_kind_without_losing_valid_items():
+    observations = (
+        _observation("event-1", "member-1", "我Dota1玩得少", 100),
+        _observation("event-2", "member-1", "我不太熟悉老版本机制", 110),
+        _observation("event-3", "member-2", "我们经常一起研究机制", 120),
+    )
+    client = _Client(
+        {
+            "facts": [
+                {
+                    "subject_id": "member-1",
+                    "category": "skill",
+                    "summary": "Dota1经验较少",
+                    "source_kind": "self_statement",
+                    "source_actor_id": "member-1",
+                    "evidence_event_ids": ["event-1", "event-2"],
+                    "confidence": 0.93,
+                }
+            ],
+            "episodes": [],
+            "edges": [
+                {
+                    "source_member_id": "member-1",
+                    "target_member_id": "member-2",
+                    "relation_type": "friend",
+                    "direction": "bidirectional",
+                    "strength": 0.72,
+                    "confidence": 0.92,
+                    "evidence_event_ids": ["event-1", "event-2", "event-3"],
+                }
+            ],
+        }
+    )
+
+    result = asyncio.run(
+        ProfileExtractor(client, ProfileEvidencePolicy()).extract(observations)
+    )
+
+    assert [fact.summary for fact in result.facts] == ["Dota1经验较少"]
+    assert result.edges == ()
+    assert result.diagnostic_code == "profile_edge_relation_type_invalid"
+    assert result.diagnostic_codes == ("profile_edge_relation_type_invalid",)
+
+
+def test_extractor_rejects_model_source_kind_outside_the_declared_vocabulary():
+    client = _Client(
+        {
+            "facts": [
+                {
+                    "subject_id": "member-1",
+                    "category": "interest",
+                    "summary": "喜欢研究游戏机制",
+                    "source_kind": "personal_statement",
+                    "source_actor_id": "member-1",
+                    "evidence_event_ids": ["event-1"],
+                    "confidence": 0.94,
+                }
+            ],
+            "episodes": [],
+            "edges": [],
+        }
+    )
+
+    result = asyncio.run(
+        ProfileExtractor(client, ProfileEvidencePolicy()).extract(
+            (_observation(),)
+        )
+    )
+
+    assert result.facts == ()
+    assert result.diagnostic_code == "profile_fact_source_kind_invalid"
 
 
 def test_extractor_validates_episode_and_repeated_social_edge_evidence():
@@ -151,3 +225,41 @@ def test_extractor_validates_episode_and_repeated_social_edge_evidence():
     assert result.edges[0].relation_type == "technical_peer"
     assert result.edges[0].status == "confirmed"
     assert result.diagnostic_code is None
+def test_fact_identity_keeps_source_kind_separate():
+    observation = _observation("event-1", "member-1")
+    shared = {
+        "subject_id": "member-1",
+        "category": "preference",
+        "summary": "喜欢冷饮",
+        "source_actor_id": "member-1",
+        "evidence_event_ids": ["event-1"],
+    }
+
+    self_statement = ProfileExtractor._candidate_id(
+        {**shared, "source_kind": "self_statement"}, observation
+    )
+    hearsay = ProfileExtractor._candidate_id(
+        {**shared, "source_kind": "third_party_claim"}, observation
+    )
+
+    assert self_statement != hearsay
+
+
+def test_fact_identity_keeps_semantic_programming_symbols():
+    observation = _observation("event-1", "member-1")
+    shared = {
+        "subject_id": "member-1",
+        "category": "skill",
+        "source_kind": "self_statement",
+        "source_actor_id": "member-1",
+        "evidence_event_ids": ["event-1"],
+    }
+
+    c_sharp = ProfileExtractor._candidate_id(
+        {**shared, "summary": "擅长 C#"}, observation
+    )
+    plain_c = ProfileExtractor._candidate_id(
+        {**shared, "summary": "擅长 C"}, observation
+    )
+
+    assert c_sharp != plain_c

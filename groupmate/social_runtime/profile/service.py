@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import suppress
+from dataclasses import replace
 from typing import Callable
 
 from ...adapters.deepseek_profile import ProfileModelError
 from ..contracts import SocialEventEnvelope
 from .contracts import ProfileObservation
 from .extractor import ProfileExtractor
+from .group_portrait import GroupPortraitBuilder
 from .identity import IdentityService
 from .repository import ProfileRepository
 from .snapshot import SnapshotBuilder
@@ -29,6 +31,7 @@ class ProfileService:
         style_service: object | None = None,
         clock: Callable[[], float] | None = None,
         snapshot_builder: SnapshotBuilder | None = None,
+        group_portrait_builder: GroupPortraitBuilder | None = None,
     ) -> None:
         self.repository = repository
         self.extractor = extractor
@@ -40,8 +43,19 @@ class ProfileService:
         self.style_service = style_service
         self.clock = time.time if clock is None else clock
         self.snapshot_builder = snapshot_builder or SnapshotBuilder()
+        self.group_portrait_builder = (
+            group_portrait_builder or GroupPortraitBuilder()
+        )
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._health = {
+            group_id: {
+                "last_attempt_at": None,
+                "last_success_at": None,
+                "last_diagnostic": None,
+            }
+            for group_id in self.group_ids
+        }
 
     async def observe(self, event: SocialEventEnvelope) -> bool:
         if (
@@ -85,8 +99,12 @@ class ProfileService:
             if not observations:
                 continue
             event_ids = tuple(item.event_id for item in observations)
+            health = self._health[group_id]
+            health["last_attempt_at"] = decision_now
             try:
-                result = await self.extractor.extract(observations)
+                diagnostic = await self._process_batch(
+                    observations, decision_now=decision_now
+                )
             except ProfileModelError as exc:
                 attempt = max(item.attempt for item in observations)
                 delay = (60, 300, 1800)[min(max(attempt - 1, 0), 2)]
@@ -96,27 +114,89 @@ class ProfileService:
                     diagnostic_code=exc.code,
                     next_attempt_at=decision_now + delay,
                 )
+                health["last_diagnostic"] = exc.code
                 continue
-            for fact in result.facts:
-                self.repository.put_fact(fact)
-            for episode in result.episodes:
-                self.repository.put_episode(episode)
-            for edge in result.edges:
-                self.repository.put_edge(edge)
-            self._refresh_snapshots(
-                observations,
-                result=result,
-                generated_at=decision_now,
+            except Exception:
+                # Do not expose exception text or let one malformed batch kill
+                # the long-lived scheduler. The durable observation is retried.
+                self.repository.complete_observations(
+                    event_ids,
+                    status="retry",
+                    diagnostic_code="profile_worker_failed",
+                    next_attempt_at=decision_now + 60,
+                )
+                health["last_diagnostic"] = "profile_worker_failed"
+                continue
+            health["last_success_at"] = decision_now
+            health["last_diagnostic"] = diagnostic
+
+    async def _process_batch(
+        self,
+        observations: tuple[ProfileObservation, ...],
+        *,
+        decision_now: int,
+    ) -> str | None:
+        """Extract and persist one claimed batch as an idempotent unit of work."""
+
+        result = await self.extractor.extract(observations)
+        event_ids = tuple(item.event_id for item in observations)
+        merged_facts = []
+        for fact in result.facts:
+            existing = self.repository.fact(fact.fact_id)
+            merged = (
+                fact
+                if existing is None
+                else self.extractor.policy.reinforce_fact(existing, fact)
             )
-            self.repository.complete_observations(
-                event_ids,
-                status=(
-                    "discarded"
-                    if result.diagnostic_code and not result.facts
-                    else "completed"
-                ),
-                diagnostic_code=result.diagnostic_code,
+            self.repository.upsert_fact(merged)
+            merged_facts.append(merged)
+        for episode in result.episodes:
+            self.repository.put_episode(episode)
+        merged_edges = []
+        for edge in result.edges:
+            existing = self.repository.edge(edge.edge_id)
+            merged = (
+                edge
+                if existing is None
+                else self.extractor.policy.reinforce_edge(existing, edge)
             )
+            self.repository.put_edge(merged)
+            merged_edges.append(merged)
+        merged_result = replace(
+            result,
+            facts=tuple(merged_facts),
+            edges=tuple(merged_edges),
+        )
+        self._refresh_snapshots(
+            observations,
+            result=merged_result,
+            generated_at=decision_now,
+        )
+        group_id = observations[0].group_id
+        self._refresh_group_portrait(
+            group_id,
+            source_revision=max(
+                (item.occurred_at for item in observations),
+                default=decision_now,
+            ),
+            generated_at=decision_now,
+        )
+        has_candidates = bool(
+            result.facts or result.episodes or result.edges
+        )
+        diagnostic = result.diagnostic_code or (
+            None if has_candidates else "profile_no_candidates"
+        )
+        self.repository.complete_observations(
+            event_ids,
+            status=(
+                "discarded"
+                if result.diagnostic_code and not has_candidates
+                else "completed"
+            ),
+            diagnostic_code=diagnostic,
+        )
+        return diagnostic
 
     def _refresh_snapshots(
         self,
@@ -171,6 +251,34 @@ class ProfileService:
             )
             self.repository.put_snapshot(snapshot)
 
+    def _refresh_group_portrait(
+        self,
+        group_id: str,
+        *,
+        source_revision: int,
+        generated_at: int,
+    ) -> None:
+        """Rebuild only privacy-safe group aggregates after each batch."""
+
+        portrait = self.group_portrait_builder.build(
+            persona_id=self.persona_id,
+            group_id=group_id,
+            member_snapshots=self.repository.snapshots_for_group(
+                self.persona_id, group_id
+            ),
+            # Culture/topics need their own governed evidence source.  Private
+            # member facts must never be repurposed as group-wide topics.
+            culture=(),
+            topic_counts={},
+            activity_hours=self.repository.observation_hours(
+                self.persona_id, group_id
+            ),
+            edges=self.repository.edges(self.persona_id, group_id),
+            source_revision=source_revision,
+            generated_at=generated_at,
+        )
+        self.repository.put_group_portrait(portrait)
+
     def pending_count(self, group_id: str) -> int:
         return self.repository.pending_observation_count(
             self.persona_id, str(group_id)
@@ -180,6 +288,26 @@ class ProfileService:
         return self.repository.observation_diagnostics(
             self.persona_id, str(group_id)
         )
+
+    def health(self, group_id: str) -> dict[str, object]:
+        """Expose bounded operational state without model output or errors."""
+
+        normalized = str(group_id)
+        health = self._health.get(normalized, {})
+        task = self._task
+        return {
+            "enabled": self.extractor is not None,
+            "task_running": bool(task is not None and not task.done()),
+            "pending_count": self.pending_count(normalized),
+            "last_attempt_at": health.get("last_attempt_at"),
+            "last_success_at": health.get("last_success_at"),
+            "last_diagnostic": health.get("last_diagnostic"),
+        }
+
+    def status(self, group_id: str) -> dict[str, object]:
+        """Compatibility alias for callers that render a generic status."""
+
+        return self.health(group_id)
 
     async def start(self) -> None:
         if self._task is None:
@@ -211,7 +339,15 @@ class ProfileService:
             except TimeoutError:
                 pass
             self._wake.clear()
-            await self.process_due()
+            try:
+                await self.process_due()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A failure outside a claimed batch is still visible and the
+                # next interval remains scheduled.
+                for health in self._health.values():
+                    health["last_diagnostic"] = "profile_worker_failed"
 
 
 __all__ = ("ProfileService",)
