@@ -2,7 +2,11 @@ import { ApiBridge } from "./bridge.js";
 import { renderInspector } from "./components/inspector.js";
 import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
-import { ProjectionStore, workspaceProjectionNames } from "./store.js";
+import {
+  ProjectionStore,
+  createCommandId,
+  workspaceProjectionNames,
+} from "./store.js";
 import { renderRuntime } from "./workspaces/runtime.js";
 import { renderProfiles } from "./workspaces/profiles.js";
 import { safeMediaPreview } from "./components/security.js";
@@ -339,7 +343,7 @@ async function refreshWorkspaceData() {
 }
 
 async function submitWorkspaceCommand(spec) {
-  const commandId = spec.command_id || crypto.randomUUID();
+  const commandId = spec.command_id || createCommandId();
   store.trackCommand({
     command_id: commandId,
     expected_version: Number(spec.expected_version || 0),

@@ -123,6 +123,20 @@ def test_runtime_refresh_queries_live_bootstrap_status():
     ]
 
 
+def test_command_id_falls_back_when_random_uuid_is_unavailable():
+    result = _run_store(
+        "const provider = { getRandomValues(bytes) { "
+        "bytes.set(Array.from({length: 16}, (_, index) => index)); "
+        "return bytes; } }; "
+        "console.log(JSON.stringify("
+        "typeof store.createCommandId === 'function' "
+        "? store.createCommandId(provider) : null"
+        "));"
+    )
+
+    assert result == "00010203-0405-4607-8809-0a0b0c0d0e0f"
+
+
 def test_message_presenter_uses_non_text_parts_instead_of_generic_placeholder():
     result = _run_presenter(
         "console.log(JSON.stringify({"
