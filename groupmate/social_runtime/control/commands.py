@@ -203,6 +203,13 @@ class SplitProfileIdentity:
     command_id: str | None = None
 
 
+@dataclass(frozen=True)
+class SetMemberStyleDistillation:
+    member_ref: str
+    enabled: bool
+    command_id: str | None = None
+
+
 ControlCommand = (
     PauseRuntime
     | SetRuntimeMode
@@ -224,6 +231,7 @@ ControlCommand = (
     | InvalidateProfileFact
     | MergeProfileIdentity
     | SplitProfileIdentity
+    | SetMemberStyleDistillation
 )
 
 
@@ -266,6 +274,7 @@ _PROFILE_COMMANDS = (
     MergeProfileIdentity,
     SplitProfileIdentity,
 )
+_MEMBER_STYLE_COMMANDS = (SetMemberStyleDistillation,)
 _ALL_PROJECTIONS = (
     "runtime",
     "activity",
@@ -879,6 +888,73 @@ class CommandService:
                 "profile_revision": 0,
                 "status": "split",
             }, "control.profile_identity_split"
+        if isinstance(command, SetMemberStyleDistillation):
+            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            row = db.execute(
+                "SELECT enabled,enabled_at,version,collection_windows_json "
+                "FROM member_style_settings WHERE group_id=? AND member_id=?",
+                (context.group_id, actor_id),
+            ).fetchone()
+            was_enabled = bool(row["enabled"]) if row is not None else False
+            windows = (
+                list(json.loads(str(row["collection_windows_json"])))
+                if row is not None
+                else []
+            )
+            if command.enabled and not was_enabled:
+                windows.append([now, None])
+            elif not command.enabled and was_enabled and windows:
+                windows[-1][1] = now
+            version = (int(row["version"]) if row is not None else 0) + 1
+            enabled_at = (
+                int(row["enabled_at"])
+                if row is not None and int(row["enabled_at"]) > 0
+                else now if command.enabled else 0
+            )
+            db.execute(
+                "INSERT INTO member_style_settings(group_id,member_id,enabled,"
+                "enabled_at,updated_by,updated_at,version,collection_windows_json) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(group_id,member_id) DO UPDATE SET "
+                "enabled=excluded.enabled,enabled_at=excluded.enabled_at,"
+                "updated_by=excluded.updated_by,updated_at=excluded.updated_at,"
+                "version=excluded.version,collection_windows_json=excluded.collection_windows_json",
+                (
+                    context.group_id,
+                    actor_id,
+                    int(bool(command.enabled)),
+                    enabled_at,
+                    context.admin_id,
+                    now,
+                    version,
+                    self._canonical_json(windows),
+                ),
+            )
+            if not command.enabled:
+                db.execute(
+                    "UPDATE imitation_sessions SET stopped_at=?,stopped_by=?,"
+                    "stop_reason='distillation_disabled' WHERE group_id=? "
+                    "AND target_member_id=? AND stopped_at IS NULL AND expires_at>?",
+                    (now, context.admin_id, context.group_id, actor_id, now),
+                )
+            self._record_profile_audit(
+                db,
+                context,
+                subject_id=actor_id,
+                action_type=(
+                    "member_style_distillation_enabled"
+                    if command.enabled
+                    else "member_style_distillation_disabled"
+                ),
+                target_id=str(command.member_ref),
+                details={"enabled": bool(command.enabled), "setting_version": version},
+                now=now,
+            )
+            return {
+                "member_ref": str(command.member_ref),
+                "enabled": bool(command.enabled),
+                "setting_version": version,
+                "status": "ACCUMULATING" if command.enabled else "DISABLED",
+            }, "control.member_style_distillation_set"
         raise CommandValidationError("unsupported control command")
 
     def _validate_context(
@@ -929,6 +1005,14 @@ class CommandService:
                 "SELECT source_revision FROM profile_snapshots WHERE persona_id=? "
                 "AND group_id=? AND subject_id=?",
                 (context.persona_id, context.group_id, actor_id),
+            ).fetchone()
+            return int(row[0]) if row is not None else 0
+        if isinstance(command, _MEMBER_STYLE_COMMANDS):
+            actor_id = self._profile_subject_on(db, context, command.member_ref)
+            row = db.execute(
+                "SELECT version FROM member_style_settings "
+                "WHERE group_id=? AND member_id=?",
+                (context.group_id, actor_id),
             ).fetchone()
             return int(row[0]) if row is not None else 0
         return self._control_version_on(db, context)
@@ -1300,5 +1384,6 @@ __all__ = (
     "ReviewEvidence",
     "ReviewShadowDecision",
     "SplitProfileIdentity",
+    "SetMemberStyleDistillation",
     "ValidateConfig",
 )

@@ -31,6 +31,7 @@ from ..social_runtime.control.commands import (
     RestoreConfig,
     ReviewEvidence,
     ReviewShadowDecision,
+    SetMemberStyleDistillation,
     SetRuntimeMode,
     SplitProfileIdentity,
     ValidateConfig,
@@ -557,6 +558,11 @@ class ControlPlaneWebAPI:
                 str(payload.get("new_stable_id") or ""),
                 str(payload.get("new_display_name") or ""),
                 tuple(payload.get("fact_refs") or ()),
+                command_id=command_id,
+            ),
+            "member_style_distillation_set": lambda: SetMemberStyleDistillation(
+                str(payload.get("member_ref") or ""),
+                cls._boolean(payload.get("enabled"), "enabled"),
                 command_id=command_id,
             ),
         }

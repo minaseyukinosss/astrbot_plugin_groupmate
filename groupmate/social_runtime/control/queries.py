@@ -9,6 +9,8 @@ from pathlib import Path
 from ..persona.profile import GroupmatePersonaProfile
 from ..persistence.schema import connect_database
 from ..profile.repository import ProfileRepository
+from ..profile.speech_style import MemberStyleMaturity
+from ..profile.style_repository import MemberStyleRepository
 from .config_versions import ConfigVersionRepository
 from .message_traces import MessageTraceRepository
 from .projections import ProjectionConsumer
@@ -309,6 +311,7 @@ class ProjectionQueries:
                 persona, group, actor_id
             ),
             "profile_revision": int(snapshot_summary["source_revision"]),
+            "speech_style": self._speech_style_summary(group, actor_id),
         }
         return self._direct_view(
             "profile",
@@ -324,6 +327,43 @@ class ProjectionQueries:
             ],
             as_of=as_of,
         )
+
+    def _speech_style_summary(
+        self, group_id: str, member_id: str
+    ) -> dict[str, object]:
+        repository = MemberStyleRepository(self.path)
+        setting = repository.setting(group_id, member_id)
+        evidence = repository.eligible_observations(group_id, member_id)
+        maturity = MemberStyleMaturity.from_evidence(evidence)
+        style = repository.latest_ready(group_id, member_id)
+        return {
+            "enabled": setting.enabled,
+            "setting_version": setting.version,
+            "status": (
+                "DISABLED"
+                if not setting.enabled
+                else "READY"
+                if style is not None
+                else "ACCUMULATING"
+            ),
+            "eligible_message_count": (
+                style.eligible_message_count
+                if style is not None
+                else maturity.eligible_message_count
+            ),
+            "active_day_count": (
+                style.active_day_count if style is not None else maturity.active_day_count
+            ),
+            "scene_types": list(
+                style.scene_types if style is not None else maturity.scene_types
+            ),
+            "style_version": style.version if style is not None else None,
+            "generated_at": style.generated_at if style is not None else None,
+            "opening_patterns": list(style.opening_patterns) if style else [],
+            "progression_patterns": list(style.progression_patterns) if style else [],
+            "closing_patterns": list(style.closing_patterns) if style else [],
+            "stable_traits": list(style.stable_traits) if style else [],
+        }
 
     def group_portrait(
         self, *, persona_id: str, group_id: str
