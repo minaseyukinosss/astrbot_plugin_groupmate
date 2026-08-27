@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-27-aemeath-smalltalk-style-system-design.md`
 
+**Scenario Catalog:** `docs/scenarios/aemeath-scenario-catalog.json`
+
 ## Global Constraints
 
 - 全局默认身份保持“爱弥斯”；Persona Canon 是名称、现实、经历和能力事实的唯一权威来源。

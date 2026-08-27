@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-27-aemeath-smalltalk-style-system-design.md`
 
+**Scenario Catalog:** `docs/scenarios/aemeath-scenario-catalog.json`
+
 ## Global Constraints
 
 - 本计划在 `2026-08-27-aemeath-smalltalk-style-core.md` 完成后执行。

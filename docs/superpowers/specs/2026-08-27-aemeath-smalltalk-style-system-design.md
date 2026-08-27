@@ -3,6 +3,7 @@
 - 日期：2026-08-27
 - 状态：已确认，待规格审阅
 - 适用范围：Groupmate 社交运行时的闲聊决策、表达规划与成品检查
+- 当前场景目录：`docs/scenarios/aemeath-scenario-catalog.json`
 
 ## 1. 决策摘要
 

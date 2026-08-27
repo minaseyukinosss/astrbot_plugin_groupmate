@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-27-aemeath-smalltalk-style-system-design.md`
 
+**Scenario Catalog:** `docs/scenarios/aemeath-scenario-catalog.json`
+
 ## Global Constraints
 
 - 本计划在闲聊主链计划完成后执行；命令能力计划可以并行评审，但媒体命令仍服从其归属规则。
