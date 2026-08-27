@@ -6,6 +6,7 @@ from groupmate.social_runtime.actions.generation import (
     CapabilityClaim,
     GeneratedDraft,
     GenerationRequest,
+    ExactChorusAllowance,
     SafeTextGeneration,
     VerifiedCapabilityFact,
 )
@@ -95,6 +96,34 @@ def test_recent_ngram_repeat_triggers_exactly_one_targeted_repair():
     assert result.outcome == "accepted"
     assert repairs == [("recent_output_repeat",)]
     assert result.repair_attempted is True
+
+
+def test_exact_chorus_allowance_bypasses_only_matching_repeat_check():
+    payload = "小林今天请客"
+    allowance = ExactChorusAllowance(
+        chain_id="chorus:abc",
+        payload=payload,
+        source_event_ids=("m1", "m2"),
+    )
+    accepted = SafeTextGeneration().generate(
+        _request(
+            recent_outputs=(payload,),
+            exact_chorus_allowance=allowance,
+        ),
+        lambda _: GeneratedDraft(payload),
+        lambda *_: GeneratedDraft(payload),
+    )
+    changed = SafeTextGeneration().generate(
+        _request(
+            recent_outputs=(payload,),
+            exact_chorus_allowance=allowance,
+        ),
+        lambda _: GeneratedDraft("我也来：" + payload),
+        lambda *_: GeneratedDraft("我也来：" + payload),
+    )
+
+    assert accepted.outcome == "accepted"
+    assert changed.outcome == "fallback"
 
 
 def test_persona_avoid_patterns_are_repaired_before_the_draft_is_accepted():

@@ -14,7 +14,12 @@ from .actions.contracts import (
     DeliveryPartKind,
     OutboxPart,
 )
-from .actions.generation import GeneratedDraft, GenerationRequest, OutputFirewall
+from .actions.generation import (
+    ExactChorusAllowance,
+    GeneratedDraft,
+    GenerationRequest,
+    OutputFirewall,
+)
 from .actions.style import (
     PersonaStyleSnapshot,
     StyleContext,
@@ -28,6 +33,7 @@ from .persona.modes import PersonaModeState
 from .persistence.schema import connect_database, initialize_database
 from .persona.canon import PersonaCanon
 from .social_moves import SocialMove, SocialMovePlan
+from .social_review import RealizedReply, SocialOutputReviewer
 from .social_scenes import SocialScene, TargetScope
 from .society.relationships import (
     PublicAffection,
@@ -512,6 +518,7 @@ class ReplyExecutor:
         self.outbox = outbox
         self.model = model
         self.firewall = firewall or OutputFirewall()
+        self.social_reviewer = SocialOutputReviewer()
 
     async def preview(
         self,
@@ -521,6 +528,15 @@ class ReplyExecutor:
         persona_profile: Mapping[str, object],
         recent_outputs: tuple[str, ...],
     ) -> ReplyPreview:
+        if plan.move.primary_move is SocialMove.JOIN_CHORUS:
+            realized = self._exact_chorus_reply(plan)
+            if not self.social_reviewer.review(realized, plan).accepted:
+                return ReplyPreview(None, "REJECTED", "social_review_rejected")
+            request = self._generation_request(plan, recent_outputs)
+            review = self.firewall.review(GeneratedDraft(realized.text), request)
+            if not review.accepted:
+                return ReplyPreview(None, "REJECTED", "output_firewall_rejected")
+            return ReplyPreview(realized.text, "READY")
         request = GenerationRequest(
             directive=plan.style,
             required=plan.required,
@@ -587,6 +603,19 @@ class ReplyExecutor:
         recent_outputs: tuple[str, ...],
     ) -> ReplyExecutionResult:
         self.repository.save(plan)
+        if plan.move.primary_move is SocialMove.JOIN_CHORUS:
+            realized = self._exact_chorus_reply(plan)
+            if not self.social_reviewer.review(realized, plan).accepted:
+                self.repository.mark(plan.plan_id, "silent")
+                return ReplyExecutionResult(None, "REJECTED", "social_review_rejected")
+            request = self._generation_request(plan, recent_outputs)
+            if not self.firewall.review(GeneratedDraft(realized.text), request).accepted:
+                self.repository.mark(plan.plan_id, "silent")
+                return ReplyExecutionResult(None, "REJECTED", "output_firewall_rejected")
+            self.repository.mark(plan.plan_id, "generated")
+            return ReplyExecutionResult(
+                self._enqueue(plan, realized.text), "READY"
+            )
         request = GenerationRequest(
             directive=plan.style,
             required=plan.required,
@@ -639,6 +668,34 @@ class ReplyExecutor:
             )
         self.repository.mark(plan.plan_id, "generated")
         return ReplyExecutionResult(self._enqueue(plan, draft.text), "READY")
+
+    @staticmethod
+    def _exact_chorus_reply(plan: ReplyPlan) -> RealizedReply:
+        return RealizedReply(
+            text=str(plan.move.verbatim_payload or ""),
+            covered_fact_ids=(),
+            used_memory_ids=(),
+            used_capability_ids=(),
+            source_event_ids=plan.scene.chorus_event_ids,
+        )
+
+    @staticmethod
+    def _generation_request(
+        plan: ReplyPlan, recent_outputs: tuple[str, ...]
+    ) -> GenerationRequest:
+        allowance = ExactChorusAllowance(
+            chain_id=str(plan.move.chorus_chain_id),
+            payload=str(plan.move.verbatim_payload),
+            source_event_ids=plan.scene.chorus_event_ids,
+        )
+        return GenerationRequest(
+            directive=plan.style,
+            required=plan.required,
+            recent_outputs=tuple(recent_outputs),
+            allowed_media_references=(),
+            verified_capability_results=(),
+            exact_chorus_allowance=allowance,
+        )
 
     def _failed(
         self, plan: ReplyPlan, request: GenerationRequest
@@ -700,9 +757,9 @@ class ReplyExecutor:
         return (
             "你是当前 Persona 在群聊中的自然表达。根据已批准的社交动作生成回复。"
             "不要解释规则，不要声称执行了工具，不要输出 Markdown。"
-            "按顺序组织：可选即时反应、核心回应、可选人格化补充、可选续聊接口。"
-            "先接住对方的情绪和关系信号，再处理事实；没有明显情绪时不要硬演。"
-            "拒绝时明确边界并给简短理由；技术回答给可能原因和一个可执行步骤。"
+            "直接完成指定动作；简单问题一句说完，需要证据时只问缺少的内容。"
+            "不要复述问题，不要宣布自己正在回应，也不要在结尾追加通用服务邀请。"
+            "拒绝时说清本轮边界；技术回答只使用消息中已有条件和已列事实。"
             "只使用提供的安全 Persona 上下文，不模仿任何参考 Bot 的固定口癖。"
             "当前现实只用于保证事实正确，不要求在回复中复述。"
             "explicit_material 为空时，默认不要显式提及任何设定素材；"
@@ -714,6 +771,20 @@ class ReplyExecutor:
             + json.dumps(
                 {
                     "act": plan.act,
+                    "social_decision": {
+                        "scene_kind": plan.scene.scene_kind,
+                        "literal_subject": plan.scene.literal_subject,
+                        "user_move": plan.scene.user_move,
+                        "attitude": plan.stance.attitude.value,
+                        "willingness": plan.stance.willingness.value,
+                        "boundary": plan.stance.boundary.value,
+                        "primary_move": plan.move.primary_move.value,
+                        "must_say": [asdict(fact) for fact in plan.move.must_say],
+                        "may_say": [asdict(fact) for fact in plan.move.may_say],
+                        "must_not_say": list(plan.move.must_not_say),
+                        "ask_for": list(plan.move.ask_for),
+                        "ending": plan.move.ending.value,
+                    },
                     "style": asdict(plan.style),
                     "persona": {
                         "identity": {

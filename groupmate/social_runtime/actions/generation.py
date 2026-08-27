@@ -55,6 +55,19 @@ class GeneratedDraft:
 
 
 @dataclass(frozen=True)
+class ExactChorusAllowance:
+    chain_id: str
+    payload: str
+    source_event_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not str(self.chain_id).strip() or not str(self.payload).strip():
+            raise ValueError("exact chorus allowance requires chain and payload")
+        if len(tuple(dict.fromkeys(self.source_event_ids))) < 2:
+            raise ValueError("exact chorus allowance requires source events")
+
+
+@dataclass(frozen=True)
 class GenerationRequest:
     directive: StyleDirective
     required: bool
@@ -63,6 +76,7 @@ class GenerationRequest:
     verified_capability_results: tuple[VerifiedCapabilityFact, ...]
     protected_spans: tuple[str, ...] = ()
     protected_ids: tuple[str, ...] = ()
+    exact_chorus_allowance: ExactChorusAllowance | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +129,10 @@ class OutputFirewall:
         style = self._style_violations(draft.text, request.directive)
         if style:
             return FirewallReview(False, "style", style)
-        if self._repeats_recent_output(draft.text, request.recent_outputs):
+        if (
+            self._repeats_recent_output(draft.text, request.recent_outputs)
+            and not self._exact_chorus_allowed(draft, request)
+        ):
             return FirewallReview(False, "repeat", ("recent_output_repeat",))
         return FirewallReview(True, None, ())
 
@@ -265,6 +282,18 @@ class OutputFirewall:
         return bool(candidate) and any(candidate & OutputFirewall._ngrams(old) for old in recent_outputs)
 
     @staticmethod
+    def _exact_chorus_allowed(
+        draft: GeneratedDraft, request: GenerationRequest
+    ) -> bool:
+        allowance = request.exact_chorus_allowance
+        return bool(
+            allowance is not None
+            and draft.text == allowance.payload
+            and not draft.media_references
+            and not draft.claimed_capability_results
+        )
+
+    @staticmethod
     def _ngrams(text: str) -> set[tuple[str, ...]]:
         words = re.findall(r"[\w']+", text.casefold())
         if len(words) >= 3:
@@ -343,6 +372,7 @@ __all__ = (
     "CapabilityClaim",
     "DraftGenerator",
     "DraftRepairer",
+    "ExactChorusAllowance",
     "FirewallReview",
     "GeneratedDraft",
     "GenerationRequest",

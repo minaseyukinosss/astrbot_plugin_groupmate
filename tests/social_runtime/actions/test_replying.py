@@ -222,6 +222,64 @@ def test_repository_round_trips_exact_chorus_plan(tmp_path):
     assert restored.move.verbatim_payload == "小林今天请客"
 
 
+def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_path):
+    class FailIfCalledModel:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete_text(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("exact chorus must not call the reply model")
+
+    scene = SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="小林",
+        user_move="chorus_about_member",
+        continuity_event_ids=("qq:m1", "qq:m2"),
+        repetition_count=2,
+        chorus_target="MEMBER",
+        chorus_target_id="u9",
+        chorus_chain_id="chorus:abc",
+        chorus_payload="小林今天请客",
+        chorus_event_ids=("qq:m1", "qq:m2"),
+        chorus_participant_ids=("u1", "u2"),
+        chorus_tone="SAFE_BANTER",
+        confidence=0.95,
+    )
+    _, stance, _ = _social_decisions()
+    move = SocialMovePlan.create(
+        primary_move="JOIN_CHORUS",
+        mention_event_ids=("qq:m1", "qq:m2"),
+        realization_mode="EXACT_CHORUS",
+        verbatim_payload="小林今天请客",
+        chorus_chain_id="chorus:abc",
+    )
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile(),
+        scene=scene, stance=stance, move=move,
+    )
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = FailIfCalledModel()
+
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, model).execute_with_result(
+            plan,
+            context_events=_evaluation().context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=("小林今天请客",),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.payload["text"] == "小林今天请客"
+    assert model.calls == 0
+
+
 def test_old_serialized_reply_plan_defaults_to_ambient_lane():
     plan = ReplyPlanner().plan(
         _evaluation(), now=100, persona_profile=_persona_profile()
@@ -345,7 +403,10 @@ def test_expression_uses_persona_cues_without_reference_bot_phrases():
     assert "爱弥斯" in prompt
     assert "咪呀" not in prompt
     assert "花房" not in prompt
-    assert "先接住对方的情绪和关系信号" in prompt
+    assert "先接住" not in prompt
+    assert "人格化补充" not in prompt
+    assert "续聊接口" not in prompt
+    assert "接住了" not in prompt
 
 
 def test_prompt_does_not_dump_the_full_persona_material_pool():
