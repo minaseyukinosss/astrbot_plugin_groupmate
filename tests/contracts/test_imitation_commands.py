@@ -6,11 +6,14 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from groupmate.adapters.imitation_commands import (
+    ImitationSessionController,
     ImitationCommandError,
     ImitationCommandInterpreter,
 )
 from groupmate.adapters.participants import ParticipantDirectory
 from groupmate.social_runtime.contracts import SocialEventEnvelope
+from groupmate.social_runtime.profile.speech_style import MemberSpeechStyle
+from groupmate.social_runtime.profile.style_repository import MemberStyleRepository
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -108,3 +111,56 @@ def test_invalid_start_request_does_not_guess(tmp_path, text, code):
         )
 
     assert captured.value.code == code
+
+
+def _ready_style(repository):
+    repository.set_enabled(
+        "group-1", "u1", enabled=True, updated_by="admin", now=100
+    )
+    repository.publish(MemberSpeechStyle(
+        group_id="group-1", member_id="u1", version=1, status="READY",
+        opening_patterns=("先表态",), progression_patterns=("再补理由",),
+        closing_patterns=("自然收口",), length_rhythm="短句", directness="直接",
+        disagreement_style="指出问题", play_style="现场调侃", care_style="给具体动作",
+        addressing_style="需要时称呼", particles_punctuation="少量语气词",
+        stable_traits=("结论在前",), occasional_traits=("偶尔省略主语",),
+        evidence_event_ids=("e1", "e2"), eligible_message_count=40,
+        active_day_count=5, scene_types=("answer", "banter", "care"), generated_at=100,
+    ))
+
+
+def test_controller_commits_ready_session_and_self_stop(tmp_path):
+    interpreter = _interpreter(tmp_path)
+    repository = MemberStyleRepository(tmp_path / "groupmate-social-runtime-v2.db")
+    _ready_style(repository)
+    controller = ImitationSessionController(interpreter, repository)
+    now = _timestamp("2026-08-27 14:00")
+
+    started = controller.handle(
+        _event("开始模仿到明晚八点", mentions=("bot", "u1")), now=now
+    )
+    stopped = controller.handle(
+        _event("别学我了", actor="u1", mentions=("bot",)), now=now + 1
+    )
+
+    assert started.transition.operation == "STARTED"
+    assert started.transition.session.target_member_id == "u1"
+    assert stopped.transition.operation == "STOPPED_BY_TARGET"
+    assert repository.active_session("group-1", now=now + 2) is None
+
+
+def test_controller_returns_aemeath_error_when_style_is_not_ready(tmp_path):
+    controller = ImitationSessionController(
+        _interpreter(tmp_path),
+        MemberStyleRepository(tmp_path / "groupmate-social-runtime-v2.db"),
+    )
+
+    result = controller.handle(
+        _event("开始模仿到明晚八点", mentions=("bot", "u1")),
+        now=_timestamp("2026-08-27 14:00"),
+    )
+
+    assert result.handled is True
+    assert result.transition is None
+    assert result.diagnostic_code == "imitation_style_not_ready"
+    assert "还学不像阿甲" in result.error_text

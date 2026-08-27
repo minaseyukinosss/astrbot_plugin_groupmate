@@ -25,6 +25,20 @@ class ImitationCommandError(ValueError):
         super().__init__(self.code)
 
 
+@dataclass(frozen=True)
+class ImitationTransition:
+    operation: str
+    session: object
+
+
+@dataclass(frozen=True)
+class ImitationCommandResult:
+    handled: bool
+    transition: ImitationTransition | None = None
+    error_text: str | None = None
+    diagnostic_code: str | None = None
+
+
 class ImitationCommandInterpreter:
     MAX_DURATION_SECONDS = 3 * 24 * 60 * 60
     _START = re.compile(r"(?:开始|从现在开始|接下来)?.{0,6}(?:模仿|学着?|学学).{0,10}(?:说话|讲话|口吻|语气)?")
@@ -170,8 +184,78 @@ class ImitationCommandInterpreter:
         raise ImitationCommandError("imitation_expiry_invalid", "时间数字没看明白。")
 
 
+class ImitationSessionController:
+    """Apply a validated request without entering the smalltalk model chain."""
+
+    def __init__(self, interpreter: ImitationCommandInterpreter, repository) -> None:
+        self.interpreter = interpreter
+        self.repository = repository
+
+    def handle(self, event, *, now: int) -> ImitationCommandResult | None:
+        try:
+            request = self.interpreter.interpret(event, now=now)
+        except ImitationCommandError as exc:
+            return ImitationCommandResult(
+                True, error_text=exc.user_text, diagnostic_code=exc.code
+            )
+        if request is None:
+            return None
+        if request.kind in {"STOP_SELF", "STOP_ADMIN"}:
+            stopped = self.repository.stop_session(
+                request.group_id,
+                stopped_by=request.requester_id,
+                now=now,
+                requester_is_admin=request.kind == "STOP_ADMIN",
+            )
+            if stopped is None:
+                text = (
+                    "我现在没在学你说话。"
+                    if request.kind == "STOP_SELF"
+                    else "当前群没有正在进行的模仿。"
+                )
+                return ImitationCommandResult(
+                    True, error_text=text, diagnostic_code="imitation_session_not_stopped"
+                )
+            operation = (
+                "STOPPED_BY_TARGET"
+                if request.kind == "STOP_SELF"
+                else "STOPPED_BY_ADMIN"
+            )
+            return ImitationCommandResult(
+                True, transition=ImitationTransition(operation, stopped)
+            )
+        style = self.repository.latest_ready(
+            request.group_id, str(request.target_member_id)
+        )
+        if style is None:
+            return ImitationCommandResult(
+                True,
+                error_text=f"我现在还学不像{request.target_display_name}，再让我熟悉一阵吧。",
+                diagnostic_code="imitation_style_not_ready",
+            )
+        previous = self.repository.active_session(request.group_id, now=now)
+        session = self.repository.start_session(
+            group_id=request.group_id,
+            target_member_id=str(request.target_member_id),
+            target_display_name=str(request.target_display_name),
+            style_version=style.version,
+            started_by=request.requester_id,
+            started_at=now,
+            expires_at=int(request.expires_at),
+        )
+        return ImitationCommandResult(
+            True,
+            transition=ImitationTransition(
+                "REPLACED" if previous is not None else "STARTED", session
+            ),
+        )
+
+
 __all__ = (
     "ImitationCommandError",
     "ImitationCommandInterpreter",
+    "ImitationCommandResult",
     "ImitationRequest",
+    "ImitationSessionController",
+    "ImitationTransition",
 )
