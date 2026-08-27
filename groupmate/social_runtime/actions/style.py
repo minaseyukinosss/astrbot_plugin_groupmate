@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..persona.modes import PersonaModeState
+from ..social_moves import SocialMove, SocialMovePlan
+from ..social_scenes import SocialScene
 from ..society.relationships import RelationshipProjection
+from ..stances import Attitude, Boundary, StanceDecision
 
 
 @dataclass(frozen=True)
@@ -30,12 +33,15 @@ class StyleContext:
     relationship: RelationshipProjection | None
     culture_patterns: tuple[str, ...]
     recent_outputs: tuple[str, ...]
-    act: str
     token_budget: int
+    scene: SocialScene | None = None
+    stance: StanceDecision | None = None
+    move: SocialMovePlan | None = None
+    act: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.act.strip():
-            raise ValueError("act is required")
+        if self.move is None and not str(self.act or "").strip():
+            raise ValueError("move or legacy act is required")
         if self.token_budget <= 0:
             raise ValueError("token_budget must be positive")
 
@@ -75,6 +81,11 @@ class StyleDirector:
     _DIRECT_ANSWER_MAX_SEGMENTS = 3
 
     def direct(self, context: StyleContext) -> StyleDirective:
+        act = (
+            context.move.primary_move.value.lower()
+            if context.move is not None
+            else str(context.act).strip()
+        )
         relation = context.relationship
         relationship_warmth = relation.warmth if relation is not None else 0
         relationship_play = relation.play_acceptance if relation is not None else 0
@@ -82,6 +93,30 @@ class StyleDirector:
         playfulness = self._clamp(10 + relationship_play // 3)
         directness = 70
         posture = "friendly" if warmth >= 50 else "neutral"
+
+        stance = context.stance
+        if stance is not None:
+            if stance.attitude is Attitude.WARM:
+                warmth = self._clamp(warmth + 15)
+            elif stance.attitude is Attitude.AMUSED:
+                playfulness = self._clamp(playfulness + 25)
+            elif stance.attitude is Attitude.FOCUSED:
+                posture = "focused"
+                directness = max(directness, 85)
+                playfulness = 0
+            elif stance.attitude is Attitude.GUARDED:
+                posture = "reserved"
+                warmth = self._clamp(warmth - 20)
+                directness = max(directness, 80)
+                playfulness = 0
+            elif stance.attitude is Attitude.IRRITATED:
+                posture = "reserved"
+                directness = 95
+                playfulness = 0
+            if stance.boundary in {Boundary.FIRM, Boundary.FINAL}:
+                posture = "firm"
+                directness = 95
+                playfulness = 0
 
         if "warm" in context.mode.modifiers:
             warmth = self._clamp(warmth + 15)
@@ -98,7 +133,15 @@ class StyleDirector:
 
         max_chars = min(320, max(40, context.token_budget * 3))
         max_sentences = 6
-        max_segments = self._DIRECT_ANSWER_MAX_SEGMENTS if context.act == "direct_answer" else 2
+        max_segments = self._DIRECT_ANSWER_MAX_SEGMENTS if act == "direct_answer" else 2
+        if context.move is not None and context.move.primary_move in {
+            SocialMove.FIRM_BOUNDARY,
+            SocialMove.REFUSE,
+            SocialMove.JOIN_CHORUS,
+            SocialMove.SILENCE,
+        }:
+            max_segments = 1
+            max_sentences = min(max_sentences, 2)
         particle_budget = 2 if playfulness else 1
         punctuation_budget = 3
         if "drowsy" in context.mode.modifiers:
@@ -110,7 +153,7 @@ class StyleDirector:
 
         return StyleDirective(
             mode=context.mode.primary,
-            act=context.act,
+            act=act,
             posture=posture,
             address=context.persona.default_address,
             max_chars=max_chars,
@@ -131,7 +174,10 @@ class StyleDirector:
 
     @staticmethod
     def _avoid_patterns(context: StyleContext) -> tuple[str, ...]:
-        values = context.culture_patterns + context.recent_outputs
+        move_avoidances = (
+            context.move.must_not_say if context.move is not None else ()
+        )
+        values = context.culture_patterns + context.recent_outputs + move_avoidances
         return tuple(value for value in dict.fromkeys(values) if value.strip())
 
 

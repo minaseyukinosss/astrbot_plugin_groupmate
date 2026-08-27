@@ -15,13 +15,26 @@ from .actions.contracts import (
     OutboxPart,
 )
 from .actions.generation import GeneratedDraft, GenerationRequest, OutputFirewall
-from .actions.style import StyleDirective
+from .actions.style import (
+    PersonaStyleSnapshot,
+    StyleContext,
+    StyleDirective,
+    StyleDirector,
+)
 from .contracts import SocialEventEnvelope
 from .delivery.outbox import OutboxService
 from .expression import ExpressionPlan, ExpressionPlanner
+from .persona.modes import PersonaModeState
 from .persistence.schema import connect_database, initialize_database
 from .persona.canon import PersonaCanon
-from .society.relationships import PublicAffection, RelationshipStage
+from .social_moves import SocialMove, SocialMovePlan
+from .social_scenes import SocialScene, TargetScope
+from .society.relationships import (
+    PublicAffection,
+    RelationshipProjection,
+    RelationshipStage,
+)
+from .stances import Boundary, PermissionSnapshot, StanceDecision
 
 
 class ReplyPlanIdentityConflict(RuntimeError):
@@ -54,6 +67,10 @@ class ReplyPlan:
     created_at: int
     expires_at: int
     expression: ExpressionPlan
+    scene: SocialScene
+    stance: StanceDecision
+    move: SocialMovePlan
+    relationship_projection_version: int
     status: str = "planned"
     participation_lane: str = "AMBIENT"
     member_context: str = ""
@@ -204,12 +221,64 @@ class ReplyPlanRepository:
             if isinstance(expression, Mapping)
             else ExpressionPlan.conservative()
         )
+        scene = values.get("scene")
+        stance = values.get("stance")
+        move = values.get("move")
+        if isinstance(scene, Mapping) and isinstance(stance, Mapping) and isinstance(move, Mapping):
+            values["scene"] = SocialScene.create(**dict(scene))
+            values["stance"] = StanceDecision.create(**dict(stance))
+            values["move"] = SocialMovePlan.create(**dict(move))
+        else:
+            legacy_scene, legacy_stance, legacy_move = ReplyPlanRepository._legacy_decisions(values)
+            values["scene"] = legacy_scene
+            values["stance"] = legacy_stance
+            values["move"] = legacy_move
+        values.setdefault("relationship_projection_version", 0)
         return ReplyPlan(**values)
+
+    @staticmethod
+    def _legacy_decisions(
+        values: Mapping[str, object],
+    ) -> tuple[SocialScene, StanceDecision, SocialMovePlan]:
+        evidence = tuple(values.get("evidence_event_ids", ())) or (
+            str(values.get("correlation_id") or "legacy-event"),
+        )
+        target_id = str(values.get("target_id") or "").strip() or None
+        scene = SocialScene.create(
+            scene_kind="legacy_conservative",
+            target_scope=(TargetScope.INDIVIDUAL if target_id else TargetScope.AMBIENT),
+            target_id=target_id,
+            literal_subject="旧版回复计划",
+            user_move=str(values.get("act") or "legacy_reply"),
+            continuity_event_ids=evidence,
+            confidence=0.0,
+        )
+        stance = StanceDecision.create(
+            attitude="NEUTRAL",
+            willingness="WILLING",
+            boundary="NONE",
+            concession="NONE",
+            effort="NORMAL",
+            initiative="ALLOW",
+            reason_event_ids=evidence,
+            permission=PermissionSnapshot(True, "legacy_social_reply"),
+        )
+        move = SocialMovePlan.create(
+            primary_move=SocialMove.DIRECT_ANSWER,
+            mention_event_ids=evidence,
+        )
+        return scene, stance, move
 
 
 class ReplyPlanner:
-    def __init__(self, expression_planner: ExpressionPlanner | None = None) -> None:
+    def __init__(
+        self,
+        expression_planner: ExpressionPlanner | None = None,
+        *,
+        style_director: StyleDirector | None = None,
+    ) -> None:
         self._expression_planner = expression_planner or ExpressionPlanner()
+        self._style_director = style_director or StyleDirector()
 
     def plan(
         self,
@@ -221,6 +290,12 @@ class ReplyPlanner:
         recent_outputs: tuple[str, ...] = (),
         relationship_memory_cues: tuple[str, ...] = (),
         member_context: str = "",
+        relationship_projection: RelationshipProjection | None = None,
+        scene: SocialScene | None = None,
+        stance: StanceDecision | None = None,
+        move: SocialMovePlan | None = None,
+        persona_mode: PersonaModeState | None = None,
+        culture_patterns: tuple[str, ...] = (),
     ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
@@ -243,15 +318,36 @@ class ReplyPlanner:
         )
         if selected is None or selected.expires_at <= int(now):
             return None
+        resolved_public_affection = relationship or (
+            PublicAffection.from_projection(relationship_projection)
+            if relationship_projection is not None
+            else PublicAffection(0.0, RelationshipStage.STRANGER)
+        )
         expression = self._expression_planner.plan(
             lane=str(getattr(evaluation, "participation_lane", "AMBIENT")),
             act=selected.proposed_act,
             source_text=str(evaluation.source_event.payload.get("text") or ""),
             persona_profile=persona_profile,
-            relationship=relationship
-            or PublicAffection(0.0, RelationshipStage.STRANGER),
+            relationship=resolved_public_affection,
             recent_outputs=tuple(recent_outputs),
             relationship_memory_cues=tuple(relationship_memory_cues),
+        )
+        if scene is None or stance is None or move is None:
+            scene, stance, move = self._legacy_decisions(
+                evaluation, selected=selected, target_id=(selected.target_id or self._first(frame.candidate_audiences))
+            )
+        style = self._style_director.direct(
+            StyleContext(
+                persona=self._persona_style(persona_profile, evaluation.persona_id),
+                mode=persona_mode or self._mode_for_stance(stance),
+                relationship=relationship_projection,
+                culture_patterns=tuple(culture_patterns),
+                recent_outputs=tuple(recent_outputs),
+                token_budget=40,
+                scene=scene,
+                stance=stance,
+                move=move,
+            )
         )
         return self._build_plan(
             evaluation=evaluation,
@@ -259,6 +355,13 @@ class ReplyPlanner:
             selected=selected,
             intention_id=intention_id,
             expression=expression,
+            style=style,
+            scene=scene,
+            stance=stance,
+            move=move,
+            relationship_projection_version=(
+                relationship_projection.version if relationship_projection is not None else 0
+            ),
             member_context=str(member_context)[:1200],
             now=int(now),
         )
@@ -271,6 +374,11 @@ class ReplyPlanner:
         selected: object,
         intention_id: str,
         expression: ExpressionPlan,
+        style: StyleDirective,
+        scene: SocialScene,
+        stance: StanceDecision,
+        move: SocialMovePlan,
+        relationship_projection_version: int,
         member_context: str,
         now: int,
     ) -> ReplyPlan:
@@ -298,30 +406,87 @@ class ReplyPlanner:
             intention_id=intention_id,
             act=selected.proposed_act,
             required=required,
-            style=StyleDirective(
-                mode="social",
-                act=selected.proposed_act,
-                posture="friendly",
-                address=None,
-                max_chars=120,
-                max_sentences=3,
-                max_segments=2,
-                warmth=55,
-                playfulness=15 if selected.kind == "PLAY" else 0,
-                directness=75,
-                particle_budget=1,
-                punctuation_budget=2,
-                media_policy="text_only",
-                avoid_patterns=(),
-            ),
+            style=style,
             created_at=now,
             expires_at=min(int(selected.expires_at), now + 30),
             expression=expression,
+            scene=scene,
+            stance=stance,
+            move=move,
+            relationship_projection_version=int(relationship_projection_version),
             participation_lane=str(
                 getattr(evaluation, "participation_lane", "AMBIENT")
                 or "AMBIENT"
             ),
             member_context=str(member_context)[:1200],
+        )
+
+    @staticmethod
+    def _legacy_decisions(
+        evaluation: object, *, selected: object, target_id: str | None
+    ) -> tuple[SocialScene, StanceDecision, SocialMovePlan]:
+        evidence = tuple(selected.evidence_event_ids) or (evaluation.source_event.event_id,)
+        scene = SocialScene.create(
+            scene_kind="legacy_conservative",
+            target_scope=TargetScope.INDIVIDUAL if target_id else TargetScope.AMBIENT,
+            target_id=target_id,
+            literal_subject=str(evaluation.source_event.payload.get("text") or "当前消息")[:160],
+            user_move=str(selected.proposed_act),
+            continuity_event_ids=evidence,
+            confidence=0.0,
+        )
+        stance = StanceDecision.create(
+            attitude="NEUTRAL",
+            willingness="WILLING",
+            boundary="NONE",
+            concession="NONE",
+            effort="NORMAL",
+            initiative="ALLOW",
+            reason_event_ids=evidence,
+            permission=PermissionSnapshot(True, "legacy_social_reply"),
+        )
+        move = SocialMovePlan.create(
+            primary_move=SocialMove.DIRECT_ANSWER,
+            mention_event_ids=evidence,
+        )
+        return scene, stance, move
+
+    @staticmethod
+    def _persona_style(
+        persona_profile: Mapping[str, object], persona_id: str
+    ) -> PersonaStyleSnapshot:
+        identity = persona_profile.get("identity")
+        expression = persona_profile.get("expression")
+        identity = identity if isinstance(identity, Mapping) else {}
+        expression = expression if isinstance(expression, Mapping) else {}
+        cues = tuple(
+            value
+            for value in (
+                str(expression.get("tone") or "").strip(),
+                str(expression.get("language_habits") or "").strip(),
+            )
+            if value
+        )
+        return PersonaStyleSnapshot(
+            persona_id=str(persona_id),
+            default_address=(str(identity.get("default_address") or "").strip() or None),
+            expression=cues,
+        )
+
+    @staticmethod
+    def _mode_for_stance(stance: StanceDecision) -> PersonaModeState:
+        if stance.boundary in {Boundary.FIRM, Boundary.FINAL}:
+            return PersonaModeState("boundary", (), stance.reason_event_ids, None)
+        modifier = {
+            "WARM": "warm",
+            "AMUSED": "playful",
+            "IRRITATED": "irritated",
+        }.get(stance.attitude.value)
+        return PersonaModeState(
+            "social",
+            () if modifier is None else (modifier,),
+            stance.reason_event_ids,
+            None,
         )
 
     @staticmethod

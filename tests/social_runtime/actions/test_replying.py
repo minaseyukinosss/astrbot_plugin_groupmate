@@ -11,8 +11,12 @@ from groupmate.social_runtime.persona.profile import GroupmatePersonaProfile
 from groupmate.social_runtime.persona.presets import AEMEATH_CURRENT_CANON
 from groupmate.social_runtime.society.relationships import (
     PublicAffection,
+    RelationshipProjection,
     RelationshipStage,
 )
+from groupmate.social_runtime.social_moves import SocialMove, SocialMovePlan
+from groupmate.social_runtime.social_scenes import SocialScene
+from groupmate.social_runtime.stances import PermissionSnapshot, StanceDecision
 from groupmate.social_runtime.replying import (
     ReplyExecutor,
     ReplyPlanRepository,
@@ -92,6 +96,29 @@ def _persona_profile():
     return profile
 
 
+def _social_decisions(*, move="DIRECT_ANSWER"):
+    scene = SocialScene.create(
+        scene_kind="fact_question",
+        target_scope="INDIVIDUAL",
+        target_id="u1",
+        literal_subject="报错",
+        user_move="asks_help",
+        continuity_event_ids=("qq:m1",),
+        confidence=0.9,
+    )
+    stance = StanceDecision.create(
+        attitude="FOCUSED",
+        willingness="WILLING",
+        boundary="NONE",
+        concession="NONE",
+        effort="NORMAL",
+        initiative="ALLOW",
+        reason_event_ids=("qq:m1",),
+        permission=PermissionSnapshot(True, "social_reply"),
+    )
+    return scene, stance, SocialMovePlan.create(primary_move=move)
+
+
 def test_reply_planner_builds_one_short_text_plan():
     plan = ReplyPlanner().plan(
         _evaluation(), now=100, persona_profile=_persona_profile()
@@ -103,8 +130,96 @@ def test_reply_planner_builds_one_short_text_plan():
     assert plan.required is True
     assert plan.participation_lane == "DIRECT_FAST"
     assert plan.style.max_chars == 120
-    assert plan.style.max_segments == 2
+    assert plan.style.max_segments == 3
     assert plan.expression.persona_cues[0] == "爱弥斯"
+
+
+def test_reply_planner_uses_style_director_instead_of_uniform_friendly_defaults():
+    class RecordingStyleDirector:
+        def __init__(self):
+            self.contexts = []
+
+        def direct(self, context):
+            self.contexts.append(context)
+            from groupmate.social_runtime.actions.style import StyleDirective
+
+            return StyleDirective(
+                mode="boundary",
+                act="firm_boundary",
+                posture="firm",
+                address=None,
+                max_chars=80,
+                max_sentences=2,
+                max_segments=1,
+                warmth=10,
+                playfulness=0,
+                directness=95,
+                particle_budget=0,
+                punctuation_budget=1,
+                media_policy="text_only",
+                avoid_patterns=(),
+            )
+
+    director = RecordingStyleDirector()
+    scene, stance, move = _social_decisions(move="FIRM_BOUNDARY")
+    plan = ReplyPlanner(style_director=director).plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        relationship_projection=RelationshipProjection(
+            "aemeath", "885617919", "u1", boundary_pressure=70
+        ),
+        scene=scene,
+        stance=stance,
+        move=move,
+        recent_outputs=(),
+    )
+
+    assert len(director.contexts) == 1
+    assert plan.style.posture == "firm"
+    assert plan.style.directness == 95
+
+
+def test_repository_round_trips_exact_chorus_plan(tmp_path):
+    scene = SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="小林",
+        user_move="chorus_about_member",
+        continuity_event_ids=("qq:m1", "qq:m2"),
+        repetition_count=2,
+        chorus_target="MEMBER",
+        chorus_target_id="u9",
+        chorus_chain_id="chorus:abc",
+        chorus_payload="小林今天请客",
+        chorus_event_ids=("qq:m1", "qq:m2"),
+        chorus_participant_ids=("u1", "u2"),
+        chorus_tone="SAFE_BANTER",
+        confidence=0.95,
+    )
+    _, stance, _ = _social_decisions()
+    move = SocialMovePlan.create(
+        primary_move="JOIN_CHORUS",
+        mention_event_ids=("qq:m1", "qq:m2"),
+        realization_mode="EXACT_CHORUS",
+        verbatim_payload="小林今天请客",
+        chorus_chain_id="chorus:abc",
+    )
+    original = ReplyPlanner().plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+    )
+
+    restored = ReplyPlanRepository._decode(ReplyPlanRepository._encode(original))
+
+    assert restored.scene.chorus_chain_id == "chorus:abc"
+    assert restored.move.primary_move is SocialMove.JOIN_CHORUS
+    assert restored.move.verbatim_payload == "小林今天请客"
 
 
 def test_old_serialized_reply_plan_defaults_to_ambient_lane():
@@ -115,12 +230,18 @@ def test_old_serialized_reply_plan_defaults_to_ambient_lane():
     values.pop("participation_lane")
     values.pop("expression")
     values.pop("member_context")
+    values.pop("scene")
+    values.pop("stance")
+    values.pop("move")
+    values.pop("relationship_projection_version")
 
     restored = ReplyPlanRepository._decode(json.dumps(values))
 
     assert restored.participation_lane == "AMBIENT"
     assert restored.expression.reaction_stance == "attentive"
     assert restored.member_context == ""
+    assert restored.scene.scene_kind == "legacy_conservative"
+    assert restored.move.primary_move is SocialMove.DIRECT_ANSWER
 
 
 def test_optional_generation_failure_stays_silent(tmp_path):

@@ -6,6 +6,9 @@ from groupmate.social_runtime.actions.style import (
     StyleDirector,
 )
 from groupmate.social_runtime.persona.modes import PersonaModeState
+from groupmate.social_runtime.social_moves import SocialMovePlan
+from groupmate.social_runtime.social_scenes import SocialScene
+from groupmate.social_runtime.stances import PermissionSnapshot, StanceDecision
 from groupmate.social_runtime.society.relationships import RelationshipProjection
 
 
@@ -28,13 +31,35 @@ def _relationship(**overrides) -> RelationshipProjection:
 
 
 def _context(**overrides) -> StyleContext:
+    scene = SocialScene.create(
+        scene_kind="fact_question",
+        target_scope="INDIVIDUAL",
+        target_id="user-1",
+        literal_subject="插件用途",
+        user_move="asks_fact",
+        continuity_event_ids=("m1",),
+        confidence=0.9,
+    )
+    stance = StanceDecision.create(
+        attitude="FOCUSED",
+        willingness="WILLING",
+        boundary="NONE",
+        concession="NONE",
+        effort="NORMAL",
+        initiative="ALLOW",
+        reason_event_ids=("m1",),
+        permission=PermissionSnapshot(True, "social_reply"),
+    )
+    move = SocialMovePlan.create(primary_move="DIRECT_ANSWER")
     values = {
         "persona": _persona(),
         "mode": PersonaModeState.social(),
         "relationship": _relationship(warmth=30, play_acceptance=20),
         "culture_patterns": ("梗不要复读",),
         "recent_outputs": ("上一次的回复",),
-        "act": "direct_answer",
+        "scene": scene,
+        "stance": stance,
+        "move": move,
         "token_budget": 80,
     }
     values.update(overrides)
@@ -86,3 +111,26 @@ def test_relationship_changes_tone_without_granting_capability_permission():
 
     assert close.warmth > distant.warmth
     assert not hasattr(close, "capability_permission")
+
+
+def test_firm_social_move_overrides_friendly_relationship_surface():
+    firm_stance = StanceDecision.create(
+        attitude="IRRITATED",
+        willingness="UNWILLING",
+        boundary="FIRM",
+        concession="NONE",
+        effort="MINIMAL",
+        initiative="AVOID",
+        reason_event_ids=("m1",),
+        permission=PermissionSnapshot(True, "social_reply"),
+    )
+    directive = StyleDirector().direct(
+        _context(
+            relationship=_relationship(warmth=100, play_acceptance=100),
+            stance=firm_stance,
+            move=SocialMovePlan.create(primary_move="FIRM_BOUNDARY"),
+        )
+    )
+    assert directive.act == "firm_boundary"
+    assert directive.posture == "firm"
+    assert directive.playfulness == 0

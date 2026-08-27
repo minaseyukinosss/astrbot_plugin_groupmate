@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .social_scenes import ChorusTarget, ChorusTone, SocialScene
 from .society.relationships import RelationshipProjection
@@ -104,7 +104,11 @@ class StanceDecision:
 
     @classmethod
     def create(cls, **values: object) -> "StanceDecision":
-        return cls(**values)
+        normalized = dict(values)
+        permission = normalized.get("permission")
+        if isinstance(permission, Mapping):
+            normalized["permission"] = PermissionSnapshot(**dict(permission))
+        return cls(**normalized)
 
 
 class StancePolicy:

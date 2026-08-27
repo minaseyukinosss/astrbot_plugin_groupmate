@@ -43,7 +43,7 @@ def test_permission_snapshot_requires_a_stable_reason_code():
 
 def test_stance_rejects_non_permission_input():
     with pytest.raises(ValueError, match="permission"):
-        StanceDecision.create(
+        StanceDecision(
             attitude="NEUTRAL",
             willingness="UNWILLING",
             boundary="FINAL",

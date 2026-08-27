@@ -7,7 +7,7 @@ import json
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .social_scenes import ChorusTarget, ChorusTone, SocialScene, TargetScope
 from .stances import Boundary, StanceDecision, Willingness
@@ -216,6 +216,20 @@ class SocialMovePlan:
             "media_intent": MediaIntent.NONE,
             **values,
         }
+        for field in ("must_say", "may_say"):
+            normalized[field] = tuple(
+                DecisionFact(
+                    **{
+                        **dict(item),
+                        "source_event_ids": tuple(
+                            dict(item).get("source_event_ids", ())
+                        ),
+                    }
+                )
+                if isinstance(item, Mapping)
+                else item
+                for item in normalized[field]
+            )
         return cls(**normalized)
 
 

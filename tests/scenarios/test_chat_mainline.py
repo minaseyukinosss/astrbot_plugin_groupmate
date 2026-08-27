@@ -43,6 +43,10 @@ class _Context:
     async def llm_generate(self, **kwargs):
         self.model_calls.append(kwargs)
         if "结构化群聊观察器" not in kwargs["system_prompt"]:
+            if "然后呢" in kwargs["prompt"]:
+                return _Response(
+                    "接着看报错最前面的异常类型，再对照它指向的那一行代码。"
+                )
             return _Response("可以把完整报错和相关代码贴一下，我帮你一起看。")
         request = json.loads(kwargs["prompt"])["input"]
         frame = request["frame"]
