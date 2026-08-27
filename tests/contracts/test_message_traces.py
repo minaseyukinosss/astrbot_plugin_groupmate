@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -377,6 +378,111 @@ def test_reply_plan_projects_only_safe_expression_summary(tmp_path):
     }
     assert "persona_cues" not in str(summary)
     assert "不应展示的人格背景" not in str(summary)
+
+
+def test_social_plan_trace_projects_decisions_without_private_inputs(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("social-plan")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    plan = SimpleNamespace(
+        expression=None,
+        scene=SimpleNamespace(
+            scene_kind="intimacy_request",
+            target_scope=SimpleNamespace(value="INDIVIDUAL"),
+            chorus_target=SimpleNamespace(value="NONE"),
+            chorus_chain_id=None,
+            chorus_participant_ids=(),
+            profile_fact_ids=("profile:private",),
+        ),
+        stance=SimpleNamespace(
+            attitude=SimpleNamespace(value="GUARDED"),
+            willingness=SimpleNamespace(value="LIMITED"),
+            boundary=SimpleNamespace(value="SOFT"),
+            effort=SimpleNamespace(value="MINIMAL"),
+            boundary_pressure=88,
+        ),
+        move=SimpleNamespace(
+            primary_move=SimpleNamespace(value="LIMITED_ACCEPT"),
+            ending=SimpleNamespace(value="STOP"),
+            realization_mode=SimpleNamespace(value="GENERATED"),
+            must_say=(),
+            may_say=(SimpleNamespace(category="profile_fact", text="数据库管理员"),),
+        ),
+        style=SimpleNamespace(
+            posture="guarded",
+            max_chars=80,
+            max_sentences=2,
+            max_segments=1,
+        ),
+        member_context="数据库管理员，最近在维护私有项目",
+    )
+
+    repo.record_plan(event.event_id, plan, now=12)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    serialized = json.dumps(summary, ensure_ascii=False)
+    assert summary["social_scene"] == {
+        "scene_kind": "intimacy_request",
+        "target_scope": "INDIVIDUAL",
+        "chorus_target": "NONE",
+        "chorus_chain_id": None,
+        "chorus_participant_count": 0,
+    }
+    assert summary["stance"] == {
+        "attitude": "GUARDED",
+        "willingness": "LIMITED",
+        "boundary": "SOFT",
+        "effort": "MINIMAL",
+    }
+    assert summary["social_move"]["primary_move"] == "LIMITED_ACCEPT"
+    assert summary["social_move"]["fact_categories"] == ["profile_fact"]
+    assert "profile_fact_ids" not in serialized
+    assert "boundary_pressure" not in serialized
+    assert "数据库管理员" not in serialized
+
+
+def test_silent_social_move_overrides_pre_gate_act_without_creating_reply_plan(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("social-silence")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.record_evaluation(_evaluation(event, outcome="ACT"), now=11)
+
+    repo.record_social_decision(
+        event.event_id,
+        scene=SimpleNamespace(
+            scene_kind="group_chorus",
+            target_scope=SimpleNamespace(value="GROUP"),
+            chorus_target=SimpleNamespace(value="UNKNOWN"),
+            chorus_chain_id="chorus:safe-id",
+            chorus_participant_ids=("u1", "u2"),
+        ),
+        stance=SimpleNamespace(
+            attitude=SimpleNamespace(value="GUARDED"),
+            willingness=SimpleNamespace(value="UNWILLING"),
+            boundary=SimpleNamespace(value="SOFT"),
+            effort=SimpleNamespace(value="MINIMAL"),
+        ),
+        move=SimpleNamespace(
+            primary_move=SimpleNamespace(value="SILENCE"),
+            ending=SimpleNamespace(value="STOP"),
+            realization_mode=SimpleNamespace(value="GENERATED"),
+            must_say=(),
+            may_say=(),
+        ),
+        diagnostic_code="chorus_member_invalid",
+        now=12,
+    )
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["decision"]["pre_gate_outcome"] == "ACT"
+    assert summary["decision"]["would_reply"] is False
+    assert summary["decision"]["reply_diagnostic"] == "chorus_member_invalid"
+    assert summary["social_move"]["primary_move"] == "SILENCE"
+    assert summary["delivery"]["status"] == "SILENT"
 
 
 def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):

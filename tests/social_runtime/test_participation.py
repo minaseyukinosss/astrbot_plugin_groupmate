@@ -5,6 +5,7 @@ from dataclasses import replace
 from groupmate.social_runtime.attention import AttentionFrame
 from groupmate.social_runtime.cognition.blackboard import BlackboardSnapshot
 from groupmate.social_runtime.governor import SocialGovernor
+from groupmate.social_runtime.chorus import ChorusEvidence
 from groupmate.social_runtime.participation import (
     ParticipationLane,
     ParticipationPolicy,
@@ -96,3 +97,28 @@ def test_deterministic_lane_fails_closed_without_a_target():
     assert proposal.allow_degraded is False
     assert proposal.candidates == ()
     assert proposal.diagnostics == ("deterministic_scope_missing",)
+
+
+def test_confirmed_chorus_gets_semantic_check_without_repeat_penalty():
+    evidence = ChorusEvidence(
+        chain_id="chorus:abc",
+        payload="小林今天请客",
+        normalized_key="小林今天请客",
+        event_ids=("qq:m0", "qq:m1"),
+        participant_ids=("u0", "u1"),
+        already_joined=False,
+    )
+
+    proposal = ParticipationPolicy().propose(
+        _frame("AMBIENT"),
+        _blackboard(degraded=True),
+        now=100,
+        chorus_evidence=evidence,
+    )
+
+    assert proposal.lane is ParticipationLane.AMBIENT
+    assert proposal.allow_degraded is True
+    assert [item.kind for item in proposal.candidates] == ["CHORUS_CHECK"]
+    assert proposal.candidates[0].evidence_event_ids == ("qq:m0", "qq:m1")
+    assert proposal.candidates[0].repetition_cost == 0.0
+    assert SocialGovernor.utility(proposal.candidates[0]) >= 1.0

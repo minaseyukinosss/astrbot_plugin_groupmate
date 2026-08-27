@@ -7,6 +7,7 @@ from enum import Enum
 
 from .attention import AttentionFrame
 from .cognition.blackboard import BlackboardSnapshot
+from .chorus import ChorusEvidence
 from .intentions import (
     CandidateIntention,
     IntentionEngine,
@@ -39,6 +40,8 @@ class ParticipationPolicy:
         frame: AttentionFrame,
         blackboard: BlackboardSnapshot,
         now: int,
+        *,
+        chorus_evidence: ChorusEvidence | None = None,
     ) -> ParticipationProposal:
         if frame.trigger_kind == "FAST" and not frame.requested_workers:
             return self._deterministic(
@@ -67,6 +70,8 @@ class ParticipationPolicy:
                     "continuity_value": 1.0,
                 },
             )
+        if chorus_evidence is not None:
+            return self._chorus_check(frame, chorus_evidence, now=int(now))
         return ParticipationProposal(
             lane=ParticipationLane.AMBIENT,
             candidates=self._intentions.propose(blackboard, int(now)),
@@ -109,6 +114,48 @@ class ParticipationPolicy:
             candidates=(candidate,),
             allow_degraded=True,
             diagnostics=(f"deterministic_{lane.value.lower()}",),
+        )
+
+    @staticmethod
+    def _chorus_check(
+        frame: AttentionFrame,
+        evidence: ChorusEvidence,
+        *,
+        now: int,
+    ) -> ParticipationProposal:
+        target_id = next(iter(frame.candidate_audiences), None)
+        topic_id = next(iter(frame.focus_topic_ids), None)
+        if not target_id or not topic_id:
+            return ParticipationProposal(
+                lane=ParticipationLane.AMBIENT,
+                candidates=(),
+                allow_degraded=False,
+                diagnostics=("chorus_scope_missing",),
+            )
+        # 零重复成本只让确定的复读链进入语义判断；最终是否说话仍由 Governor 和场景链决定。
+        candidate = create_candidate_intention(
+            kind="CHORUS_CHECK",
+            target_id=target_id,
+            topic_id=topic_id,
+            evidence=evidence.event_ids,
+            proposed_act="interpret_group_chorus",
+            expires_at=now + 30,
+            features={
+                "relevance": 1.0,
+                "relational_value": 0.5,
+                "continuity_value": 0.5,
+                "novelty": 0.2,
+                "disruption_cost": 0.1,
+                "uncertainty_cost": 0.1,
+                "repetition_cost": 0.0,
+            },
+            identity_salt=evidence.chain_id,
+        )
+        return ParticipationProposal(
+            lane=ParticipationLane.AMBIENT,
+            candidates=(candidate,),
+            allow_degraded=True,
+            diagnostics=("confirmed_chorus_semantic_check",),
         )
 
 

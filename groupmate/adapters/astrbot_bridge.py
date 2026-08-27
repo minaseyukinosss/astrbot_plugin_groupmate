@@ -26,11 +26,19 @@ from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
+from ..social_runtime.social_context import SceneContextBuilder
+from ..social_runtime.social_moves import SocialMove, SocialMovePlanner
+from ..social_runtime.social_scenes import (
+    ChorusTarget,
+    SocialSceneInterpreter,
+)
+from ..social_runtime.stances import PermissionSnapshot, StancePolicy
 from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
 from ..social_runtime.actions.contracts import OutboxStatus
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
+from .social_scene_model import SceneJsonModel
 from .affection_card import AffectionCardPresenter
 from .affection_query import AffectionQuery, is_affection_query
 from .profile_query import (
@@ -96,6 +104,10 @@ class AstrBotSocialRuntimeBridge:
         self.reply_error: str | None = None
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
+        self._scene_context_builder = SceneContextBuilder()
+        self._scene_interpreter: SocialSceneInterpreter | None = None
+        self._stance_policy = StancePolicy()
+        self._move_planner = SocialMovePlanner()
         self._reply_executor: ReplyExecutor | None = None
         self._dispatcher: DeliveryDispatcher | None = None
         self._reply_lock = asyncio.Lock()
@@ -502,6 +514,7 @@ class AstrBotSocialRuntimeBridge:
             reply_model = AstrBotModelPort(
                 self.context, self.settings.generation_provider
             )
+            scene_interpreter = SocialSceneInterpreter(SceneJsonModel(reply_model))
             cognition_client = self._cognition_client_factory(self.settings)
             if cognition_client is None:
                 raise RuntimeError("direct cognition client is unavailable")
@@ -550,6 +563,7 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = cognition_client
                 self._profile_client = profile_client
                 self._profile_service = profile_service
+                self._scene_interpreter = scene_interpreter
                 self._reply_executor = ReplyExecutor(
                     manager.reply_plans,
                     manager.outbox,
@@ -571,6 +585,7 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = None
                 self._profile_client = None
                 self._profile_service = None
+                self._scene_interpreter = None
                 if profile_service is not None:
                     with suppress(Exception):
                         await profile_service.close()
@@ -779,16 +794,40 @@ class AstrBotSocialRuntimeBridge:
                         int(self.clock()),
                     )
                     continue
+                source_event = getattr(evaluation, "source_event", None)
+                if (
+                    source_event is None
+                    or source_event.payload.get("social_eligible") is False
+                ):
+                    # 外部命令已完成所有权判定，只记交接结果，不进入场景或回复模型。
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        evaluation,
+                        int(self.clock()),
+                    )
+                    continue
                 persona_profile = self._manager.persona_profile_mapping(
                     group_id,
                     int(getattr(evaluation, "config_version", 0)),
                 )
-                source_event = getattr(evaluation, "source_event", None)
                 subject_id = str(getattr(source_event, "actor_id", "") or "")
-                relationship = self._manager.relationship_affection(
+                if self._scene_interpreter is None:
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        evaluation,
+                        int(self.clock()),
+                    )
+                    continue
+                relationship_projection = self._manager.relationship_projection(
                     group_id, subject_id
                 )
+                relationship = self._manager.relationship_affection(group_id, subject_id)
                 try:
+                    relationship_memories = self._safe_relationship_memories(
+                        self._manager.relationship_memory_records(
+                            group_id, subject_id
+                        )
+                    )
                     relationship_memory_cues = (
                         self._manager.relationship_memory_cues(
                             group_id,
@@ -805,21 +844,111 @@ class AstrBotSocialRuntimeBridge:
                     # Relationship memory enriches expression but must never
                     # block an already approved social reply.
                     relationship_memory_cues = ()
+                    relationship_memories = ()
                 recent_outputs = tuple(
                     self._recent_outputs.get(group_id, ())
                 )
+                profile_retrieval = self._manager.member_profile_retrieval(
+                    source_event, max_chars=1200
+                )
+                frame = getattr(evaluation, "frame", None)
+                topic_id = next(
+                    iter(getattr(frame, "focus_topic_ids", ()) or ()), None
+                )
+                identity = persona_profile.get("identity")
+                identity = identity if isinstance(identity, Mapping) else {}
+                scene_context = self._scene_context_builder.build(
+                    source_event=source_event,
+                    context_events=tuple(
+                        getattr(evaluation, "context_events", ()) or ()
+                    ),
+                    focus_event_ids=tuple(
+                        getattr(frame, "focus_event_ids", ()) or ()
+                    ),
+                    target_id=subject_id or None,
+                    topic_id=topic_id,
+                    persona_actor_id=self._manager.persona_id,
+                    persona_aliases=(
+                        str(identity.get("name") or "爱弥斯"),
+                        *tuple(identity.get("aliases", ()) or ()),
+                    ),
+                    member_refs=self._manager.group_member_refs(group_id),
+                    profile=profile_retrieval,
+                    relationship_memories=relationship_memories,
+                ).with_chorus(getattr(evaluation, "chorus_evidence", None))
+                interpretation = await self._scene_interpreter.interpret(
+                    scene_context
+                )
+                subject_relationship = None
+                if (
+                    interpretation.scene.chorus_target
+                    is ChorusTarget.MEMBER
+                    and interpretation.scene.chorus_target_id
+                ):
+                    subject_relationship = self._manager.relationship_projection(
+                        group_id, interpretation.scene.chorus_target_id
+                    )
+                persona_snapshot = await self._manager.persona_snapshot(
+                    group_id, int(getattr(evaluation, "config_version", 0))
+                )
+                culture_patterns = (
+                    ("light_member_banter",)
+                    if getattr(evaluation, "chorus_evidence", None) is not None
+                    else ()
+                )
+                stance = self._stance_policy.decide(
+                    interpretation.scene,
+                    actor_relationship=relationship_projection,
+                    subject_relationship=subject_relationship,
+                    culture_patterns=culture_patterns,
+                    permission=PermissionSnapshot(True, "social_reply_governed"),
+                    mode_modifiers=persona_snapshot.modifiers,
+                    memory_event_ids=tuple(
+                        memory.relationship_event_id
+                        for memory in relationship_memories
+                    ),
+                )
+                move = self._move_planner.plan(
+                    interpretation.scene,
+                    stance,
+                    profile=profile_retrieval,
+                    memories=relationship_memories,
+                )
+                if move.primary_move is SocialMove.SILENCE:
+                    diagnostic = (
+                        interpretation.diagnostic_code or "social_move_silence"
+                    )
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        replace(
+                            evaluation,
+                            reply_diagnostic=diagnostic,
+                        ),
+                        int(self.clock()),
+                    )
+                    self._record_trace(
+                        self.trace_repository.record_social_decision,
+                        source_event.event_id,
+                        scene=interpretation.scene,
+                        stance=stance,
+                        move=move,
+                        diagnostic_code=diagnostic,
+                        now=int(self.clock()),
+                    )
+                    continue
                 plan = self._reply_planner.plan(
                     evaluation,
                     now=int(self.clock()),
                     persona_profile=persona_profile,
                     relationship=relationship,
+                    relationship_projection=relationship_projection,
                     recent_outputs=recent_outputs,
                     relationship_memory_cues=relationship_memory_cues,
-                    member_context=self._manager.member_profile_context(
-                        source_event, max_chars=1200
-                    )
-                    if source_event is not None
-                    else "",
+                    member_context=profile_retrieval.prompt_text,
+                    scene=interpretation.scene,
+                    stance=stance,
+                    move=move,
+                    culture_patterns=culture_patterns,
                 )
                 if plan is None:
                     self._record_trace(
@@ -891,6 +1020,18 @@ class AstrBotSocialRuntimeBridge:
         history = self._recent_outputs.setdefault(str(group_id), deque(maxlen=8))
         history.append(str(text).strip())
 
+    @staticmethod
+    def _safe_relationship_memories(records: tuple[object, ...]) -> tuple[object, ...]:
+        """Keep only current, normal-sensitivity memories in model-visible context."""
+
+        return tuple(
+            record
+            for record in records
+            if getattr(record, "resolved_at", None) is None
+            and str(getattr(record, "sensitivity", "")) == "normal"
+            and float(getattr(record, "confidence", 0.0)) >= 0.82
+        )[:8]
+
     async def _dispatch_ready(self) -> None:
         if self._manager is None or self._dispatcher is None:
             return
@@ -904,6 +1045,17 @@ class AstrBotSocialRuntimeBridge:
                 )
                 status = "sent" if part.status is OutboxStatus.SENT else part.status.value
                 self._manager.reply_plans.mark(plan.plan_id, status)
+                if (
+                    part.status is OutboxStatus.SENT
+                    and plan.move.primary_move is SocialMove.JOIN_CHORUS
+                    and plan.move.chorus_chain_id
+                ):
+                    # 只有平台给出成功回执后才记为已参与；预览、入队和失败均不占链。
+                    self._manager.chorus_participation.mark_joined(
+                        plan.group_id,
+                        plan.move.chorus_chain_id,
+                        joined_at=int(self.clock()),
+                    )
             except LookupError:
                 pass
             if part.receipt is not None:
@@ -922,9 +1074,9 @@ class AstrBotSocialRuntimeBridge:
                 )
             await self._manager.drain()
 
-    def _record_trace(self, operation, *args) -> None:
+    def _record_trace(self, operation, *args, **kwargs) -> None:
         try:
-            operation(*args)
+            operation(*args, **kwargs)
             self.trace_error = None
         except Exception as exc:
             self.trace_error = f"{type(exc).__name__}: {exc}"
@@ -980,6 +1132,7 @@ class AstrBotSocialRuntimeBridge:
             if callable(profile_close):
                 await profile_close()
             self._reply_executor = None
+            self._scene_interpreter = None
             self._dispatcher = None
             self._started = False
 

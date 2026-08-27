@@ -726,6 +726,13 @@ class MessageTraceRepository:
                         40,
                     ),
                 }
+            scene = getattr(plan, "scene", None)
+            stance = getattr(plan, "stance", None)
+            move = getattr(plan, "move", None)
+            style = getattr(plan, "style", None)
+            self._project_social_summary(
+                summary, scene=scene, stance=stance, move=move, style=style
+            )
 
         self._mutate(
             event_id,
@@ -738,6 +745,119 @@ class MessageTraceRepository:
                 "status": "DONE",
             },
         )
+
+    def record_social_decision(
+        self,
+        event_id: str,
+        *,
+        scene: object,
+        stance: object,
+        move: object,
+        diagnostic_code: str | None,
+        now: int,
+    ) -> None:
+        """Record a terminal social decision that intentionally has no reply plan."""
+
+        def mutate(summary: dict[str, object]) -> None:
+            self._project_social_summary(
+                summary, scene=scene, stance=stance, move=move, style=None
+            )
+            decision = dict(summary.get("decision") or {})
+            decision["would_reply"] = False
+            decision["reply_diagnostic"] = (
+                self._safe_text(diagnostic_code, 80) or None
+            )
+            summary["decision"] = decision
+            delivery = dict(summary.get("delivery") or {})
+            delivery.update(status="SILENT", label="社交动作决定不回复")
+            summary["delivery"] = delivery
+
+        self._mutate(
+            event_id,
+            now,
+            mutate,
+            stage={
+                "kind": "PLANNED",
+                "label": "社交动作决定不回复",
+                "at": int(now),
+                "status": "DONE",
+            },
+        )
+
+    def _project_social_summary(
+        self,
+        summary: dict[str, object],
+        *,
+        scene: object | None,
+        stance: object | None,
+        move: object | None,
+        style: object | None,
+    ) -> None:
+        # 追踪只展示决策形状；成员画像正文、内部关系数值和 Persona 材料均不投影。
+        if scene is not None:
+            summary["social_scene"] = {
+                "scene_kind": self._safe_text(
+                    getattr(scene, "scene_kind", ""), 48
+                ),
+                "target_scope": self._enum_value(
+                    getattr(scene, "target_scope", "")
+                ),
+                "chorus_target": self._enum_value(
+                    getattr(scene, "chorus_target", "NONE")
+                ),
+                "chorus_chain_id": self._safe_text(
+                    getattr(scene, "chorus_chain_id", ""), 80
+                )
+                or None,
+                "chorus_participant_count": min(
+                    99,
+                    len(
+                        tuple(
+                            getattr(scene, "chorus_participant_ids", ()) or ()
+                        )
+                    ),
+                ),
+            }
+        if stance is not None:
+            summary["stance"] = {
+                field: self._enum_value(getattr(stance, field, ""))
+                for field in ("attitude", "willingness", "boundary", "effort")
+            }
+        if move is not None:
+            facts = (
+                *tuple(getattr(move, "must_say", ()) or ()),
+                *tuple(getattr(move, "may_say", ()) or ()),
+            )
+            categories = tuple(
+                dict.fromkeys(
+                    self._safe_text(getattr(fact, "category", ""), 40)
+                    for fact in facts
+                    if self._safe_text(getattr(fact, "category", ""), 40)
+                )
+            )
+            summary["social_move"] = {
+                "primary_move": self._enum_value(
+                    getattr(move, "primary_move", "")
+                ),
+                "ending": self._enum_value(getattr(move, "ending", "")),
+                "realization_mode": self._enum_value(
+                    getattr(move, "realization_mode", "")
+                ),
+                "fact_categories": list(categories),
+            }
+        if style is not None:
+            summary["style"] = {
+                "posture": self._safe_text(getattr(style, "posture", ""), 32),
+                "max_chars": max(0, int(getattr(style, "max_chars", 0))),
+                "max_sentences": max(
+                    0, int(getattr(style, "max_sentences", 0))
+                ),
+                "max_segments": max(0, int(getattr(style, "max_segments", 0))),
+            }
+
+    @staticmethod
+    def _enum_value(value: object) -> str:
+        return str(getattr(value, "value", value) or "")
 
     def record_delivery(
         self,

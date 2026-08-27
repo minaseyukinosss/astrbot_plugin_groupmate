@@ -11,6 +11,7 @@ from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import OutboxStatus
 from groupmate.social_runtime.profile.contracts import MemberAlias, ProfileFact
 from groupmate.social_runtime.profile.repository import ProfileRepository
+from groupmate.social_runtime.society.relationships import RelationshipProjection
 
 
 class _Response:
@@ -42,6 +43,97 @@ class _Context:
 
     async def llm_generate(self, **kwargs):
         self.model_calls.append(kwargs)
+        if "只负责识别当前群聊的具体社会场景" in kwargs["system_prompt"]:
+            facts = json.loads(kwargs["prompt"])
+            current_text = facts["current_text"]
+            chorus = facts.get("chorus_evidence")
+            if chorus is not None:
+                member_target_id = next(
+                    (
+                        member_id
+                        for member_id, aliases in facts["member_refs"].items()
+                        if any(alias in current_text for alias in aliases)
+                    ),
+                    None,
+                )
+                return _Response(
+                    json.dumps(
+                        {
+                            "scene_kind": "group_chorus",
+                            "target_scope": "GROUP",
+                            "target_id": None,
+                            "literal_subject": (
+                                "小林" if member_target_id else "爱弥斯"
+                            ),
+                            "user_move": (
+                                "chorus_about_member"
+                                if member_target_id
+                                else "chorus_about_aemeath"
+                            ),
+                            "continuity_event_ids": chorus["event_ids"],
+                            "repetition_count": len(chorus["event_ids"]),
+                            "chorus_target": (
+                                "MEMBER" if member_target_id else "SELF"
+                            ),
+                            "chorus_target_id": member_target_id,
+                            "chorus_tone": "SAFE_BANTER",
+                            "constraints": [],
+                            "information_gaps": [],
+                            "capability_request": "NONE",
+                            "confidence": 0.96,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return _Response(
+                json.dumps(
+                    {
+                        "scene_kind": (
+                            "technical_help" if "报错" in current_text else "direct_chat"
+                        ),
+                        "target_scope": "INDIVIDUAL",
+                        "target_id": facts["target_id"],
+                        "literal_subject": "报错" if "报错" in current_text else current_text,
+                        "user_move": "asks_help" if "报错" in current_text else "direct_message",
+                        "continuity_event_ids": [facts["source_event_id"]],
+                        "repetition_count": 0,
+                        "constraints": [],
+                        "information_gaps": [],
+                        "capability_request": "NONE",
+                        "confidence": 0.95,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        if "根据已批准的社交动作生成回复" in kwargs["system_prompt"]:
+            decision_json = kwargs["system_prompt"].split("\n")[-1]
+            decision = json.loads(decision_json)["social_decision"]
+            must_say = decision["must_say"]
+            text = (
+                "接着看报错最前面的异常类型和对应代码行。"
+                if "然后呢" in kwargs["prompt"]
+                else "先看报错最前面那一行。"
+            )
+            if decision["ending"] == "QUESTION":
+                text = "把缺少的信息贴出来？"
+            return _Response(
+                json.dumps(
+                    {
+                        "text": text,
+                        "covered_fact_ids": [item["fact_id"] for item in must_say],
+                        "used_memory_ids": [],
+                        "used_capability_ids": [],
+                        "source_event_ids": list(
+                            dict.fromkeys(
+                                event_id
+                                for item in must_say
+                                for event_id in item["source_event_ids"]
+                            )
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
         if "结构化群聊观察器" not in kwargs["system_prompt"]:
             if "然后呢" in kwargs["prompt"]:
                 return _Response(
@@ -228,6 +320,162 @@ def test_alias_prefixed_external_command_stays_owned_by_astrbot(tmp_path):
     assert trace["route"]["reason"] == "匹配已配置的外部触发规则"
 
 
+def test_direct_reply_interprets_scene_before_generating_text(tmp_path):
+    context, trace = asyncio.run(
+        _run_alias_case(tmp_path, "小爱，这个报错怎么看")
+    )
+
+    assert len(context.model_calls) == 2
+    assert "只负责识别当前群聊的具体社会场景" in context.model_calls[0][
+        "system_prompt"
+    ]
+    assert "根据已批准的社交动作生成回复" in context.model_calls[1][
+        "system_prompt"
+    ]
+    assert trace["social_scene"]["scene_kind"] == "technical_help"
+    assert trace["stance"]["willingness"] == "WILLING"
+    assert trace["social_move"]["primary_move"] == "DIRECT_ANSWER"
+
+
+def test_confirmed_multi_actor_chorus_reaches_target_aware_scene(tmp_path):
+    async def scenario():
+        context = _Context()
+        cognition = _MatrixCognition()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+                "persona_name": "爱弥斯",
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path,
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: cognition,
+        )
+        await bridge.start()
+        await bridge.handle_event(_event("chorus-1", "爱弥斯今天请客", actor_id="u1"))
+        await bridge.handle_event(_event("chorus-2", "爱弥斯今天请客", actor_id="u2"))
+        due = await bridge.manager.drain(now=102)
+        await bridge._handle_evaluations(due)
+        summaries = bridge.trace_repository.query(
+            persona_id=settings.persona_id,
+            group_id="885617919",
+        )["items"]
+        await bridge.close()
+        diagnostics = [
+            {
+                "outcome": item.governor_result.outcome,
+                "candidate_kinds": [candidate.kind for candidate in item.candidates],
+                "chorus": item.chorus_evidence,
+                "reply_diagnostic": item.reply_diagnostic,
+            }
+            for item in due
+        ]
+        return context, summaries, diagnostics
+
+    context, summaries, diagnostics = asyncio.run(scenario())
+    matching_traces = [
+        item["summary"]
+        for item in summaries
+        if "爱弥斯今天请客" in item["summary"]["message"]["summary"]
+        and item["summary"].get("social_scene")
+    ]
+    scene_inputs = [
+        json.loads(call["prompt"])
+        for call in context.model_calls
+        if "只负责识别当前群聊的具体社会场景" in call["system_prompt"]
+    ]
+    assert matching_traces, (diagnostics, scene_inputs)
+    trace = matching_traces[0]
+
+    assert trace["understanding"]["participation_diagnostics"] == [
+        "confirmed_chorus_semantic_check"
+    ]
+    assert trace["social_scene"]["scene_kind"] == "group_chorus"
+    assert trace["social_scene"]["chorus_target"] == "SELF"
+    assert trace["social_scene"]["chorus_participant_count"] == 2
+    assert trace["social_move"]["primary_move"] == "GROUP_RESPONSE"
+    assert any(
+        "只负责识别当前群聊的具体社会场景" in call["system_prompt"]
+        for call in context.model_calls
+    )
+
+
+def test_safe_member_chorus_joins_exactly_and_marks_only_after_send(tmp_path):
+    async def scenario():
+        context = _Context()
+        cognition = _MatrixCognition()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SOCIAL_RUNTIME",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path,
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: cognition,
+        )
+        await bridge.start()
+        bridge.manager.profile_retriever.repository.remember_alias(
+            MemberAlias(
+                persona_id=settings.persona_id,
+                group_id="885617919",
+                actor_id="u9",
+                alias="小林",
+                alias_type="group_card",
+                confidence=1.0,
+                first_seen_at=90,
+                last_seen_at=100,
+                status="confirmed",
+            )
+        )
+        bridge.manager.society.save_relationship(
+            RelationshipProjection(
+                settings.persona_id,
+                "885617919",
+                "u9",
+                play_acceptance=70,
+            )
+        )
+        await bridge.handle_event(_event("member-chorus-1", "小林今天请客", actor_id="u1"))
+        await bridge.handle_event(_event("member-chorus-2", "小林今天请客", actor_id="u2"))
+        due = await bridge.manager.drain(now=102)
+        await bridge._handle_evaluations(due)
+        plans = [
+            bridge.manager.reply_plans.by_correlation(item.source_event.correlation_id)
+            for item in due
+            if item.governor_result.outcome == "ACT"
+        ]
+        joined = bridge.manager.chorus_participation.recent_joined_chain_ids(
+            "885617919", since=0
+        )
+        await bridge.close()
+        return context, plans, joined
+
+    context, plans, joined = asyncio.run(scenario())
+
+    assert len(plans) == 1
+    assert plans[0].move.primary_move.value == "JOIN_CHORUS"
+    assert context.client.calls[0]["message"] == [
+        {"type": "text", "data": {"text": "小林今天请客"}}
+    ]
+    assert joined == (plans[0].move.chorus_chain_id,)
+    assert not any(
+        "根据已批准的社交动作生成回复" in call["system_prompt"]
+        for call in context.model_calls
+    )
+
+
 def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):
     context, trace = asyncio.run(_run_alias_case(tmp_path, "小爱说话"))
 
@@ -246,8 +494,13 @@ def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):
     assert trace["expression"]["relationship_stage"] == "陌生"
     assert trace["expression"]["explicit_material_selected"] is False
     assert trace["expression"]["material_reason"] == "no_relevant_material"
-    assert "爱弥斯" in context.model_calls[0]["system_prompt"]
-    assert "默认不要显式提及任何设定素材" in context.model_calls[0]["system_prompt"]
+    reply_call = next(
+        call
+        for call in context.model_calls
+        if "根据已批准的社交动作生成回复" in call["system_prompt"]
+    )
+    assert "爱弥斯" in reply_call["system_prompt"]
+    assert "默认不要显式提及任何设定素材" in reply_call["system_prompt"]
     assert "接入频道" not in json.dumps(context.client.calls, ensure_ascii=False)
 
 
@@ -462,4 +715,9 @@ def test_existing_profile_context_reaches_reply_expression(tmp_path):
 
     calls = asyncio.run(scenario())
 
-    assert "会持续追问到问题真正落地" in calls[0]["system_prompt"]
+    reply_call = next(
+        call
+        for call in calls
+        if "根据已批准的社交动作生成回复" in call["system_prompt"]
+    )
+    assert "会持续追问到问题真正落地" in reply_call["system_prompt"]

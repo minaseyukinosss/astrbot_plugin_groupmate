@@ -26,6 +26,7 @@ from .contracts import (
     RuntimeMode,
     SocialEventEnvelope,
 )
+from .chorus import ChorusDetector, ChorusEvidence, ChorusParticipationRepository
 from .event_fabric import SocialEventFabric
 from .governor import (
     GovernorContext,
@@ -58,6 +59,7 @@ from .society.relationships import (
 )
 from .memory.relationship_memory import RelationshipMemory
 from .replying import ReplyPlan, ReplyPlanRepository
+from .social_context import SceneEventFact
 from .delivery.outbox import OutboxService
 from .scene_actor import (
     GroupSceneActor,
@@ -99,6 +101,7 @@ class ShadowEvaluation:
     status: str
     participation_lane: str = "AMBIENT"
     participation_diagnostics: tuple[str, ...] = ()
+    chorus_evidence: ChorusEvidence | None = None
     cognitive_observations: tuple[CognitiveObservation, ...] = ()
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
     candidate_response: str | None = None
@@ -130,6 +133,11 @@ class ShadowEvaluation:
                 "participation_lane": self.participation_lane,
                 "participation_diagnostics": list(
                     self.participation_diagnostics
+                ),
+                "chorus_evidence": (
+                    asdict(self.chorus_evidence)
+                    if self.chorus_evidence is not None
+                    else None
                 ),
                 "cognitive_observations": [
                     safe_cognitive_observation(item)
@@ -224,6 +232,7 @@ class ShadowEvaluation:
             relationship_decisions.append(
                 RelationshipEventDecision(**decision)
             )
+        chorus_values = values.get("chorus_evidence")
         return cls(
             persona_id=str(values["persona_id"]),
             request_id=str(values["request_id"]),
@@ -245,6 +254,19 @@ class ShadowEvaluation:
             ),
             participation_diagnostics=tuple(
                 values.get("participation_diagnostics", ())
+            ),
+            chorus_evidence=(
+                ChorusEvidence(
+                    **{
+                        **dict(chorus_values),
+                        "event_ids": tuple(dict(chorus_values).get("event_ids", ())),
+                        "participant_ids": tuple(
+                            dict(chorus_values).get("participant_ids", ())
+                        ),
+                    }
+                )
+                if isinstance(chorus_values, Mapping)
+                else None
             ),
             cognitive_observations=cognitive_observations,
             cognition_diagnostics=cognition_diagnostics,
@@ -359,6 +381,8 @@ class SocialRuntimeManager:
         )
         self.intentions = IntentionEngine()
         self.participation = ParticipationPolicy(self.intentions)
+        self.chorus_detector = ChorusDetector()
+        self.chorus_participation = ChorusParticipationRepository(database_path)
         self.governor = SocialGovernor()
         self._governance_state = governance_state or RuntimeGovernanceState()
         self.fabric = SocialEventFabric(self._new_actor, self.event_store)
@@ -846,6 +870,16 @@ class SocialRuntimeManager:
             request.group_id,
             frame.focus_event_ids,
         )
+        context_events = self.event_store.event_envelopes(
+            request.persona_id,
+            request.group_id,
+            request.world_snapshot.recent_presence.recent_event_ids[-20:],
+        )
+        chorus_evidence = self._detect_chorus(
+            request=request,
+            context_events=context_events,
+            now=now,
+        )
         profile = self._persona_profiles.get(
             (request.group_id, frame.config_version)
         )
@@ -868,7 +902,12 @@ class SocialRuntimeManager:
         )
         blackboard = await self.cognition.evaluate(frame, context)
         decision_now = now if explicit_now else self._resolve_now(None)
-        proposal = self.participation.propose(frame, blackboard, decision_now)
+        proposal = self.participation.propose(
+            frame,
+            blackboard,
+            decision_now,
+            chorus_evidence=chorus_evidence,
+        )
         candidates = proposal.candidates
         governor_result = self.governor.decide(
             candidates,
@@ -888,16 +927,14 @@ class SocialRuntimeManager:
                 capability_allowed=request.governance_snapshot.capability_allowed,
                 force_observe=(
                     (blackboard.degraded and not proposal.allow_degraded)
-                    or not self._participation_allows(frame, blackboard)
+                    or (
+                        chorus_evidence is None
+                        and not self._participation_allows(frame, blackboard)
+                    )
                 ),
                 rate_limited_until=request.governance_snapshot.rate_limited_until,
                 minimum_utility=request.governance_snapshot.minimum_utility,
             ),
-        )
-        context_events = self.event_store.event_envelopes(
-            request.persona_id,
-            request.group_id,
-            request.world_snapshot.recent_presence.recent_event_ids[-20:],
         )
         evaluation = ShadowEvaluation(
             persona_id=request.persona_id,
@@ -914,6 +951,7 @@ class SocialRuntimeManager:
             status="accepted",
             participation_lane=proposal.lane.value,
             participation_diagnostics=proposal.diagnostics,
+            chorus_evidence=chorus_evidence,
             cognitive_observations=tuple(
                 entry.observation for entry in blackboard.entries
             ),
@@ -974,6 +1012,31 @@ class SocialRuntimeManager:
             if evaluation.runtime_mode is RuntimeMode.SHADOW:
                 self.update_shadow_review_evidence(evaluation)
         return evaluation
+
+    def _detect_chorus(
+        self,
+        *,
+        request: SceneWorkRequest,
+        context_events: tuple[SocialEventEnvelope, ...],
+        now: int,
+    ) -> ChorusEvidence | None:
+        if request.event.payload.get("social_eligible") is False:
+            return None
+        events_by_id = {event.event_id: event for event in context_events}
+        events_by_id[request.event.event_id] = request.event
+        joined = self.chorus_participation.recent_joined_chain_ids(
+            request.group_id,
+            since=max(0, int(now) - 3600),
+        )
+        return self.chorus_detector.detect(
+            events=tuple(
+                SceneEventFact.from_event(event) for event in events_by_id.values()
+            ),
+            source_event_id=request.event.event_id,
+            group_id=request.group_id,
+            persona_actor_id=request.persona_id,
+            joined_chain_ids=joined,
+        )
 
     def _process_relationship_events(
         self,
