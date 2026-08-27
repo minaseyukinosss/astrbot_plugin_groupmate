@@ -2,6 +2,7 @@ import asyncio
 from types import MappingProxyType
 
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
+from groupmate.social_runtime.chorus import ChorusEvidence
 from groupmate.social_runtime.manager import SocialRuntimeManager
 from groupmate.social_runtime.profile.contracts import MemberAlias
 from groupmate.social_runtime.social_context import SceneContextBuilder
@@ -137,3 +138,32 @@ def test_manager_exposes_structured_frozen_inputs_from_existing_repositories(tmp
     assert member_refs == {"u1": ("霞月",)}
     assert snapshot.persona_id == "aemeath"
     assert snapshot.config_version == 1
+
+
+def test_scene_context_attaches_chorus_without_mutating_original():
+    context = SceneContextBuilder(max_chars=600).build(
+        source_event=_event("m2", "小林今天请客", actor_id="u2", occurred_at=120),
+        context_events=(_event("m1", "小林今天请客", actor_id="u1", occurred_at=110),),
+        focus_event_ids=("m1", "m2"),
+        target_id="u2",
+        topic_id="m1",
+        persona_actor_id="aemeath",
+        persona_aliases=("爱弥斯",),
+        member_refs={"u9": ("小林",)},
+        profile=None,
+        relationship_memories=(),
+    )
+    evidence = ChorusEvidence(
+        chain_id="chorus:abc",
+        payload="小林今天请客",
+        normalized_key="小林今天请客",
+        event_ids=("m1", "m2"),
+        participant_ids=("u1", "u2"),
+        already_joined=False,
+    )
+
+    attached = context.with_chorus(evidence)
+
+    assert context.chorus is None
+    assert attached.chorus == evidence
+    assert attached.events == context.events

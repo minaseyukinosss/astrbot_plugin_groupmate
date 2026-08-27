@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import TYPE_CHECKING, Iterable, Mapping
 
 from .contracts import SocialEventEnvelope
+
+if TYPE_CHECKING:
+    from .chorus import ChorusEvidence
 
 
 MAX_CONTEXT_EVENTS = 16
@@ -16,6 +19,10 @@ MAX_ALIASES_PER_MEMBER = 4
 
 def _text(value: object) -> str:
     return " ".join(str(value or "").split())
+
+
+def _message_text(value: object) -> str:
+    return str(value or "").strip()
 
 
 def _unique(values: Iterable[object], *, limit: int) -> tuple[str, ...]:
@@ -46,7 +53,7 @@ class SceneEventFact:
         return cls(
             event_id=event.event_id,
             actor_id=_text(event.actor_id) or None,
-            text=_text(payload.get("text")),
+            text=_message_text(payload.get("text")),
             reply_to=reply_to,
             parts=cls._parts(payload),
             occurred_at=int(event.occurred_at),
@@ -83,8 +90,20 @@ class SceneContext:
     profile_fact_ids: tuple[str, ...]
     memory_ids: tuple[str, ...]
     facts: Mapping[str, object]
+    chorus: "ChorusEvidence | None" = None
+
+    def with_chorus(self, evidence: "ChorusEvidence | None") -> "SceneContext":
+        if evidence is None:
+            return self
+        known_event_ids = {item.event_id for item in self.events}
+        if not set(evidence.event_ids).issubset(known_event_ids):
+            raise ValueError("chorus event ids must exist in scene context")
+        if self.source_event_id not in evidence.event_ids:
+            raise ValueError("chorus evidence must include source event")
+        return replace(self, chorus=evidence)
 
     def to_model_facts(self) -> dict[str, object]:
+        chorus = self.chorus
         return {
             "source_event_id": self.source_event_id,
             "current_text": self.current_text,
@@ -113,6 +132,18 @@ class SceneContext:
             "profile_fact_ids": list(self.profile_fact_ids),
             "memory_ids": list(self.memory_ids),
             "facts": dict(self.facts),
+            "chorus_evidence": (
+                None
+                if chorus is None
+                else {
+                    "chain_id": chorus.chain_id,
+                    "payload": chorus.payload,
+                    "normalized_key": chorus.normalized_key,
+                    "event_ids": list(chorus.event_ids),
+                    "participant_ids": list(chorus.participant_ids),
+                    "already_joined": chorus.already_joined,
+                }
+            ),
         }
 
 
@@ -163,7 +194,7 @@ class SceneContextBuilder:
         )
         return SceneContext(
             source_event_id=source_event.event_id,
-            current_text=_text(source_event.payload.get("text")),
+            current_text=_message_text(source_event.payload.get("text")),
             target_id=_text(target_id) or None,
             topic_id=_text(topic_id) or None,
             events=packed,
