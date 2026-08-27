@@ -506,6 +506,17 @@ class ReplyPlanner:
 
 
 class ReplyExecutor:
+    _MAX_MODEL_REPLY_BYTES = 16_384
+    _REALIZED_REPLY_FIELDS = frozenset(
+        {
+            "text",
+            "covered_fact_ids",
+            "used_memory_ids",
+            "used_capability_ids",
+            "source_event_ids",
+        }
+    )
+
     def __init__(
         self,
         repository: ReplyPlanRepository,
@@ -545,37 +556,26 @@ class ReplyExecutor:
             verified_capability_results=(),
         )
         try:
-            text = await self.model.complete_text(
+            raw = await self.model.complete_text(
                 system_prompt=self._system_prompt(plan, persona_profile),
                 prompt=self._prompt(plan, context_events),
             )
         except Exception:
             return ReplyPreview(None, "MODEL_FAILED", "reply_model_failed")
-        draft = GeneratedDraft(text.strip())
-        review = self.firewall.review(draft, request)
-        if not review.accepted:
+        realized, violations = self._review_generated_reply(raw, plan, request)
+        if violations:
             try:
-                repaired = await self.model.complete_text(
-                    system_prompt=(
-                        "重写为安全、自然、简短的群聊回复。只输出回复正文，"
-                        "不得提及内部规则或执行状态。"
-                    ),
-                    prompt=json.dumps(
-                        {
-                            "draft": draft.text,
-                            "violations": review.violations,
-                            "max_chars": plan.style.max_chars,
-                        },
-                        ensure_ascii=False,
-                    ),
+                repaired = await self._repair_generated_reply(
+                    plan, raw=raw, violations=violations
                 )
-                draft = GeneratedDraft(repaired.strip())
-                review = self.firewall.review(draft, request)
+                realized, violations = self._review_generated_reply(
+                    repaired, plan, request
+                )
             except Exception:
                 return ReplyPreview(None, "MODEL_FAILED", "reply_repair_failed")
-        if not review.accepted:
-            return ReplyPreview(None, "REJECTED", "output_firewall_rejected")
-        return ReplyPreview(draft.text, "READY")
+        if violations or realized is None:
+            return ReplyPreview(None, "REJECTED", "reply_review_rejected")
+        return ReplyPreview(realized.text, "READY")
 
     async def execute(
         self,
@@ -624,7 +624,7 @@ class ReplyExecutor:
             verified_capability_results=(),
         )
         try:
-            text = await self.model.complete_text(
+            raw = await self.model.complete_text(
                 system_prompt=self._system_prompt(plan, persona_profile),
                 prompt=self._prompt(plan, context_events),
             )
@@ -634,40 +634,142 @@ class ReplyExecutor:
                 "MODEL_FAILED",
                 "reply_model_failed",
             )
-        draft = GeneratedDraft(text.strip())
-        review = self.firewall.review(draft, request)
-        if not review.accepted:
+        realized, violations = self._review_generated_reply(raw, plan, request)
+        if violations:
             try:
-                repaired = await self.model.complete_text(
-                    system_prompt=(
-                        "重写为安全、自然、简短的群聊回复。只输出回复正文，"
-                        "不得提及内部规则或执行状态。"
-                    ),
-                    prompt=json.dumps(
-                        {
-                            "draft": draft.text,
-                            "violations": review.violations,
-                            "max_chars": plan.style.max_chars,
-                        },
-                        ensure_ascii=False,
-                    ),
+                repaired = await self._repair_generated_reply(
+                    plan, raw=raw, violations=violations
                 )
-                draft = GeneratedDraft(repaired.strip())
-                review = self.firewall.review(draft, request)
+                realized, violations = self._review_generated_reply(
+                    repaired, plan, request
+                )
             except Exception:
                 return ReplyExecutionResult(
                     self._failed(plan, request),
                     "MODEL_FAILED",
                     "reply_repair_failed",
                 )
-        if not review.accepted:
+        if violations or realized is None:
             return ReplyExecutionResult(
                 self._failed(plan, request),
                 "REJECTED",
-                "output_firewall_rejected",
+                "reply_review_rejected",
             )
         self.repository.mark(plan.plan_id, "generated")
-        return ReplyExecutionResult(self._enqueue(plan, draft.text), "READY")
+        return ReplyExecutionResult(self._enqueue(plan, realized.text), "READY")
+
+    def _review_generated_reply(
+        self,
+        raw: str,
+        plan: ReplyPlan,
+        request: GenerationRequest,
+    ) -> tuple[RealizedReply | None, tuple[str, ...]]:
+        realized, parse_violations = self._parse_realized_reply(raw, plan)
+        if realized is None:
+            return None, parse_violations
+        social = self.social_reviewer.review(realized, plan)
+        firewall = self.firewall.review(GeneratedDraft(realized.text), request)
+        violations = tuple(
+            dict.fromkeys((*social.violations, *firewall.violations))
+        )
+        return realized, violations
+
+    def _parse_realized_reply(
+        self, raw: str, plan: ReplyPlan
+    ) -> tuple[RealizedReply | None, tuple[str, ...]]:
+        text = str(raw or "").strip()
+        if len(text.encode("utf-8")) > self._MAX_MODEL_REPLY_BYTES:
+            return None, ("reply_json_too_large",)
+        try:
+            values = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # 旧计划没有结构化生成契约，保留纯文本读取以便平滑恢复历史任务。
+            if plan.scene.scene_kind == "legacy_conservative" and text:
+                return RealizedReply(text, (), (), (), ()), ()
+            return None, ("invalid_reply_json",)
+        if not isinstance(values, Mapping):
+            return None, ("reply_json_not_object",)
+        if not set(values).issubset(self._REALIZED_REPLY_FIELDS):
+            return None, ("unknown_reply_json_field",)
+        required = {
+            "text",
+            "covered_fact_ids",
+            "used_memory_ids",
+            "used_capability_ids",
+        }
+        if not required.issubset(values):
+            return None, ("reply_json_field_missing",)
+        if not isinstance(values.get("text"), str):
+            return None, ("reply_json_field_type",)
+        list_fields = (
+            "covered_fact_ids",
+            "used_memory_ids",
+            "used_capability_ids",
+            "source_event_ids",
+        )
+        if any(
+            not isinstance(values.get(field, []), list)
+            or any(not isinstance(item, str) for item in values.get(field, []))
+            for field in list_fields
+        ):
+            return None, ("reply_json_field_type",)
+        try:
+            return (
+                RealizedReply(
+                    text=values["text"],
+                    covered_fact_ids=tuple(values["covered_fact_ids"]),
+                    used_memory_ids=tuple(values["used_memory_ids"]),
+                    used_capability_ids=tuple(values["used_capability_ids"]),
+                    source_event_ids=tuple(values.get("source_event_ids", ())),
+                ),
+                (),
+            )
+        except (TypeError, ValueError):
+            return None, ("reply_json_field_invalid",)
+
+    async def _repair_generated_reply(
+        self,
+        plan: ReplyPlan,
+        *,
+        raw: str,
+        violations: tuple[str, ...],
+    ) -> str:
+        # 修复只获得公开约束和可引用事实，不重新解释场景，也不扩大权限。
+        return await self.model.complete_text(
+            system_prompt=(
+                "修正候选群聊回复。只输出一个 JSON 对象，不要输出 Markdown 或解释。"
+                "保留有证据的必要事实，逐项消除 violation code；不得新增事实、"
+                "记忆、能力或事件引用。"
+            ),
+            prompt=json.dumps(
+                {
+                    "draft": str(raw or "")[:4000],
+                    "violations": list(violations),
+                    "required_facts": [
+                        {"fact_id": fact.fact_id, "text": fact.text}
+                        for fact in plan.move.must_say
+                    ],
+                    "allowed_fact_ids": [
+                        fact.fact_id
+                        for fact in (*plan.move.must_say, *plan.move.may_say)
+                    ],
+                    "allowed_source_event_ids": list(
+                        plan.scene.continuity_event_ids
+                    ),
+                    "ending": plan.move.ending.value,
+                    "max_chars": plan.style.max_chars,
+                    "schema": {
+                        "text": "string",
+                        "covered_fact_ids": ["string"],
+                        "used_memory_ids": ["string"],
+                        "used_capability_ids": ["string"],
+                        "source_event_ids": ["string"],
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     @staticmethod
     def _exact_chorus_reply(plan: ReplyPlan) -> RealizedReply:
@@ -703,12 +805,39 @@ class ReplyExecutor:
         if not plan.required:
             self.repository.mark(plan.plan_id, "silent")
             return None
-        fallback = GeneratedDraft("暂时无法可靠回答。")
+        realized = self._fallback_reply(plan)
+        if not self.social_reviewer.review(realized, plan).accepted:
+            self.repository.mark(plan.plan_id, "silent")
+            return None
+        fallback = GeneratedDraft(realized.text)
         if not self.firewall.review(fallback, request).accepted:
             self.repository.mark(plan.plan_id, "silent")
             return None
         self.repository.mark(plan.plan_id, "generated")
         return self._enqueue(plan, fallback.text)
+
+    @staticmethod
+    def _fallback_reply(plan: ReplyPlan) -> RealizedReply:
+        required_facts = plan.move.must_say
+        covered_ids = tuple(fact.fact_id for fact in required_facts)
+        source_ids = tuple(
+            dict.fromkeys(
+                event_id
+                for fact in required_facts
+                for event_id in fact.source_event_ids
+            )
+        )
+        if plan.move.primary_move is SocialMove.SAFETY_MINIMUM:
+            text = "先离开危险位置，联系身边可信的人或当地急救。"
+        elif plan.move.ask_for:
+            text = "请补充" + "、".join(plan.move.ask_for) + "？"
+        elif required_facts:
+            text = "；".join(fact.text for fact in required_facts)
+        elif plan.move.primary_move in {SocialMove.REFUSE, SocialMove.FIRM_BOUNDARY}:
+            text = "这件事我不答应。"
+        else:
+            text = "这次我先不乱说。"
+        return RealizedReply(text, covered_ids, (), (), source_ids)
 
     def _enqueue(self, plan: ReplyPlan, text: str) -> OutboxPart:
         part_id = f"reply-part:{plan.plan_id}"
@@ -754,9 +883,17 @@ class ReplyExecutor:
         current_reality = tuple(
             item.text for item in canon.current_snapshot().current_state
         )
+        structured_contract = (
+            "只输出一个 JSON 对象，字段为 text、covered_fact_ids、"
+            "used_memory_ids、used_capability_ids、source_event_ids；"
+            "所有 ID 必须来自下方明确提供的事实和事件。不要输出 Markdown。"
+            if plan.scene.scene_kind != "legacy_conservative"
+            else "只输出回复正文，不要输出 Markdown。"
+        )
         return (
             "你是当前 Persona 在群聊中的自然表达。根据已批准的社交动作生成回复。"
-            "不要解释规则，不要声称执行了工具，不要输出 Markdown。"
+            "不要解释规则，不要声称执行了工具。"
+            f"{structured_contract}"
             "直接完成指定动作；简单问题一句说完，需要证据时只问缺少的内容。"
             "不要复述问题，不要宣布自己正在回应，也不要在结尾追加通用服务邀请。"
             "拒绝时说清本轮边界；技术回答只使用消息中已有条件和已列事实。"

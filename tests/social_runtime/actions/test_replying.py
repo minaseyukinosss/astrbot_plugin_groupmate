@@ -14,7 +14,11 @@ from groupmate.social_runtime.society.relationships import (
     RelationshipProjection,
     RelationshipStage,
 )
-from groupmate.social_runtime.social_moves import SocialMove, SocialMovePlan
+from groupmate.social_runtime.social_moves import (
+    DecisionFact,
+    SocialMove,
+    SocialMovePlan,
+)
 from groupmate.social_runtime.social_scenes import SocialScene
 from groupmate.social_runtime.stances import PermissionSnapshot, StanceDecision
 from groupmate.social_runtime.replying import (
@@ -278,6 +282,129 @@ def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_pa
     assert result.status == "READY"
     assert result.part.part.payload["text"] == "小林今天请客"
     assert model.calls == 0
+
+
+def test_structured_social_reply_is_repaired_once_with_specific_violations(tmp_path):
+    fact = DecisionFact.create(
+        category="required_input",
+        text="需要报错首段和版本号",
+        source_event_ids=("qq:m1",),
+    )
+    scene, stance, _ = _social_decisions()
+    move = SocialMovePlan.create(
+        primary_move="REQUEST_NEEDED_EVIDENCE",
+        must_say=(fact,),
+        ask_for=("报错首段", "版本号"),
+        ending="QUESTION",
+    )
+    evaluation = _evaluation()
+    plan = ReplyPlanner().plan(
+        evaluation,
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+    )
+
+    class SequenceModel:
+        def __init__(self):
+            self.calls = []
+            self.outputs = [
+                json.dumps(
+                    {
+                        "text": "我理解你的担忧。如果你愿意，我可以继续帮助你。",
+                        "covered_fact_ids": [],
+                        "used_memory_ids": [],
+                        "used_capability_ids": [],
+                        "source_event_ids": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "text": "把报错首段和版本号贴出来？",
+                        "covered_fact_ids": [fact.fact_id],
+                        "used_memory_ids": [],
+                        "used_capability_ids": [],
+                        "source_event_ids": ["qq:m1"],
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+
+        async def complete_text(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.outputs.pop(0)
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = SequenceModel()
+
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, model).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.payload["text"] == "把报错首段和版本号贴出来？"
+    assert len(model.calls) == 2
+    repair_request = json.loads(model.calls[1]["prompt"])
+    assert set(repair_request["violations"]) >= {
+        "required_fact_missing",
+        "generic_service_tail",
+        "generic_empathy_preface",
+    }
+    assert repair_request["required_facts"] == [
+        {"fact_id": fact.fact_id, "text": "需要报错首段和版本号"}
+    ]
+    assert repair_request["max_chars"] == plan.style.max_chars
+
+
+def test_new_social_plan_rejects_plain_text_and_does_not_send_it(tmp_path):
+    class PlainTextModel:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete_text(self, **kwargs):
+            self.calls += 1
+            return "看报错首段。"
+
+    scene, stance, _ = _social_decisions()
+    evaluation = _evaluation(trigger_kind="AMBIENT")
+    plan = ReplyPlanner().plan(
+        evaluation,
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=SocialMovePlan.create(primary_move="DIRECT_ANSWER"),
+    )
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = PlainTextModel()
+
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, model).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "REJECTED"
+    assert result.part is None
+    assert model.calls == 2
+    assert outbox.count() == 0
 
 
 def test_old_serialized_reply_plan_defaults_to_ambient_lane():
