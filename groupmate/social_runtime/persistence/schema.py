@@ -54,12 +54,22 @@ def initialize_database(path: Path) -> None:
     existed_with_data = path.exists() and path.stat().st_size > 0
     if existed_with_data:
         with sqlite3.connect(str(path)) as probe:
-            owned = probe.execute(
-                "SELECT 1 FROM sqlite_master "
-                "WHERE type='table' AND name='social_runtime_schema'"
-            ).fetchone()
-        if owned is None:
-            raise ForeignDatabaseError("not a Social Runtime database")
+            user_objects = {
+                str(row[0])
+                for row in probe.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            }
+            owned = "social_runtime_schema" in user_objects
+        if not owned:
+            if user_objects:
+                raise ForeignDatabaseError("not a Social Runtime database")
+            # A stale read can recreate an empty SQLite shell immediately
+            # after operators delete the old runtime database. With no user
+            # schema objects there is nothing foreign to protect, so treat it
+            # exactly like a new file and bootstrap the authoritative schema.
+            existed_with_data = False
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with connect_database(path) as db:

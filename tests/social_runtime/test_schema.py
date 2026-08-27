@@ -81,6 +81,24 @@ def test_new_database_bootstraps_complete_v3_schema(tmp_path):
         assert verify_schema(db) is None
 
 
+def test_empty_sqlite_shell_is_bootstrapped_after_deleted_database_race(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+
+    # A stale page query can reopen the path after the old database was
+    # deleted but before the new plugin finishes starting.
+    with connect_database(path):
+        pass
+
+    initialize_database(path)
+
+    with connect_database(path) as db:
+        version = db.execute(
+            "SELECT version FROM social_runtime_schema WHERE singleton=1"
+        ).fetchone()[0]
+        assert version == SCHEMA_VERSION
+        assert verify_schema(db) is None
+
+
 def test_initialize_is_idempotent_and_preserves_existing_events(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
     initialize_database(path)
