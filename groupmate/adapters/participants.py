@@ -129,6 +129,34 @@ class ParticipantDirectory:
             "avatar_ref": str(row["avatar_ref"]),
         }
 
+    def matching_display_names(
+        self, *, persona_id: str, group_id: str, text: str
+    ) -> tuple[dict[str, str], ...]:
+        """Return exact current-group display names mentioned in text.
+
+        Multiple rows are intentionally preserved so callers can reject an
+        ambiguous nickname instead of guessing from activity or familiarity.
+        """
+
+        source = str(text or "")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT actor_id,member_ref,display_name,avatar_ref "
+                "FROM participant_directory WHERE persona_id=? AND group_id=? "
+                "ORDER BY display_name,actor_id",
+                (str(persona_id), str(group_id)),
+            ).fetchall()
+        return tuple(
+            {
+                "actor_id": str(row["actor_id"]),
+                "member_ref": str(row["member_ref"]),
+                "display_name": str(row["display_name"]),
+                "avatar_ref": str(row["avatar_ref"]),
+            }
+            for row in rows
+            if str(row["display_name"]) and str(row["display_name"]) in source
+        )
+
     def active_members(
         self,
         *,
