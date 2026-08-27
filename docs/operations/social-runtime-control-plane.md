@@ -51,6 +51,81 @@ Projection/SSE 故障不阻塞 GroupSceneActor、TaskRuntime 或 Outbox。页面
 
 画像事实纠正与失效使用该成员当前的 `profile_revision`，不是全局 `control_version`。两者都是高影响命令，必须填写原因并二次确认。服务端再次验证管理员、群作用域、成员引用和事实引用；成功后旧事实立即停止注入、画像版本递增并写入 `profile_audit`。HTTP 409 时应重新读取该成员详情后再决定是否提交新命令。
 
+## 成员说话风格蒸馏与临时模仿
+
+- 设置以 `group_id × member_id` 为业务键，不使用 `persona_id` 制造重复风格资产。每成员默认关闭；`member_style_distillation_set` 只接受当前群不透明 `member_ref`、布尔开关、当前 `setting_version`、操作原因和管理员身份。
+- 开启时刻会开始一个新收集窗口，不回填关闭期间的历史消息。关闭后资产立即不可选，并结束正在模仿该成员的会话。
+- 成熟门槛为至少 40 条合格消息、5 个活跃日、3 类场景，其中至少 32 条为有实质内容的表达，实质消息占比不低于 75%。首版成熟后低频调用独立风格模型；此后至少新增 20 条合格消息才会发布新版本。
+- 证据不接受命令、转发、链接或媒体正文、群复读、敏感/攻击内容、第三方话语。发布资产只保存起句、推进、收尾、节奏和分场景的定性特征；不保存可拼接的长原句，不把身份、经历、观点、关系、隐私或攻击对象写入风格。
+- 启动/替换/停止要求平台真实 `@爱弥斯` 段。启动和管理员停止只认 `control_admin_ids`，不认 QQ 群职位；被模仿者只能结束当前群对自己的当前会话。目标先取同一消息的真实 @，其次只允许当前群不歧义的精确昵称/别名。
+- 每群最多一个有效会话，必须有明确未来截止时间，单次最长 3 天。会话锁定启动时的风格版本，读取时自动排除已过期、已关闭蒸馏或版本不可用的会话。
+- 表达附层只进入 `GENERATED` 闲聊回复。命令/插件结果、权限和安全文案、高风险确认、`EXACT_CHORUS` 复读保持原结果。身份守卫在一次修复仍失败后移除附层重试普通 Persona 表达，不改变已批准的 `SocialMovePlan` 和事实。
+- 启动确认必须包含目标显示名、本地截止时间和当前 Persona 名，确认本身使用目标风格作为第一次试演。不使用连接、频道、上线、系统指令、浓度或百分比包装。确认模型失败时返回含同样三个事实的简短爱弥斯文本，会话事务不回滚。
+- `/health` 只暴露风格任务是否启用/运行、当前群是否有会话、截止时间和有界诊断码；不暴露目标平台 ID、原始证据、模型输出或异常文本。
+
+SQLite schema v3 对插件自有 v2 数据库执行原位迁移，新建库直接建立 `member_style_settings`、`member_speech_style_versions` 和 `imitation_sessions`。迁移不启用任何成员的蒸馏，也不创建模仿会话。
+
+## 全新数据库切换
+
+本流程只用于已经明确接受“画像、好感、场景、任务、审计等 V2 历史全部从空状态重新形成”的版本切换。插件自身永远不会删除或重置数据库；清空通过停机后移动文件完成，保留可回滚副本。不要在 AstrBot 仍运行时单独移动主文件，也不要只处理 `.db` 而遗漏 WAL/SHM。
+
+### 切换前
+
+1. 记录当前插件版本，并导出 AstrBot 中 Groupmate 的完整配置。API Key 等密钥应保存在既有密钥管理位置，不要写入工单、终端日志或仓库。
+2. 停止 AstrBot，并确认没有进程继续打开数据库。停机方式以当前 AstrBot 部署（服务、容器或前台进程）为准。
+3. 为本次操作填写一个不会重复的 `CUTOVER_TAG`，创建独立归档目录，然后对停止写入后的数据库执行 SQLite online backup 和完整性检查：
+
+```bash
+ASTRBOT_ROOT=/absolute/path/to/astrbot
+DB_PATH="$ASTRBOT_ROOT/data/plugin_data/astrbot_plugin_groupmate/groupmate-social-runtime-v2.db"
+CUTOVER_TAG=2026-08-27-before-fresh-profile
+ARCHIVE_DIR="$ASTRBOT_ROOT/backups/groupmate-$CUTOVER_TAG"
+
+mkdir -p "$ARCHIVE_DIR"
+sqlite3 "$DB_PATH" "PRAGMA wal_checkpoint(FULL);"
+sqlite3 "$DB_PATH" ".backup '$ARCHIVE_DIR/groupmate-social-runtime-v2.backup.db'"
+sqlite3 "$ARCHIVE_DIR/groupmate-social-runtime-v2.backup.db" "PRAGMA integrity_check;"
+```
+
+完整性检查必须返回 `ok`。若数据库不存在、检查失败或仍被写入，停止切换并先处理原因。
+
+### 建立全新数据库
+
+保持 AstrBot 停止，把三个 SQLite 运行文件移入同一个归档目录；某个辅助文件不存在时可以跳过，但不能删除其他文件：
+
+```bash
+for SUFFIX in "" "-wal" "-shm"; do
+  if [ -e "$DB_PATH$SUFFIX" ]; then
+    mv "$DB_PATH$SUFFIX" "$ARCHIVE_DIR/"
+  fi
+done
+```
+
+随后安装新插件版本、恢复刚才导出的插件配置，再启动 AstrBot。新版本会按当前 schema 创建新的 `groupmate-social-runtime-v2.db`，不会读取归档目录。
+
+### 冒烟验收
+
+切换后至少确认：
+
+- AstrBot 和插件启动无 schema、认证或模型配置错误；
+- `/health` 中 `profile_status.enabled` 与配置一致，启用画像时 `task_running` 为 true；
+- 普通群聊能进入画像观察，后台处理后 `last_attempt_at`、`last_success_at` 会更新；合法但没有候选的批次显示 `profile_no_candidates`，不是静默无状态；
+- 外部命令（例如配置给其他插件的 `bq`）不进入画像队列，也不触发闲聊回复；
+- 成员侧只有精确命令 `查看我的画像` 可用，纠正和删除命令不开放；
+- 管理页能看到成员画像、群画像和画像后台状态，且另一群的数据不会串入当前群。
+
+保持原版本包、配置导出、`.backup.db` 和移动后的三个原始 SQLite 文件，至少跨过预定观察期后再按运维策略处理；不要在冒烟通过后立即删除。
+
+### 回滚
+
+1. 再次停止 AstrBot。
+2. 把本次新建的 `.db`、`-wal`、`-shm` 移到另一个故障留存目录，不要覆盖切换前归档。
+3. 恢复与旧数据库匹配的旧插件版本和旧配置。
+4. 将 `groupmate-social-runtime-v2.backup.db` 复制回权威 `DB_PATH`，不要恢复旧 `-wal`/`-shm`；SQLite 会按需重新创建辅助文件。
+5. 对恢复后的数据库运行 `PRAGMA integrity_check;`，启动 AstrBot，再核对 `/health`、待处理任务和 Outbox。`UNKNOWN` 或未确认的平台发送结果仍禁止盲重试。
+
+如果旧版本无法读取恢复库，不要尝试手工改 schema；保持停机并使用归档的原插件版本、配置和数据库作为一个整体恢复。
+
 ## 故障处置
 
 ### Projection 或 Query 失败

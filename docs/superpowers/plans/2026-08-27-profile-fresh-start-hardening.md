@@ -42,23 +42,23 @@
 - Produces: `ProfileRepository.edge(edge_id) -> SocialEdge | None`
 - Produces: `ProfileRepository.upsert_fact(fact) -> ProfileFact`
 
-- [ ] **Step 1: Write failing cross-batch tests**
+- [x] **Step 1: Write failing cross-batch tests**
 
 Add tests that process three one-message batches returning the same `observed_pattern` with different evidence IDs and assert one confirmed fact with three evidence IDs. Add the equivalent relation test and a test proving `third_party_claim` never merges with `self_statement`.
 
-- [ ] **Step 2: Run the focused tests and confirm red**
+- [x] **Step 2: Run the focused tests and confirm red**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/profile/test_profile_policy.py tests/social_runtime/profile/test_profile_repository.py tests/scenarios/test_profile_background_pipeline.py`
 
 Expected: FAIL because fact IDs include evidence and repository writes do not merge evidence.
 
-- [ ] **Step 3: Implement stable claims and deterministic reinforcement**
+- [x] **Step 3: Implement stable claims and deterministic reinforcement**
 
 Use NFKC normalization, collapsed whitespace, case-folding and punctuation removal. Exclude evidence IDs from `_candidate_id` but retain `source_kind`. Add repository lookup/upsert methods with scope verification. Reinforcement unions evidence, retains maximum confidence/strength, then reuses local thresholds; confirmed records never downgrade.
 
 Update the model prompt so a direct relationship candidate may be proposed with one evidence event while local policy remains the only confirmation authority.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the Step 2 command. Expected: PASS.
 
@@ -76,21 +76,21 @@ Run the Step 2 command. Expected: PASS.
 - Produces: `ProfileRepository.observation_hours(persona_id, group_id, limit=500) -> tuple[int, ...]`
 - Produces: `ProfileService._refresh_group_portrait(group_id, generated_at) -> None`
 
-- [ ] **Step 1: Write a failing automatic refresh scenario**
+- [x] **Step 1: Write a failing automatic refresh scenario**
 
 Process a batch that creates a member snapshot, then assert the repository contains a group portrait with `member_count == 1`, a non-empty activity rhythm and a privacy-safe summary that omits the member fact text.
 
-- [ ] **Step 2: Run and confirm red**
+- [x] **Step 2: Run and confirm red**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/profile/test_group_portrait.py tests/scenarios/test_profile_background_pipeline.py`
 
 Expected: FAIL because production service never stores a group portrait.
 
-- [ ] **Step 3: Implement scoped aggregate inputs and refresh**
+- [x] **Step 3: Implement scoped aggregate inputs and refresh**
 
 Read only same-group snapshots, confirmed edges and the latest 500 observation timestamps. Build with empty `culture` and `topic_counts` until a separately governed group-topic source exists. Add a deterministic member-count fallback summary and store the portrait after every completed batch.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the Step 2 command. Expected: PASS.
 
@@ -110,21 +110,21 @@ Run the Step 2 command. Expected: PASS.
 - Extends: `AstrBotSocialRuntimeBridge.runtime_status(group_id)` with `profile_status`
 - Extends: `/health` response with `profile_status`
 
-- [ ] **Step 1: Write failing health and recovery tests**
+- [x] **Step 1: Write failing health and recovery tests**
 
 Assert a legal empty result records `profile_no_candidates`, a successful candidate updates `last_success_at`, and one unexpected extractor exception records `profile_worker_failed` without ending a test background loop. Assert the health API and profile workspace expose only safe status fields.
 
-- [ ] **Step 2: Run and confirm red**
+- [x] **Step 2: Run and confirm red**
 
 Run: `.venv/bin/python -m pytest -q tests/scenarios/test_profile_background_pipeline.py tests/contracts/test_web_api.py tests/page/test_profile_workspace.py`
 
 Expected: FAIL because profile health is not exported and unexpected exceptions escape the loop.
 
-- [ ] **Step 3: Implement in-memory health and safe recovery**
+- [x] **Step 3: Implement in-memory health and safe recovery**
 
 Track task state, pending count, last attempt, last success and last diagnostic per group. Catch unexpected loop exceptions at the scheduler boundary, record only `profile_worker_failed`, yield control and continue. Preserve existing provider retry timing. Merge the safe mapping into Bridge runtime status and `/health`; render a compact status line on the profile page.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the Step 2 command. Expected: PASS.
 
@@ -141,21 +141,21 @@ Run the Step 2 command. Expected: PASS.
 - Consumes: translated payload fields `social_eligible` and `interaction_owner`
 - Preserves: exact member command `查看我的画像`
 
-- [ ] **Step 1: Write failing filtering and enum tests**
+- [x] **Step 1: Write failing filtering and enum tests**
 
 Assert configured external command and external-link events do not increase pending profile observations, while an ordinary unaddressed group message does. Assert frontend labels cover `stable` and every value in the backend relation vocabulary.
 
-- [ ] **Step 2: Run and confirm red**
+- [x] **Step 2: Run and confirm red**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_astrbot_events.py tests/scenarios/test_profile_background_pipeline.py tests/page/test_profile_workspace.py`
 
 Expected: FAIL because profile observation ignores ownership and the frontend uses obsolete enum names.
 
-- [ ] **Step 3: Implement the minimal boundary changes**
+- [x] **Step 3: Implement the minimal boundary changes**
 
 Skip profile observation when `social_eligible is False`, owner is `EXTERNAL_PLUGIN`, or the text is the view command. Replace frontend mappings with exact backend vocabulary and readable Chinese labels.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the Step 2 command. Expected: PASS.
 
@@ -169,11 +169,11 @@ Run the Step 2 command. Expected: PASS.
 **Interfaces:**
 - Documents: stop, `.backup`, move `.db/.db-wal/.db-shm`, install, smoke-test, rollback
 
-- [ ] **Step 1: Add a clean-database acceptance scenario**
+- [x] **Step 1: Add a clean-database acceptance scenario**
 
 Create a new database, process multiple batches, and assert confirmed fact, confirmed edge, member snapshot, group portrait, profile health and the single view command all work together.
 
-- [ ] **Step 2: Run all relevant tests**
+- [x] **Step 2: Run all relevant tests**
 
 Run:
 
@@ -193,11 +193,11 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 3: Document the destructive deployment boundary**
+- [x] **Step 3: Document the destructive deployment boundary**
 
 Document that code never deletes the database. Operators must stop AstrBot, create an SQLite `.backup`, preserve config, move all three SQLite files, start the new version, verify health and keep the backup for rollback.
 
-- [ ] **Step 4: Final verification**
+- [x] **Step 4: Final verification**
 
 Run: `.venv/bin/python -m compileall -q groupmate && git diff --check`
 

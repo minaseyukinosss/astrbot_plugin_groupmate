@@ -69,7 +69,7 @@
 - Produces: `MemberStyleRepository.set_enabled(...)`, `.setting(...)`, `.eligible_observations(...)`, `.publish(...)`, `.latest_ready(...)`, `.start_session(...)`, `.stop_session(...)`, `.active_session(...)`.
 - Consumes: `ProfileObservation` and the existing SQLite connection helpers.
 
-- [ ] **Step 1: Write failing contract and policy tests**
+- [x] **Step 1: Write failing contract and policy tests**
 
 Cover literal behavior: default-disabled setting, qualitative field bounds, invalid evidence IDs, commands/forwards/chorus/sensitive text rejection, short reaction classification, and maturity requiring 40 messages across 5 days and 3 scenes.
 
@@ -85,13 +85,13 @@ def test_maturity_requires_volume_days_and_scene_diversity():
     assert maturity.scene_types == ("answer", "banter", "care")
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `pytest -q tests/social_runtime/profile/test_member_speech_style.py`
 
 Expected: collection fails because `speech_style` does not exist.
 
-- [ ] **Step 3: Implement immutable contracts and local evidence policy**
+- [x] **Step 3: Implement immutable contracts and local evidence policy**
 
 Use explicit validation and bounded tuples. `MemberSpeechStyle` carries only qualitative generation fields and evidence IDs; it has no Persona field and no raw-example field.
 
@@ -118,7 +118,7 @@ class MemberSpeechStyle:
     generated_at: int
 ```
 
-- [ ] **Step 4: Add failing schema and repository tests**
+- [x] **Step 4: Add failing schema and repository tests**
 
 Tests must verify clean v3 bootstrap, owned v2 migration, settings default off, enable timestamps, version increments, disabled assets cannot resolve, one active session per group, atomic replacement, target-only stop, and read-time expiry.
 
@@ -134,17 +134,17 @@ def test_active_session_expires_on_read(tmp_path):
     assert repository.active_session("g1", now=200) is None
 ```
 
-- [ ] **Step 5: Run repository tests and verify RED**
+- [x] **Step 5: Run repository tests and verify RED**
 
 Run: `pytest -q tests/social_runtime/profile/test_style_repository.py tests/social_runtime/test_schema.py`
 
 Expected: missing repository and schema v3 assertions fail.
 
-- [ ] **Step 6: Implement v3 migration and repository**
+- [x] **Step 6: Implement v3 migration and repository**
 
 Add required tables `member_style_settings`, `member_speech_style_versions`, `imitation_sessions`; migrate an owned v2 database inside `BEGIN IMMEDIATE`. Session replacement first closes the effective row with `stop_reason='replaced'`, then inserts the new row in the same transaction. `active_session` always adds `expires_at > now` and verifies that the target setting remains enabled and its selected style remains `READY`.
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run: `pytest -q tests/social_runtime/profile/test_member_speech_style.py tests/social_runtime/profile/test_style_repository.py tests/social_runtime/test_schema.py`
 
@@ -171,7 +171,7 @@ Commit only Task 1 files with `git commit -m "feat: persist member speech styles
 - Produces: `MemberStyleService.process_due(now=...)`, `.member_status(...)` and `.wake()`.
 - `ProfileService` receives optional `style_service` and calls `wake()` only after durable observations change.
 
-- [ ] **Step 1: Write failing model-contract tests**
+- [x] **Step 1: Write failing model-contract tests**
 
 Verify request uses JSON mode and a dedicated qualitative prompt; the response must reject unknown fields, missing sections, invented event IDs, raw quotations, identity/opinion/experience fields, and unbounded strings.
 
@@ -184,31 +184,31 @@ def test_distiller_request_asks_for_qualitative_structure_not_word_percentages()
     assert "词频" in system and "不得" in system
 ```
 
-- [ ] **Step 2: Run model tests and verify RED**
+- [x] **Step 2: Run model tests and verify RED**
 
 Run: `pytest -q tests/contracts/test_deepseek_member_style.py`
 
 Expected: missing adapter failure.
 
-- [ ] **Step 3: Implement the dedicated client and validated parser**
+- [x] **Step 3: Implement the dedicated client and validated parser**
 
 Reuse the existing `AioHttpJsonTransport`, error normalization and timeout accounting. The request includes only event ID, occurred_at, local scene type and bounded text. Publishable output must list evidence IDs for every stable trait and all IDs must be in the submitted set.
 
-- [ ] **Step 4: Write failing service tests**
+- [x] **Step 4: Write failing service tests**
 
 Tests cover no call below maturity, one call at maturity, no per-message call, disabled target skipped, prior ready version kept on provider failure, incremental evidence creates version 2, and safe diagnostics do not contain provider exception text.
 
-- [ ] **Step 5: Run service tests and verify RED**
+- [x] **Step 5: Run service tests and verify RED**
 
 Run: `pytest -q tests/social_runtime/profile/test_member_style_service.py tests/scenarios/test_profile_background_pipeline.py`
 
 Expected: missing service/integration behavior fails.
 
-- [ ] **Step 6: Implement low-frequency scheduling**
+- [x] **Step 6: Implement low-frequency scheduling**
 
 `MemberStyleService` scans only enabled members with enough unprocessed evidence. It is woken by observation changes but debounces work through the existing profile interval; it never invokes the provider from `observe()`. On success it publishes a new immutable version; on failure it records a bounded failure code and leaves the prior ready version selectable.
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run: `pytest -q tests/contracts/test_deepseek_member_style.py tests/social_runtime/profile/test_member_style_service.py tests/scenarios/test_profile_background_pipeline.py`
 
@@ -233,7 +233,7 @@ Commit Task 2 files with `git commit -m "feat: distill member speech styles"`.
 - Existing `profile` query adds `speech_style` with no raw member ID or evidence text.
 - Command execution resolves opaque `member_ref`, writes through `MemberStyleRepository`, records `profile_audit`, and returns the current style setting version.
 
-- [ ] **Step 1: Write failing command and query tests**
+- [x] **Step 1: Write failing command and query tests**
 
 Verify admin-only group scope, opaque member ref resolution, default disabled response, enable/disable audit, disabling closes an active session, and query output exposes only status/counts/dates/readable summary.
 
@@ -247,17 +247,17 @@ def test_admin_can_enable_distillation_without_exposing_actor_id(tmp_path):
     assert "actor_id" not in json.dumps(result.data)
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `pytest -q tests/contracts/test_commands.py tests/contracts/test_profile_web_api.py`
 
 Expected: unsupported command and absent query field failures.
 
-- [ ] **Step 3: Implement command, API parsing and safe query projection**
+- [x] **Step 3: Implement command, API parsing and safe query projection**
 
 The command is not available to ordinary chat users. Reuse current `CommandContext` authorization, expected-version/idempotency and audit mechanics. Style summaries are constructed from the structured version, not from raw evidence.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `pytest -q tests/contracts/test_commands.py tests/contracts/test_profile_web_api.py`
 
@@ -282,7 +282,7 @@ Commit Task 3 files with `git commit -m "feat: govern member style distillation"
 - Produces: `AstrBotSocialRuntimeBridge.prepare_imitation_transition(event)`; returns `None` for ordinary messages and a structured result for recognized state requests.
 - Consumes: real `mentions_bot`, ordered mention segments, `control_admin_ids`, `ParticipantDirectory`, `MemberStyleRepository`.
 
-- [ ] **Step 1: Write failing deterministic parser tests**
+- [x] **Step 1: Write failing deterministic parser tests**
 
 Cover: actual @ bot required; text name rejected; configured admin start/replace/stop; target member self-stop; non-target denied; same-message target @ preferred; unique confirmed name fallback; duplicate name asks for @; relative hours and tonight/tomorrow clock parsing; missing/past/ambiguous/>3-day time rejected.
 
@@ -292,31 +292,31 @@ def test_textual_bot_name_cannot_change_imitation_state():
     assert interpreter.interpret(event, now=_timestamp("2026-08-27 14:00")) is None
 ```
 
-- [ ] **Step 2: Run parser tests and verify RED**
+- [x] **Step 2: Run parser tests and verify RED**
 
 Run: `pytest -q tests/contracts/test_imitation_commands.py`
 
 Expected: missing adapter failure.
 
-- [ ] **Step 3: Implement deterministic recognition and validation**
+- [x] **Step 3: Implement deterministic recognition and validation**
 
 The interpreter recognizes only explicit start/stop semantics. Mention target uses platform ID; nickname lookup uses current-group exact display name/confirmed alias and succeeds only with one actor. Time parser supports explicit duration and unambiguous local dates without a model call. It returns candidates only; the service repeats membership, permission, readiness and time validation before writing.
 
-- [ ] **Step 4: Write failing bridge flow tests**
+- [x] **Step 4: Write failing bridge flow tests**
 
 Verify state request calls no scene model, creates exactly one group session, returns a normal Aemeath error on failure, emits immutable success facts without generated text, and does not affect another group.
 
-- [ ] **Step 5: Run bridge tests and verify RED**
+- [x] **Step 5: Run bridge tests and verify RED**
 
 Run: `pytest -q tests/scenarios/test_imitation_command_flow.py`
 
 Expected: bridge method absent.
 
-- [ ] **Step 6: Implement Bridge transition integration**
+- [x] **Step 6: Implement Bridge transition integration**
 
 `prepare_imitation_transition()` performs translation, recognition and the repository transaction without entering cognition. Error and stop results carry a final current-Persona text; start/replace results carry only the committed session plus the three immutable confirmation facts. The public AstrBot handler is not registered until Task 5 can render a complete confirmation.
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run: `pytest -q tests/contracts/test_imitation_commands.py tests/scenarios/test_imitation_command_flow.py`
 
@@ -347,7 +347,7 @@ Commit Task 4 files with `git commit -m "feat: control group imitation sessions"
 - `ReplyPlan` gains `member_style_overlay: MemberStyleOverlay | None = None` with backward-compatible decode.
 - `ReplyExecutor` includes overlay only in generated smalltalk paths; exact chorus bypasses it.
 
-- [ ] **Step 1: Write failing overlay and guard tests**
+- [x] **Step 1: Write failing overlay and guard tests**
 
 Verify structured asset becomes qualitative directives without raw event IDs; guard rejects target identity claims, target experience/opinion claims and omitted target/expiry/Aemeath facts in activation confirmation; ordinary Aemeath identity remains accepted.
 
@@ -359,35 +359,35 @@ def test_guard_rejects_claiming_target_identity():
     assert "imitation_target_identity_claim" in violations
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `pytest -q tests/social_runtime/actions/test_member_style_overlay.py`
 
 Expected: missing action module failure.
 
-- [ ] **Step 3: Implement overlay builder and guard**
+- [x] **Step 3: Implement overlay builder and guard**
 
 The builder caps field count and characters, strips event IDs, and emits explicit “只改变句式，不改变身份、事实、立场”的 rules. Guard uses normalized target names plus first-person identity/experience patterns and required fact coverage; it does not treat every occurrence of the target name as unsafe.
 
-- [ ] **Step 4: Write failing ReplyExecutor tests**
+- [x] **Step 4: Write failing ReplyExecutor tests**
 
 Tests verify overlay appears after base Persona/stance/move in the model prompt, exact chorus excludes it, command-like deterministic outputs do not use `ReplyExecutor`, invalid imitation output repairs once then falls back to no-overlay generation, and old stored plans decode with `None`.
 
-- [ ] **Step 5: Run replying tests and verify RED**
+- [x] **Step 5: Run replying tests and verify RED**
 
 Run: `pytest -q tests/social_runtime/actions/test_replying.py`
 
 Expected: ReplyPlan and prompt assertions fail.
 
-- [ ] **Step 6: Integrate overlay and safe fallback**
+- [x] **Step 6: Integrate overlay and safe fallback**
 
 Bridge queries `active_session(group_id, now)` immediately before planning and resolves its fixed style version. It adds an overlay only for `realization_mode == GENERATED`. Executor combines social reviewer, output firewall and identity guard; after one failed repair it retries once without overlay, preserving the same `SocialMovePlan` and facts.
 
-- [ ] **Step 7: Render activation as confirmation-as-audition and register the handler**
+- [x] **Step 7: Render activation as confirmation-as-audition and register the handler**
 
 Activation generation receives immutable facts for target display name, local expiry and current Persona name. The selected member style shapes the wording, but the guard requires all three facts. Model failure returns a concise Aemeath fallback such as `好，我学 A 说话到明晚八点。只是说话方式变了，我还是爱弥斯。` without connection/status imagery. Register `prepare_imitation_command()` before profile/affection query and `handle_event()` in `main.py`; a handled request stops propagation and yields exactly one result.
 
-- [ ] **Step 8: Run focused tests and commit**
+- [x] **Step 8: Run focused tests and commit**
 
 Run: `pytest -q tests/social_runtime/actions/test_member_style_overlay.py tests/social_runtime/actions/test_replying.py tests/scenarios/test_imitation_command_flow.py tests/scenarios/test_chat_mainline.py`
 
@@ -408,21 +408,21 @@ Commit Task 5 files with `git commit -m "feat: apply temporary member style over
 - Consumes: Task 3 `profile.summary.speech_style` and existing `submitCommand`.
 - Sends: `member_style_distillation_set` with opaque `member_ref`, boolean `enabled`, current style setting version and a human reason.
 
-- [ ] **Step 1: Write failing page contract tests**
+- [x] **Step 1: Write failing page contract tests**
 
 Test user-visible behaviors: default-off switch, status labels `关闭/积累中/可用/分析失败`, eligible count/day/scene/version display, readable summary, no editable style text area, and no distillation operation outside governed admin command.
 
-- [ ] **Step 2: Run page tests and verify RED**
+- [x] **Step 2: Run page tests and verify RED**
 
 Run: `pytest -q tests/page/test_profile_workspace.py`
 
 Expected: missing member-style section assertions fail.
 
-- [ ] **Step 3: Implement the accessible admin section**
+- [x] **Step 3: Implement the accessible admin section**
 
 Add a compact section after the identity/portrait content. Use a real button or checkbox with an associated label, disabled in flight, and refresh after accepted command. The summary renders qualitative bullets; it never renders event IDs, raw messages, target platform ID or model error details.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `pytest -q tests/page/test_profile_workspace.py tests/contracts/test_profile_web_api.py`
 
@@ -448,21 +448,21 @@ Commit Task 6 files with `git commit -m "feat: manage member style distillation"
 - `close()` cancels the style task and closes its client without leaking tasks.
 - `runtime_status()` adds bounded style worker/session health for the admin page.
 
-- [ ] **Step 1: Write failing lifecycle and end-to-end tests**
+- [x] **Step 1: Write failing lifecycle and end-to-end tests**
 
 Cover start/close, profile disabled behavior, style client failure isolation, restart persistence, expired-session recovery, command/external plugin bypass, exact chorus bypass, current-group-only overlay, self-awareness question, and active imitation not increasing proactive participation.
 
-- [ ] **Step 2: Run integration tests and verify RED**
+- [x] **Step 2: Run integration tests and verify RED**
 
 Run: `pytest -q tests/shared/test_plugin_skeleton.py tests/scenarios/test_profile_background_pipeline.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_imitation_command_flow.py`
 
 Expected: at least lifecycle and end-to-end behavior failures.
 
-- [ ] **Step 3: Complete composition and bounded diagnostics**
+- [x] **Step 3: Complete composition and bounded diagnostics**
 
 Use the same database path and clock in every component. Style-service failure never prevents Social Runtime startup when an older ready asset exists; unavailable style processing is reflected as a bounded admin diagnostic. Session self-awareness is passed as authoritative runtime context, not inferred from recent chat text.
 
-- [ ] **Step 4: Run integration tests and commit**
+- [x] **Step 4: Run integration tests and commit**
 
 Run: `pytest -q tests/shared/test_plugin_skeleton.py tests/scenarios/test_profile_background_pipeline.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_imitation_command_flow.py`
 
@@ -482,11 +482,11 @@ Commit Task 7 files with `git commit -m "feat: wire member style imitation runti
 **Interfaces:**
 - Documents exact authorization, default-off behavior, maturity thresholds, current-group scope, max duration, target opt-out, failure fallback and database v3 migration.
 
-- [ ] **Step 1: Update operator documentation**
+- [x] **Step 1: Update operator documentation**
 
 Document that enabling distillation begins with future messages, disabling immediately makes the asset unselectable and ends its active session, no normal-user asset editing exists, activation requires actual @, and old v2 databases migrate in place.
 
-- [ ] **Step 2: Run format and focused verification**
+- [x] **Step 2: Run format and focused verification**
 
 Run:
 
@@ -497,19 +497,19 @@ pytest -q tests/social_runtime/profile tests/social_runtime/actions/test_member_
 
 Expected: no whitespace errors; all selected tests pass.
 
-- [ ] **Step 3: Run full regression suite**
+- [x] **Step 3: Run full regression suite**
 
 Run: `pytest -q`
 
 Expected: all feature-related tests pass. Any pre-existing environment/socket or stale-contract failures must be listed separately with exact test names and compared against the baseline; do not call them feature successes.
 
-- [ ] **Step 4: Inspect final scope**
+- [x] **Step 4: Inspect final scope**
 
 Run: `git status --short` and `git diff --stat`.
 
 Verify user-owned `analysis/shadow_20260824.sql` and `analysis/target_bot_20260824/` remain untouched, and no unrelated dirty file is staged.
 
-- [ ] **Step 5: Commit documentation and final integration**
+- [x] **Step 5: Commit documentation and final integration**
 
 Commit only feature documentation and any final feature-owned integration files with `git commit -m "docs: operate member style imitation"`.
 
