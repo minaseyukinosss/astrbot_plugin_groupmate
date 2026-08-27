@@ -144,6 +144,69 @@ function auditDetails(summary, member, submitCommand, refresh) {
   ]);
 }
 
+const SPEECH_STYLE_STATUS_LABELS = Object.freeze({
+  DISABLED: "关闭",
+  ACCUMULATING: "积累中",
+  READY: "可用",
+  FAILED: "分析失败",
+});
+
+function speechStyleSection(summary, member, submitCommand, refresh) {
+  const style = summary.speech_style || {
+    enabled: false,
+    setting_version: 0,
+    status: "DISABLED",
+    eligible_message_count: 0,
+    active_day_count: 0,
+    scene_types: [],
+    stable_traits: [],
+  };
+  const scenes = Array.isArray(style.scene_types) ? style.scene_types : [];
+  const traits = Array.isArray(style.stable_traits) ? style.stable_traits : [];
+  const status = SPEECH_STYLE_STATUS_LABELS[style.status] || "积累中";
+  const toggle = governedAction(
+    style.enabled ? "关闭风格蒸馏" : "开启风格蒸馏",
+    {
+      type: "member_style_distillation_set",
+      expected_version: style.setting_version,
+      payload: {
+        member_ref: member.member_ref,
+        enabled: !style.enabled,
+      },
+    },
+    async (spec) => {
+      await submitCommand(spec);
+      await refresh();
+    },
+    {
+      title: style.enabled ? "关闭说话风格蒸馏" : "开启说话风格蒸馏",
+      submitLabel: style.enabled ? "确认关闭" : "确认开启",
+    },
+  );
+  return section("说话风格蒸馏", element("div", {
+    className: "profile-style-distillation",
+  }, [
+    element("div", { className: "profile-style-heading" }, [
+      element("div", {}, [
+        element("strong", { text: status }),
+        element("p", {
+          text: style.enabled
+            ? "只从开启后的合格群聊证据中形成定性风格，群友不能自行编辑。"
+            : "默认关闭；开启后只会积累未来的合格消息。",
+        }),
+      ]),
+      toggle,
+    ]),
+    element("dl", { className: "profile-style-metrics" }, [
+      element("div", {}, [element("dt", { text: "合格消息" }), element("dd", { text: style.eligible_message_count ?? 0 })]),
+      element("div", {}, [element("dt", { text: "活跃天数" }), element("dd", { text: style.active_day_count ?? 0 })]),
+      element("div", {}, [element("dt", { text: "场景类型" }), element("dd", { text: scenes.length })]),
+      element("div", {}, [element("dt", { text: "风格版本" }), element("dd", { text: style.style_version ?? "—" })]),
+    ]),
+    list(traits, "还没有形成可用的稳定表达特征。", "profile-style-traits"),
+  ]), "profile-style-section");
+}
+
 function renderDetail(item, hydrateAvatars, submitCommand, refresh) {
   const summary = item?.summary || {};
   const member = summary.member || {};
@@ -169,6 +232,7 @@ function renderDetail(item, hydrateAvatars, submitCommand, refresh) {
       className: "profile-portrait-quote",
       text: snapshot.one_line_portrait || "画像正在形成",
     }), "profile-lead"),
+    speechStyleSection(summary, member, submitCommand, refresh),
     section("个体特征", list(
       snapshot.individual_fingerprints,
       "还没有足够稳定的个体特征。",
