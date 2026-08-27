@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, Mapping, Protocol
+
+from .social_context import SceneContext
 
 
 MAX_SCENE_REFERENCES = 32
@@ -31,6 +33,12 @@ class ChorusTone(str, Enum):
     ATTACK = "ATTACK"
     DANGEROUS = "DANGEROUS"
     UNKNOWN = "UNKNOWN"
+
+
+class SocialSceneModelPort(Protocol):
+    async def classify_scene(
+        self, facts: Mapping[str, object]
+    ) -> Mapping[str, object]: ...
 
 
 def _required_text(value: object, name: str) -> str:
@@ -172,9 +180,138 @@ class SocialScene:
         return cls(**values)
 
 
+@dataclass(frozen=True)
+class SceneInterpretationResult:
+    scene: SocialScene
+    diagnostic_code: str | None = None
+
+
+class SocialSceneInterpreter:
+    """Accept model semantics only when every referenced fact exists locally."""
+
+    def __init__(self, model: SocialSceneModelPort) -> None:
+        self._model = model
+
+    async def interpret(self, context: SceneContext) -> SceneInterpretationResult:
+        try:
+            raw = dict(await self._model.classify_scene(context.to_model_facts()))
+        except Exception:
+            return self._fallback(context, "scene_model_failed")
+
+        claims_chorus = any(
+            raw.get(field) not in (None, "", (), [], "NONE")
+            for field in (
+                "chorus_target",
+                "chorus_tone",
+                "chorus_chain_id",
+                "chorus_payload",
+                "chorus_event_ids",
+                "chorus_participant_ids",
+            )
+        )
+        if claims_chorus and context.chorus is None:
+            return self._fallback(context, "chorus_evidence_missing")
+        raw = self._freeze_chorus_evidence(raw, context)
+        try:
+            scene = SocialScene.create(**raw)
+        except (TypeError, ValueError):
+            return self._fallback(context, "scene_model_invalid")
+
+        allowed_event_ids = {item.event_id for item in context.events}
+        if not set(scene.continuity_event_ids).issubset(allowed_event_ids):
+            return self._fallback(context, "scene_evidence_invalid")
+        if scene.target_scope is TargetScope.INDIVIDUAL:
+            if scene.target_id != context.target_id:
+                return self._fallback(context, "scene_target_invalid")
+        elif scene.target_id is not None:
+            return self._fallback(context, "scene_target_invalid")
+        if scene.chorus_target is ChorusTarget.MEMBER:
+            if scene.chorus_target_id not in context.member_refs:
+                return self._chorus_unknown(context, "chorus_member_invalid")
+        return SceneInterpretationResult(scene)
+
+    @staticmethod
+    def _freeze_chorus_evidence(
+        raw: dict[str, object], context: SceneContext
+    ) -> dict[str, object]:
+        evidence = context.chorus
+        frozen = dict(raw)
+        if evidence is None:
+            for field in (
+                "chorus_chain_id",
+                "chorus_payload",
+                "chorus_event_ids",
+                "chorus_participant_ids",
+                "chorus_already_joined",
+            ):
+                frozen.pop(field, None)
+            return frozen
+        # 链 ID、原文和参与者来自确定性检测，模型只能判断语义靶心与风险。
+        frozen.update(
+            {
+                "repetition_count": max(
+                    len(evidence.event_ids), int(frozen.get("repetition_count", 0))
+                ),
+                "chorus_chain_id": evidence.chain_id,
+                "chorus_payload": evidence.payload,
+                "chorus_event_ids": evidence.event_ids,
+                "chorus_participant_ids": evidence.participant_ids,
+                "chorus_already_joined": evidence.already_joined,
+            }
+        )
+        return frozen
+
+    @staticmethod
+    def _fallback(
+        context: SceneContext, diagnostic_code: str
+    ) -> SceneInterpretationResult:
+        target_id = context.target_id
+        scope = TargetScope.INDIVIDUAL if target_id else TargetScope.AMBIENT
+        scene = SocialScene.create(
+            scene_kind="conservative_direct" if target_id else "observe_only",
+            target_scope=scope,
+            target_id=target_id,
+            literal_subject=context.current_text[:160] or "当前互动",
+            user_move="direct_message" if target_id else "ambient_activity",
+            continuity_event_ids=(context.source_event_id,),
+            confidence=0.0,
+        )
+        return SceneInterpretationResult(scene, diagnostic_code)
+
+    @staticmethod
+    def _chorus_unknown(
+        context: SceneContext, diagnostic_code: str
+    ) -> SceneInterpretationResult:
+        evidence = context.chorus
+        if evidence is None:
+            return SocialSceneInterpreter._fallback(context, diagnostic_code)
+        scene = SocialScene.create(
+            scene_kind="group_chorus",
+            target_scope=TargetScope.GROUP,
+            target_id=None,
+            literal_subject="无法可靠解析的复读靶心",
+            user_move="chorus_target_unknown",
+            continuity_event_ids=evidence.event_ids,
+            repetition_count=len(evidence.event_ids),
+            chorus_target=ChorusTarget.UNKNOWN,
+            chorus_target_id=None,
+            chorus_chain_id=evidence.chain_id,
+            chorus_payload=evidence.payload,
+            chorus_event_ids=evidence.event_ids,
+            chorus_participant_ids=evidence.participant_ids,
+            chorus_already_joined=evidence.already_joined,
+            chorus_tone=ChorusTone.UNKNOWN,
+            confidence=0.0,
+        )
+        return SceneInterpretationResult(scene, diagnostic_code)
+
+
 __all__ = (
     "ChorusTarget",
     "ChorusTone",
+    "SceneInterpretationResult",
     "SocialScene",
+    "SocialSceneInterpreter",
+    "SocialSceneModelPort",
     "TargetScope",
 )

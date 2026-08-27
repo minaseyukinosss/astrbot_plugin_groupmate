@@ -1,9 +1,15 @@
+import asyncio
+
 import pytest
 
+from groupmate.social_runtime.chorus import ChorusEvidence
+from groupmate.social_runtime.contracts import SocialEventEnvelope
+from groupmate.social_runtime.social_context import SceneContextBuilder
 from groupmate.social_runtime.social_scenes import (
     ChorusTarget,
     ChorusTone,
     SocialScene,
+    SocialSceneInterpreter,
     TargetScope,
 )
 
@@ -97,6 +103,7 @@ def test_member_chorus_requires_known_target_and_complete_evidence():
             chorus_tone="SAFE_BANTER",
             confidence=0.95,
         )
+
     with pytest.raises(ValueError, match="subset"):
         SocialScene.create(
             scene_kind="group_chorus",
@@ -115,3 +122,125 @@ def test_member_chorus_requires_known_target_and_complete_evidence():
             chorus_tone="SAFE_BANTER",
             confidence=0.95,
         )
+
+
+class FixedSceneModel:
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def classify_scene(self, facts):
+        del facts
+        return self.payload
+
+
+def _event(event_id, text, *, actor_id="u1", occurred_at=100):
+    return SocialEventEnvelope.create(
+        event_id=event_id,
+        event_type="platform.message",
+        occurred_at=occurred_at,
+        received_at=occurred_at,
+        persona_id="aemeath",
+        group_id="g1",
+        actor_id=actor_id,
+        source_message_id=event_id,
+        correlation_id=f"c:{event_id}",
+        causation_id=None,
+        payload={"text": text, "origin_kind": "USER_TEXT"},
+    )
+
+
+def _context(*, chorus=False, member_refs=None):
+    context = SceneContextBuilder(max_chars=800).build(
+        source_event=_event("m2", "爱弥斯又嘴硬", actor_id="u2", occurred_at=110),
+        context_events=(_event("m1", "爱弥斯又嘴硬", actor_id="u1", occurred_at=100),),
+        focus_event_ids=("m1", "m2"),
+        target_id="u2",
+        topic_id="m1",
+        persona_actor_id="aemeath",
+        persona_aliases=("爱弥斯",),
+        member_refs=member_refs or {"u9": ("小林",)},
+        profile=None,
+        relationship_memories=(),
+    )
+    if not chorus:
+        return context
+    return context.with_chorus(
+        ChorusEvidence(
+            chain_id="chorus:abc",
+            payload="爱弥斯又嘴硬",
+            normalized_key="爱弥斯又嘴硬",
+            event_ids=("m1", "m2"),
+            participant_ids=("u1", "u2"),
+            already_joined=False,
+        )
+    )
+
+
+def test_interpreter_rejects_invented_evidence_ids():
+    model = FixedSceneModel(
+        {
+            "scene_kind": "repeated_boundary_test",
+            "target_scope": "INDIVIDUAL",
+            "target_id": "u2",
+            "literal_subject": "拥抱请求",
+            "user_move": "repeats_intimacy_request",
+            "continuity_event_ids": ["invented"],
+            "repetition_count": 3,
+            "constraints": [],
+            "information_gaps": [],
+            "capability_request": "NONE",
+            "confidence": 0.96,
+        }
+    )
+
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(_context()))
+
+    assert result.diagnostic_code == "scene_evidence_invalid"
+    assert result.scene.scene_kind == "conservative_direct"
+
+
+def test_interpreter_freezes_self_chorus_evidence_instead_of_model_payload():
+    model = FixedSceneModel(
+        {
+            "scene_kind": "group_chorus",
+            "target_scope": "GROUP",
+            "target_id": None,
+            "literal_subject": "爱弥斯",
+            "user_move": "chorus_about_self",
+            "continuity_event_ids": ["m1", "m2"],
+            "chorus_target": "SELF",
+            "chorus_target_id": None,
+            "chorus_tone": "SAFE_BANTER",
+            "chorus_payload": "模型试图改写的文本",
+            "confidence": 0.97,
+        }
+    )
+
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(_context(chorus=True)))
+
+    assert result.diagnostic_code is None
+    assert result.scene.chorus_payload == "爱弥斯又嘴硬"
+    assert result.scene.chorus_event_ids == ("m1", "m2")
+    assert result.scene.chorus_chain_id == "chorus:abc"
+
+
+def test_member_chorus_target_must_resolve_to_current_group_member():
+    model = FixedSceneModel(
+        {
+            "scene_kind": "group_chorus",
+            "target_scope": "GROUP",
+            "target_id": None,
+            "literal_subject": "某个群友",
+            "user_move": "chorus_about_member",
+            "continuity_event_ids": ["m1", "m2"],
+            "chorus_target": "MEMBER",
+            "chorus_target_id": "not-in-group",
+            "chorus_tone": "SAFE_BANTER",
+            "confidence": 0.97,
+        }
+    )
+
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(_context(chorus=True)))
+
+    assert result.diagnostic_code == "chorus_member_invalid"
+    assert result.scene.chorus_target is ChorusTarget.UNKNOWN
