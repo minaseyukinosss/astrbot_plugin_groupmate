@@ -8,8 +8,11 @@ from groupmate.social_runtime.stances import (
     Initiative,
     PermissionSnapshot,
     StanceDecision,
+    StancePolicy,
     Willingness,
 )
+from groupmate.social_runtime.social_scenes import SocialScene
+from groupmate.social_runtime.society.relationships import RelationshipProjection
 
 
 def test_stance_decision_freezes_permission_and_deduplicates_reasons():
@@ -50,3 +53,131 @@ def test_stance_rejects_non_permission_input():
             reason_event_ids=("m1",),
             permission={"allowed": False, "reason_code": "blocked"},
         )
+
+
+def _scene(scene_kind, *, repetition_count=0):
+    return SocialScene.create(
+        scene_kind=scene_kind,
+        target_scope="INDIVIDUAL",
+        target_id="u1",
+        literal_subject="当前请求",
+        user_move="asks",
+        continuity_event_ids=("m1",),
+        repetition_count=repetition_count,
+        confidence=0.9,
+    )
+
+
+def _relationship(subject="u1", **values):
+    return RelationshipProjection(
+        persona_id="aemeath", group_id="g1", subject_id=subject, **values
+    )
+
+
+def _member_chorus(*, tone="SAFE_BANTER"):
+    return SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="小林",
+        user_move="chorus_about_member",
+        continuity_event_ids=("m1", "m2"),
+        repetition_count=2,
+        chorus_target="MEMBER",
+        chorus_target_id="u9",
+        chorus_chain_id="chorus:abc",
+        chorus_payload="小林今天请客",
+        chorus_event_ids=("m1", "m2"),
+        chorus_participant_ids=("u1", "u2"),
+        chorus_tone=tone,
+        confidence=0.95,
+    )
+
+
+@pytest.mark.parametrize(
+    ("relationship", "expected_willingness", "expected_boundary"),
+    (
+        (_relationship(warmth=55, play_acceptance=60), "LIMITED", "SOFT"),
+        (_relationship(), "UNWILLING", "SOFT"),
+        (_relationship(boundary_pressure=70), "UNWILLING", "FIRM"),
+    ),
+)
+def test_same_intimacy_request_uses_relationship_for_willingness(
+    relationship, expected_willingness, expected_boundary
+):
+    decision = StancePolicy().decide(
+        _scene("intimacy_request"),
+        actor_relationship=relationship,
+        subject_relationship=None,
+        culture_patterns=(),
+        permission=PermissionSnapshot(True, "social_reply"),
+        mode_modifiers=(),
+        memory_event_ids=relationship.evidence_event_ids,
+    )
+
+    assert decision.willingness.value == expected_willingness
+    assert decision.boundary.value == expected_boundary
+
+
+def test_safety_minimum_ignores_low_affection_but_not_permission():
+    decision = StancePolicy().decide(
+        _scene("safety_signal"),
+        actor_relationship=_relationship(boundary_pressure=100),
+        subject_relationship=None,
+        culture_patterns=(),
+        permission=PermissionSnapshot(True, "safety_required"),
+        mode_modifiers=(),
+        memory_event_ids=("boundary-1",),
+    )
+    assert decision.willingness is Willingness.REQUIRED_MINIMUM
+
+    blocked = StancePolicy().decide(
+        _scene("safety_signal"),
+        actor_relationship=_relationship(),
+        subject_relationship=None,
+        culture_patterns=(),
+        permission=PermissionSnapshot(False, "platform_blocked"),
+        mode_modifiers=(),
+        memory_event_ids=(),
+    )
+    assert blocked.willingness is Willingness.UNWILLING
+    assert blocked.boundary is Boundary.FINAL
+
+
+@pytest.mark.parametrize(
+    ("tone", "subject_pressure", "expected"),
+    (
+        ("SAFE_BANTER", 0, Willingness.WILLING),
+        ("SAFE_BANTER", 70, Willingness.UNWILLING),
+        ("ATTACK", 0, Willingness.UNWILLING),
+        ("UNKNOWN", 0, Willingness.UNWILLING),
+    ),
+)
+def test_member_chorus_uses_target_relationship_and_tone(
+    tone, subject_pressure, expected
+):
+    decision = StancePolicy().decide(
+        _member_chorus(tone=tone),
+        actor_relationship=_relationship("u2", play_acceptance=90),
+        subject_relationship=_relationship(
+            "u9", play_acceptance=60, boundary_pressure=subject_pressure
+        ),
+        culture_patterns=("light_member_banter",),
+        permission=PermissionSnapshot(True, "social_reply"),
+        mode_modifiers=(),
+        memory_event_ids=("m1", "m2"),
+    )
+    assert decision.willingness is expected
+
+
+def test_member_chorus_does_not_borrow_current_sender_relationship():
+    decision = StancePolicy().decide(
+        _member_chorus(),
+        actor_relationship=_relationship("u2", warmth=100, play_acceptance=100),
+        subject_relationship=None,
+        culture_patterns=("light_member_banter",),
+        permission=PermissionSnapshot(True, "social_reply"),
+        mode_modifiers=(),
+        memory_event_ids=(),
+    )
+    assert decision.willingness is Willingness.UNWILLING
