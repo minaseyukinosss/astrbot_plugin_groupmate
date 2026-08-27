@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class ForeignDatabaseError(RuntimeError):
@@ -32,6 +32,8 @@ _REQUIRED_TABLES = {
     "profile_facts", "profile_episodes", "social_edges",
     "profile_snapshots", "group_portraits", "profile_preferences",
     "profile_audit",
+    "member_style_settings", "member_speech_style_versions",
+    "imitation_sessions",
 }
 
 
@@ -68,9 +70,14 @@ def initialize_database(path: Path) -> None:
             version = int(row[0]) if row is not None else 0
             if version == 1:
                 _migrate_v1_to_v2(db)
+                version = 2
+            if version == 2:
+                _migrate_v2_to_v3(db)
             verify_schema(db)
             return
-        db.executescript(_SCHEMA_SQL + _PROFILE_SCHEMA_SQL)
+        db.executescript(
+            _SCHEMA_SQL + _PROFILE_SCHEMA_SQL + _MEMBER_STYLE_SCHEMA_SQL
+        )
         db.execute(
             "INSERT INTO social_runtime_schema(singleton, version, created_at) "
             "VALUES(1, ?, ?)",
@@ -86,6 +93,17 @@ def _migrate_v1_to_v2(db: sqlite3.Connection) -> None:
         "BEGIN IMMEDIATE;\n"
         + _PROFILE_SCHEMA_SQL
         + "\nUPDATE social_runtime_schema SET version=2 WHERE singleton=1;\n"
+        + "COMMIT;"
+    )
+
+
+def _migrate_v2_to_v3(db: sqlite3.Connection) -> None:
+    """Add style assets without changing existing profile or runtime rows."""
+
+    db.executescript(
+        "BEGIN IMMEDIATE;\n"
+        + _MEMBER_STYLE_SCHEMA_SQL
+        + "\nUPDATE social_runtime_schema SET version=3 WHERE singleton=1;\n"
         + "COMMIT;"
     )
 
@@ -430,4 +448,53 @@ CREATE TABLE profile_audit (
 );
 CREATE INDEX idx_profile_audit_scope
     ON profile_audit(persona_id, group_id, subject_id, created_at);
+"""
+
+
+_MEMBER_STYLE_SCHEMA_SQL = """
+CREATE TABLE member_style_settings (
+    group_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+    enabled_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    collection_windows_json TEXT NOT NULL,
+    PRIMARY KEY(group_id, member_id)
+);
+CREATE INDEX idx_member_style_settings_enabled
+    ON member_style_settings(enabled, group_id, member_id);
+CREATE TABLE member_speech_style_versions (
+    group_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('READY','FAILED')),
+    style_json TEXT NOT NULL,
+    eligible_message_count INTEGER NOT NULL,
+    active_day_count INTEGER NOT NULL,
+    scene_types_json TEXT NOT NULL,
+    evidence_event_ids_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL,
+    PRIMARY KEY(group_id, member_id, version)
+);
+CREATE INDEX idx_member_speech_style_ready
+    ON member_speech_style_versions(group_id, member_id, status, version);
+CREATE TABLE imitation_sessions (
+    session_id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    target_member_id TEXT NOT NULL,
+    target_display_name TEXT NOT NULL,
+    style_version INTEGER NOT NULL,
+    started_by_admin_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    stopped_at INTEGER,
+    stopped_by TEXT,
+    stop_reason TEXT,
+    FOREIGN KEY(group_id, target_member_id, style_version)
+        REFERENCES member_speech_style_versions(group_id, member_id, version)
+);
+CREATE INDEX idx_imitation_sessions_active
+    ON imitation_sessions(group_id, stopped_at, expires_at, started_at);
 """

@@ -17,6 +17,15 @@ from .identity import IdentityService
 from .policy import ProfileEvidencePolicy
 from .extractor import ProfileExtractionResult, ProfileExtractor
 from .service import ProfileService
+from .speech_style import (
+    ImitationSession,
+    MemberSpeechStyle,
+    MemberStyleEvidence,
+    MemberStyleEvidencePolicy,
+    MemberStyleMaturity,
+    MemberStyleSetting,
+)
+from .style_repository import MemberStyleRepository
 from .snapshot import SnapshotBuilder
 from .graph import SocialGraph
 from .group_portrait import GroupPortrait, GroupPortraitBuilder
@@ -38,6 +47,13 @@ __all__ = (
     "ProfileExtractor",
     "ProfileSnapshot",
     "ProfileService",
+    "ImitationSession",
+    "MemberSpeechStyle",
+    "MemberStyleEvidence",
+    "MemberStyleEvidencePolicy",
+    "MemberStyleMaturity",
+    "MemberStyleRepository",
+    "MemberStyleSetting",
     "SnapshotBuilder",
     "SocialGraph",
     "GroupPortrait",

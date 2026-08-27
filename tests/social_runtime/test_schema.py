@@ -42,10 +42,23 @@ REQUIRED_TABLES = {
     "governance_actions",
     "projection_cursors",
     "evaluation_labels",
+    "member_identities",
+    "member_aliases",
+    "profile_observations",
+    "profile_facts",
+    "profile_episodes",
+    "social_edges",
+    "profile_snapshots",
+    "group_portraits",
+    "profile_preferences",
+    "profile_audit",
+    "member_style_settings",
+    "member_speech_style_versions",
+    "imitation_sessions",
 }
 
 
-def test_new_database_bootstraps_complete_v1_schema(tmp_path):
+def test_new_database_bootstraps_complete_v3_schema(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
 
     initialize_database(path)
@@ -61,7 +74,7 @@ def test_new_database_bootstraps_complete_v1_schema(tmp_path):
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
         ).fetchone()[0]
         assert REQUIRED_TABLES <= names
-        assert SCHEMA_VERSION == version == 1
+        assert SCHEMA_VERSION == version == 3
         assert db.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000

@@ -52,6 +52,12 @@ _PROFILE_TABLES = {
     "profile_audit",
 }
 
+_MEMBER_STYLE_TABLES = {
+    "member_style_settings",
+    "member_speech_style_versions",
+    "imitation_sessions",
+}
+
 
 def _create_v1_database(path) -> None:
     with sqlite3.connect(path) as db:
@@ -85,8 +91,9 @@ def test_v1_database_upgrades_in_place_without_losing_runtime_rows(tmp_path):
             ).fetchall()
         }
         marker = db.execute("SELECT marker FROM culture").fetchone()[0]
-    assert SCHEMA_VERSION == version == 2
+    assert SCHEMA_VERSION == version == 3
     assert _PROFILE_TABLES <= names
+    assert _MEMBER_STYLE_TABLES <= names
     assert marker == "preserve-me"
 
 
@@ -102,4 +109,4 @@ def test_fresh_database_contains_profile_schema(tmp_path):
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-    assert _PROFILE_TABLES <= names
+    assert _PROFILE_TABLES | _MEMBER_STYLE_TABLES <= names
