@@ -261,6 +261,9 @@ class AttentionScheduler:
         source_event_ids = self._payload_texts(
             event.payload.get("source_event_ids")
         )
+        entry_reason_event_ids = self._payload_texts(
+            event.payload.get("entry_reason_event_ids")
+        )
         audience = self._payload_texts(event.payload.get("audience"))
         expires_at = self._payload_int(event.payload.get("expires_at"))
         earliest_at = self._payload_int(event.payload.get("earliest_at"))
@@ -269,6 +272,8 @@ class AttentionScheduler:
         kind = str(event.payload.get("kind") or "").strip()
         if (
             not source_event_ids
+            or not entry_reason_event_ids
+            or not set(entry_reason_event_ids).issubset(source_event_ids)
             or not audience
             or any(value.startswith("autonomy:") for value in source_event_ids)
             or kind not in ALLOWED_OPPORTUNITY_KINDS
@@ -282,7 +287,9 @@ class AttentionScheduler:
             or followup_count not in {0, 1}
         ):
             return ()
-        topic_id = self._topic_id(world, event)
+        topic_id = self._topic_id(world, event) or str(
+            event.payload.get("opportunity_id") or ""
+        ).strip()
         return (
             self._build_frame(
                 group_id=world.group_id,
@@ -290,7 +297,7 @@ class AttentionScheduler:
                 trigger_kind="TEMPORAL",
                 focus_topic_ids=(topic_id,) if topic_id else (),
                 focus_event_ids=self._append_unique(
-                    source_event_ids, event.event_id
+                    entry_reason_event_ids, event.event_id
                 ),
                 candidate_audiences=audience,
                 urgency="normal",

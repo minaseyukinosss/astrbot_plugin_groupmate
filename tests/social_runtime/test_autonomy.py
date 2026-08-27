@@ -23,6 +23,8 @@ def _opportunity(**overrides):
         "expires_at": 150,
         "max_attempts": 2,
         "kind": "delayed-scene",
+        "entry_reason_event_ids": ("qq:source-1",),
+        "literal_subject": "明天继续聊部署方案",
     }
     values.update(overrides)
     return AutonomousOpportunity(**values)
@@ -45,6 +47,7 @@ def _revalidation(**overrides):
     ("overrides", "message"),
     (
         ({"source_event_ids": ()}, "source"),
+        ({"entry_reason_event_ids": ()}, "entry reason"),
         ({"audience": ()}, "audience"),
         ({"expires_at": 100}, "expiry"),
         ({"max_attempts": 3}, "attempt"),
@@ -111,6 +114,8 @@ def test_quiet_hours_delay_due_event_and_latest_context_is_recorded(tmp_path):
     assert event.actor_id is None
     assert event.causation_id == "qq:source-1"
     assert event.payload["source_event_ids"] == ["qq:source-1"]
+    assert event.payload["entry_reason_event_ids"] == ["qq:source-1"]
+    assert event.payload["literal_subject"] == "明天继续聊部署方案"
     assert event.payload["audience"] == ["user-1"]
     assert event.payload["attempt"] == 1
     assert event.payload["scene_version"] == 7

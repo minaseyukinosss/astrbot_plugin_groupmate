@@ -7,6 +7,7 @@ from typing import Mapping
 
 from ...adapters.deepseek_cognition import DirectCognitionError
 from ..attention import AttentionFrame
+from ..social_context import SceneContextBuilder
 from ..society.relationship_events import (
     RELATIONSHIP_EVENT_KINDS,
     RELATIONSHIP_SEVERITIES,
@@ -112,12 +113,15 @@ class DirectAmbientWorker:
     def _facts(
         cls, frame: AttentionFrame, context: CognitiveContext
     ) -> dict[str, object]:
-        allowed_events = set(frame.focus_event_ids)
+        packed_events = SceneContextBuilder.pack_event_mappings(
+            context.focus_events,
+            frame.focus_event_ids,
+            max_chars=400,
+        )
         events = [
             cls._event_fact(item)
-            for item in context.focus_events
-            if str(item.get("event_id") or "") in allowed_events
-        ][-12:]
+            for item in packed_events
+        ]
         world = context.world_summary
         topics = [
             cls._topic_fact(item)
@@ -223,7 +227,7 @@ class DirectAmbientWorker:
             "id": cls._text(event.get("event_id"), 160),
             "actor_id": cls._text(event.get("actor_id"), 80) or None,
             "actor_name": actor_name or None,
-            "text": cls._text(payload.get("text"), 32),
+            "text": cls._text(payload.get("text"), 800),
             "reply_to": cls._text(payload.get("reply_to"), 120) or None,
             "reply_to_actor_id": cls._text(
                 payload.get("reply_to_actor_id"), 80

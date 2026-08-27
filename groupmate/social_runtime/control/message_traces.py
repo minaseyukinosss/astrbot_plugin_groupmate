@@ -364,7 +364,15 @@ class MessageTraceRepository:
         candidates = tuple(getattr(evaluation, "candidates", ()) or ())
         candidate_source = (
             "deterministic"
-            if candidates and lane in {"DIRECT_FAST", "CONTINUATION"}
+            if candidates
+            and (
+                lane in {"DIRECT_FAST", "CONTINUATION"}
+                or all(
+                    str(getattr(item, "kind", ""))
+                    in {"CHORUS_CHECK", "PROACTIVE_CHECK"}
+                    for item in candidates
+                )
+            )
             else "model"
             if candidates
             else "none"

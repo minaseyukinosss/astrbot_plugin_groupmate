@@ -79,6 +79,8 @@ def test_autonomous_opportunity_reenters_attention_and_governor_without_delivery
                 expires_at=130,
                 max_attempts=2,
                 kind="delayed-scene",
+                entry_reason_event_ids=("qq:source-1",),
+                literal_subject="明天继续聊部署方案",
             ),
             now=101,
         )

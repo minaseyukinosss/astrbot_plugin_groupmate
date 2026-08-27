@@ -9,9 +9,11 @@ from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
 from groupmate.adapters.deepseek_cognition import DirectCognitionResponse
 from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.actions.contracts import OutboxStatus
+from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.profile.contracts import MemberAlias, ProfileFact
 from groupmate.social_runtime.profile.repository import ProfileRepository
 from groupmate.social_runtime.society.relationships import RelationshipProjection
+from tests.factories import social_event_values
 
 
 class _Response:
@@ -89,12 +91,22 @@ class _Context:
                 json.dumps(
                     {
                         "scene_kind": (
-                            "technical_help" if "报错" in current_text else "direct_chat"
+                            "technical_help"
+                            if "报错" in current_text
+                            else "proactive_specific_topic"
+                            if "部署方案" in current_text
+                            else "direct_chat"
                         ),
                         "target_scope": "INDIVIDUAL",
                         "target_id": facts["target_id"],
                         "literal_subject": "报错" if "报错" in current_text else current_text,
-                        "user_move": "asks_help" if "报错" in current_text else "direct_message",
+                        "user_move": (
+                            "asks_help"
+                            if "报错" in current_text
+                            else "autonomous_reentry"
+                            if "部署方案" in current_text
+                            else "direct_message"
+                        ),
                         "continuity_event_ids": [facts["source_event_id"]],
                         "repetition_count": 0,
                         "constraints": [],
@@ -232,6 +244,37 @@ def _event(message_id, text, *, mention_bot=False, actor_id="u1"):
             return "onebot-main"
 
     return Event()
+
+
+def _temporal_event(
+    message_id: str, literal_subject: str, *, persona_id: str = "aemeath"
+) -> SocialEventEnvelope:
+    return SocialEventEnvelope.create(
+        **social_event_values(
+            event_id=f"autonomy:{message_id}:1",
+            event_type="temporal.opportunity_due",
+            source_message_id=None,
+            actor_id=None,
+            persona_id=persona_id,
+            correlation_id=f"autonomy:{message_id}",
+            causation_id="qq:source-1",
+            payload={
+                "opportunity_id": f"opportunity:{message_id}",
+                "source_event_ids": ["qq:source-1"],
+                "entry_reason_event_ids": ["qq:source-1"],
+                "literal_subject": literal_subject,
+                "audience": ["u1"],
+                "earliest_at": 90,
+                "expires_at": 130,
+                "max_attempts": 2,
+                "attempt": 1,
+                "followup_count": 0,
+                "kind": "delayed-scene",
+                "scene_version": 1,
+                "relationship_version": 0,
+            },
+        )
+    )
 
 
 async def _run_alias_case(tmp_path, text):
@@ -474,6 +517,84 @@ def test_safe_member_chorus_joins_exactly_and_marks_only_after_send(tmp_path):
         "根据已批准的社交动作生成回复" in call["system_prompt"]
         for call in context.model_calls
     )
+
+
+@pytest.mark.parametrize(
+    ("literal_subject", "expected_move", "expected_would_reply"),
+    (
+        ("部署方案的回滚窗口", "PROACTIVE_JOIN", True),
+        ("", "SILENCE", False),
+    ),
+)
+def test_temporal_opportunity_uses_social_pipeline_and_requires_specific_entry(
+    tmp_path, literal_subject, expected_move, expected_would_reply
+):
+    async def scenario():
+        context = _Context()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path,
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: _MatrixCognition(),
+        )
+        await bridge.start()
+        event = _temporal_event(
+            "specific-entry", literal_subject, persona_id=settings.persona_id
+        )
+        await bridge.manager.ingest(event)
+        evaluations = await bridge.manager.drain(now=100)
+        await bridge._handle_evaluations(evaluations)
+        try:
+            plan = bridge.manager.reply_plans.by_correlation(
+                event.correlation_id
+            )
+        except LookupError:
+            plan = None
+        diagnostics = [
+                {
+                    "outcome": item.governor_result.outcome,
+                    "accepted": item.accepted,
+                    "status": item.status,
+                    "trigger_kind": item.frame.trigger_kind if item.frame else None,
+                    "candidate_kinds": [candidate.kind for candidate in item.candidates],
+                }
+            for item in evaluations
+        ]
+        captured = bridge.manager.pending_shadow_review_evidence()[-1].evaluation
+        reply_error = bridge.reply_error
+        await bridge.close()
+        return context, plan, diagnostics, reply_error, captured
+
+    context, plan, diagnostics, reply_error, captured = asyncio.run(scenario())
+
+    assert (plan is not None) is expected_would_reply, (
+        diagnostics,
+        reply_error,
+        context.model_calls,
+    )
+    if plan is not None:
+        assert plan.move.primary_move.value == expected_move
+    assert captured.social_move_summary["primary_move"] == expected_move
+    assert captured.social_would_reply is expected_would_reply
+    assert "boundary_pressure" not in json.dumps(
+        captured.to_capture_evidence(), ensure_ascii=False
+    )
+    if literal_subject:
+        assert any(
+            "只负责识别当前群聊的具体社会场景" in call["system_prompt"]
+            for call in context.model_calls
+        )
+    else:
+        assert context.model_calls == []
 
 
 def test_alias_prefixed_social_call_enters_direct_lane(tmp_path):

@@ -53,7 +53,9 @@ class SceneEventFact:
         return cls(
             event_id=event.event_id,
             actor_id=_text(event.actor_id) or None,
-            text=_message_text(payload.get("text")),
+            text=_message_text(
+                payload.get("text") or payload.get("literal_subject")
+            ),
             reply_to=reply_to,
             parts=cls._parts(payload),
             occurred_at=int(event.occurred_at),
@@ -194,7 +196,10 @@ class SceneContextBuilder:
         )
         return SceneContext(
             source_event_id=source_event.event_id,
-            current_text=_message_text(source_event.payload.get("text")),
+            current_text=_message_text(
+                source_event.payload.get("text")
+                or source_event.payload.get("literal_subject")
+            ),
             target_id=_text(target_id) or None,
             topic_id=_text(topic_id) or None,
             events=packed,
@@ -205,6 +210,75 @@ class SceneContextBuilder:
             memory_ids=memory_ids,
             facts=facts,
         )
+
+    @staticmethod
+    def pack_event_mappings(
+        events: Iterable[Mapping[str, object]],
+        focus_event_ids: Iterable[str],
+        *,
+        max_chars: int = 2400,
+    ) -> tuple[dict[str, object], ...]:
+        """Allocate one shared text budget while preserving causal chat order."""
+
+        budget = max(128, int(max_chars))
+        focus = tuple(dict.fromkeys(_text(value) for value in focus_event_ids if _text(value)))
+        by_id = {
+            _text(event.get("event_id")): event
+            for event in events
+            if _text(event.get("event_id")) in set(focus)
+        }
+        if not focus or not by_id:
+            return ()
+        current_id = next((event_id for event_id in reversed(focus) if event_id in by_id), "")
+        current_payload = by_id[current_id].get("payload") if current_id else None
+        current_payload = current_payload if isinstance(current_payload, Mapping) else {}
+        parent_id = _text(
+            current_payload.get("reply_to_event_id")
+            or current_payload.get("reply_event_id")
+            or current_payload.get("reply_to")
+        )
+        priority = tuple(
+            dict.fromkeys(
+                (
+                    current_id,
+                    parent_id if parent_id in by_id else "",
+                    *reversed(focus),
+                )
+            )
+        )
+        chosen_ids = tuple(
+            event_id
+            for event_id in priority[:MAX_CONTEXT_EVENTS]
+            if event_id in by_id
+        )
+        base = min(16, budget // max(1, len(chosen_ids)))
+        allocations = {event_id: base for event_id in chosen_ids}
+        remaining = max(0, budget - base * len(chosen_ids))
+        for event_id in chosen_ids:
+            desired = (
+                min(200, budget // 2)
+                if event_id == current_id
+                else min(120, budget // 3)
+                if event_id == parent_id
+                else 32
+            )
+            extra = min(max(0, desired - allocations[event_id]), remaining)
+            allocations[event_id] += extra
+            remaining -= extra
+        selected: dict[str, dict[str, object]] = {}
+        for event_id in chosen_ids:
+            event = by_id.get(event_id)
+            if event is None:
+                continue
+            payload = event.get("payload")
+            payload = payload if isinstance(payload, Mapping) else {}
+            raw_text = _message_text(payload.get("text"))
+            text = raw_text[: allocations[event_id]]
+            copied = dict(event)
+            copied["payload"] = {**dict(payload), "text": text}
+            selected[event_id] = copied
+        # 先按相关性分配预算，交给模型时恢复原对话顺序，避免把因果顺序倒置。
+        return tuple(selected[event_id] for event_id in focus if event_id in selected)
 
     @staticmethod
     def _deduplicate(events: Iterable[SocialEventEnvelope]) -> tuple[SocialEventEnvelope, ...]:

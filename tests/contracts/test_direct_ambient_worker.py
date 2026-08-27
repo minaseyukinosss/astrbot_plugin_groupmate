@@ -224,6 +224,25 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
     assert result.input_bytes < 6_500
 
 
+def test_ambient_event_budget_preserves_current_detail_and_reply_parent():
+    context = _context()
+    current = context.focus_events[-1]
+    parent = context.focus_events[-2]
+    current["payload"]["text"] = (
+        "前面先说明了一些背景，真正关键的是：只在 Python 3.13 下出现取消异常。"
+    )
+    current["payload"]["reply_to"] = parent["event_id"]
+    parent["payload"]["text"] = "父消息里的方案是把任务放进 TaskGroup。"
+    client = FakeClient(_verdict())
+
+    asyncio.run(DirectAmbientWorker(client).observe_with_result(_frame(), context))
+
+    events = {item["id"]: item for item in client.facts["events"]}
+    assert "Python 3.13 下出现取消异常" in events["qq:13"]["text"]
+    assert "TaskGroup" in events["qq:12"]["text"]
+    assert sum(len(item["text"]) for item in events.values()) <= 2400
+
+
 def test_valid_speak_verdict_becomes_signal_then_local_assessment():
     worker = DirectAmbientWorker(FakeClient(_verdict()))
 

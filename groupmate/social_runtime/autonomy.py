@@ -75,6 +75,8 @@ class AutonomousOpportunity:
     expires_at: int
     max_attempts: int
     kind: str
+    entry_reason_event_ids: tuple[str, ...]
+    literal_subject: str
     opportunity_id: str = ""
     attempts: int = 0
     followup_count: int = 0
@@ -89,6 +91,12 @@ class AutonomousOpportunity:
         if any(value.startswith("autonomy:") for value in sources):
             raise ValueError("recursive autonomous opportunity source is forbidden")
         audience = _normalized_texts(tuple(self.audience), "audience")
+        entry_reasons = _normalized_texts(
+            tuple(self.entry_reason_event_ids), "entry reason"
+        )
+        if not set(entry_reasons).issubset(sources):
+            raise ValueError("opportunity entry reasons must be source events")
+        literal_subject = " ".join(str(self.literal_subject or "").split())[:160]
         group_id = str(self.group_id).strip()
         if not group_id:
             raise ValueError("opportunity group must not be empty")
@@ -130,6 +138,8 @@ class AutonomousOpportunity:
             "expires_at": expires_at,
             "max_attempts": max_attempts,
             "kind": kind,
+            "entry_reason_event_ids": entry_reasons,
+            "literal_subject": literal_subject,
         }
         expected_id = _opportunity_identity(identity_values)
         supplied_id = str(self.opportunity_id).strip()
@@ -142,6 +152,8 @@ class AutonomousOpportunity:
         object.__setattr__(self, "expires_at", expires_at)
         object.__setattr__(self, "max_attempts", max_attempts)
         object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "entry_reason_event_ids", entry_reasons)
+        object.__setattr__(self, "literal_subject", literal_subject)
         object.__setattr__(self, "opportunity_id", expected_id)
         object.__setattr__(self, "attempts", attempts)
         object.__setattr__(self, "followup_count", followup_count)
@@ -467,6 +479,10 @@ class AutonomousOpportunityScheduler:
             payload={
                 "opportunity_id": opportunity.opportunity_id,
                 "source_event_ids": list(opportunity.source_event_ids),
+                "entry_reason_event_ids": list(
+                    opportunity.entry_reason_event_ids
+                ),
+                "literal_subject": opportunity.literal_subject,
                 "audience": list(opportunity.audience),
                 "earliest_at": opportunity.earliest_at,
                 "expires_at": opportunity.expires_at,
@@ -532,6 +548,9 @@ def _canonical_json(value: dict[str, object]) -> str:
 def _opportunity_to_dict(opportunity: AutonomousOpportunity) -> dict[str, object]:
     values = asdict(opportunity)
     values["source_event_ids"] = list(opportunity.source_event_ids)
+    values["entry_reason_event_ids"] = list(
+        opportunity.entry_reason_event_ids
+    )
     values["audience"] = list(opportunity.audience)
     values["status"] = opportunity.status.value
     return values
@@ -540,6 +559,10 @@ def _opportunity_to_dict(opportunity: AutonomousOpportunity) -> dict[str, object
 def _opportunity_from_dict(values: dict[str, object]) -> AutonomousOpportunity:
     normalized = dict(values)
     normalized["source_event_ids"] = tuple(normalized["source_event_ids"])
+    normalized["entry_reason_event_ids"] = tuple(
+        normalized.get("entry_reason_event_ids", normalized["source_event_ids"])
+    )
+    normalized.setdefault("literal_subject", "")
     normalized["audience"] = tuple(normalized["audience"])
     normalized["status"] = OpportunityStatus(normalized["status"])
     return AutonomousOpportunity(**normalized)

@@ -70,6 +70,21 @@ class ParticipationPolicy:
                     "continuity_value": 1.0,
                 },
             )
+        if frame.trigger_kind == "TEMPORAL":
+            return self._deterministic(
+                frame,
+                lane=ParticipationLane.AMBIENT,
+                kind="PROACTIVE_CHECK",
+                proposed_act="interpret_proactive_opportunity",
+                now=now,
+                features={
+                    "relevance": 1.0,
+                    "continuity_value": 1.0,
+                    "relational_value": 0.3,
+                    "disruption_cost": 0.1,
+                    "uncertainty_cost": 0.1,
+                },
+            )
         if chorus_evidence is not None:
             return self._chorus_check(frame, chorus_evidence, now=int(now))
         return ParticipationProposal(

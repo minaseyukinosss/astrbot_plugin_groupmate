@@ -30,7 +30,10 @@ from ..social_runtime.social_context import SceneContextBuilder
 from ..social_runtime.social_moves import SocialMove, SocialMovePlanner
 from ..social_runtime.social_scenes import (
     ChorusTarget,
+    SceneInterpretationResult,
+    SocialScene,
     SocialSceneInterpreter,
+    TargetScope,
 )
 from ..social_runtime.stances import PermissionSnapshot, StancePolicy
 from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
@@ -810,7 +813,13 @@ class AstrBotSocialRuntimeBridge:
                     group_id,
                     int(getattr(evaluation, "config_version", 0)),
                 )
-                subject_id = str(getattr(source_event, "actor_id", "") or "")
+                frame = getattr(evaluation, "frame", None)
+                subject_id = str(getattr(source_event, "actor_id", "") or "") or str(
+                    next(
+                        iter(getattr(frame, "candidate_audiences", ()) or ()),
+                        "",
+                    )
+                )
                 if self._scene_interpreter is None:
                     self._record_trace(
                         self.trace_repository.record_evaluation,
@@ -851,7 +860,6 @@ class AstrBotSocialRuntimeBridge:
                 profile_retrieval = self._manager.member_profile_retrieval(
                     source_event, max_chars=1200
                 )
-                frame = getattr(evaluation, "frame", None)
                 topic_id = next(
                     iter(getattr(frame, "focus_topic_ids", ()) or ()), None
                 )
@@ -876,9 +884,32 @@ class AstrBotSocialRuntimeBridge:
                     profile=profile_retrieval,
                     relationship_memories=relationship_memories,
                 ).with_chorus(getattr(evaluation, "chorus_evidence", None))
-                interpretation = await self._scene_interpreter.interpret(
-                    scene_context
-                )
+                if (
+                    source_event.event_type == "temporal.opportunity_due"
+                    and not str(
+                        source_event.payload.get("literal_subject") or ""
+                    ).strip()
+                ):
+                    interpretation = SceneInterpretationResult(
+                        SocialScene.create(
+                            scene_kind="proactive_no_entry",
+                            target_scope=TargetScope.INDIVIDUAL,
+                            target_id=subject_id,
+                            literal_subject="没有具体切入点的主动机会",
+                            user_move="autonomous_opportunity_without_subject",
+                            continuity_event_ids=tuple(
+                                getattr(frame, "focus_event_ids", ()) or (
+                                    source_event.event_id,
+                                )
+                            ),
+                            confidence=1.0,
+                        ),
+                        "proactive_subject_missing",
+                    )
+                else:
+                    interpretation = await self._scene_interpreter.interpret(
+                        scene_context
+                    )
                 subject_relationship = None
                 if (
                     interpretation.scene.chorus_target
@@ -914,6 +945,18 @@ class AstrBotSocialRuntimeBridge:
                     profile=profile_retrieval,
                     memories=relationship_memories,
                 )
+                scene_summary, stance_summary, move_summary = (
+                    self._safe_social_decision_summaries(
+                        interpretation.scene, stance, move
+                    )
+                )
+                evaluation = replace(
+                    evaluation,
+                    social_scene_summary=scene_summary,
+                    social_stance_summary=stance_summary,
+                    social_move_summary=move_summary,
+                    social_would_reply=move.primary_move is not SocialMove.SILENCE,
+                )
                 if move.primary_move is SocialMove.SILENCE:
                     diagnostic = (
                         interpretation.diagnostic_code or "social_move_silence"
@@ -935,6 +978,8 @@ class AstrBotSocialRuntimeBridge:
                         diagnostic_code=diagnostic,
                         now=int(self.clock()),
                     )
+                    if self._manager.group_mode(group_id) is RuntimeMode.SHADOW:
+                        self._manager.update_shadow_review_evidence(evaluation)
                     continue
                 plan = self._reply_planner.plan(
                     evaluation,
@@ -1031,6 +1076,51 @@ class AstrBotSocialRuntimeBridge:
             and str(getattr(record, "sensitivity", "")) == "normal"
             and float(getattr(record, "confidence", 0.0)) >= 0.82
         )[:8]
+
+    @staticmethod
+    def _safe_social_decision_summaries(
+        scene: object, stance: object, move: object
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+        def enum_value(value: object) -> str:
+            return str(getattr(value, "value", value) or "")
+
+        scene_summary = {
+            "scene_kind": str(getattr(scene, "scene_kind", ""))[:48],
+            "target_scope": enum_value(getattr(scene, "target_scope", "")),
+            "chorus_target": enum_value(
+                getattr(scene, "chorus_target", "NONE")
+            ),
+            "chorus_chain_id": (
+                str(getattr(scene, "chorus_chain_id", "") or "")[:80] or None
+            ),
+            "chorus_participant_count": min(
+                99,
+                len(tuple(getattr(scene, "chorus_participant_ids", ()) or ())),
+            ),
+        }
+        stance_summary = {
+            field: enum_value(getattr(stance, field, ""))
+            for field in ("attitude", "willingness", "boundary", "effort")
+        }
+        facts = (
+            *tuple(getattr(move, "must_say", ()) or ()),
+            *tuple(getattr(move, "may_say", ()) or ()),
+        )
+        move_summary = {
+            "primary_move": enum_value(getattr(move, "primary_move", "")),
+            "ending": enum_value(getattr(move, "ending", "")),
+            "realization_mode": enum_value(
+                getattr(move, "realization_mode", "")
+            ),
+            "fact_categories": list(
+                dict.fromkeys(
+                    str(getattr(fact, "category", ""))[:40]
+                    for fact in facts
+                    if str(getattr(fact, "category", "")).strip()
+                )
+            ),
+        }
+        return scene_summary, stance_summary, move_summary
 
     async def _dispatch_ready(self) -> None:
         if self._manager is None or self._dispatcher is None:

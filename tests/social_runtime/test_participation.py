@@ -122,3 +122,16 @@ def test_confirmed_chorus_gets_semantic_check_without_repeat_penalty():
     assert proposal.candidates[0].evidence_event_ids == ("qq:m0", "qq:m1")
     assert proposal.candidates[0].repetition_cost == 0.0
     assert SocialGovernor.utility(proposal.candidates[0]) >= 1.0
+
+
+def test_temporal_opportunity_gets_social_check_even_when_worker_is_unavailable():
+    proposal = ParticipationPolicy().propose(
+        _frame("TEMPORAL"),
+        _blackboard(degraded=True),
+        now=100,
+    )
+
+    assert proposal.lane is ParticipationLane.AMBIENT
+    assert proposal.allow_degraded is True
+    assert [item.kind for item in proposal.candidates] == ["PROACTIVE_CHECK"]
+    assert proposal.candidates[0].proposed_act == "interpret_proactive_opportunity"

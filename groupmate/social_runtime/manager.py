@@ -106,6 +106,10 @@ class ShadowEvaluation:
     cognition_diagnostics: tuple[CognitiveWorkerDiagnostic, ...] = ()
     candidate_response: str | None = None
     reply_diagnostic: str | None = None
+    social_scene_summary: Mapping[str, object] | None = None
+    social_stance_summary: Mapping[str, object] | None = None
+    social_move_summary: Mapping[str, object] | None = None
+    social_would_reply: bool | None = None
     relationship_decisions: tuple[RelationshipEventDecision, ...] = ()
     relationship_stage: str | None = None
 
@@ -148,6 +152,22 @@ class ShadowEvaluation:
                 ],
                 "candidate_response": self.candidate_response,
                 "reply_diagnostic": self.reply_diagnostic,
+                "social_scene_summary": (
+                    dict(self.social_scene_summary)
+                    if self.social_scene_summary is not None
+                    else None
+                ),
+                "social_stance_summary": (
+                    dict(self.social_stance_summary)
+                    if self.social_stance_summary is not None
+                    else None
+                ),
+                "social_move_summary": (
+                    dict(self.social_move_summary)
+                    if self.social_move_summary is not None
+                    else None
+                ),
+                "social_would_reply": self.social_would_reply,
                 "relationship_decisions": [
                     asdict(item) for item in self.relationship_decisions
                 ],
@@ -275,6 +295,26 @@ class ShadowEvaluation:
             ),
             reply_diagnostic=(
                 str(values.get("reply_diagnostic") or "").strip() or None
+            ),
+            social_scene_summary=(
+                dict(values["social_scene_summary"])
+                if isinstance(values.get("social_scene_summary"), Mapping)
+                else None
+            ),
+            social_stance_summary=(
+                dict(values["social_stance_summary"])
+                if isinstance(values.get("social_stance_summary"), Mapping)
+                else None
+            ),
+            social_move_summary=(
+                dict(values["social_move_summary"])
+                if isinstance(values.get("social_move_summary"), Mapping)
+                else None
+            ),
+            social_would_reply=(
+                values.get("social_would_reply")
+                if isinstance(values.get("social_would_reply"), bool)
+                else None
             ),
             relationship_decisions=tuple(relationship_decisions),
             relationship_stage=(
