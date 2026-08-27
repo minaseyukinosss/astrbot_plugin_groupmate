@@ -7,12 +7,12 @@ PAGE = ROOT / "pages" / "settings"
 
 
 def test_runtime_console_is_message_centric_and_plain_language():
-    app = (PAGE / "app.js").read_text(encoding="utf-8")
+    store = (PAGE / "store.js").read_text(encoding="utf-8")
     runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
     inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
 
     runtime_projection_block = re.search(
-        r'WORKSPACE_PROJECTIONS.*?"/runtime":\s*\[(.*?)\]', app, re.DOTALL
+        r'WORKSPACE_PROJECTIONS.*?"/runtime":\s*\[(.*?)\]', store, re.DOTALL
     ).group(1)
     assert '"traces"' in runtime_projection_block
     assert '"activity"' not in runtime_projection_block

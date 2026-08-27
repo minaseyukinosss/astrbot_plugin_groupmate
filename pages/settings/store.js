@@ -3,6 +3,19 @@ const INITIAL_CONNECTION = Object.freeze({
   impact: "实时更新尚未连接",
 });
 
+const WORKSPACE_PROJECTIONS = Object.freeze({
+  "/runtime": ["runtime", "traces", "health", "persona", "governance"],
+  "/profiles": ["profiles", "group-portrait", "health"],
+});
+
+export function workspaceProjectionNames(path, fallbackEndpoint) {
+  const projections = WORKSPACE_PROJECTIONS[path] || [fallbackEndpoint];
+  // Bootstrap carries the Bridge's current runtime/persona state. It must be
+  // refreshed with ordinary projections; otherwise the page keeps its first
+  // value even while counters and traces continue changing.
+  return ["bootstrap", ...projections.filter((name) => name && name !== "bootstrap")];
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }

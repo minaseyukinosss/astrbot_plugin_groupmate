@@ -23,6 +23,19 @@ def _run_presenter(body: str) -> object:
     return json.loads(result.stdout)
 
 
+def _run_store(body: str) -> object:
+    source = (PAGE / "store.js").read_bytes()
+    store = f"data:text/javascript;base64,{base64.b64encode(source).decode('ascii')}"
+    script = f"import * as store from {json.dumps(store)};\n{body}"
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
 def test_projection_presenter_translates_runtime_facts_for_people():
     result = _run_presenter(
         "console.log(JSON.stringify({"
@@ -90,6 +103,24 @@ def test_runtime_dashboard_prefers_effective_mode_and_resolved_persona():
     assert "当前人格：${persona.preset_label}" in runtime
     assert "bootstrap.resolved_persona?.name" in app
     assert "bootstrap.effective_runtime_mode" in app
+
+
+def test_runtime_refresh_queries_live_bootstrap_status():
+    result = _run_store(
+        "console.log(JSON.stringify("
+        "typeof store.workspaceProjectionNames === 'function' "
+        "? store.workspaceProjectionNames('/runtime', 'runtime') : []"
+        "));"
+    )
+
+    assert result == [
+        "bootstrap",
+        "runtime",
+        "traces",
+        "health",
+        "persona",
+        "governance",
+    ]
 
 
 def test_message_presenter_uses_non_text_parts_instead_of_generic_placeholder():

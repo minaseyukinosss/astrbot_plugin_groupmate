@@ -2,7 +2,7 @@ import { ApiBridge } from "./bridge.js";
 import { renderInspector } from "./components/inspector.js";
 import { workspaceCopy } from "./i18n.js";
 import { createRouter } from "./router.js";
-import { ProjectionStore } from "./store.js";
+import { ProjectionStore, workspaceProjectionNames } from "./store.js";
 import { renderRuntime } from "./workspaces/runtime.js";
 import { renderProfiles } from "./workspaces/profiles.js";
 import { safeMediaPreview } from "./components/security.js";
@@ -22,11 +22,6 @@ const mediaRequests = new Map();
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
   "/profiles": renderProfiles,
-});
-
-const WORKSPACE_PROJECTIONS = Object.freeze({
-  "/runtime": ["runtime", "traces", "health", "persona", "governance"],
-  "/profiles": ["profiles", "group-portrait", "health"],
 });
 
 const elements = {
@@ -283,7 +278,7 @@ function render(snapshot) {
 }
 
 async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
-  const projections = WORKSPACE_PROJECTIONS[route.path] || [route.endpoint];
+  const projections = workspaceProjectionNames(route.path, route.endpoint);
   const results = await Promise.all(projections.map(async (projection) => {
     try {
       const view = await bridge.query(projection, scopeParams(), { timeoutMs });
