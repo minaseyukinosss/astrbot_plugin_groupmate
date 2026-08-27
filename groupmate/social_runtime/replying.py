@@ -20,6 +20,7 @@ from .actions.generation import (
     GenerationRequest,
     OutputFirewall,
 )
+from .actions.member_style import IdentityImitationGuard, MemberStyleOverlay
 from .actions.style import (
     PersonaStyleSnapshot,
     StyleContext,
@@ -80,6 +81,8 @@ class ReplyPlan:
     status: str = "planned"
     participation_lane: str = "AMBIENT"
     member_context: str = ""
+    # 临时模仿只是表达附层，不会替换 Persona 或社交决策。
+    member_style_overlay: MemberStyleOverlay | None = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,10 @@ class ReplyPlanRepository:
         values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
         values["style"] = StyleDirective(**values["style"])
         values.setdefault("participation_lane", "AMBIENT")
+        overlay = values.get("member_style_overlay")
+        values["member_style_overlay"] = (
+            MemberStyleOverlay(**overlay) if isinstance(overlay, Mapping) else None
+        )
         expression = values.get("expression")
         values["expression"] = (
             ExpressionPlan(**expression)
@@ -302,6 +309,7 @@ class ReplyPlanner:
         move: SocialMovePlan | None = None,
         persona_mode: PersonaModeState | None = None,
         culture_patterns: tuple[str, ...] = (),
+        member_style_overlay: MemberStyleOverlay | None = None,
     ) -> ReplyPlan | None:
         frame = getattr(evaluation, "frame", None)
         governor = getattr(evaluation, "governor_result", None)
@@ -369,6 +377,7 @@ class ReplyPlanner:
                 relationship_projection.version if relationship_projection is not None else 0
             ),
             member_context=str(member_context)[:1200],
+            member_style_overlay=member_style_overlay,
             now=int(now),
         )
 
@@ -386,6 +395,7 @@ class ReplyPlanner:
         move: SocialMovePlan,
         relationship_projection_version: int,
         member_context: str,
+        member_style_overlay: MemberStyleOverlay | None,
         now: int,
     ) -> ReplyPlan:
         source = evaluation.source_event
@@ -425,6 +435,7 @@ class ReplyPlanner:
                 or "AMBIENT"
             ),
             member_context=str(member_context)[:1200],
+            member_style_overlay=member_style_overlay,
         )
 
     @staticmethod
@@ -530,6 +541,7 @@ class ReplyExecutor:
         self.model = model
         self.firewall = firewall or OutputFirewall()
         self.social_reviewer = SocialOutputReviewer()
+        self.identity_imitation_guard = IdentityImitationGuard()
 
     async def preview(
         self,
@@ -573,6 +585,18 @@ class ReplyExecutor:
                 )
             except Exception:
                 return ReplyPreview(None, "MODEL_FAILED", "reply_repair_failed")
+        if violations and plan.member_style_overlay is not None:
+            try:
+                realized, violations = await self._retry_without_member_style(
+                    plan,
+                    context_events=context_events,
+                    persona_profile=persona_profile,
+                    request=request,
+                )
+            except Exception:
+                return ReplyPreview(
+                    None, "MODEL_FAILED", "reply_style_fallback_failed"
+                )
         if violations or realized is None:
             return ReplyPreview(None, "REJECTED", "reply_review_rejected")
         return ReplyPreview(realized.text, "READY")
@@ -649,6 +673,20 @@ class ReplyExecutor:
                     "MODEL_FAILED",
                     "reply_repair_failed",
                 )
+        if violations and plan.member_style_overlay is not None:
+            try:
+                realized, violations = await self._retry_without_member_style(
+                    plan,
+                    context_events=context_events,
+                    persona_profile=persona_profile,
+                    request=request,
+                )
+            except Exception:
+                return ReplyExecutionResult(
+                    self._failed(plan, request),
+                    "MODEL_FAILED",
+                    "reply_style_fallback_failed",
+                )
         if violations or realized is None:
             return ReplyExecutionResult(
                 self._failed(plan, request),
@@ -669,10 +707,40 @@ class ReplyExecutor:
             return None, parse_violations
         social = self.social_reviewer.review(realized, plan)
         firewall = self.firewall.review(GeneratedDraft(realized.text), request)
+        imitation_violations = (
+            self.identity_imitation_guard.review(
+                realized.text, overlay=plan.member_style_overlay
+            )
+            if plan.member_style_overlay is not None
+            else ()
+        )
         violations = tuple(
-            dict.fromkeys((*social.violations, *firewall.violations))
+            dict.fromkeys(
+                (*social.violations, *firewall.violations, *imitation_violations)
+            )
         )
         return realized, violations
+
+    async def _retry_without_member_style(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        request: GenerationRequest,
+    ) -> tuple[RealizedReply | None, tuple[str, ...]]:
+        """Make one ordinary-Persona attempt after an unsafe imitation draft.
+
+        The approved social move and facts stay frozen.  Only the optional
+        wording overlay is removed, so a style failure cannot change what the
+        bot decided to say.
+        """
+        ordinary_plan = replace(plan, member_style_overlay=None)
+        raw = await self.model.complete_text(
+            system_prompt=self._system_prompt(ordinary_plan, persona_profile),
+            prompt=self._prompt(ordinary_plan, context_events),
+        )
+        return self._review_generated_reply(raw, ordinary_plan, request)
 
     def _parse_realized_reply(
         self, raw: str, plan: ReplyPlan
@@ -735,40 +803,51 @@ class ReplyExecutor:
         violations: tuple[str, ...],
     ) -> str:
         # 修复只获得公开约束和可引用事实，不重新解释场景，也不扩大权限。
+        overlay = plan.member_style_overlay
+        imitation_identity_boundary = (
+            {
+                "persona": plan.persona_id,
+                "imitated_member": overlay.target_display_name,
+                "rule": (
+                    "只修正表达方式；不得声称是目标成员，"
+                    "不得借用其经历、观点、关系或能力"
+                ),
+            }
+            if overlay is not None
+            else None
+        )
+        repair_context = {
+            "draft": str(raw or "")[:4000],
+            "violations": list(violations),
+            "required_facts": [
+                {"fact_id": fact.fact_id, "text": fact.text}
+                for fact in plan.move.must_say
+            ],
+            "allowed_fact_ids": [
+                fact.fact_id for fact in (*plan.move.must_say, *plan.move.may_say)
+            ],
+            "allowed_source_event_ids": list(plan.scene.continuity_event_ids),
+            "ending": plan.move.ending.value,
+            "max_chars": plan.style.max_chars,
+            "schema": {
+                "text": "string",
+                "covered_fact_ids": ["string"],
+                "used_memory_ids": ["string"],
+                "used_capability_ids": ["string"],
+                "source_event_ids": ["string"],
+            },
+        }
+        if imitation_identity_boundary is not None:
+            repair_context["imitation_identity_boundary"] = (
+                imitation_identity_boundary
+            )
         return await self.model.complete_text(
             system_prompt=(
                 "修正候选群聊回复。只输出一个 JSON 对象，不要输出 Markdown 或解释。"
                 "保留有证据的必要事实，逐项消除 violation code；不得新增事实、"
                 "记忆、能力或事件引用。"
             ),
-            prompt=json.dumps(
-                {
-                    "draft": str(raw or "")[:4000],
-                    "violations": list(violations),
-                    "required_facts": [
-                        {"fact_id": fact.fact_id, "text": fact.text}
-                        for fact in plan.move.must_say
-                    ],
-                    "allowed_fact_ids": [
-                        fact.fact_id
-                        for fact in (*plan.move.must_say, *plan.move.may_say)
-                    ],
-                    "allowed_source_event_ids": list(
-                        plan.scene.continuity_event_ids
-                    ),
-                    "ending": plan.move.ending.value,
-                    "max_chars": plan.style.max_chars,
-                    "schema": {
-                        "text": "string",
-                        "covered_fact_ids": ["string"],
-                        "used_memory_ids": ["string"],
-                        "used_capability_ids": ["string"],
-                        "source_event_ids": ["string"],
-                    },
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
+            prompt=json.dumps(repair_context, ensure_ascii=False, sort_keys=True),
         )
 
     @staticmethod
@@ -890,6 +969,18 @@ class ReplyExecutor:
             if plan.scene.scene_kind != "legacy_conservative"
             else "只输出回复正文，不要输出 Markdown。"
         )
+        overlay = plan.member_style_overlay
+        persona_name = str(identity.get("name") or "Groupmate")[:24]
+        imitation_guidance = ""
+        if overlay is not None:
+            # 这里只放已发布的定性特征，不放原话、证据 ID 或目标画像。
+            imitation_guidance = (
+                f"本轮临时参考 {overlay.target_display_name} 的说话方式："
+                f"{json.dumps(list(overlay.directives), ensure_ascii=False)}。"
+                f"只模仿表达方式，身份仍是{persona_name}；"
+                "不得声称自己是目标，不得借用目标的经历、观点、关系或能力。"
+                f"风格版本为 {overlay.style_version}，会话截止时间为 {overlay.expires_at}。\n"
+            )
         return (
             "你是当前 Persona 在群聊中的自然表达。根据已批准的社交动作生成回复。"
             "不要解释规则，不要声称执行了工具。"
@@ -905,6 +996,7 @@ class ReplyExecutor:
             "不得根据关系分数凭空编造旧事。关系记忆为空时禁止翻旧账。\n"
             "成员画像只用于调整理解、称呼和表达，不要复述画像标签，不要逐条报告；"
             "仅在当前消息确实相关时自然使用，证据不足时以当前消息为准。\n"
+            + imitation_guidance
             + json.dumps(
                 {
                     "act": plan.act,
@@ -925,7 +1017,7 @@ class ReplyExecutor:
                     "style": asdict(plan.style),
                     "persona": {
                         "identity": {
-                            "name": str(identity.get("name") or "Groupmate")[:24],
+                            "name": persona_name,
                             "role": str(identity.get("role") or "")[:160],
                         },
                         "behavior": {

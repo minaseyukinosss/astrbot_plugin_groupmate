@@ -26,6 +26,7 @@ from groupmate.social_runtime.replying import (
     ReplyPlanRepository,
     ReplyPlanner,
 )
+from groupmate.social_runtime.actions.member_style import MemberStyleOverlay
 from groupmate.social_runtime.delivery.outbox import OutboxService
 from tests.factories import social_event_values
 
@@ -123,6 +124,16 @@ def _social_decisions(*, move="DIRECT_ANSWER"):
     return scene, stance, SocialMovePlan.create(primary_move=move)
 
 
+def _member_style_overlay():
+    return MemberStyleOverlay(
+        target_member_id="u9",
+        target_display_name="阿甲",
+        style_version=3,
+        expires_at=7_200,
+        directives=("先给结论，再补一句理由", "收尾干脆，不留客服式邀请"),
+    )
+
+
 def test_reply_planner_builds_one_short_text_plan():
     plan = ReplyPlanner().plan(
         _evaluation(), now=100, persona_profile=_persona_profile()
@@ -136,6 +147,20 @@ def test_reply_planner_builds_one_short_text_plan():
     assert plan.style.max_chars == 120
     assert plan.style.max_segments == 3
     assert plan.expression.persona_cues[0] == "爱弥斯"
+
+
+def test_reply_plan_round_trips_member_style_overlay():
+    overlay = _member_style_overlay()
+    plan = ReplyPlanner().plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        member_style_overlay=overlay,
+    )
+
+    restored = ReplyPlanRepository._decode(ReplyPlanRepository._encode(plan))
+
+    assert restored.member_style_overlay == overlay
 
 
 def test_reply_planner_uses_style_director_instead_of_uniform_friendly_defaults():
@@ -263,6 +288,7 @@ def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_pa
     plan = ReplyPlanner().plan(
         _evaluation(), now=100, persona_profile=_persona_profile(),
         scene=scene, stance=stance, move=move,
+        member_style_overlay=_member_style_overlay(),
     )
     repository = ReplyPlanRepository(tmp_path / "runtime.db")
     outbox = OutboxService(
@@ -427,6 +453,7 @@ def test_old_serialized_reply_plan_defaults_to_ambient_lane():
     assert restored.member_context == ""
     assert restored.scene.scene_kind == "legacy_conservative"
     assert restored.move.primary_move is SocialMove.DIRECT_ANSWER
+    assert restored.member_style_overlay is None
 
 
 def test_optional_generation_failure_stays_silent(tmp_path):
@@ -588,3 +615,85 @@ def test_reply_prompt_gets_compact_member_context_without_label_recitation():
     assert "会持续追问到问题真正落地" in prompt
     assert "不接受只有技术完成" in prompt
     assert "不要复述画像标签" in prompt
+
+
+def test_reply_prompt_applies_member_style_as_expression_only_overlay():
+    scene, stance, move = _social_decisions()
+    plan = ReplyPlanner().plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+        member_style_overlay=_member_style_overlay(),
+    )
+
+    prompt = ReplyExecutor._system_prompt(plan, _persona_profile())
+
+    assert "阿甲" in prompt
+    assert "先给结论，再补一句理由" in prompt
+    assert "只模仿表达方式" in prompt
+    assert "身份仍是爱弥斯" in prompt
+    assert "不得借用目标的经历、观点、关系或能力" in prompt
+
+
+def test_imitation_identity_failure_repairs_then_retries_without_overlay(tmp_path):
+    def reply(text):
+        return json.dumps(
+            {
+                "text": text,
+                "covered_fact_ids": [],
+                "used_memory_ids": [],
+                "used_capability_ids": [],
+                "source_event_ids": [],
+            },
+            ensure_ascii=False,
+        )
+
+    class SequenceModel:
+        def __init__(self):
+            self.calls = []
+            self.outputs = [
+                reply("我就是阿甲，本人来了。"),
+                reply("阿甲本人在这儿。"),
+                reply("说话像了一点而已，我还是爱弥斯。"),
+            ]
+
+        async def complete_text(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.outputs.pop(0)
+
+    scene, stance, move = _social_decisions()
+    evaluation = _evaluation()
+    plan = ReplyPlanner().plan(
+        evaluation,
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+        member_style_overlay=_member_style_overlay(),
+    )
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = SequenceModel()
+
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, model).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.payload["text"] == "说话像了一点而已，我还是爱弥斯。"
+    assert len(model.calls) == 3
+    repair_request = json.loads(model.calls[1]["prompt"])
+    assert "imitation_target_identity_claim" in repair_request["violations"]
+    assert repair_request["imitation_identity_boundary"]["persona"] == "aemeath"
+    assert "member_style_overlay" not in model.calls[2]["system_prompt"]

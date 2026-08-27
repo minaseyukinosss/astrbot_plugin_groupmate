@@ -11,6 +11,11 @@ from .coordinator import (
 )
 from .generation import GeneratedDraft, GenerationRequest, OutputFirewall, SafeTextGeneration
 from .style import PersonaStyleSnapshot, StyleContext, StyleDirective, StyleDirector
+from .member_style import (
+    IdentityImitationGuard,
+    MemberStyleOverlay,
+    MemberStyleOverlayBuilder,
+)
 
 __all__ = (
     "ActionEdge",
@@ -32,4 +37,7 @@ __all__ = (
     "StyleContext",
     "StyleDirective",
     "StyleDirector",
+    "IdentityImitationGuard",
+    "MemberStyleOverlay",
+    "MemberStyleOverlayBuilder",
 )
