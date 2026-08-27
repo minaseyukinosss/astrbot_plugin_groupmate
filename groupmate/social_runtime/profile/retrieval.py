@@ -141,6 +141,30 @@ class ProfileRetriever:
             ambient_context=self._ambient_context(members, facts, edges),
         )
 
+    def group_member_refs(
+        self,
+        persona_id: str,
+        group_id: str,
+        *,
+        max_members: int = 64,
+    ) -> dict[str, tuple[str, ...]]:
+        """Expose confirmed names only; inferred profile traits are not aliases."""
+
+        grouped: dict[str, list[str]] = {}
+        for alias in self.repository.aliases_for_group(persona_id, group_id):
+            if alias.status != "confirmed":
+                continue
+            if alias.actor_id not in grouped and len(grouped) >= max(1, int(max_members)):
+                break
+            values = grouped.setdefault(alias.actor_id, [])
+            if alias.alias not in values:
+                values.append(alias.alias)
+        return {
+            actor_id: tuple(aliases[-4:])
+            for actor_id, aliases in grouped.items()
+            if aliases
+        }
+
     @staticmethod
     def _subject_ids(event: SocialEventEnvelope) -> tuple[str, ...]:
         values = [str(event.actor_id or "").strip()]

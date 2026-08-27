@@ -136,6 +136,38 @@ class ProfileRepository:
             for row in rows
         )
 
+    def aliases_for_group(
+        self, persona_id: str, group_id: str
+    ) -> tuple[MemberAlias, ...]:
+        """Return the bounded source records used to build a group member directory."""
+
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT rowid,* FROM member_aliases "
+                "WHERE persona_id=? AND group_id=? "
+                "ORDER BY actor_id,last_seen_at,rowid",
+                (str(persona_id), str(group_id)),
+            ).fetchall()
+        return tuple(
+            MemberAlias(
+                persona_id=str(row["persona_id"]),
+                group_id=str(row["group_id"]),
+                actor_id=str(row["actor_id"]),
+                alias=str(row["alias"]),
+                alias_type=str(row["alias_type"]),
+                confidence=float(row["confidence"]),
+                source_event_id=(
+                    str(row["source_event_id"])
+                    if row["source_event_id"] is not None
+                    else None
+                ),
+                status=str(row["status"]),
+                first_seen_at=int(row["first_seen_at"]),
+                last_seen_at=int(row["last_seen_at"]),
+            )
+            for row in rows
+        )
+
     def enqueue_observation(self, observation: ProfileObservation) -> bool:
         with connect_database(self.path) as db:
             cursor = db.execute(

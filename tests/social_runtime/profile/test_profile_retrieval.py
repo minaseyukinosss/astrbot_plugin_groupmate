@@ -173,3 +173,39 @@ def test_profile_context_obeys_hard_character_budget(tmp_path):
 
     assert len(result.prompt_text) <= 180
     assert len(result.facts) <= 3
+
+
+def test_group_member_refs_only_publish_confirmed_group_aliases(tmp_path):
+    repo = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")
+    _remember_alias(repo, "u1", "小林")
+    repo.remember_alias(
+        MemberAlias(
+            persona_id="persona",
+            group_id="group-1",
+            actor_id="u1",
+            alias="未确认称呼",
+            alias_type="inferred",
+            confidence=0.5,
+            first_seen_at=100,
+            last_seen_at=150,
+            status="candidate",
+        )
+    )
+    _remember_alias(repo, "u2", "霞月")
+    repo.remember_alias(
+        MemberAlias(
+            persona_id="persona",
+            group_id="group-2",
+            actor_id="outside",
+            alias="别群成员",
+            alias_type="platform_name",
+            confidence=1.0,
+            first_seen_at=100,
+            last_seen_at=150,
+        )
+    )
+
+    refs = ProfileRetriever(repo).group_member_refs("persona", "group-1")
+
+    assert refs == {"u1": ("小林",), "u2": ("霞月",)}
+    assert "未确认称呼" not in refs["u1"]

@@ -21,6 +21,7 @@ from .cognition.contracts import (
 )
 from .cognition.service import CognitionBudget, CognitionService
 from .contracts import (
+    PersonaSnapshot,
     RuntimeGovernanceState,
     RuntimeMode,
     SocialEventEnvelope,
@@ -43,14 +44,19 @@ from .persistence.repositories import (
 )
 from .persona.profile import GroupmatePersonaProfile
 from .profile.repository import ProfileRepository
-from .profile.retrieval import ProfileRetriever
+from .profile.retrieval import ProfileRetrieval, ProfileRetriever
 from .memory.relationship_memory import RelationshipMemorySelector
 from .society.relationship_events import (
     RelationshipEventDecision,
     RelationshipEventProposal,
     RelationshipEventService,
 )
-from .society.relationships import PublicAffection, RelationshipEvidence
+from .society.relationships import (
+    PublicAffection,
+    RelationshipEvidence,
+    RelationshipProjection,
+)
+from .memory.relationship_memory import RelationshipMemory
 from .replying import ReplyPlan, ReplyPlanRepository
 from .delivery.outbox import OutboxService
 from .scene_actor import (
@@ -536,6 +542,57 @@ class SocialRuntimeManager:
         )
         return affection
 
+    def relationship_projection(
+        self, group_id: str, subject_id: str
+    ) -> RelationshipProjection:
+        normalized_group = str(group_id).strip()
+        normalized_subject = str(subject_id).strip()
+        if normalized_group not in self.enabled_groups or not normalized_subject:
+            raise ValueError("relationship lookup requires an enabled group and subject")
+        state, _ = self.society.relationship_snapshot(
+            self.persona_id,
+            normalized_group,
+            normalized_subject,
+        )
+        return state
+
+    def member_profile_retrieval(
+        self, event: SocialEventEnvelope, *, max_chars: int = 1200
+    ) -> ProfileRetrieval:
+        try:
+            return self.profile_retriever.for_message(event, max_chars=max_chars)
+        except Exception:
+            return ProfileRetrieval((), (), (), (), "", {"members": [], "relations": []})
+
+    def relationship_memory_records(
+        self, group_id: str, subject_id: str
+    ) -> tuple[RelationshipMemory, ...]:
+        normalized_group = str(group_id).strip()
+        normalized_subject = str(subject_id).strip()
+        if normalized_group not in self.enabled_groups or not normalized_subject:
+            raise ValueError("relationship memory lookup requires an enabled scope")
+        return self.society.relationship_memories(
+            self.persona_id,
+            normalized_group,
+            normalized_subject,
+        )
+
+    async def persona_snapshot(
+        self, group_id: str, config_version: int
+    ) -> PersonaSnapshot:
+        profile = self._load_persona_profile(str(group_id))
+        if profile.version != int(config_version):
+            raise RuntimeError("persona profile changed after frozen evaluation")
+        return await self.supervisor.snapshot(int(config_version))
+
+    def group_member_refs(self, group_id: str) -> Mapping[str, tuple[str, ...]]:
+        normalized_group = str(group_id).strip()
+        if normalized_group not in self.enabled_groups:
+            raise ValueError("member directory requires an enabled group")
+        return self.profile_retriever.group_member_refs(
+            self.persona_id, normalized_group
+        )
+
     def relationship_memory_cues(
         self,
         group_id: str,
@@ -572,7 +629,7 @@ class SocialRuntimeManager:
         max_chars: int = 1200,
     ) -> str:
         try:
-            return self.profile_retriever.for_message(
+            return self.member_profile_retrieval(
                 event, max_chars=max_chars
             ).prompt_text
         except Exception:
