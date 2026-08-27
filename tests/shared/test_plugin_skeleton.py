@@ -403,6 +403,16 @@ def test_profile_command_is_checked_before_affection_and_social_runtime():
     assert "yield event.plain_result(profile_query.text)" in composition
 
 
+def test_imitation_state_command_is_claimed_before_local_queries_and_chat():
+    root = Path(__file__).parents[2]
+    composition = (root / "main.py").read_text(encoding="utf-8")
+
+    assert composition.index("prepare_imitation_command") < composition.index(
+        "prepare_profile_command"
+    )
+    assert "yield event.plain_result(imitation.response_text)" in composition
+
+
 def test_external_trigger_rules_are_native_deployment_configuration():
     settings = SocialRuntimeSettings.from_mapping(
         {

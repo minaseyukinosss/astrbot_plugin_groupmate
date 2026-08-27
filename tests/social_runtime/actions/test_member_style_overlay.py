@@ -46,3 +46,21 @@ def test_guard_does_not_treat_aemeath_own_first_person_life_as_borrowed():
     assert IdentityImitationGuard().review(
         "我上学时也碰到过这种事。", overlay=overlay
     ) == ()
+
+
+def test_guard_requires_activation_confirmation_facts():
+    overlay = MemberStyleOverlayBuilder().build(
+        _style(), target_display_name="阿甲", expires_at=200
+    )
+
+    violations = IdentityImitationGuard().review(
+        "好，那我试试。",
+        overlay=overlay,
+        required_facts=("阿甲", "2026年8月28日20:00", "爱弥斯"),
+    )
+
+    assert violations == (
+        "imitation_confirmation_fact_missing",
+        "imitation_confirmation_fact_missing",
+        "imitation_confirmation_fact_missing",
+    )

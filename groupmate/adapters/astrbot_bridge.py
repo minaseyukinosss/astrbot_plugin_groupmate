@@ -9,8 +9,10 @@ from contextlib import suppress
 from dataclasses import asdict, replace
 import inspect
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
+from zoneinfo import ZoneInfo
 
 from ..settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from ..social_runtime.addressing import PersonaAddressResolver
@@ -27,7 +29,11 @@ from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
 from ..social_runtime.social_context import SceneContextBuilder
-from ..social_runtime.social_moves import SocialMove, SocialMovePlanner
+from ..social_runtime.social_moves import (
+    RealizationMode,
+    SocialMove,
+    SocialMovePlanner,
+)
 from ..social_runtime.social_scenes import (
     ChorusTarget,
     SceneInterpretationResult,
@@ -38,6 +44,10 @@ from ..social_runtime.social_scenes import (
 from ..social_runtime.stances import PermissionSnapshot, StancePolicy
 from ..social_runtime.delivery.dispatcher import DeliveryDispatcher
 from ..social_runtime.actions.contracts import OutboxStatus
+from ..social_runtime.actions.member_style import (
+    IdentityImitationGuard,
+    MemberStyleOverlayBuilder,
+)
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
@@ -50,10 +60,16 @@ from .profile_query import (
 )
 from .deepseek_cognition import DeepSeekCognitionClient
 from .deepseek_profile import DeepSeekProfileClient
+from .imitation_commands import (
+    ImitationCommandInterpreter,
+    ImitationCommandResult,
+    ImitationSessionController,
+)
 from .onebot_delivery import OneBotDeliveryAdapter
 from ..social_runtime.profile.extractor import ProfileExtractor
 from ..social_runtime.profile.repository import ProfileRepository
 from ..social_runtime.profile.service import ProfileService
+from ..social_runtime.profile.style_repository import MemberStyleRepository
 from ..social_runtime.profile.contracts import ProfileFactCandidate
 from ..social_runtime.profile.policy import ProfileEvidencePolicy
 from ..social_runtime.society.affection_leaderboard import (
@@ -99,12 +115,15 @@ class AstrBotSocialRuntimeBridge:
         self._cognition_client: object | None = None
         self._profile_client: object | None = None
         self._profile_service: ProfileService | None = None
+        self._member_style_repository: MemberStyleRepository | None = None
+        self._imitation_controller: ImitationSessionController | None = None
         self._trace_repository: MessageTraceRepository | None = None
         self.shadow_reviews = shadow_reviews
         self.shadow_review_error: str | None = None
         self.attention_wakeup_error: str | None = None
         self.cognition_diagnostics: list[str] = []
         self.reply_error: str | None = None
+        self.member_style_overlay_error: str | None = None
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._scene_context_builder = SceneContextBuilder()
@@ -112,6 +131,7 @@ class AstrBotSocialRuntimeBridge:
         self._stance_policy = StancePolicy()
         self._move_planner = SocialMovePlanner()
         self._reply_executor: ReplyExecutor | None = None
+        self._reply_model: object | None = None
         self._dispatcher: DeliveryDispatcher | None = None
         self._reply_lock = asyncio.Lock()
         self._recent_outputs: dict[str, deque[str]] = {}
@@ -196,6 +216,117 @@ class AstrBotSocialRuntimeBridge:
         return AffectionQuery(
             leaderboard=leaderboard,
             pages=AffectionCardPresenter().pages(leaderboard),
+        )
+
+    async def prepare_imitation_transition(
+        self, event: object
+    ) -> ImitationCommandResult | None:
+        """Commit an explicit group imitation request without entering chat AI.
+
+        Recognition requires the platform's real bot-mention fact.  Ordinary
+        messages return ``None`` so the normal command/profile/chat routes can
+        continue unchanged.
+        """
+
+        if not self._started or self._manager is None:
+            return None
+        translated = self.translator.translate(event)
+        group_id = str(translated.group_id or "").strip()
+        if not group_id or self._manager.group_mode(group_id) is RuntimeMode.OFF:
+            return None
+        controller = self._imitation_controller
+        if controller is None:
+            return None
+        self.trace_repository.participants.remember(translated)
+        result = controller.handle(translated, now=int(self.clock()))
+        if result is None or result.transition is None:
+            return result
+        identity = self._profile_snapshot(group_id)["identity"]
+        transition = replace(
+            result.transition,
+            persona_name=str(identity.get("name") or self.settings.persona_name),
+        )
+        return replace(result, transition=transition)
+
+    async def prepare_imitation_command(
+        self, event: object
+    ) -> ImitationCommandResult | None:
+        """Render one complete response for a recognized state request.
+
+        The transaction is committed before rendering.  A provider failure
+        therefore changes only the confirmation wording, never the session.
+        """
+
+        result = await self.prepare_imitation_transition(event)
+        if result is None:
+            return None
+        if result.transition is None:
+            return replace(result, response_text=result.error_text)
+        transition = result.transition
+        session = transition.session
+        persona_name = str(transition.persona_name or self.settings.persona_name)
+        if transition.operation in {"STOPPED_BY_TARGET", "STOPPED_BY_ADMIN"}:
+            return replace(
+                result,
+                response_text=f"好，不学了。我还是{persona_name}。",
+            )
+
+        style = self.member_style_repository.style(
+            session.group_id,
+            session.target_member_id,
+            session.style_version,
+        )
+        expiry_text = self._imitation_expiry_text(session.expires_at)
+        fallback = (
+            f"好，我学{session.target_display_name}说话到{expiry_text}。"
+            f"只是说话方式变了，我还是{persona_name}。"
+        )
+        if style is None or self._reply_model is None:
+            return replace(result, response_text=fallback)
+        overlay = MemberStyleOverlayBuilder().build(
+            style,
+            target_display_name=session.target_display_name,
+            expires_at=session.expires_at,
+        )
+        try:
+            text = await self._reply_model.complete_text(
+                system_prompt=(
+                    f"你是{persona_name}，正在给出一条群聊模仿确认。"
+                    "确认本身就是第一次试演，只输出一条自然正文。"
+                    f"参考这些定性表达特征：{list(overlay.directives)}。"
+                    f"必须明说目标“{session.target_display_name}”、"
+                    f"截止时间“{expiry_text}”、身份仍是“{persona_name}”。"
+                    "只模仿说话方式，不借用目标的身份、经历、观点、关系或能力。"
+                    "不要使用连接、频道、上线、系统指令、浓度或百分比包装。"
+                ),
+                prompt=(
+                    f"开始模仿 {session.target_display_name}，"
+                    f"到 {expiry_text}结束。"
+                ),
+            )
+            violations = IdentityImitationGuard().review(
+                text,
+                overlay=overlay,
+                required_facts=(
+                    session.target_display_name,
+                    expiry_text,
+                    persona_name,
+                ),
+            )
+            if violations:
+                text = fallback
+        except Exception:
+            text = fallback
+        return replace(result, response_text=text)
+
+    @staticmethod
+    def _imitation_expiry_text(expires_at: int) -> str:
+        moment = datetime.fromtimestamp(
+            int(expires_at), tz=ZoneInfo("Asia/Shanghai")
+        )
+        return (
+            f"{moment.year}年{moment.month}月{moment.day}日"
+            f"{moment.hour:02d}:{moment.minute:02d}"
         )
 
     async def prepare_profile_command(
@@ -462,6 +593,46 @@ class AstrBotSocialRuntimeBridge:
             raise RuntimeError("member profiling is disabled")
         return self._profile_service
 
+    @property
+    def member_style_repository(self) -> MemberStyleRepository:
+        repository = self._member_style_repository
+        if repository is None:
+            repository = MemberStyleRepository(
+                self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+            )
+            self._member_style_repository = repository
+        return repository
+
+    def _member_style_overlay(self, group_id: str, *, now: int):
+        """Resolve the session's frozen style version for this group only."""
+
+        try:
+            session = self.member_style_repository.active_session(
+                str(group_id), now=int(now)
+            )
+            if session is None:
+                self.member_style_overlay_error = None
+                return None
+            style = self.member_style_repository.style(
+                session.group_id,
+                session.target_member_id,
+                session.style_version,
+            )
+            if style is None:
+                self.member_style_overlay_error = "style_version_unavailable"
+                return None
+            overlay = MemberStyleOverlayBuilder().build(
+                style,
+                target_display_name=session.target_display_name,
+                expires_at=session.expires_at,
+            )
+            self.member_style_overlay_error = None
+            return overlay
+        except Exception:
+            # 风格是可选表达层，读取失败不得阻断闲聊主线。
+            self.member_style_overlay_error = "style_overlay_unavailable"
+            return None
+
     def runtime_status(self, group_id: str) -> dict[str, object]:
         """Return the bridge state that is effective for this group now."""
 
@@ -539,6 +710,14 @@ class AstrBotSocialRuntimeBridge:
             )
             profile_client = None
             profile_service = None
+            member_style_repository = self.member_style_repository
+            imitation_controller = ImitationSessionController(
+                ImitationCommandInterpreter(
+                    admin_ids=self.settings.control_admin_ids,
+                    participants=self.trace_repository.participants,
+                ),
+                member_style_repository,
+            )
             if self.settings.profile_enabled:
                 profile_client = self._profile_client_factory(self.settings)
                 if profile_client is None:
@@ -566,12 +745,14 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = cognition_client
                 self._profile_client = profile_client
                 self._profile_service = profile_service
+                self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
                 self._reply_executor = ReplyExecutor(
                     manager.reply_plans,
                     manager.outbox,
                     reply_model,
                 )
+                self._reply_model = reply_model
                 self._dispatcher = DeliveryDispatcher(
                     manager.outbox,
                     OneBotDeliveryAdapter(
@@ -588,7 +769,9 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = None
                 self._profile_client = None
                 self._profile_service = None
+                self._imitation_controller = None
                 self._scene_interpreter = None
+                self._reply_model = None
                 if profile_service is not None:
                     with suppress(Exception):
                         await profile_service.close()
@@ -994,6 +1177,13 @@ class AstrBotSocialRuntimeBridge:
                     stance=stance,
                     move=move,
                     culture_patterns=culture_patterns,
+                    member_style_overlay=(
+                        self._member_style_overlay(
+                            group_id, now=int(self.clock())
+                        )
+                        if move.realization_mode is RealizationMode.GENERATED
+                        else None
+                    ),
                 )
                 if plan is None:
                     self._record_trace(
@@ -1208,6 +1398,7 @@ class AstrBotSocialRuntimeBridge:
         self._manager = None
         self._cognition_client = None
         self._profile_service = None
+        self._imitation_controller = None
         self._profile_client = None
         try:
             if profile_service is not None:
@@ -1222,6 +1413,7 @@ class AstrBotSocialRuntimeBridge:
             if callable(profile_close):
                 await profile_close()
             self._reply_executor = None
+            self._reply_model = None
             self._scene_interpreter = None
             self._dispatcher = None
             self._started = False

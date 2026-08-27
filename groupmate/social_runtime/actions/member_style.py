@@ -89,7 +89,11 @@ class IdentityImitationGuard:
         r"叫我{name}",
     )
     def review(
-        self, text: str, *, overlay: MemberStyleOverlay
+        self,
+        text: str,
+        *,
+        overlay: MemberStyleOverlay,
+        required_facts: tuple[str, ...] = (),
     ) -> tuple[str, ...]:
         candidate = " ".join(str(text or "").split())
         if not candidate:
@@ -101,6 +105,10 @@ class IdentityImitationGuard:
             for pattern in self._IDENTITY_FORMS
         ):
             violations.append("imitation_target_identity_claim")
+        for fact in required_facts:
+            normalized = " ".join(str(fact or "").split())
+            if normalized and normalized not in candidate:
+                violations.append("imitation_confirmation_fact_missing")
         return tuple(violations)
 
 

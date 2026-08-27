@@ -29,6 +29,8 @@ class ImitationCommandError(ValueError):
 class ImitationTransition:
     operation: str
     session: object
+    # Bridge 在提交事务后固化当前 Persona 名，供确认试演使用。
+    persona_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class ImitationCommandResult:
     transition: ImitationTransition | None = None
     error_text: str | None = None
     diagnostic_code: str | None = None
+    response_text: str | None = None
 
 
 class ImitationCommandInterpreter:
