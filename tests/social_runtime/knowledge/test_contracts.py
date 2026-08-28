@@ -274,3 +274,153 @@ def test_knowledge_need_rejects_unknown_outcome_and_expired_shape():
             query_intents=(),
             expires_at=-1,
         )
+
+
+def test_public_claim_requires_checked_at_and_validity():
+    contracts = _contracts()
+    values = {
+        "candidate_id": "candidate:1",
+        "subject_entity_id": "game:genshin-impact",
+        "predicate": "next_version_label",
+        "safe_summary": "官方已公开下一版本名称",
+        "claim_kind": "public_fact",
+        "evidence_level": "official",
+        "applies_to_version_slot_id": "slot:genshin:next",
+        "region": "cn",
+        "platform": "all",
+        "valid_from": 100,
+        "valid_until": 200,
+        "checked_at": 110,
+    }
+    assert contracts.KnowledgeClaimCandidate.create(**values).checked_at == 110
+    for missing in ("checked_at", "valid_until"):
+        invalid = dict(values)
+        invalid.pop(missing)
+        with pytest.raises(ValueError, match=missing):
+            contracts.KnowledgeClaimCandidate.create(**invalid)
+
+
+def test_source_evidence_is_bounded_and_hash_validated():
+    contracts = _contracts()
+    values = {
+        "evidence_id": "evidence:1",
+        "source_id": "source:genshin:official-news",
+        "canonical_url": "https://ys.mihoyo.com/main/news/detail/1",
+        "domain": "ys.mihoyo.com",
+        "publisher": "原神官方",
+        "source_class": "official",
+        "title": "版本公告",
+        "published_at": 100,
+        "fetched_at": 110,
+        "evidence_excerpt": "官方页面中的短证据",
+        "content_hash": "a" * 64,
+    }
+    assert contracts.SourceEvidence.create(**values).source_class.value == "official"
+    with pytest.raises(ValueError, match="evidence_excerpt"):
+        contracts.SourceEvidence.create(
+            **{**values, "evidence_excerpt": "证" * 321}
+        )
+    with pytest.raises(ValueError, match="content_hash"):
+        contracts.SourceEvidence.create(
+            **{**values, "content_hash": "not-a-hash"}
+        )
+
+
+def test_negative_snapshot_requires_complete_covered_probe():
+    contracts = _contracts()
+    values = {
+        "snapshot_id": "negative:1",
+        "game_entity_id": "game:genshin-impact",
+        "query_intent": "next_version_official",
+        "probe_status": "complete",
+        "covered_source_ids": ("source:official-news",),
+        "required_source_ids": ("source:official-news",),
+        "region": "cn",
+        "platform": "all",
+        "checked_at": 100,
+        "expires_at": 700,
+        "version_state_revision": 1,
+    }
+    assert contracts.NegativeSearchSnapshot.create(**values).status == "active"
+    with pytest.raises(ValueError, match="complete covered probe"):
+        contracts.NegativeSearchSnapshot.create(
+            **{**values, "probe_status": "partial"}
+        )
+    with pytest.raises(ValueError, match="complete covered probe"):
+        contracts.NegativeSearchSnapshot.create(
+            **{**values, "covered_source_ids": ()}
+        )
+
+
+def test_version_slot_rejects_collapsed_or_impossible_truth_tracks():
+    contracts = _contracts()
+    values = {
+        "version_slot_id": "slot:genshin:next",
+        "game_entity_id": "game:genshin-impact",
+        "official_label": "版本名",
+        "region": "cn",
+        "platform": "all",
+        "release_state": "future",
+        "official_state": "preview",
+        "rumor_state": "conflicted",
+        "announced_at": 100,
+        "release_at": 200,
+        "effective_until": None,
+        "official_checked_at": 120,
+        "rumor_checked_at": 115,
+        "fresh_until": 180,
+        "status": "active",
+        "revision": 1,
+    }
+    slot = contracts.VersionSlot.create(**values)
+    assert slot.official_state == "preview"
+    assert slot.rumor_state == "conflicted"
+    with pytest.raises(ValueError, match="released official state"):
+        contracts.VersionSlot.create(
+            **{
+                **values,
+                "release_state": "future",
+                "official_state": "released",
+            }
+        )
+    with pytest.raises(ValueError, match="released official state"):
+        contracts.VersionSlot.create(
+            **{
+                **values,
+                "release_state": "current",
+                "official_state": "preview",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"official_checked_at": None}, "official_checked_at"),
+        ({"rumor_checked_at": None}, "rumor_checked_at"),
+        ({"announced_at": 210, "release_at": 200}, "announced_at"),
+        ({"fresh_until": 119}, "fresh_until"),
+    ),
+)
+def test_version_slot_requires_auditable_temporal_order(overrides, message):
+    contracts = _contracts()
+    values = {
+        "version_slot_id": "slot:genshin:next",
+        "game_entity_id": "game:genshin-impact",
+        "official_label": "版本名",
+        "region": "cn",
+        "platform": "all",
+        "release_state": "future",
+        "official_state": "preview",
+        "rumor_state": "weak",
+        "announced_at": 100,
+        "release_at": 200,
+        "effective_until": 300,
+        "official_checked_at": 120,
+        "rumor_checked_at": 115,
+        "fresh_until": 180,
+        "status": "active",
+        "revision": 1,
+    }
+    with pytest.raises(ValueError, match=message):
+        contracts.VersionSlot.create(**{**values, **overrides})

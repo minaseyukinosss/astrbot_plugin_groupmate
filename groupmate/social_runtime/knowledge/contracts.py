@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import math
 import re
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping, Protocol, TypeVar
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 MAX_FRAME_GAMES = 4
@@ -20,6 +22,25 @@ MAX_FRAME_SUPPORTING_IDS = 16
 MAX_PROMPT_CHARS = 1800
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
+_NUMERIC_HOST = re.compile(
+    r"(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*$",
+    re.IGNORECASE,
+)
+_BLOCKED_SOURCE_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+}
+_SEMANTIC_SOURCE_QUERY_KEYS = {
+    "article_id",
+    "id",
+    "lang",
+    "locale",
+    "news_id",
+    "p",
+    "page",
+    "version",
+}
 
 
 class OriginClass(str, Enum):
@@ -57,6 +78,12 @@ class EvidenceLevel(str, Enum):
     BUNDLED = "bundled"
     OFFICIAL = "official"
     CORROBORATED = "corroborated"
+    SECONDARY = "secondary"
+    UNOFFICIAL = "unofficial"
+
+
+class SourceClass(str, Enum):
+    OFFICIAL = "official"
     SECONDARY = "secondary"
     UNOFFICIAL = "unofficial"
 
@@ -141,6 +168,77 @@ def _timestamp(value: object, name: str) -> int:
     if normalized < 0:
         raise ValueError(f"{name} must not be negative")
     return normalized
+
+
+def _optional_timestamp(value: object, name: str) -> int | None:
+    return None if value is None else _timestamp(value, name)
+
+
+def _positive_revision(value: object, name: str = "revision") -> int:
+    normalized = _timestamp(value, name)
+    if normalized < 1:
+        raise ValueError(f"{name} must be positive")
+    return normalized
+
+
+def canonical_source_url(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 2048:
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    if any(character.isspace() or ord(character) < 32 for character in raw):
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("URL must be a safe public HTTP(S) URL") from error
+    scheme = parsed.scheme.casefold()
+    hostname = (parsed.hostname or "").rstrip(".").casefold()
+    if (
+        scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or hostname in _BLOCKED_SOURCE_HOSTS
+        or hostname.endswith((".localhost", ".local", ".internal"))
+        or not hostname.isascii()
+        or _NUMERIC_HOST.fullmatch(hostname)
+    ):
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    default_port = (scheme == "https" and port == 443) or (
+        scheme == "http" and port == 80
+    )
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = (
+        display_host
+        if port is None or default_port
+        else f"{display_host}:{port}"
+    )
+    query = urlencode(
+        sorted(
+            (key.casefold(), item)
+            for key, item in parse_qsl(
+                parsed.query, keep_blank_values=True, strict_parsing=False
+            )
+            if key.casefold() in _SEMANTIC_SOURCE_QUERY_KEYS
+        ),
+        doseq=True,
+    )
+    canonical = urlunsplit(
+        (scheme, netloc, parsed.path or "/", query, "")
+    )
+    if len(canonical) > 2048:
+        raise ValueError("URL must be a safe public HTTP(S) URL")
+    return canonical
 
 
 def _texts(
@@ -615,6 +713,359 @@ class KnowledgeNeed:
         )
 
 
+@dataclass(frozen=True)
+class SourceEvidence:
+    evidence_id: str
+    source_id: str
+    canonical_url: str
+    domain: str
+    publisher: str
+    source_class: SourceClass
+    title: str
+    published_at: int | None
+    fetched_at: int
+    evidence_excerpt: str
+    content_hash: str
+
+    @classmethod
+    def create(cls, **values: object) -> "SourceEvidence":
+        canonical_url = canonical_source_url(values.get("canonical_url"))
+        parsed = urlsplit(canonical_url)
+        domain = _text(values.get("domain"), "domain", maximum=253).casefold()
+        if parsed.hostname.casefold() != domain:
+            raise ValueError("domain must match canonical_url")
+        content_hash = _text(
+            values.get("content_hash"), "content_hash", maximum=64
+        )
+        if not _HASH.fullmatch(content_hash):
+            raise ValueError("content_hash must be a lowercase SHA-256 digest")
+        published_at = _optional_timestamp(
+            values.get("published_at"), "published_at"
+        )
+        fetched_at = _timestamp(values.get("fetched_at"), "fetched_at")
+        if published_at is not None and published_at > fetched_at:
+            raise ValueError("published_at cannot follow fetched_at")
+        return cls(
+            evidence_id=_text(
+                values.get("evidence_id"), "evidence_id", maximum=128
+            ),
+            source_id=_text(
+                values.get("source_id"), "source_id", maximum=128
+            ),
+            canonical_url=canonical_url,
+            domain=domain,
+            publisher=_text(
+                values.get("publisher"), "publisher", maximum=80
+            ),
+            source_class=_enum(
+                SourceClass, values.get("source_class"), "source_class"
+            ),
+            title=_text(values.get("title"), "title", maximum=180),
+            published_at=published_at,
+            fetched_at=fetched_at,
+            evidence_excerpt=_text(
+                values.get("evidence_excerpt"),
+                "evidence_excerpt",
+                maximum=320,
+            ),
+            content_hash=content_hash,
+        )
+
+
+@dataclass(frozen=True)
+class KnowledgeClaimCandidate:
+    candidate_id: str
+    subject_entity_id: str
+    predicate: str
+    safe_summary: str
+    claim_kind: ClaimKind
+    evidence_level: EvidenceLevel
+    applies_to_version_slot_id: str | None
+    region: str | None
+    platform: str | None
+    valid_from: int | None
+    valid_until: int | None
+    checked_at: int
+
+    @classmethod
+    def create(cls, **values: object) -> "KnowledgeClaimCandidate":
+        claim_kind = _enum(
+            ClaimKind, values.get("claim_kind"), "claim_kind"
+        )
+        checked_at = _timestamp(values.get("checked_at"), "checked_at")
+        valid_from = _optional_timestamp(
+            values.get("valid_from"), "valid_from"
+        )
+        valid_until = _optional_timestamp(
+            values.get("valid_until"), "valid_until"
+        )
+        if claim_kind in {ClaimKind.PUBLIC_FACT, ClaimKind.RUMOR} and (
+            valid_until is None
+        ):
+            raise ValueError("valid_until is required for temporal claims")
+        if valid_until is not None and valid_until <= (
+            valid_from if valid_from is not None else checked_at
+        ):
+            raise ValueError("valid_until must follow claim validity start")
+        return cls(
+            candidate_id=_text(
+                values.get("candidate_id"), "candidate_id", maximum=128
+            ),
+            subject_entity_id=_text(
+                values.get("subject_entity_id"),
+                "subject_entity_id",
+                maximum=128,
+            ),
+            predicate=_text(
+                values.get("predicate"), "predicate", maximum=80
+            ),
+            safe_summary=_text(
+                values.get("safe_summary"), "safe_summary", maximum=240
+            ),
+            claim_kind=claim_kind,
+            evidence_level=_enum(
+                EvidenceLevel,
+                values.get("evidence_level"),
+                "evidence_level",
+            ),
+            applies_to_version_slot_id=_text(
+                values.get("applies_to_version_slot_id"),
+                "applies_to_version_slot_id",
+                maximum=128,
+                optional=True,
+            ),
+            region=_text(
+                values.get("region"), "region", maximum=48, optional=True
+            ),
+            platform=_text(
+                values.get("platform"),
+                "platform",
+                maximum=48,
+                optional=True,
+            ),
+            valid_from=valid_from,
+            valid_until=valid_until,
+            checked_at=checked_at,
+        )
+
+
+@dataclass(frozen=True)
+class VersionSlot:
+    version_slot_id: str
+    game_entity_id: str
+    official_label: str | None
+    region: str
+    platform: str
+    release_state: str
+    official_state: str
+    rumor_state: str
+    announced_at: int | None
+    release_at: int | None
+    effective_until: int | None
+    official_checked_at: int | None
+    rumor_checked_at: int | None
+    fresh_until: int
+    status: str
+    revision: int
+
+    @classmethod
+    def create(cls, **values: object) -> "VersionSlot":
+        release_state = _text(
+            values.get("release_state"), "release_state", maximum=16
+        )
+        official_state = _text(
+            values.get("official_state"), "official_state", maximum=16
+        )
+        rumor_state = _text(
+            values.get("rumor_state"), "rumor_state", maximum=24
+        )
+        status = _text(values.get("status"), "status", maximum=16)
+        if release_state not in {"future", "current", "past"}:
+            raise ValueError("release_state is unsupported")
+        if official_state not in {
+            "none",
+            "teaser",
+            "preview",
+            "notice",
+            "released",
+        }:
+            raise ValueError("official_state is unsupported")
+        if rumor_state not in {
+            "none_observed",
+            "weak",
+            "corroborated",
+            "conflicted",
+            "stale",
+        }:
+            raise ValueError("rumor_state is unsupported")
+        if status not in {"active", "superseded", "disputed"}:
+            raise ValueError("status is unsupported")
+        release_at = _optional_timestamp(
+            values.get("release_at"), "release_at"
+        )
+        if (official_state == "released") != (
+            release_state in {"current", "past"}
+        ):
+            raise ValueError(
+                "released official state must match current or past release state"
+            )
+        if official_state == "released" and release_at is None:
+            raise ValueError("released official state requires release_at")
+        announced_at = _optional_timestamp(
+            values.get("announced_at"), "announced_at"
+        )
+        official_checked_at = _optional_timestamp(
+            values.get("official_checked_at"), "official_checked_at"
+        )
+        rumor_checked_at = _optional_timestamp(
+            values.get("rumor_checked_at"), "rumor_checked_at"
+        )
+        fresh_until = _timestamp(
+            values.get("fresh_until"), "fresh_until"
+        )
+        if official_state != "none" and official_checked_at is None:
+            raise ValueError(
+                "official_checked_at is required for official state"
+            )
+        if rumor_state != "none_observed" and rumor_checked_at is None:
+            raise ValueError("rumor_checked_at is required for rumor state")
+        if official_state != "none" and announced_at is None:
+            raise ValueError("announced_at is required for official state")
+        if official_state == "none" and values.get("official_label") is not None:
+            raise ValueError("official_label requires official state")
+        if (
+            announced_at is not None
+            and release_at is not None
+            and announced_at > release_at
+        ):
+            raise ValueError("announced_at cannot follow release_at")
+        effective_until = _optional_timestamp(
+            values.get("effective_until"), "effective_until"
+        )
+        if (
+            release_at is not None
+            and effective_until is not None
+            and effective_until <= release_at
+        ):
+            raise ValueError("effective_until must follow release_at")
+        supporting_checks = tuple(
+            value
+            for value in (official_checked_at, rumor_checked_at)
+            if value is not None
+        )
+        if supporting_checks and fresh_until <= max(supporting_checks):
+            raise ValueError("fresh_until must follow supporting checks")
+        return cls(
+            version_slot_id=_text(
+                values.get("version_slot_id"),
+                "version_slot_id",
+                maximum=128,
+            ),
+            game_entity_id=_text(
+                values.get("game_entity_id"),
+                "game_entity_id",
+                maximum=128,
+            ),
+            official_label=_text(
+                values.get("official_label"),
+                "official_label",
+                maximum=80,
+                optional=True,
+            ),
+            region=_text(values.get("region"), "region", maximum=48),
+            platform=_text(
+                values.get("platform"), "platform", maximum=48
+            ),
+            release_state=release_state,
+            official_state=official_state,
+            rumor_state=rumor_state,
+            announced_at=announced_at,
+            release_at=release_at,
+            effective_until=effective_until,
+            official_checked_at=official_checked_at,
+            rumor_checked_at=rumor_checked_at,
+            fresh_until=fresh_until,
+            status=status,
+            revision=_positive_revision(values.get("revision")),
+        )
+
+
+@dataclass(frozen=True)
+class NegativeSearchSnapshot:
+    snapshot_id: str
+    game_entity_id: str
+    query_intent: str
+    probe_status: str
+    covered_source_ids: tuple[str, ...]
+    required_source_ids: tuple[str, ...]
+    region: str | None
+    platform: str | None
+    checked_at: int
+    expires_at: int
+    version_state_revision: int
+    status: str
+    diagnostic_code: str
+
+    @classmethod
+    def create(cls, **values: object) -> "NegativeSearchSnapshot":
+        probe_status = str(values.get("probe_status") or "")
+        covered = _texts(
+            values.get("covered_source_ids", ()),
+            "covered_source_ids",
+            limit=16,
+        )
+        required = _texts(
+            values.get("required_source_ids", ()),
+            "required_source_ids",
+            limit=16,
+        )
+        if (
+            probe_status != "complete"
+            or not required
+            or not set(required).issubset(covered)
+        ):
+            raise ValueError(
+                "negative snapshot requires complete covered probe"
+            )
+        checked_at = _timestamp(values.get("checked_at"), "checked_at")
+        expires_at = _timestamp(values.get("expires_at"), "expires_at")
+        if expires_at <= checked_at:
+            raise ValueError("expires_at must follow checked_at")
+        return cls(
+            snapshot_id=_text(
+                values.get("snapshot_id"), "snapshot_id", maximum=128
+            ),
+            game_entity_id=_text(
+                values.get("game_entity_id"),
+                "game_entity_id",
+                maximum=128,
+            ),
+            query_intent=_text(
+                values.get("query_intent"), "query_intent", maximum=64
+            ),
+            probe_status=probe_status,
+            covered_source_ids=covered,
+            required_source_ids=required,
+            region=_text(
+                values.get("region"), "region", maximum=48, optional=True
+            ),
+            platform=_text(
+                values.get("platform"),
+                "platform",
+                maximum=48,
+                optional=True,
+            ),
+            checked_at=checked_at,
+            expires_at=expires_at,
+            version_state_revision=_positive_revision(
+                values.get("version_state_revision"),
+                "version_state_revision",
+            ),
+            status="active",
+            diagnostic_code="official_no_matching_update",
+        )
+
+
 class KnowledgeResolverPort(Protocol):
     def resolve(
         self,
@@ -633,14 +1084,20 @@ __all__ = (
     "EvidenceLevel",
     "KnowledgeNeed",
     "KnowledgeNeedOutcome",
+    "KnowledgeClaimCandidate",
     "KnowledgeObservation",
     "KnowledgeResolverPort",
     "KnowledgeScope",
     "ObservationStatus",
     "OriginClass",
+    "NegativeSearchSnapshot",
     "ResolvedEntity",
     "ResolvedTerm",
     "RiskClass",
+    "SourceClass",
+    "SourceEvidence",
     "TopicUnderstandingFrame",
     "VersionReference",
+    "VersionSlot",
+    "canonical_source_url",
 )

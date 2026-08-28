@@ -66,7 +66,7 @@
 - Produces: `SourceEvidence`、`KnowledgeClaimCandidate`、`VersionSlot`、`NegativeSearchSnapshot`。
 - `OfficialProbeResult.status` 只能是 `complete`、`partial`、`timed_out`、`unavailable`、`failed`。
 
-- [ ] **Step 1: 写契约失败测试**
+- [x] **Step 1: 写契约失败测试**
 
 覆盖：非 HTTP(S)、userinfo、fragment、回环、RFC1918、link-local、云元数据地址、过长 URL/标题/证据；官方 evidence 发布者与 seed registry 不匹配；negative snapshot 来自 partial probe；claim 缺 checked_at/validity；三轨非法组合。
 
@@ -84,21 +84,21 @@ def test_negative_snapshot_requires_complete_covered_probe():
         )
 ```
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
 
 Expected: source/release 契约缺失。
 
-- [ ] **Step 3: 实现 URL policy 与 Port 数据边界**
+- [x] **Step 3: 实现 URL policy 与 Port 数据边界**
 
 规范 URL 移除 tracking query，保留语义 query 白名单；DNS/重定向前后均由 adapter 执行地址安全检查。领域对象不保存正文、脚本、Prompt、异常原文或厂商密钥；短证据最大 320 字。
 
-- [ ] **Step 4: 实现结果完整性语义**
+- [x] **Step 4: 实现结果完整性语义**
 
 `complete` 要求 registry 中本次策略的 required source 全部成功或得到可验证无更新响应；`partial` 与空 `evidence` 可以共存但不能创建 negative snapshot。错误只暴露固定 diagnostic code。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
 
