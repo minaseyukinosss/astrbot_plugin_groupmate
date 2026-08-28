@@ -94,7 +94,7 @@ def test_snapshot_does_not_change_after_repository_update(repository):
 
 - [ ] **Step 3: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
 
 Expected: search/snapshot 模块不存在。
 
@@ -104,7 +104,7 @@ Expected: search/snapshot 模块不存在。
 
 - [ ] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
 
 Expected: PASS。
 
@@ -134,7 +134,7 @@ Commit: `git commit -m "feat: define bounded knowledge snapshots"`
 
 - [ ] **Step 3: 运行契约测试并确认 RED**
 
-Run: `pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
 
 Expected: adapter 缺失。
 
@@ -148,7 +148,7 @@ Bridge 启动时从 host context 解析当前启用工具，白名单仅接受 s
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
 
 Expected: PASS。
 
@@ -185,7 +185,7 @@ DIRECT/CONTINUATION 最多 5s，AMBIENT 在本阶段返回 `ambient_search_disab
 
 - [ ] **Step 4: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
 
 Expected: coordinator 缺失。
 
@@ -199,7 +199,7 @@ semaphore 只包 provider I/O；single-flight map 在 `finally` 清理；等待�
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
 
 Expected: PASS。
 
@@ -230,7 +230,7 @@ Commit: `git commit -m "feat: coordinate bounded knowledge enrichment"`
 
 - [ ] **Step 3: 运行并确认 RED**
 
-Run: `pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py`
+Run: `.venv/bin/python -m pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py`
 
 Expected: 当前 `_reply_lock` 是全局锁，场景核验接口缺失。
 
@@ -244,7 +244,7 @@ OBSERVE 和无需知识 ACT 不搜索；需补全 ACT 在锁外 await coordinato
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py tests/recovery/test_stale_cognition.py`
+Run: `.venv/bin/python -m pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py tests/recovery/test_stale_cognition.py`
 
 Expected: PASS。
 
@@ -276,7 +276,7 @@ SILENCE/JOIN_CHORUS 必须 knowledge none；strict 必须有 snapshot 和 requir
 
 - [ ] **Step 3: 运行并确认 RED**
 
-Run: `pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py`
 
 Expected: 新字段/enum 缺失。
 
@@ -286,7 +286,7 @@ local stable semantic 可 grounded；版本/日期/清单/数字/status 自动 s
 
 - [ ] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py tests/recovery/test_delivery_recovery.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py tests/recovery/test_delivery_recovery.py`
 
 Expected: PASS。
 
@@ -334,7 +334,7 @@ Commit: `git commit -m "feat: authorize grounded reply knowledge"`
 
 - [ ] **Step 4: 运行并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
 
 Expected: grounding 模块和 knowledge review 缺失。
 
@@ -348,7 +348,7 @@ ReplyExecutor 在 strict 时要求 JSON parts，不走现有完整 text parser�
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
 
 Expected: PASS。
 
@@ -383,19 +383,19 @@ SHADOW 可完整执行 search/admission/snapshot/render/review preview，但 out
 
 - [ ] **Step 4: 运行场景并修复实现**
 
-Run: `pytest -q tests/scenarios/test_game_grounded_reply.py tests/contracts/test_message_traces.py`
+Run: `.venv/bin/python -m pytest -q tests/scenarios/test_game_grounded_reply.py tests/contracts/test_message_traces.py`
 
 Expected: 初次因 rollout/trace 缺失失败；实现后 PASS。
 
 - [ ] **Step 5: 运行 Gate 3**
 
-Run: `pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_knowledge_search.py tests/recovery/test_knowledge_enrichment_recovery.py tests/scenarios/test_game_grounded_reply.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_knowledge_search.py tests/recovery/test_knowledge_enrichment_recovery.py tests/scenarios/test_game_grounded_reply.py`
 
 Expected: PASS；`unsupported_temporal_claims=0`、`rumor_as_official=0`、`false_negative_claims=0`、`stale_scene_sends=0`、`search_under_reply_lock=0`。
 
 - [ ] **Step 6: 全量回归和提交**
 
-Run: `pytest -q`
+Run: `.venv/bin/python -m pytest -q`
 
 Expected: PASS。
 

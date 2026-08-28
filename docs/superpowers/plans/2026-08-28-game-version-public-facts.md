@@ -86,7 +86,7 @@ def test_negative_snapshot_requires_complete_covered_probe():
 
 - [ ] **Step 2: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
 
 Expected: source/release 契约缺失。
 
@@ -100,7 +100,7 @@ Expected: source/release 契约缺失。
 
 - [ ] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/social_runtime/knowledge/test_sources.py`
 
 Expected: PASS。
 
@@ -128,7 +128,7 @@ Commit: `git commit -m "feat: define official knowledge evidence"`
 
 - [ ] **Step 2: 运行 repository 测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
 
 Expected: v4 表存在但相应 repository API 缺失。
 
@@ -142,7 +142,7 @@ Expected: v4 表存在但相应 repository API 缺失。
 
 - [ ] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
 
 Expected: PASS。
 
@@ -179,7 +179,7 @@ bundled 只支持 stable semantic；单官方来源可激活其明确支持的 p
 
 - [ ] **Step 4: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
 
 Expected: policy/service 缺失或仍只有词法 version reference。
 
@@ -193,7 +193,7 @@ resolver 先识别语言相对词，再由 service 绑定已验证 slot；绑定
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
 
 Expected: PASS。
 
@@ -219,7 +219,7 @@ Commit: `git commit -m "feat: model game release truth tracks"`
 
 - [ ] **Step 2: 运行 adapter 测试并确认 RED**
 
-Run: `pytest -q tests/contracts/test_official_source_probe.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_official_source_probe.py`
 
 Expected: adapter 不存在。
 
@@ -229,7 +229,7 @@ Expected: adapter 不存在。
 
 - [ ] **Step 4: 运行最低兼容契约**
 
-Run: `pytest -q tests/contracts/test_official_source_probe.py tests/shared/test_astrbot_package_loading.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_official_source_probe.py tests/shared/test_astrbot_package_loading.py`
 
 Expected: PASS，并且 import 在无 AstrBot 测试环境使用现有 shim/延迟导入方式。
 
@@ -263,7 +263,7 @@ Commit: `git commit -m "feat: probe official game sources"`
 
 - [ ] **Step 3: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py`
 
 Expected: job service 缺失。
 
@@ -277,7 +277,7 @@ knowledge enabled 时先 seed import，再启动 job service；search/probe adap
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py tests/contracts/test_official_source_probe.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py tests/contracts/test_official_source_probe.py`
 
 Expected: PASS。
 
@@ -307,19 +307,19 @@ Trace 能区分 `official_complete`、`official_partial`、`negative_snapshot_va
 
 - [ ] **Step 3: 运行并按失败完善编排**
 
-Run: `pytest -q tests/scenarios/test_game_release_shadow.py tests/contracts/test_message_traces.py`
+Run: `.venv/bin/python -m pytest -q tests/scenarios/test_game_release_shadow.py tests/contracts/test_message_traces.py`
 
 Expected: 首次因 SHADOW orchestration/trace 缺失而失败；实现后 PASS。
 
 - [ ] **Step 4: 运行 Gate 2**
 
-Run: `pytest -q tests/social_runtime/knowledge tests/contracts/test_official_source_probe.py tests/recovery/test_knowledge_job_recovery.py tests/scenarios/test_game_release_shadow.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_official_source_probe.py tests/recovery/test_knowledge_job_recovery.py tests/scenarios/test_game_release_shadow.py`
 
 Expected: PASS；失败/partial 不推进成功时间，false negative claims 为 0，三轨审计链完整。
 
 - [ ] **Step 5: 回归并提交**
 
-Run: `pytest -q tests/social_runtime tests/contracts tests/recovery tests/scenarios`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime tests/contracts tests/recovery tests/scenarios`
 
 Expected: PASS。
 

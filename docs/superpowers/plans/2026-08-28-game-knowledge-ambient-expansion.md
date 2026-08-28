@@ -90,7 +90,7 @@ timeout、partial、empty without valid negative、disputed、scene advanced、t
 
 - [ ] **Step 4: 运行并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py`
 
 Expected: 当前 coordinator 返回 `ambient_search_disabled`。
 
@@ -100,7 +100,7 @@ Expected: 当前 coordinator 返回 `ambient_search_disabled`。
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py tests/scenarios/test_attention_windows.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py tests/scenarios/test_attention_windows.py`
 
 Expected: PASS。
 
@@ -136,7 +136,7 @@ Commit: `git commit -m "feat: gate ambient game knowledge search"`
 
 - [ ] **Step 4: 运行并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_learning.py tests/recovery/test_knowledge_job_recovery.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_learning.py tests/recovery/test_knowledge_job_recovery.py`
 
 Expected: learning policy/job kinds 缺失。
 
@@ -150,7 +150,7 @@ Expected: learning policy/job kinds 缺失。
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_learning.py tests/social_runtime/knowledge/test_observation.py tests/recovery/test_knowledge_job_recovery.py tests/shared/test_group_scope_privacy.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_learning.py tests/social_runtime/knowledge/test_observation.py tests/recovery/test_knowledge_job_recovery.py tests/shared/test_group_scope_privacy.py`
 
 Expected: PASS。
 
@@ -182,7 +182,7 @@ Commit: `git commit -m "feat: learn long tail game semantics"`
 
 - [ ] **Step 3: 运行并确认 RED**
 
-Run: `pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py`
 
 Expected: control query/commands 缺失。
 
@@ -192,7 +192,7 @@ Expected: control query/commands 缺失。
 
 - [ ] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py tests/shared/test_group_scope_privacy.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py tests/shared/test_group_scope_privacy.py`
 
 Expected: PASS。
 
@@ -230,7 +230,7 @@ Commit: `git commit -m "feat: administer scoped game knowledge"`
 
 - [ ] **Step 3: 运行并确认 RED**
 
-Run: `pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py`
 
 Expected: routes/workspace 缺失。
 
@@ -244,7 +244,7 @@ Web API 只验证请求并调用 Task 3 control service，不拼 SQL、不返回
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/page/test_accessibility_contract.py tests/page/test_frontend_security.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/page/test_accessibility_contract.py tests/page/test_frontend_security.py`
 
 Expected: PASS。
 
@@ -279,7 +279,7 @@ Commit: `git commit -m "feat: add game knowledge workspace"`
 
 - [ ] **Step 4: 运行并优化**
 
-Run: `pytest -q tests/evaluation/test_knowledge_capacity.py tests/evaluation/test_load_budget.py tests/contracts/test_message_traces.py`
+Run: `.venv/bin/python -m pytest -q tests/evaluation/test_knowledge_capacity.py tests/evaluation/test_load_budget.py tests/contracts/test_message_traces.py`
 
 Expected: PASS，所有预算断言成立。
 
@@ -313,13 +313,13 @@ Commit: `git commit -m "perf: validate game knowledge capacity"`
 
 - [ ] **Step 3: 运行 Gate 4 自动部分**
 
-Run: `pytest -q tests/social_runtime/knowledge tests/contracts/test_knowledge_admin.py tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/scenarios/test_ambient_game_knowledge.py tests/evaluation/test_knowledge_capacity.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_knowledge_admin.py tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/scenarios/test_ambient_game_knowledge.py tests/evaluation/test_knowledge_capacity.py`
 
 Expected: PASS；非知识 ambient search=0、cross-group leaks=0、stale scene sends=0、unsupported claims=0。
 
 - [ ] **Step 4: 运行全量回归**
 
-Run: `pytest -q`
+Run: `.venv/bin/python -m pytest -q`
 
 Expected: PASS。
 

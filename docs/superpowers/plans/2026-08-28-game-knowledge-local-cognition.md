@@ -84,7 +84,7 @@
 - Produces: `KnowledgeNeed.create(**values) -> KnowledgeNeed`，assessor 在 Task 5 实现。
 - Produces: `game_knowledge_metrics(records) -> Mapping[str, float | int]`。
 
-- [ ] **Step 1: 写失败的不可变契约测试**
+- [x] **Step 1: 写失败的不可变契约测试**
 
 覆盖：空 ID、未知枚举、confidence 越界、全局观察携带 group、群观察缺 group、version reference 缺游戏、超过 8 个实体/12 个术语/16 个 supporting ID、不可 JSON 序列化值、输入列表在构造后被外部修改。
 
@@ -107,23 +107,23 @@ def test_topic_frame_is_bounded_and_immutable():
         frame.confidence = 0.1
 ```
 
-- [ ] **Step 2: 运行契约测试并确认 RED**
+- [x] **Step 2: 运行契约测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_contracts.py tests/evaluation/test_game_knowledge.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/evaluation/test_game_knowledge.py`
 
-Expected: collection 因 `groupmate.social_runtime.knowledge` 和 `eval.knowledge` 不存在而失败。
+Expected: 测试函数因 `groupmate.social_runtime.knowledge` 和 `eval.knowledge` 不存在而失败；pytest 仍能完成收集。
 
-- [ ] **Step 3: 实现最小领域类型和固定枚举**
+- [x] **Step 3: 实现最小领域类型和固定枚举**
 
 定义 `OriginClass`、`KnowledgeScope`、`ClaimKind`、`EvidenceLevel`、`ClaimStatus`、`KnowledgeNeedOutcome`、`RiskClass`。所有 `.create()` 归一化 NFKC 文本、去重并限制长度；`safe_summary` 最大 240 字，别名最大 48 字，frame `to_prompt_facts()` 最大 1800 字且不含来源原文、内部得分和作者 ID。
 
-- [ ] **Step 4: 实现评测聚合器**
+- [x] **Step 4: 实现评测聚合器**
 
 聚合器只读逐条结果并输出 `understanding_accuracy`、`high_confidence_wrong_merge_rate`、`cross_group_leaks`、`bot_promotions`、`command_promotions`、`temporal_need_recall`；分母为 0 时返回 0.0，不静默丢弃 malformed record。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_contracts.py tests/evaluation/test_game_knowledge.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_contracts.py tests/evaluation/test_game_knowledge.py`
 
 Expected: PASS。
 
@@ -156,7 +156,7 @@ Commit: `git commit -m "feat: define game knowledge contracts"`
 
 - [ ] **Step 3: 运行 schema/repository 测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
 
 Expected: schema 仍是 v3、知识表和 repository 缺失导致失败。
 
@@ -183,7 +183,7 @@ def append_observation(self, value: KnowledgeObservation) -> bool:
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
 
 Expected: PASS。
 
@@ -217,7 +217,7 @@ Commit: `git commit -m "feat: persist scoped game knowledge"`
 
 - [ ] **Step 3: 运行 seed 测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_seeds.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_seeds.py`
 
 Expected: loader、资产和 importer 缺失。
 
@@ -231,7 +231,7 @@ hash 取去除 `content_hash` 后的 canonical JSON SHA-256；loader 启动时�
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_seeds.py tests/social_runtime/knowledge/test_repository.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_seeds.py tests/social_runtime/knowledge/test_repository.py`
 
 Expected: PASS。
 
@@ -268,7 +268,7 @@ Commit: `git commit -m "feat: bundle five game semantic seeds"`
 
 - [ ] **Step 4: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py`
 
 Expected: observation service/classifier 缺失，event 来源事实断言失败。
 
@@ -282,7 +282,7 @@ Expected: observation service/classifier 缺失，event 来源事实断言失败
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py tests/scenarios/test_profile_background_pipeline.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py tests/scenarios/test_profile_background_pipeline.py`
 
 Expected: PASS，现有 profile 后台链路无回归。
 
@@ -317,7 +317,7 @@ Commit: `git commit -m "feat: learn group knowledge conventions"`
 
 - [ ] **Step 4: 运行测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
 
 Expected: resolver/retriever 缺失。
 
@@ -331,7 +331,7 @@ Expected: resolver/retriever 缺失。
 
 - [ ] **Step 7: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
 
 Expected: PASS。
 
@@ -366,7 +366,7 @@ Spy worker 断言 `world_summary["topic_understanding"]` 在 `cognition.evaluate
 
 - [ ] **Step 3: 运行集成测试并确认 RED**
 
-Run: `pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py`
 
 Expected: Manager/SceneContext 尚无 topic frame 接口。
 
@@ -380,7 +380,7 @@ Expected: Manager/SceneContext 尚无 topic frame 接口。
 
 - [ ] **Step 6: 运行测试并提交**
 
-Run: `pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py tests/recovery/test_phase_a_replay.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py tests/recovery/test_phase_a_replay.py`
 
 Expected: PASS，旧 capture/replay 兼容。
 
@@ -415,7 +415,7 @@ Commit: `git commit -m "feat: ground social cognition in local knowledge"`
 
 - [ ] **Step 3: 运行发布门并确认初次失败**
 
-Run: `pytest -q tests/contracts/test_message_traces.py tests/evaluation/test_game_knowledge.py tests/scenarios/test_game_knowledge_shadow.py`
+Run: `.venv/bin/python -m pytest -q tests/contracts/test_message_traces.py tests/evaluation/test_game_knowledge.py tests/scenarios/test_game_knowledge_shadow.py`
 
 Expected: 新配置/trace/corpus 断言失败，随后按失败类别补 seed 或消歧规则，不降低断言阈值。
 
@@ -425,13 +425,13 @@ MessageTraceRepository 只投影 frame 摘要和 need；未知旧 evaluation 默
 
 - [ ] **Step 5: 运行本地认知 Gate 1**
 
-Run: `pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_events.py tests/contracts/test_message_traces.py tests/scenarios/test_game_knowledge_shadow.py tests/evaluation/test_game_knowledge.py`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_events.py tests/contracts/test_message_traces.py tests/scenarios/test_game_knowledge_shadow.py tests/evaluation/test_game_knowledge.py`
 
 Expected: PASS；`understanding_accuracy >= 0.95`、`high_confidence_wrong_merge_rate < 0.01`、`cross_group_leaks == 0`、`bot_promotions == 0`、`command_promotions == 0`。
 
 - [ ] **Step 6: 运行回归和提交**
 
-Run: `pytest -q tests/social_runtime tests/contracts tests/shared tests/scenarios`
+Run: `.venv/bin/python -m pytest -q tests/social_runtime tests/contracts tests/shared tests/scenarios`
 
 Expected: PASS。
 

@@ -130,9 +130,9 @@ class KnowledgeSnapshot:
 完成四份子计划后运行：
 
 ```bash
-pytest -q
-pytest -q tests/evaluation/test_game_knowledge.py tests/scenarios/test_game_knowledge_shadow.py
-pytest -q tests/scenarios/test_game_grounded_reply.py tests/scenarios/test_ambient_game_knowledge.py
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q tests/evaluation/test_game_knowledge.py tests/scenarios/test_game_knowledge_shadow.py
+.venv/bin/python -m pytest -q tests/scenarios/test_game_grounded_reply.py tests/scenarios/test_ambient_game_knowledge.py
 ```
 
 Expected: 全量 pytest 和两组固定场景通过；断言覆盖 `unsupported_temporal_claims=0`、`cross_group_leaks=0`、`stale_scene_sends=0`，五款 seed 理解准确率不低于 0.95。
