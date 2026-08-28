@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from ..persistence.schema import connect_database, initialize_database
 from .contracts import KnowledgeObservation, KnowledgeScope, OriginClass
@@ -66,6 +67,23 @@ class TopicAffinity:
     updated_at: int
 
 
+@dataclass(frozen=True)
+class SeedVersionRecord:
+    seed_id: str
+    seed_version: int
+    content_hash: str
+    status: str
+    imported_at: int
+
+
+class SeedVersionConflict(ValueError):
+    """Raised when an immutable seed version is reused with new content."""
+
+
+class SeedVersionOrderConflict(ValueError):
+    """Raised when an absent older seed follows a newer active version."""
+
+
 class KnowledgeRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -104,6 +122,315 @@ class KnowledgeRepository:
                 (scope,),
             ).fetchone()
         return 0 if row is None else int(row[0])
+
+    def seed_versions(self, seed_id: str) -> tuple[SeedVersionRecord, ...]:
+        identity = _required_text(seed_id, "seed_id")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT seed_id,seed_version,content_hash,status,imported_at "
+                "FROM knowledge_seeds WHERE seed_id=? ORDER BY seed_version",
+                (identity,),
+            ).fetchall()
+        return tuple(
+            SeedVersionRecord(
+                seed_id=str(row["seed_id"]),
+                seed_version=int(row["seed_version"]),
+                content_hash=str(row["content_hash"]),
+                status=str(row["status"]),
+                imported_at=int(row["imported_at"]),
+            )
+            for row in rows
+        )
+
+    def import_seed_manifest(
+        self, manifest: Mapping[str, Any], *, imported_at: int
+    ) -> str:
+        """Atomically import one validated semantic seed.
+
+        Validation belongs to the seed loader. This projection method enforces
+        the immutable-version rule again at the persistence boundary.
+        """
+
+        seed_id = _required_text(manifest.get("seed_id"), "seed_id")
+        seed_version = int(manifest.get("seed_version", 0))
+        if seed_version <= 0:
+            raise ValueError("seed_version must be positive")
+        content_hash = _required_text(
+            manifest.get("content_hash"), "content_hash", maximum=64
+        )
+        timestamp = int(imported_at)
+        if timestamp < 0:
+            raise ValueError("imported_at must not be negative")
+        game = manifest["game"]
+        game_id = _required_text(game["entity_id"], "game.entity_id")
+        claim_prefix = "claim:seed:{}:".format(seed_id)
+
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT content_hash FROM knowledge_seeds "
+                "WHERE seed_id=? AND seed_version=?",
+                (seed_id, seed_version),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["content_hash"]) == content_hash:
+                    return "unchanged"
+                raise SeedVersionConflict(
+                    "seed {!r} version {} already has a different hash".format(
+                        seed_id, seed_version
+                    )
+                )
+            newest = db.execute(
+                "SELECT MAX(seed_version) AS newest_version "
+                "FROM knowledge_seeds WHERE seed_id=? AND status='active'",
+                (seed_id,),
+            ).fetchone()
+            if (
+                newest is not None
+                and newest["newest_version"] is not None
+                and int(newest["newest_version"]) > seed_version
+            ):
+                raise SeedVersionOrderConflict(
+                    "seed {!r} already has newer active version {}".format(
+                        seed_id, int(newest["newest_version"])
+                    )
+                )
+
+            db.execute(
+                "UPDATE knowledge_seeds SET status='superseded' "
+                "WHERE seed_id=? AND status='active' AND seed_version<?",
+                (seed_id, seed_version),
+            )
+            db.execute(
+                "UPDATE knowledge_claims SET status='superseded',updated_at=? "
+                "WHERE evidence_level='bundled' AND status='active' "
+                "AND claim_id LIKE ?",
+                (timestamp, claim_prefix + "%"),
+            )
+            db.execute(
+                "INSERT INTO knowledge_seeds(seed_id,seed_version,content_hash,"
+                "status,manifest_json,imported_at) VALUES(?,?,?,?,?,?)",
+                (
+                    seed_id,
+                    seed_version,
+                    content_hash,
+                    "active",
+                    json.dumps(
+                        manifest,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                ),
+            )
+            self._upsert_seed_entity(
+                db,
+                entity_id=game_id,
+                entity_type="game",
+                canonical_name=game["canonical_name"],
+                game_id=game_id,
+                now=timestamp,
+            )
+            aliases = list(game["aliases"]) + [
+                {
+                    "text": game["english_name"],
+                    "kind": "translation",
+                    "ambiguity_level": "contextual",
+                }
+            ]
+            for alias in aliases:
+                self._upsert_seed_alias(
+                    db,
+                    entity_id=game_id,
+                    text=alias["text"],
+                    alias_kind=alias["kind"],
+                    ambiguity_level=alias["ambiguity_level"],
+                )
+
+            for entity in manifest["entities"]:
+                entity_id = _required_text(entity["entity_id"], "entity_id")
+                self._upsert_seed_entity(
+                    db,
+                    entity_id=entity_id,
+                    entity_type=entity["entity_type"],
+                    canonical_name=entity["canonical_name"],
+                    game_id=game_id,
+                    now=timestamp,
+                )
+                self._upsert_seed_alias(
+                    db,
+                    entity_id=entity_id,
+                    text=entity["canonical_name"],
+                    alias_kind="official",
+                    ambiguity_level="none",
+                )
+
+            for term in manifest["terms"]:
+                term_id = _required_text(term["term_id"], "term_id")
+                self._upsert_seed_entity(
+                    db,
+                    entity_id=term_id,
+                    entity_type="term",
+                    canonical_name=term["text"],
+                    game_id=game_id,
+                    now=timestamp,
+                )
+                self._upsert_seed_alias(
+                    db,
+                    entity_id=term_id,
+                    text=term["text"],
+                    alias_kind=term["term_kind"],
+                    ambiguity_level=term["ambiguity_level"],
+                )
+                self._insert_seed_claim(
+                    db,
+                    claim_id="{}v{}:term:{}".format(
+                        claim_prefix, seed_version, term_id
+                    ),
+                    subject_entity_id=term_id,
+                    predicate="meaning",
+                    safe_summary=term["meaning_summary"],
+                    now=timestamp,
+                )
+
+            for index, pattern in enumerate(manifest["discussion_patterns"]):
+                self._insert_seed_claim(
+                    db,
+                    claim_id="{}v{}:pattern:{}".format(
+                        claim_prefix, seed_version, index
+                    ),
+                    subject_entity_id=game_id,
+                    predicate="discussion_pattern",
+                    safe_summary=pattern,
+                    now=timestamp,
+                )
+
+            for relation in manifest["stable_relations"]:
+                self._insert_seed_claim(
+                    db,
+                    claim_id="{}v{}:relation:{}".format(
+                        claim_prefix, seed_version, relation["relation_id"]
+                    ),
+                    subject_entity_id=relation["subject_entity_id"],
+                    predicate=relation["predicate"],
+                    safe_summary=relation["safe_summary"],
+                    now=timestamp,
+                )
+
+            for source in manifest["official_sources"]:
+                source_hash = hashlib.sha256(
+                    json.dumps(
+                        source,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                db.execute(
+                    "INSERT INTO knowledge_sources(source_id,canonical_url,"
+                    "domain,publisher,source_class,published_at,fetched_at,"
+                    "content_hash,evidence_excerpt) VALUES(?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(source_id) DO NOTHING",
+                    (
+                        source["source_id"],
+                        source["url"],
+                        source["domain"],
+                        source["publisher"],
+                        "official",
+                        None,
+                        timestamp,
+                        source_hash,
+                        "Seed-declared official entry point; not temporal evidence.",
+                    ),
+                )
+        return "imported"
+
+    @staticmethod
+    def _upsert_seed_entity(
+        db,
+        *,
+        entity_id: str,
+        entity_type: str,
+        canonical_name: str,
+        game_id: str,
+        now: int,
+    ) -> None:
+        db.execute(
+            "INSERT INTO knowledge_entities(entity_id,entity_type,canonical_name,"
+            "canonical_game_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(entity_id) DO UPDATE SET "
+            "entity_type=excluded.entity_type,canonical_name=excluded.canonical_name,"
+            "canonical_game_id=excluded.canonical_game_id,status='active',"
+            "updated_at=excluded.updated_at",
+            (
+                _required_text(entity_id, "entity_id"),
+                _required_text(entity_type, "entity_type", maximum=48),
+                _required_text(canonical_name, "canonical_name", maximum=80),
+                _required_text(game_id, "canonical_game_id"),
+                "active",
+                now,
+                now,
+            ),
+        )
+
+    @staticmethod
+    def _upsert_seed_alias(
+        db,
+        *,
+        entity_id: str,
+        text: str,
+        alias_kind: str,
+        ambiguity_level: str,
+    ) -> None:
+        normalized = _expression(text)
+        alias_id = "alias:seed:" + hashlib.sha256(
+            "{}\0{}\0{}".format(entity_id, normalized, alias_kind).encode(
+                "utf-8"
+            )
+        ).hexdigest()[:24]
+        db.execute(
+            "INSERT INTO knowledge_aliases(alias_id,entity_id,normalized_alias,"
+            "alias_kind,ambiguity_level,source_id,status) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(entity_id,normalized_alias,alias_kind) DO UPDATE SET "
+            "ambiguity_level=excluded.ambiguity_level,status='active'",
+            (
+                alias_id,
+                entity_id,
+                normalized,
+                alias_kind,
+                ambiguity_level,
+                None,
+                "active",
+            ),
+        )
+
+    @staticmethod
+    def _insert_seed_claim(
+        db,
+        *,
+        claim_id: str,
+        subject_entity_id: str,
+        predicate: str,
+        safe_summary: str,
+        now: int,
+    ) -> None:
+        db.execute(
+            "INSERT INTO knowledge_claims(claim_id,subject_entity_id,predicate,"
+            "safe_summary,claim_kind,evidence_level,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                claim_id,
+                subject_entity_id,
+                predicate,
+                _required_text(safe_summary, "safe_summary", maximum=500),
+                "stable_semantic",
+                "bundled",
+                "active",
+                now,
+                now,
+            ),
+        )
 
     def upsert_entity(
         self,
@@ -418,5 +745,8 @@ __all__ = (
     "AFFINITY_HALF_LIFE_SECONDS",
     "KnowledgeAliasRecord",
     "KnowledgeRepository",
+    "SeedVersionConflict",
+    "SeedVersionOrderConflict",
+    "SeedVersionRecord",
     "TopicAffinity",
 )

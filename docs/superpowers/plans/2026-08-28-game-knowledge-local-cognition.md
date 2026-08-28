@@ -207,29 +207,29 @@ Commit: `git commit -m "feat: persist scoped game knowledge"`
 - Produces: `SeedImporter(repository).import_all(seeds) -> SeedImportReport`。
 - Each JSON includes: `seed_id`、`seed_version`、`game`、`aliases`、`entity_types`、`terms`、`stable_relations`、`discussion_patterns`、`official_sources`、`content_hash`。
 
-- [ ] **Step 1: 写 seed schema 与禁区失败测试**
+- [x] **Step 1: 写 seed schema 与禁区失败测试**
 
 五个资产必须各有唯一 canonical game ID、中文官方名、英文名/常见简称、至少 5 类稳定实体、20 个稳定术语/讨论模式和官方来源注册表。测试拒绝 `current_banner`、`current_version`、`latest_numbers`、`tier_list`、`leak_content` 等时效字段，并拒绝 source 非 HTTPS 或非登记官方域名。
 
-- [ ] **Step 2: 写幂等升级失败测试**
+- [x] **Step 2: 写幂等升级失败测试**
 
 同版本同 hash 二次导入为 no-op；同 `seed_id × version` 不同 hash 报 `seed_hash_conflict`；v2 只 supersede 同 seed 的 v1 stable semantic，不覆盖 `evidence_level=official` 的后续 claim。
 
-- [ ] **Step 3: 运行 seed 测试并确认 RED**
+- [x] **Step 3: 运行 seed 测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_seeds.py`
 
 Expected: loader、资产和 importer 缺失。
 
-- [ ] **Step 4: 分别编写并校验五个 seed 资产**
+- [x] **Step 4: 分别编写并校验五个 seed 资产**
 
 每个游戏以官方名称和稳定玩法结构为骨架，社区术语显式标 `community`；歧义 alias 必须给 `requires_any_context` 或 `ambiguity_level=high`。原神/星铁/鸣潮/绝区零覆盖抽卡、角色、配队、资源、版本讨论；三角洲覆盖行动、烽火地带、全面战场、干员、地图、装备和赛季讨论。不得写当前卡池、当前赛季和当期角色。
 
-- [ ] **Step 5: 实现严格 loader、hash 和幂等 importer**
+- [x] **Step 5: 实现严格 loader、hash 和幂等 importer**
 
 hash 取去除 `content_hash` 后的 canonical JSON SHA-256；loader 启动时逐个验证，任何内置资产损坏都使 knowledge readiness 降级并禁止使用该 seed，不部分导入该包。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_seeds.py tests/social_runtime/knowledge/test_repository.py`
 

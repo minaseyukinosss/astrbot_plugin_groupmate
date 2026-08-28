@@ -1,0 +1,46 @@
+{
+  "seed_id": "game-semantic:zenless-zone-zero",
+  "seed_version": 1,
+  "game": {
+    "entity_id": "game:zenless-zone-zero",
+    "canonical_name": "绝区零",
+    "english_name": "Zenless Zone Zero",
+    "aliases": [
+      {"text": "绝区零", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "Zenless Zone Zero", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "ZZZ", "kind": "abbreviation", "ambiguity_level": "high", "requires_any_context": ["新艾利都", "绳匠", "音擎"]}
+    ]
+  },
+  "entity_types": ["game", "character", "faction", "world", "resource", "mechanic", "equipment"],
+  "entities": [
+    {"entity_id": "entity:zzz:proxy", "entity_type": "character", "canonical_name": "绳匠"},
+    {"entity_id": "entity:zzz:new-eridu", "entity_type": "world", "canonical_name": "新艾利都"},
+    {"entity_id": "entity:zzz:agent", "entity_type": "character", "canonical_name": "代理人"},
+    {"entity_id": "entity:zzz:bangboo", "entity_type": "character", "canonical_name": "邦布"},
+    {"entity_id": "entity:zzz:hollow", "entity_type": "mechanic", "canonical_name": "空洞"}
+  ],
+  "terms": [
+    {"term_id": "term:zzz:signal-search", "text": "调频", "meaning_summary": "获取代理人、音擎等内容的系统", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["代理人", "音擎", "保底"]},
+    {"term_id": "term:zzz:lose-5050", "text": "歪", "meaning_summary": "调频结果没有获得当期目标对象", "term_kind": "community", "ambiguity_level": "high", "requires_any_context": ["调频", "保底", "卡池"]},
+    {"term_id": "term:zzz:pity", "text": "保底", "meaning_summary": "调频系统中累计次数对应的保障机制", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["调频", "抽卡"]},
+    {"term_id": "term:zzz:mindscape", "text": "影画", "meaning_summary": "代理人重复获取后解锁的成长系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:zzz:w-engine", "text": "音擎", "meaning_summary": "代理人使用的装备系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:zzz:drive-disc", "text": "驱动盘", "meaning_summary": "代理人装备与属性养成系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:zzz:team", "text": "配队", "meaning_summary": "围绕代理人机制组合队伍", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["代理人", "队伍"]},
+    {"term_id": "term:zzz:daze", "text": "失衡", "meaning_summary": "通过累积失衡值制造输出窗口的战斗机制", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["敌人", "击破", "战斗"]},
+    {"term_id": "term:zzz:agent", "text": "代理人", "meaning_summary": "可参与战斗的角色称呼", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["空洞", "战斗"]},
+    {"term_id": "term:zzz:proxy", "text": "绳匠", "meaning_summary": "玩家主角身份的官方称呼", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:zzz:hollow", "text": "空洞", "meaning_summary": "游戏世界观与探索战斗相关的空间概念", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["新艾利都", "以骸", "绳匠"]},
+    {"term_id": "term:zzz:rerun", "text": "复刻", "meaning_summary": "已出现内容在后续版本再次开放", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["代理人", "调频", "活动"]}
+  ],
+  "stable_relations": [
+    {"relation_id": "zzz-world", "subject_entity_id": "game:zenless-zone-zero", "predicate": "has_world", "object_entity_id": "entity:zzz:new-eridu", "safe_summary": "新艾利都是绝区零中的主要城市舞台"},
+    {"relation_id": "zzz-proxy", "subject_entity_id": "game:zenless-zone-zero", "predicate": "has_role", "object_entity_id": "entity:zzz:proxy", "safe_summary": "绳匠是绝区零中的玩家身份称谓"},
+    {"relation_id": "zzz-mechanic", "subject_entity_id": "game:zenless-zone-zero", "predicate": "has_setting", "object_entity_id": "entity:zzz:hollow", "safe_summary": "空洞是绝区零世界观与玩法中的核心设定"}
+  ],
+  "discussion_patterns": ["调频结果", "代理人养成", "驱动盘评价", "队伍组合", "失衡机制", "空洞探索", "剧情讨论", "版本更新"],
+  "official_sources": [
+    {"source_id": "source:zzz:official-news", "publisher": "绝区零官方", "domain": "zzz.mihoyo.com", "url": "https://zzz.mihoyo.com/main", "required": true}
+  ],
+  "content_hash": "a1c88e40653040d4e07a74dd40ca8e77c565d7304a678f015a898e848208e020"
+}

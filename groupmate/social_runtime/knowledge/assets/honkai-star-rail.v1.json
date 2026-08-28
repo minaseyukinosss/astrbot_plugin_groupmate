@@ -1,0 +1,46 @@
+{
+  "seed_id": "game-semantic:honkai-star-rail",
+  "seed_version": 1,
+  "game": {
+    "entity_id": "game:honkai-star-rail",
+    "canonical_name": "崩坏：星穹铁道",
+    "english_name": "Honkai: Star Rail",
+    "aliases": [
+      {"text": "星铁", "kind": "abbreviation", "ambiguity_level": "contextual", "requires_any_context": ["开拓者", "跃迁", "光锥"]},
+      {"text": "崩坏星穹铁道", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "HSR", "kind": "abbreviation", "ambiguity_level": "high", "requires_any_context": ["星穹列车", "星琼", "跃迁"]}
+    ]
+  },
+  "entity_types": ["game", "character", "faction", "resource", "mechanic", "mode", "equipment"],
+  "entities": [
+    {"entity_id": "entity:starrail:trailblazer", "entity_type": "character", "canonical_name": "开拓者"},
+    {"entity_id": "entity:starrail:express", "entity_type": "faction", "canonical_name": "星穹列车"},
+    {"entity_id": "entity:starrail:jade", "entity_type": "resource", "canonical_name": "星琼"},
+    {"entity_id": "entity:starrail:path", "entity_type": "mechanic", "canonical_name": "命途"},
+    {"entity_id": "entity:starrail:light-cone", "entity_type": "equipment", "canonical_name": "光锥"}
+  ],
+  "terms": [
+    {"term_id": "term:starrail:warp", "text": "跃迁", "meaning_summary": "获取角色或光锥的系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:lose-5050", "text": "歪", "meaning_summary": "跃迁结果没有获得当期目标对象", "term_kind": "community", "ambiguity_level": "high", "requires_any_context": ["跃迁", "保底", "卡池"]},
+    {"term_id": "term:starrail:pity", "text": "保底", "meaning_summary": "跃迁系统中累计次数对应的保障机制", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["跃迁", "抽卡"]},
+    {"term_id": "term:starrail:doe", "text": "星魂", "meaning_summary": "角色重复获取后解锁的成长系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:light-cone", "text": "光锥", "meaning_summary": "与命途条件相关的角色装备系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:relic", "text": "遗器", "meaning_summary": "角色装备与属性养成系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:team", "text": "配队", "meaning_summary": "围绕角色机制组合队伍", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["角色", "队伍"]},
+    {"term_id": "term:starrail:break", "text": "弱点击破", "meaning_summary": "针对敌方弱点削减韧性并触发击破效果", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:simulated", "text": "模拟宇宙", "meaning_summary": "带有随机选择与持续构筑的玩法体系", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:memory", "text": "忘却之庭", "meaning_summary": "以队伍战斗挑战为核心的玩法模式", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:power", "text": "开拓力", "meaning_summary": "领取部分养成奖励所消耗的体力资源", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:starrail:rerun", "text": "复刻", "meaning_summary": "已出现内容在后续版本再次开放", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["角色", "跃迁", "活动"]}
+  ],
+  "stable_relations": [
+    {"relation_id": "starrail-protagonist", "subject_entity_id": "game:honkai-star-rail", "predicate": "has_protagonist", "object_entity_id": "entity:starrail:trailblazer", "safe_summary": "开拓者是崩坏：星穹铁道中的玩家主角称谓"},
+    {"relation_id": "starrail-faction", "subject_entity_id": "game:honkai-star-rail", "predicate": "has_faction", "object_entity_id": "entity:starrail:express", "safe_summary": "星穹列车是崩坏：星穹铁道中的核心阵营之一"},
+    {"relation_id": "starrail-equipment", "subject_entity_id": "game:honkai-star-rail", "predicate": "has_equipment", "object_entity_id": "entity:starrail:light-cone", "safe_summary": "光锥是崩坏：星穹铁道中的装备类型"}
+  ],
+  "discussion_patterns": ["跃迁结果", "角色养成", "遗器评价", "队伍组合", "弱点击破", "模拟宇宙", "剧情讨论", "版本更新"],
+  "official_sources": [
+    {"source_id": "source:starrail:official-news", "publisher": "崩坏：星穹铁道官方", "domain": "sr.mihoyo.com", "url": "https://sr.mihoyo.com/", "required": true}
+  ],
+  "content_hash": "cea8ee4c3ac93d78e275bdbee8a3d88fa0fe37873649d26dae69f2198b6e273c"
+}

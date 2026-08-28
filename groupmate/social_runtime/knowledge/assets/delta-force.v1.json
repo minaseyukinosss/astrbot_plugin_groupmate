@@ -1,0 +1,46 @@
+{
+  "seed_id": "game-semantic:delta-force",
+  "seed_version": 1,
+  "game": {
+    "entity_id": "game:delta-force",
+    "canonical_name": "三角洲行动",
+    "english_name": "Delta Force",
+    "aliases": [
+      {"text": "三角洲", "kind": "abbreviation", "ambiguity_level": "contextual", "requires_any_context": ["干员", "烽火地带", "全面战场"]},
+      {"text": "Delta Force", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "DF", "kind": "abbreviation", "ambiguity_level": "high", "requires_any_context": ["撤离", "改枪", "干员"]}
+    ]
+  },
+  "entity_types": ["game", "operator", "mode", "map", "equipment", "resource", "mechanic"],
+  "entities": [
+    {"entity_id": "entity:delta:operator", "entity_type": "operator", "canonical_name": "干员"},
+    {"entity_id": "entity:delta:operations", "entity_type": "mode", "canonical_name": "烽火地带"},
+    {"entity_id": "entity:delta:warfare", "entity_type": "mode", "canonical_name": "全面战场"},
+    {"entity_id": "entity:delta:loadout", "entity_type": "equipment", "canonical_name": "战备"},
+    {"entity_id": "entity:delta:extraction", "entity_type": "mechanic", "canonical_name": "撤离"}
+  ],
+  "terms": [
+    {"term_id": "term:delta:loot", "text": "摸金", "meaning_summary": "在搜打撤模式中搜集高价值物资", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["撤离", "物资", "烽火地带"]},
+    {"term_id": "term:delta:extract", "text": "撤离", "meaning_summary": "携带物资到达撤离点并离开对局", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["对局", "撤离点"]},
+    {"term_id": "term:delta:knife-run", "text": "跑刀", "meaning_summary": "以低成本战备进入对局搜集物资", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["战备", "撤离", "摸金"]},
+    {"term_id": "term:delta:extraction-shooter", "text": "搜打撤", "meaning_summary": "搜索物资、交战并尝试撤离的玩法结构", "term_kind": "community", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:delta:operator", "text": "干员", "meaning_summary": "具有不同战术能力的可操作角色", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["技能", "战术"]},
+    {"term_id": "term:delta:season", "text": "赛季", "meaning_summary": "游戏内容和进度按周期组织的运营概念", "term_kind": "official", "ambiguity_level": "contextual", "requires_any_context": ["段位", "更新", "任务"]},
+    {"term_id": "term:delta:gunsmith", "text": "改枪", "meaning_summary": "调整枪械配件与性能取向", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["配件", "后坐力", "枪械"]},
+    {"term_id": "term:delta:loadout-value", "text": "战备值", "meaning_summary": "用于概括入局装备价值或门槛的数值概念", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:delta:operations", "text": "烽火地带", "meaning_summary": "强调物资搜索、交战与撤离的玩法模式", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:delta:warfare", "text": "全面战场", "meaning_summary": "强调大规模战场目标对抗的玩法模式", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:delta:safe", "text": "保险箱", "meaning_summary": "用于保留部分携带物的受限容器概念", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["撤离", "物资"]},
+    {"term_id": "term:delta:valuable", "text": "大红", "meaning_summary": "玩家对高价值红色品质物资的常见称呼", "term_kind": "community", "ambiguity_level": "high", "requires_any_context": ["出货", "物资", "摸金"]}
+  ],
+  "stable_relations": [
+    {"relation_id": "delta-operations-mode", "subject_entity_id": "game:delta-force", "predicate": "has_mode", "object_entity_id": "entity:delta:operations", "safe_summary": "烽火地带是三角洲行动中的玩法模式"},
+    {"relation_id": "delta-warfare-mode", "subject_entity_id": "game:delta-force", "predicate": "has_mode", "object_entity_id": "entity:delta:warfare", "safe_summary": "全面战场是三角洲行动中的玩法模式"},
+    {"relation_id": "delta-extraction", "subject_entity_id": "entity:delta:operations", "predicate": "uses_mechanic", "object_entity_id": "entity:delta:extraction", "safe_summary": "撤离是烽火地带讨论中的核心机制之一"}
+  ],
+  "discussion_patterns": ["摸金出货", "撤离失败", "战备搭配", "枪械改装", "干员配合", "地图路线", "全面战场", "赛季更新"],
+  "official_sources": [
+    {"source_id": "source:delta:official-news", "publisher": "三角洲行动官方", "domain": "df.qq.com", "url": "https://df.qq.com/", "required": true}
+  ],
+  "content_hash": "ee4e9fe181e688148f99249ff4c640310809261716135409b7eb0d66bba9c5d3"
+}

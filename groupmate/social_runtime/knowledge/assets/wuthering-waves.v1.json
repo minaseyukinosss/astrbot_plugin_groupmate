@@ -1,0 +1,46 @@
+{
+  "seed_id": "game-semantic:wuthering-waves",
+  "seed_version": 1,
+  "game": {
+    "entity_id": "game:wuthering-waves",
+    "canonical_name": "鸣潮",
+    "english_name": "Wuthering Waves",
+    "aliases": [
+      {"text": "鸣潮", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "Wuthering Waves", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "WW", "kind": "abbreviation", "ambiguity_level": "high", "requires_any_context": ["声骸", "共鸣者", "漂泊者"]}
+    ]
+  },
+  "entity_types": ["game", "character", "world", "resource", "mechanic", "equipment"],
+  "entities": [
+    {"entity_id": "entity:waves:rover", "entity_type": "character", "canonical_name": "漂泊者"},
+    {"entity_id": "entity:waves:solaris", "entity_type": "world", "canonical_name": "索拉里斯"},
+    {"entity_id": "entity:waves:echo", "entity_type": "equipment", "canonical_name": "声骸"},
+    {"entity_id": "entity:waves:resonator", "entity_type": "character", "canonical_name": "共鸣者"},
+    {"entity_id": "entity:waves:resonance", "entity_type": "mechanic", "canonical_name": "共鸣系统"}
+  ],
+  "terms": [
+    {"term_id": "term:waves:gacha", "text": "抽卡", "meaning_summary": "通过唤取系统获取共鸣者或武器", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["唤取", "共鸣者", "保底"]},
+    {"term_id": "term:waves:lose-5050", "text": "歪", "meaning_summary": "唤取结果没有获得当期目标对象", "term_kind": "community", "ambiguity_level": "high", "requires_any_context": ["抽卡", "保底", "唤取"]},
+    {"term_id": "term:waves:pity", "text": "保底", "meaning_summary": "唤取系统中累计次数对应的保障机制", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["抽卡", "唤取"]},
+    {"term_id": "term:waves:chain", "text": "共鸣链", "meaning_summary": "重复获得共鸣者后解锁的成长系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:echo", "text": "声骸", "meaning_summary": "提供能力与属性组合的养成装备系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:rotation", "text": "合轴", "meaning_summary": "安排队伍动作以压缩或协调战斗循环", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["配队", "轮切", "技能"]},
+    {"term_id": "term:waves:swap", "text": "轮切", "meaning_summary": "队伍成员按战斗循环依次切换上场", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["配队", "合轴"]},
+    {"term_id": "term:waves:liberation", "text": "共鸣解放", "meaning_summary": "共鸣者战斗技能体系中的能力类型", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:skill", "text": "共鸣技能", "meaning_summary": "共鸣者战斗技能体系中的能力类型", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:rover", "text": "漂泊者", "meaning_summary": "玩家主角的官方称呼", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:solaris", "text": "索拉里斯", "meaning_summary": "游戏世界设定中的世界名称", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:waves:rerun", "text": "复刻", "meaning_summary": "已出现内容在后续版本再次开放", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["共鸣者", "唤取", "活动"]}
+  ],
+  "stable_relations": [
+    {"relation_id": "waves-world", "subject_entity_id": "game:wuthering-waves", "predicate": "has_world", "object_entity_id": "entity:waves:solaris", "safe_summary": "鸣潮的世界背景与索拉里斯相关"},
+    {"relation_id": "waves-protagonist", "subject_entity_id": "game:wuthering-waves", "predicate": "has_protagonist", "object_entity_id": "entity:waves:rover", "safe_summary": "漂泊者是鸣潮中的玩家主角称谓"},
+    {"relation_id": "waves-equipment", "subject_entity_id": "game:wuthering-waves", "predicate": "has_equipment", "object_entity_id": "entity:waves:echo", "safe_summary": "声骸是鸣潮中的养成与装备系统"}
+  ],
+  "discussion_patterns": ["唤取结果", "共鸣者养成", "声骸评价", "队伍轮切", "战斗合轴", "地图探索", "剧情讨论", "版本更新"],
+  "official_sources": [
+    {"source_id": "source:waves:official-news", "publisher": "鸣潮官方", "domain": "mc.kurogames.com", "url": "https://mc.kurogames.com/", "required": true}
+  ],
+  "content_hash": "2ef22a88f7e8d3b9262ea7ae658e7fca8f335065222a59cc6b721035995568a5"
+}

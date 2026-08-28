@@ -1,0 +1,45 @@
+{
+  "seed_id": "game-semantic:genshin-impact",
+  "seed_version": 1,
+  "game": {
+    "entity_id": "game:genshin-impact",
+    "canonical_name": "原神",
+    "english_name": "Genshin Impact",
+    "aliases": [
+      {"text": "原神", "kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+      {"text": "Genshin", "kind": "abbreviation", "ambiguity_level": "contextual", "requires_any_context": ["提瓦特", "原石", "元素反应"]}
+    ]
+  },
+  "entity_types": ["game", "character", "world", "resource", "mechanic", "mode"],
+  "entities": [
+    {"entity_id": "entity:genshin:traveler", "entity_type": "character", "canonical_name": "旅行者"},
+    {"entity_id": "entity:genshin:teyvat", "entity_type": "world", "canonical_name": "提瓦特"},
+    {"entity_id": "entity:genshin:primogem", "entity_type": "resource", "canonical_name": "原石"},
+    {"entity_id": "entity:genshin:elemental-reaction", "entity_type": "mechanic", "canonical_name": "元素反应"},
+    {"entity_id": "entity:genshin:spiral-abyss", "entity_type": "mode", "canonical_name": "深境螺旋"}
+  ],
+  "terms": [
+    {"term_id": "term:genshin:gacha", "text": "抽卡", "meaning_summary": "使用祈愿系统获取角色或武器", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["原石", "保底", "角色"]},
+    {"term_id": "term:genshin:lose-5050", "text": "歪", "meaning_summary": "祈愿结果没有获得当期目标对象", "term_kind": "community", "ambiguity_level": "high", "requires_any_context": ["抽卡", "保底", "卡池"]},
+    {"term_id": "term:genshin:pity", "text": "保底", "meaning_summary": "祈愿系统中累计次数对应的保障机制", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["抽卡", "祈愿"]},
+    {"term_id": "term:genshin:constellation", "text": "命座", "meaning_summary": "角色重复获取后解锁的成长系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:genshin:artifact", "text": "圣遗物", "meaning_summary": "角色装备与属性养成系统", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:genshin:team", "text": "配队", "meaning_summary": "围绕角色机制组合队伍", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["角色", "元素"]},
+    {"term_id": "term:genshin:reaction", "text": "元素反应", "meaning_summary": "不同元素附着相互作用形成的战斗机制", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:genshin:abyss", "text": "深渊", "meaning_summary": "群聊中通常指深境螺旋挑战模式", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["配队", "满星", "层数"]},
+    {"term_id": "term:genshin:open-world", "text": "大世界", "meaning_summary": "非副本式开放区域探索内容", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["探索", "地图"]},
+    {"term_id": "term:genshin:resin", "text": "树脂", "meaning_summary": "领取部分养成奖励所消耗的体力资源", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["副本", "体力"]},
+    {"term_id": "term:genshin:primogem", "text": "原石", "meaning_summary": "用于祈愿等用途的游戏资源", "term_kind": "official", "ambiguity_level": "none", "requires_any_context": []},
+    {"term_id": "term:genshin:rerun", "text": "复刻", "meaning_summary": "已出现内容在后续版本再次开放", "term_kind": "community", "ambiguity_level": "contextual", "requires_any_context": ["角色", "卡池", "活动"]}
+  ],
+  "stable_relations": [
+    {"relation_id": "genshin-world", "subject_entity_id": "game:genshin-impact", "predicate": "has_world", "object_entity_id": "entity:genshin:teyvat", "safe_summary": "原神的主要世界背景称为提瓦特"},
+    {"relation_id": "genshin-currency", "subject_entity_id": "game:genshin-impact", "predicate": "has_resource", "object_entity_id": "entity:genshin:primogem", "safe_summary": "原石是原神中的游戏资源"},
+    {"relation_id": "genshin-mode", "subject_entity_id": "game:genshin-impact", "predicate": "has_mode", "object_entity_id": "entity:genshin:spiral-abyss", "safe_summary": "深境螺旋是原神中的挑战模式"}
+  ],
+  "discussion_patterns": ["抽卡结果", "角色养成", "圣遗物评价", "队伍组合", "元素反应", "地图探索", "深境螺旋", "版本更新"],
+  "official_sources": [
+    {"source_id": "source:genshin:official-news", "publisher": "原神官方", "domain": "ys.mihoyo.com", "url": "https://ys.mihoyo.com/", "required": true}
+  ],
+  "content_hash": "c7005655065e77c23b23e9b0d39e914a5c08b68e9014f501338794f1666c59c5"
+}
