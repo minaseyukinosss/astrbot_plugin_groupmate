@@ -11,7 +11,15 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ..persistence.schema import connect_database, initialize_database
-from .contracts import KnowledgeObservation, KnowledgeScope, OriginClass
+from .contracts import (
+    KnowledgeClaimCandidate,
+    KnowledgeObservation,
+    KnowledgeScope,
+    NegativeSearchSnapshot,
+    OriginClass,
+    SourceEvidence,
+    VersionSlot,
+)
 
 
 AFFINITY_HALF_LIFE_SECONDS = 7 * 24 * 60 * 60
@@ -138,6 +146,68 @@ class KnowledgeClaimRecord:
     evidence_level: str
     status: str
     checked_at: int | None
+
+
+@dataclass(frozen=True)
+class ClaimWriteResult:
+    outcome: str
+    claim_id: str
+    superseded_claim_ids: tuple[str, ...]
+    source_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NegativeSnapshotKey:
+    game_entity_id: str
+    query_intent: str
+    region: str | None
+    platform: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "game_entity_id",
+            _required_text(self.game_entity_id, "game_entity_id"),
+        )
+        object.__setattr__(
+            self,
+            "query_intent",
+            _required_text(self.query_intent, "query_intent", maximum=64),
+        )
+        object.__setattr__(
+            self,
+            "region",
+            None
+            if self.region is None
+            else _required_text(self.region, "region", maximum=48),
+        )
+        object.__setattr__(
+            self,
+            "platform",
+            None
+            if self.platform is None
+            else _required_text(self.platform, "platform", maximum=48),
+        )
+
+
+@dataclass(frozen=True)
+class NegativeSearchSnapshotRecord:
+    snapshot_id: str
+    game_entity_id: str
+    query_intent: str
+    covered_source_ids: tuple[str, ...]
+    required_source_ids: tuple[str, ...]
+    region: str | None
+    platform: str | None
+    checked_at: int
+    expires_at: int
+    version_state_revision: int
+    status: str
+    diagnostic_code: str
+
+
+class ReleaseStateConflict(RuntimeError):
+    """Raised when a release aggregate is saved from a stale revision."""
 
 
 class KnowledgeRepository:
@@ -381,6 +451,695 @@ class KnowledgeRepository:
             )
             for row in rows
         )
+
+    def upsert_source(self, evidence: SourceEvidence) -> str:
+        if not isinstance(evidence, SourceEvidence):
+            raise TypeError("evidence must be SourceEvidence")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM knowledge_sources WHERE canonical_url=?",
+                (evidence.canonical_url,),
+            ).fetchone()
+            if row is None:
+                row = db.execute(
+                    "SELECT * FROM knowledge_sources WHERE domain=? "
+                    "AND publisher=? AND content_hash=? "
+                    "ORDER BY fetched_at DESC,source_id LIMIT 1",
+                    (
+                        evidence.domain,
+                        evidence.publisher,
+                        evidence.content_hash,
+                    ),
+                ).fetchone()
+            if row is None:
+                identity_row = db.execute(
+                    "SELECT canonical_url FROM knowledge_sources "
+                    "WHERE source_id=?",
+                    (evidence.source_id,),
+                ).fetchone()
+                if identity_row is not None:
+                    raise ValueError(
+                        "source_id already belongs to another canonical URL"
+                    )
+                db.execute(
+                    "INSERT INTO knowledge_sources(source_id,canonical_url,"
+                    "domain,publisher,source_class,published_at,fetched_at,"
+                    "content_hash,evidence_excerpt) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        evidence.source_id,
+                        evidence.canonical_url,
+                        evidence.domain,
+                        evidence.publisher,
+                        evidence.source_class.value,
+                        evidence.published_at,
+                        evidence.fetched_at,
+                        evidence.content_hash,
+                        evidence.evidence_excerpt,
+                    ),
+                )
+                return evidence.source_id
+
+            source_id = str(row["source_id"])
+            if evidence.fetched_at >= int(row["fetched_at"]):
+                db.execute(
+                    "UPDATE knowledge_sources SET "
+                    "published_at=COALESCE(?,published_at),fetched_at=?,"
+                    "content_hash=?,evidence_excerpt=? WHERE source_id=?",
+                    (
+                        evidence.published_at,
+                        evidence.fetched_at,
+                        evidence.content_hash,
+                        evidence.evidence_excerpt,
+                        source_id,
+                    ),
+                )
+            return source_id
+
+    def admit_claim(
+        self,
+        candidate: KnowledgeClaimCandidate,
+        evidence_ids: Iterable[str],
+    ) -> ClaimWriteResult:
+        if not isinstance(candidate, KnowledgeClaimCandidate):
+            raise TypeError("candidate must be KnowledgeClaimCandidate")
+        source_ids = tuple(
+            dict.fromkeys(
+                _required_text(value, "evidence_id")
+                for value in evidence_ids
+            )
+        )
+        if not source_ids:
+            raise ValueError("evidence_ids must not be empty")
+
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing_identity = db.execute(
+                "SELECT * FROM knowledge_claims WHERE claim_id=?",
+                (candidate.candidate_id,),
+            ).fetchone()
+            if existing_identity is not None:
+                linked = db.execute(
+                    "SELECT source_id FROM knowledge_claim_evidence "
+                    "WHERE claim_id=? AND relation_kind='supports' "
+                    "ORDER BY source_id",
+                    (candidate.candidate_id,),
+                ).fetchall()
+                linked_ids = tuple(str(row[0]) for row in linked)
+                expected_values = (
+                    candidate.subject_entity_id,
+                    candidate.predicate,
+                    candidate.safe_summary,
+                    candidate.claim_kind.value,
+                    candidate.evidence_level.value,
+                    candidate.applies_to_version_slot_id,
+                    candidate.region,
+                    candidate.platform,
+                    candidate.valid_from,
+                    candidate.valid_until,
+                    candidate.checked_at,
+                )
+                stored_values = tuple(
+                    existing_identity[name]
+                    for name in (
+                        "subject_entity_id",
+                        "predicate",
+                        "safe_summary",
+                        "claim_kind",
+                        "evidence_level",
+                        "applies_to_version_slot_id",
+                        "region",
+                        "platform",
+                        "valid_from",
+                        "valid_until",
+                        "checked_at",
+                    )
+                )
+                if stored_values != expected_values or set(linked_ids) != set(
+                    source_ids
+                ):
+                    raise ValueError(
+                        "claim identity already has different content"
+                    )
+                return ClaimWriteResult(
+                    outcome="unchanged",
+                    claim_id=candidate.candidate_id,
+                    superseded_claim_ids=(),
+                    source_ids=linked_ids,
+                )
+
+            placeholders = ",".join("?" for _ in source_ids)
+            source_rows = db.execute(
+                "SELECT source_id,source_class FROM knowledge_sources "
+                "WHERE source_id IN ({})".format(placeholders),
+                source_ids,
+            ).fetchall()
+            found = {str(row["source_id"]) for row in source_rows}
+            if found != set(source_ids):
+                raise ValueError("source evidence does not exist")
+            source_classes = [
+                str(row["source_class"]) for row in source_rows
+            ]
+            evidence_level = candidate.evidence_level.value
+            level_supported = {
+                "unofficial": True,
+                "secondary": any(
+                    value in {"secondary", "official"}
+                    for value in source_classes
+                ),
+                "corroborated": sum(
+                    value in {"secondary", "official"}
+                    for value in source_classes
+                )
+                >= 2,
+                "official": "official" in source_classes,
+                # Bundled claims are admitted only by the immutable seed
+                # importer, not by fetched source evidence.
+                "bundled": False,
+            }[evidence_level]
+            if not level_supported:
+                raise ValueError(
+                    "source evidence does not support evidence level"
+                )
+
+            active_rows = db.execute(
+                "SELECT * FROM knowledge_claims WHERE subject_entity_id=? "
+                "AND predicate=? AND applies_to_version_slot_id IS ? "
+                "AND region IS ? AND platform IS ? AND status='active' "
+                "ORDER BY COALESCE(checked_at,-1) DESC,claim_id",
+                (
+                    candidate.subject_entity_id,
+                    candidate.predicate,
+                    candidate.applies_to_version_slot_id,
+                    candidate.region,
+                    candidate.platform,
+                ),
+            ).fetchall()
+            comparable = [
+                row for row in active_rows if str(row["claim_kind"]) != "rumor"
+            ]
+            superseded: tuple[str, ...] = ()
+            if candidate.claim_kind.value != "rumor" and comparable:
+                rank = {
+                    "unofficial": 1,
+                    "secondary": 2,
+                    "corroborated": 3,
+                    "bundled": 4,
+                    "official": 5,
+                }
+                incoming_rank = rank[candidate.evidence_level.value]
+                dominates = all(
+                    incoming_rank > rank[str(row["evidence_level"])]
+                    or (
+                        incoming_rank == rank[str(row["evidence_level"])]
+                        and candidate.checked_at
+                        > (
+                            -1
+                            if row["checked_at"] is None
+                            else int(row["checked_at"])
+                        )
+                    )
+                    for row in comparable
+                )
+                if not dominates:
+                    active = comparable[0]
+                    return ClaimWriteResult(
+                        outcome="unchanged",
+                        claim_id=str(active["claim_id"]),
+                        superseded_claim_ids=(),
+                        source_ids=(),
+                    )
+                superseded = tuple(str(row["claim_id"]) for row in comparable)
+                db.execute(
+                    "UPDATE knowledge_claims SET status='superseded',"
+                    "updated_at=? WHERE claim_id IN ({})".format(
+                        ",".join("?" for _ in superseded)
+                    ),
+                    (candidate.checked_at, *superseded),
+                )
+
+            supersedes_claim_id = superseded[0] if superseded else None
+            db.execute(
+                "INSERT INTO knowledge_claims(claim_id,subject_entity_id,"
+                "predicate,safe_summary,claim_kind,evidence_level,status,"
+                "applies_to_version_slot_id,region,platform,valid_from,"
+                "valid_until,checked_at,supersedes_claim_id,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    candidate.candidate_id,
+                    candidate.subject_entity_id,
+                    candidate.predicate,
+                    candidate.safe_summary,
+                    candidate.claim_kind.value,
+                    candidate.evidence_level.value,
+                    "active",
+                    candidate.applies_to_version_slot_id,
+                    candidate.region,
+                    candidate.platform,
+                    candidate.valid_from,
+                    candidate.valid_until,
+                    candidate.checked_at,
+                    supersedes_claim_id,
+                    candidate.checked_at,
+                    candidate.checked_at,
+                ),
+            )
+            for source_id in source_ids:
+                link_id = "claim-evidence:" + hashlib.sha256(
+                    "{}\0{}\0supports".format(
+                        candidate.candidate_id, source_id
+                    ).encode("utf-8")
+                ).hexdigest()[:32]
+                db.execute(
+                    "INSERT INTO knowledge_claim_evidence(evidence_id,claim_id,"
+                    "source_id,observation_id,relation_kind,created_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (
+                        link_id,
+                        candidate.candidate_id,
+                        source_id,
+                        None,
+                        "supports",
+                        candidate.checked_at,
+                    ),
+                )
+
+            if (
+                candidate.evidence_level.value == "official"
+                and "official" in source_classes
+            ):
+                self._invalidate_negative_snapshots(
+                    db,
+                    candidate.subject_entity_id,
+                    "new_official_evidence",
+                )
+            return ClaimWriteResult(
+                outcome="superseded" if superseded else "inserted",
+                claim_id=candidate.candidate_id,
+                superseded_claim_ids=superseded,
+                source_ids=source_ids,
+            )
+
+    def load_release_state(
+        self, game_id: str, region: str, platform: str
+    ) -> tuple[VersionSlot, ...]:
+        game = _required_text(game_id, "game_id")
+        normalized_region = _required_text(region, "region", maximum=48)
+        normalized_platform = _required_text(
+            platform, "platform", maximum=48
+        )
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM game_release_states WHERE game_entity_id=? "
+                "AND region=? AND platform=? "
+                "ORDER BY CASE release_state WHEN 'current' THEN 0 "
+                "WHEN 'future' THEN 1 ELSE 2 END,version_slot_id",
+                (game, normalized_region, normalized_platform),
+            ).fetchall()
+        return tuple(self._version_slot(row) for row in rows)
+
+    def save_release_state(
+        self, state: VersionSlot, expected_revision: int
+    ) -> VersionSlot:
+        if not isinstance(state, VersionSlot):
+            raise TypeError("state must be VersionSlot")
+        expected = int(expected_revision)
+        if expected < 0:
+            raise ValueError("expected_revision must not be negative")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing_slot = db.execute(
+                "SELECT * FROM game_release_states WHERE version_slot_id=?",
+                (state.version_slot_id,),
+            ).fetchone()
+            if existing_slot is not None and (
+                str(existing_slot["game_entity_id"]) != state.game_entity_id
+                or str(existing_slot["region"]) != state.region
+                or str(existing_slot["platform"]) != state.platform
+            ):
+                raise ValueError(
+                    "version_slot_id already belongs to another release aggregate"
+                )
+            current = self._release_revision(
+                db, state.game_entity_id, state.region, state.platform
+            )
+            if current != expected:
+                raise ReleaseStateConflict(
+                    "release state revision changed from {} to {}".format(
+                        expected, current
+                    )
+                )
+            if existing_slot is not None:
+                field_names = (
+                    "game_entity_id",
+                    "official_label",
+                    "region",
+                    "platform",
+                    "release_state",
+                    "official_state",
+                    "rumor_state",
+                    "announced_at",
+                    "release_at",
+                    "effective_until",
+                    "official_checked_at",
+                    "rumor_checked_at",
+                    "fresh_until",
+                    "status",
+                )
+                stored = tuple(existing_slot[name] for name in field_names)
+                proposed = tuple(getattr(state, name) for name in field_names)
+                if stored == proposed:
+                    if state.revision not in {current, current + 1}:
+                        raise ValueError(
+                            "unchanged state has an invalid revision"
+                        )
+                    return self._version_slot(existing_slot)
+            if state.revision != current + 1:
+                raise ValueError(
+                    "state revision must be exactly expected_revision + 1"
+                )
+            db.execute(
+                "UPDATE game_release_states SET revision=? "
+                "WHERE game_entity_id=? AND region=? AND platform=?",
+                (
+                    state.revision,
+                    state.game_entity_id,
+                    state.region,
+                    state.platform,
+                ),
+            )
+            db.execute(
+                "INSERT INTO game_release_states(version_slot_id,game_entity_id,"
+                "official_label,region,platform,release_state,official_state,"
+                "rumor_state,announced_at,release_at,effective_until,"
+                "official_checked_at,rumor_checked_at,fresh_until,status,revision) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(version_slot_id) DO UPDATE SET "
+                "game_entity_id=excluded.game_entity_id,"
+                "official_label=excluded.official_label,region=excluded.region,"
+                "platform=excluded.platform,release_state=excluded.release_state,"
+                "official_state=excluded.official_state,"
+                "rumor_state=excluded.rumor_state,announced_at=excluded.announced_at,"
+                "release_at=excluded.release_at,"
+                "effective_until=excluded.effective_until,"
+                "official_checked_at=excluded.official_checked_at,"
+                "rumor_checked_at=excluded.rumor_checked_at,"
+                "fresh_until=excluded.fresh_until,status=excluded.status,"
+                "revision=excluded.revision",
+                (
+                    state.version_slot_id,
+                    state.game_entity_id,
+                    state.official_label,
+                    state.region,
+                    state.platform,
+                    state.release_state,
+                    state.official_state,
+                    state.rumor_state,
+                    state.announced_at,
+                    state.release_at,
+                    state.effective_until,
+                    state.official_checked_at,
+                    state.rumor_checked_at,
+                    state.fresh_until,
+                    state.status,
+                    state.revision,
+                ),
+            )
+            self._invalidate_negative_snapshots(
+                db, state.game_entity_id, "release_state_changed"
+            )
+            row = db.execute(
+                "SELECT * FROM game_release_states WHERE version_slot_id=?",
+                (state.version_slot_id,),
+            ).fetchone()
+        return self._version_slot(row)
+
+    def save_negative_snapshot(
+        self, snapshot: NegativeSearchSnapshot
+    ) -> str:
+        if not isinstance(snapshot, NegativeSearchSnapshot):
+            raise TypeError("snapshot must be NegativeSearchSnapshot")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            revision = self._release_revision(
+                db,
+                snapshot.game_entity_id,
+                snapshot.region,
+                snapshot.platform,
+            )
+            if revision != snapshot.version_state_revision:
+                raise ReleaseStateConflict(
+                    "negative snapshot was checked against a stale revision"
+                )
+            placeholders = ",".join("?" for _ in snapshot.covered_source_ids)
+            covered_count = db.execute(
+                "SELECT COUNT(*) FROM knowledge_sources WHERE source_id IN ({})".format(
+                    placeholders
+                ),
+                snapshot.covered_source_ids,
+            ).fetchone()[0]
+            if int(covered_count) != len(snapshot.covered_source_ids):
+                raise ValueError("covered source does not exist")
+            required_placeholders = ",".join(
+                "?" for _ in snapshot.required_source_ids
+            )
+            required_rows = db.execute(
+                "SELECT source_id,source_class FROM knowledge_sources "
+                "WHERE source_id IN ({})".format(required_placeholders),
+                snapshot.required_source_ids,
+            ).fetchall()
+            if (
+                {str(row["source_id"]) for row in required_rows}
+                != set(snapshot.required_source_ids)
+                or any(
+                    str(row["source_class"]) != "official"
+                    for row in required_rows
+                )
+            ):
+                raise ValueError("negative required sources must be official")
+            existing = db.execute(
+                "SELECT * FROM negative_search_snapshots "
+                "WHERE snapshot_id=?",
+                (snapshot.snapshot_id,),
+            ).fetchone()
+            if existing is not None:
+                stored_covered, stored_required = self._negative_source_ids(
+                    existing
+                )
+                stored_values = (
+                    str(existing["game_entity_id"]),
+                    str(existing["query_intent"]),
+                    (
+                        None
+                        if existing["region"] is None
+                        else str(existing["region"])
+                    ),
+                    (
+                        None
+                        if existing["platform"] is None
+                        else str(existing["platform"])
+                    ),
+                    stored_covered,
+                    stored_required,
+                    int(existing["checked_at"]),
+                    int(existing["expires_at"]),
+                    int(existing["version_state_revision"]),
+                )
+                proposed_values = (
+                    snapshot.game_entity_id,
+                    snapshot.query_intent,
+                    snapshot.region,
+                    snapshot.platform,
+                    snapshot.covered_source_ids,
+                    snapshot.required_source_ids,
+                    snapshot.checked_at,
+                    snapshot.expires_at,
+                    snapshot.version_state_revision,
+                )
+                if stored_values != proposed_values:
+                    raise ValueError(
+                        "snapshot identity already has different content"
+                    )
+                return snapshot.snapshot_id
+            db.execute(
+                "UPDATE negative_search_snapshots SET status='invalidated',"
+                "diagnostic_code='newer_negative_snapshot' "
+                "WHERE game_entity_id=? AND query_intent=? AND region IS ? "
+                "AND platform IS ? AND status='active'",
+                (
+                    snapshot.game_entity_id,
+                    snapshot.query_intent,
+                    snapshot.region,
+                    snapshot.platform,
+                ),
+            )
+            db.execute(
+                "INSERT INTO negative_search_snapshots(snapshot_id,"
+                "game_entity_id,query_intent,region,platform,"
+                "covered_source_ids_json,checked_at,expires_at,"
+                "version_state_revision,status,diagnostic_code) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    snapshot.snapshot_id,
+                    snapshot.game_entity_id,
+                    snapshot.query_intent,
+                    snapshot.region,
+                    snapshot.platform,
+                    json.dumps(
+                        {
+                            "covered": list(snapshot.covered_source_ids),
+                            "required": list(snapshot.required_source_ids),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    snapshot.checked_at,
+                    snapshot.expires_at,
+                    snapshot.version_state_revision,
+                    snapshot.status,
+                    snapshot.diagnostic_code,
+                ),
+            )
+        return snapshot.snapshot_id
+
+    def valid_negative_snapshot(
+        self, key: NegativeSnapshotKey, now: int
+    ) -> NegativeSearchSnapshotRecord | None:
+        if not isinstance(key, NegativeSnapshotKey):
+            raise TypeError("key must be NegativeSnapshotKey")
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("now must not be negative")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM negative_search_snapshots "
+                "WHERE game_entity_id=? AND query_intent=? AND region IS ? "
+                "AND platform IS ? AND status='active' "
+                "ORDER BY checked_at DESC,snapshot_id",
+                (
+                    key.game_entity_id,
+                    key.query_intent,
+                    key.region,
+                    key.platform,
+                ),
+            ).fetchall()
+            revision = self._release_revision(
+                db, key.game_entity_id, key.region, key.platform
+            )
+            for row in rows:
+                if int(row["expires_at"]) <= timestamp:
+                    db.execute(
+                        "UPDATE negative_search_snapshots SET status='expired',"
+                        "diagnostic_code='negative_ttl_expired' "
+                        "WHERE snapshot_id=?",
+                        (row["snapshot_id"],),
+                    )
+                    continue
+                if int(row["version_state_revision"]) != revision:
+                    db.execute(
+                        "UPDATE negative_search_snapshots "
+                        "SET status='invalidated',"
+                        "diagnostic_code='release_revision_changed' "
+                        "WHERE snapshot_id=?",
+                        (row["snapshot_id"],),
+                    )
+                    continue
+                return self._negative_snapshot_record(row)
+        return None
+
+    def invalidate_negative_snapshots(
+        self, game_id: str, reason: str
+    ) -> int:
+        game = _required_text(game_id, "game_id")
+        diagnostic = _required_text(reason, "reason", maximum=64)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            return self._invalidate_negative_snapshots(
+                db, game, diagnostic
+            )
+
+    @staticmethod
+    def _invalidate_negative_snapshots(db, game_id: str, reason: str) -> int:
+        cursor = db.execute(
+            "UPDATE negative_search_snapshots SET status='invalidated',"
+            "diagnostic_code=? WHERE game_entity_id=? AND status='active'",
+            (reason, game_id),
+        )
+        return int(cursor.rowcount)
+
+    @staticmethod
+    def _release_revision(
+        db, game_id: str, region: str | None, platform: str | None
+    ) -> int:
+        clauses = ["game_entity_id=?"]
+        parameters: list[object] = [game_id]
+        if region is not None:
+            clauses.append("region=?")
+            parameters.append(region)
+        if platform is not None:
+            clauses.append("platform=?")
+            parameters.append(platform)
+        row = db.execute(
+            "SELECT MAX(revision) FROM game_release_states "
+            "WHERE {}".format(" AND ".join(clauses)),
+            tuple(parameters),
+        ).fetchone()
+        return 0 if row is None or row[0] is None else int(row[0])
+
+    @staticmethod
+    def _version_slot(row) -> VersionSlot:
+        return VersionSlot.create(
+            version_slot_id=row["version_slot_id"],
+            game_entity_id=row["game_entity_id"],
+            official_label=row["official_label"],
+            region=row["region"],
+            platform=row["platform"],
+            release_state=row["release_state"],
+            official_state=row["official_state"],
+            rumor_state=row["rumor_state"],
+            announced_at=row["announced_at"],
+            release_at=row["release_at"],
+            effective_until=row["effective_until"],
+            official_checked_at=row["official_checked_at"],
+            rumor_checked_at=row["rumor_checked_at"],
+            fresh_until=row["fresh_until"],
+            status=row["status"],
+            revision=row["revision"],
+        )
+
+    @staticmethod
+    def _negative_snapshot_record(row) -> NegativeSearchSnapshotRecord:
+        covered, required = KnowledgeRepository._negative_source_ids(row)
+        return NegativeSearchSnapshotRecord(
+            snapshot_id=str(row["snapshot_id"]),
+            game_entity_id=str(row["game_entity_id"]),
+            query_intent=str(row["query_intent"]),
+            covered_source_ids=covered,
+            required_source_ids=required,
+            region=None if row["region"] is None else str(row["region"]),
+            platform=(
+                None if row["platform"] is None else str(row["platform"])
+            ),
+            checked_at=int(row["checked_at"]),
+            expires_at=int(row["expires_at"]),
+            version_state_revision=int(row["version_state_revision"]),
+            status=str(row["status"]),
+            diagnostic_code=str(row["diagnostic_code"] or ""),
+        )
+
+    @staticmethod
+    def _negative_source_ids(row) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        payload = json.loads(str(row["covered_source_ids_json"]))
+        if isinstance(payload, list):
+            covered = tuple(str(value) for value in payload)
+            return covered, covered
+        if not isinstance(payload, dict):
+            raise ValueError("negative source coverage is malformed")
+        covered = tuple(str(value) for value in payload.get("covered", ()))
+        required = tuple(str(value) for value in payload.get("required", ()))
+        return covered, required
 
     def record_convention_evidence(
         self,
@@ -1297,11 +2056,15 @@ class KnowledgeRepository:
 
 __all__ = (
     "AFFINITY_HALF_LIFE_SECONDS",
+    "ClaimWriteResult",
     "GroupConventionRecord",
     "KnowledgeAliasRecord",
     "KnowledgeClaimRecord",
     "KnowledgeEntityRecord",
     "KnowledgeRepository",
+    "NegativeSearchSnapshotRecord",
+    "NegativeSnapshotKey",
+    "ReleaseStateConflict",
     "SeedVersionConflict",
     "SeedVersionOrderConflict",
     "SeedVersionRecord",

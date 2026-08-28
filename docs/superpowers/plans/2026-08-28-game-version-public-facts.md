@@ -122,25 +122,25 @@ Commit: `git commit -m "feat: define official knowledge evidence"`
 - Produces: `.load_release_state(game_id, region, platform)`、`.save_release_state(state, expected_revision)`。
 - Produces: `.save_negative_snapshot(snapshot)`、`.valid_negative_snapshot(key, now)`、`.invalidate_negative_snapshots(game_id, reason)`。
 
-- [ ] **Step 1: 写 repository 失败测试**
+- [x] **Step 1: 写 repository 失败测试**
 
 验证 canonical URL/content hash 去重、来源分类不可升级覆盖、claim/evidence 原子提交、official 新证据 supersede 旧 official、rumor 历史保留、optimistic revision 冲突、negative TTL 与新官方证据即时失效。
 
-- [ ] **Step 2: 运行 repository 测试并确认 RED**
+- [x] **Step 2: 运行 repository 测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
 
 Expected: v4 表存在但相应 repository API 缺失。
 
-- [ ] **Step 3: 实现 claim/source 短事务**
+- [x] **Step 3: 实现 claim/source 短事务**
 
 同一 canonical source 更新 `fetched_at/content_hash` 但不改变 publisher/source_class；同 subject/predicate/version/region/platform 的 active claim 在同一事务内比较证据等级。新 claim 用 `supersedes_claim_id` 指向旧 claim，旧行改 `superseded`，evidence link 永不重挂。
 
-- [ ] **Step 4: 实现 release revision 和 negative 失效**
+- [x] **Step 4: 实现 release revision 和 negative 失效**
 
 每次三轨改变递增 `revision`。official evidence 写入与相关 negative snapshot 失效必须在同一写事务；read path 同时检查 `expires_at > now` 与当前 revision。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_repository.py tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py`
 

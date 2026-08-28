@@ -4,7 +4,11 @@ import importlib
 
 import pytest
 
-from groupmate.social_runtime.knowledge.contracts import KnowledgeObservation
+from groupmate.social_runtime.knowledge.contracts import (
+    KnowledgeObservation,
+    SourceEvidence,
+)
+from groupmate.social_runtime.persistence.schema import connect_database
 
 
 def _repository(path):
@@ -50,6 +54,122 @@ def _put_game(repository, entity_id: str, name: str):
         status="active",
         now=100,
     )
+
+
+def _source(
+    *,
+    evidence_id: str = "evidence:1",
+    source_id: str = "source:official-news",
+    url: str = "https://game.example.com/news?id=1&utm_source=chat",
+    publisher: str = "Example Game",
+    source_class: str = "official",
+    fetched_at: int = 200,
+    published_at: int | None = 190,
+    content_hash: str = "a" * 64,
+):
+    return SourceEvidence.create(
+        evidence_id=evidence_id,
+        source_id=source_id,
+        canonical_url=url,
+        domain="game.example.com",
+        publisher=publisher,
+        source_class=source_class,
+        title="版本公告",
+        published_at=published_at,
+        fetched_at=fetched_at,
+        evidence_excerpt="官方发布了版本公告。",
+        content_hash=content_hash,
+    )
+
+
+def test_source_upsert_deduplicates_canonical_url_and_refreshes_content(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    repository = _repository(path)
+
+    assert repository.upsert_source(_source()) == "source:official-news"
+    assert repository.upsert_source(
+        _source(
+            evidence_id="evidence:2",
+            source_id="source:duplicate",
+            url="https://game.example.com/news?utm_medium=bot&id=1",
+            fetched_at=300,
+            published_at=None,
+            content_hash="b" * 64,
+        )
+    ) == "source:official-news"
+
+    with connect_database(path) as db:
+        rows = db.execute("SELECT * FROM knowledge_sources").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["canonical_url"] == "https://game.example.com/news?id=1"
+    assert rows[0]["fetched_at"] == 300
+    assert rows[0]["content_hash"] == "b" * 64
+    assert rows[0]["published_at"] == 190
+
+
+def test_source_upsert_deduplicates_same_publisher_content_hash(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    repository = _repository(path)
+    repository.upsert_source(_source())
+
+    source_id = repository.upsert_source(
+        _source(
+            evidence_id="evidence:mirror",
+            source_id="source:mirror",
+            url="https://game.example.com/archive?id=99",
+        )
+    )
+
+    assert source_id == "source:official-news"
+    with connect_database(path) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM knowledge_sources"
+        ).fetchone()[0] == 1
+
+
+def test_source_identity_cannot_be_upgraded_or_republished_by_upsert(tmp_path):
+    path = tmp_path / "groupmate-social-runtime-v2.db"
+    repository = _repository(path)
+    repository.upsert_source(
+        _source(publisher="Community Mirror", source_class="unofficial")
+    )
+
+    repository.upsert_source(
+        _source(
+            evidence_id="evidence:forged-upgrade",
+            source_id="source:forged-upgrade",
+            publisher="Example Game",
+            source_class="official",
+            fetched_at=300,
+            content_hash="c" * 64,
+        )
+    )
+
+    with connect_database(path) as db:
+        row = db.execute(
+            "SELECT publisher,source_class,fetched_at,content_hash "
+            "FROM knowledge_sources"
+        ).fetchone()
+    assert tuple(row) == (
+        "Community Mirror",
+        "unofficial",
+        300,
+        "c" * 64,
+    )
+
+
+def test_source_id_cannot_be_rebound_to_another_canonical_url(tmp_path):
+    repository = _repository(tmp_path / "groupmate-social-runtime-v2.db")
+    repository.upsert_source(_source())
+
+    with pytest.raises(ValueError, match="another canonical URL"):
+        repository.upsert_source(
+            _source(
+                evidence_id="evidence:rebound",
+                url="https://game.example.com/news?id=2",
+                content_hash="d" * 64,
+            )
+        )
 
 
 def test_observation_append_is_idempotent_by_identity_and_scoped_content_hash(
