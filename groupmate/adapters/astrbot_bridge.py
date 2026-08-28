@@ -29,6 +29,7 @@ from ..social_runtime.knowledge.observation import KnowledgeObservationService
 from ..social_runtime.knowledge.repository import KnowledgeRepository
 from ..social_runtime.knowledge.resolver import KnowledgeEntityResolver
 from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
+from ..social_runtime.knowledge.sources import SafeSourceUrlPolicy
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
@@ -56,6 +57,7 @@ from ..social_runtime.actions.member_style import (
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
+from .astrbot_official_sources import AstrBotOfficialSourceProbe
 from .social_scene_model import SceneJsonModel
 from .affection_card import AffectionCardPresenter
 from .affection_query import AffectionQuery, is_affection_query
@@ -121,6 +123,12 @@ class AstrBotSocialRuntimeBridge:
             settings.persona_id,
             external_trigger_policy=self._external_trigger_policy,
             clock=self.clock,
+        )
+        # Task scheduling remains deliberately outside this composition step.
+        self.official_source_probe = AstrBotOfficialSourceProbe(
+            context,
+            SafeSourceUrlPolicy(),
+            timeout_seconds=5.0,
         )
         self._config_repository: ConfigVersionRepository | None = None
         self._manager: SocialRuntimeManager | None = None
