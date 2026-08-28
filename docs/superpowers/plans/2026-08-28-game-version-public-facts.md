@@ -165,33 +165,33 @@ Commit: `git commit -m "feat: persist game release evidence"`
 - Produces: `GameReleaseStateService.apply_evidence(state, evidence) -> ReleaseTransition`。
 - Produces: `.resolve_reference(frame, message_time, region, platform) -> ResolvedVersionReference`。
 
-- [ ] **Step 1: 写 evidence ladder 和冲突失败测试**
+- [x] **Step 1: 写 evidence ladder 和冲突失败测试**
 
 bundled 只支持 stable semantic；单官方来源可激活其明确支持的 public fact；两个独立可靠 secondary 才能激活非官方稳定事实；单一 unofficial 只能 rumor；同等级相反来源进入 disputed；正式实装优先于测试服数值。
 
-- [ ] **Step 2: 写三轨状态迁移失败测试**
+- [x] **Step 2: 写三轨状态迁移失败测试**
 
 覆盖 future→current→past、none→teaser→preview→notice→released、rumor weak/corroborated/conflicted/stale，并验证 official 变化不覆写 rumor。到达 `release_at` 只建立 revalidation job，不靠时钟自动宣称 released。
 
-- [ ] **Step 3: 写相对版本解析失败测试**
+- [x] **Step 3: 写相对版本解析失败测试**
 
 给定两个槽位和消息时间，验证“这期/下期/刚更新”；没有唯一 region/platform 或 next slot 时返回 ambiguity，绝不通过版本号 +1 构造 label。
 
-- [ ] **Step 4: 运行测试并确认 RED**
+- [x] **Step 4: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
 
 Expected: policy/service 缺失或仍只有词法 version reference。
 
-- [ ] **Step 5: 实现纯函数准入与显式状态机**
+- [x] **Step 5: 实现纯函数准入与显式状态机**
 
 Policy 输出 `activate/reject/dispute/supersede/keep_pending` 和固定 reason codes，不自行写库。Release service 在单个 `(game, region, platform)` 聚合根内验证时间和轨道，所有 transition 携带 old/new revision 与 evidence IDs。
 
-- [ ] **Step 6: 接回 resolver**
+- [x] **Step 6: 接回 resolver**
 
 resolver 先识别语言相对词，再由 service 绑定已验证 slot；绑定失败保留原始 relative kind 和 ambiguity，DIRECT 的澄清动作留给根据回复阶段。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_admission.py tests/social_runtime/knowledge/test_release_state.py tests/social_runtime/knowledge/test_resolver.py`
 
