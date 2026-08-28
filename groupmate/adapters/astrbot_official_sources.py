@@ -203,6 +203,12 @@ class AstrBotOfficialSourceProbe:
         self.url_policy = url_policy
         self.timeout_seconds = timeout
 
+    @property
+    def available(self) -> bool:
+        return callable(getattr(self.context, "resolve_official_source", None)) and callable(
+            getattr(self.context, "fetch_official_source", None)
+        )
+
     async def probe(self, request: OfficialProbeRequest) -> OfficialProbeResult:
         resolve = getattr(self.context, "resolve_official_source", None)
         fetch = getattr(self.context, "fetch_official_source", None)

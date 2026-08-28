@@ -210,6 +210,21 @@ class ReleaseStateConflict(RuntimeError):
     """Raised when a release aggregate is saved from a stale revision."""
 
 
+@dataclass(frozen=True)
+class KnowledgeJobRecord:
+    job_id: str
+    idempotency_key: str
+    job_kind: str
+    entity_id: str | None
+    request: Mapping[str, Any]
+    status: str
+    attempt: int
+    next_attempt_at: int
+    diagnostic_code: str | None
+    created_at: int
+    updated_at: int
+
+
 class KnowledgeRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -361,6 +376,145 @@ class KnowledgeRepository:
                 "WHERE status='active' ORDER BY seed_id,seed_version"
             ).fetchall()
         return tuple(json.loads(str(row[0])) for row in rows)
+
+    def enqueue_knowledge_job(
+        self,
+        *,
+        idempotency_key: str,
+        job_kind: str,
+        entity_id: str | None,
+        request: Mapping[str, Any],
+        next_attempt_at: int,
+        now: int,
+    ) -> KnowledgeJobRecord:
+        key = _required_text(idempotency_key, "idempotency_key", maximum=512)
+        kind = _required_text(job_kind, "job_kind", maximum=64)
+        if kind not in {
+            "seed_import", "official_daily_probe", "time_boundary_revalidation",
+        }:
+            raise ValueError("unsupported knowledge job kind")
+        identity = None if entity_id is None else _required_text(entity_id, "entity_id")
+        timestamp = int(now)
+        due_at = int(next_attempt_at)
+        if timestamp < 0 or due_at < 0:
+            raise ValueError("knowledge job timestamps must not be negative")
+        payload = json.dumps(
+            dict(request), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        job_id = "job:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "INSERT OR IGNORE INTO knowledge_jobs(job_id,idempotency_key,"
+                "job_kind,group_id,entity_id,request_json,status,attempt,"
+                "next_attempt_at,diagnostic_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, key, kind, None, identity, payload, "pending", 0,
+                 due_at, None, timestamp, timestamp),
+            )
+            row = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE idempotency_key=?", (key,)
+            ).fetchone()
+        assert row is not None
+        return self._knowledge_job(row)
+
+    def knowledge_jobs(self) -> tuple[KnowledgeJobRecord, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM knowledge_jobs ORDER BY created_at,job_id"
+            ).fetchall()
+        return tuple(self._knowledge_job(row) for row in rows)
+
+    def claim_due_knowledge_job(self, now: int) -> KnowledgeJobRecord | None:
+        timestamp = int(now)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE status IN ('pending','retry') "
+                "AND next_attempt_at<=? ORDER BY next_attempt_at,created_at,job_id "
+                "LIMIT 1",
+                (timestamp,),
+            ).fetchone()
+            if row is None:
+                return None
+            db.execute(
+                "UPDATE knowledge_jobs SET status='running',attempt=attempt+1,"
+                "updated_at=? WHERE job_id=?",
+                (timestamp, row["job_id"]),
+            )
+            claimed = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_id=?", (row["job_id"],)
+            ).fetchone()
+        assert claimed is not None
+        return self._knowledge_job(claimed)
+
+    def recover_running_knowledge_jobs(self, now: int) -> int:
+        timestamp = int(now)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE knowledge_jobs SET status='retry',"
+                "diagnostic_code='knowledge_job_recovered',updated_at=? "
+                "WHERE status='running'",
+                (timestamp,),
+            )
+            return int(cursor.rowcount)
+
+    def complete_knowledge_job(self, job_id: str, now: int) -> None:
+        identity = _required_text(job_id, "job_id")
+        timestamp = int(now)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE knowledge_jobs SET status='completed',diagnostic_code=NULL,"
+                "updated_at=? WHERE job_id=? AND status='running'",
+                (timestamp, identity),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("knowledge job is not running")
+
+    def retry_knowledge_job(
+        self, job_id: str, *, next_attempt_at: int, diagnostic_code: str, now: int
+    ) -> None:
+        identity = _required_text(job_id, "job_id")
+        diagnostic = _required_text(diagnostic_code, "diagnostic_code", maximum=64)
+        timestamp = int(now)
+        due_at = int(next_attempt_at)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE knowledge_jobs SET status='retry',next_attempt_at=?,"
+                "diagnostic_code=?,updated_at=? WHERE job_id=? AND status='running'",
+                (due_at, diagnostic, timestamp, identity),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("knowledge job is not running")
+
+    def latest_completed_knowledge_job_at(
+        self, *, job_kind: str, entity_id: str, region: str, platform: str
+    ) -> int | None:
+        kind = _required_text(job_kind, "job_kind", maximum=64)
+        identity = _required_text(entity_id, "entity_id")
+        normalized_region = _required_text(region, "region", maximum=48)
+        normalized_platform = _required_text(platform, "platform", maximum=48)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT request_json,updated_at FROM knowledge_jobs "
+                "WHERE job_kind=? AND entity_id=? AND status='completed' "
+                "ORDER BY updated_at DESC,job_id DESC",
+                (kind, identity),
+            ).fetchall()
+        for row in rows:
+            try:
+                request = json.loads(str(row["request_json"]))
+            except json.JSONDecodeError:
+                continue
+            if (
+                request.get("region") == normalized_region
+                and request.get("platform") == normalized_platform
+            ):
+                return int(row["updated_at"])
+        return None
 
     def active_group_aliases(
         self, group_id: str
@@ -1112,6 +1266,28 @@ class KnowledgeRepository:
             fresh_until=row["fresh_until"],
             status=row["status"],
             revision=row["revision"],
+        )
+
+    @staticmethod
+    def _knowledge_job(row) -> KnowledgeJobRecord:
+        payload = json.loads(str(row["request_json"]))
+        if not isinstance(payload, dict):
+            raise ValueError("knowledge job request is invalid")
+        return KnowledgeJobRecord(
+            job_id=str(row["job_id"]),
+            idempotency_key=str(row["idempotency_key"]),
+            job_kind=str(row["job_kind"]),
+            entity_id=None if row["entity_id"] is None else str(row["entity_id"]),
+            request=payload,
+            status=str(row["status"]),
+            attempt=int(row["attempt"]),
+            next_attempt_at=int(row["next_attempt_at"]),
+            diagnostic_code=(
+                None if row["diagnostic_code"] is None
+                else str(row["diagnostic_code"])
+            ),
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
         )
 
     @staticmethod

@@ -26,6 +26,7 @@ from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.knowledge.observation import KnowledgeObservationService
+from ..social_runtime.knowledge.jobs import KnowledgeJobService
 from ..social_runtime.knowledge.repository import KnowledgeRepository
 from ..social_runtime.knowledge.resolver import KnowledgeEntityResolver
 from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
@@ -140,6 +141,7 @@ class AstrBotSocialRuntimeBridge:
         self._profile_client: object | None = None
         self._profile_service: ProfileService | None = None
         self._knowledge_service: KnowledgeObservationService | None = None
+        self._knowledge_job_service: KnowledgeJobService | None = None
         self._member_style_repository: MemberStyleRepository | None = None
         self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
@@ -152,6 +154,7 @@ class AstrBotSocialRuntimeBridge:
         self.member_style_overlay_error: str | None = None
         self.member_style_worker_error: str | None = None
         self.knowledge_error: str | None = None
+        self.knowledge_search_adapter_unavailable = False
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._scene_context_builder = SceneContextBuilder()
@@ -720,6 +723,22 @@ class AstrBotSocialRuntimeBridge:
                 or style_health.get("last_diagnostic")
             ),
         }
+        knowledge_jobs = self._knowledge_job_service
+        job_health = (
+            knowledge_jobs.health()
+            if knowledge_jobs is not None
+            else {
+                "accepting": False,
+                "worker_running": False,
+                "pending_or_retry": 0,
+                "running": 0,
+            }
+        )
+        knowledge_status = {
+            **job_health,
+            "last_diagnostic": self.knowledge_error,
+            "search_adapter_unavailable": self.knowledge_search_adapter_unavailable,
+        }
         if manager is None:
             blockers = (
                 ["运行模式为 OFF"]
@@ -733,6 +752,7 @@ class AstrBotSocialRuntimeBridge:
                 "runtime_blockers": blockers,
                 "profile_status": profile_status,
                 "member_style_status": member_style_status,
+                "knowledge_status": knowledge_status,
             }
         return {
             "effective_runtime_mode": manager.group_mode(str(group_id)).value,
@@ -741,6 +761,7 @@ class AstrBotSocialRuntimeBridge:
             "runtime_blockers": [],
             "profile_status": profile_status,
             "member_style_status": member_style_status,
+            "knowledge_status": knowledge_status,
         }
 
     def resolved_persona_status(self, group_id: str) -> dict[str, object]:
@@ -780,6 +801,7 @@ class AstrBotSocialRuntimeBridge:
             if cognition_client is None:
                 raise RuntimeError("direct cognition client is unavailable")
             knowledge_service = None
+            knowledge_job_service = None
             knowledge_resolver = None
             if self.settings.knowledge_enabled:
                 try:
@@ -798,12 +820,27 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_resolver = KnowledgeEntityResolver(
                         knowledge_repository
                     )
-                    self.knowledge_error = None
+                    knowledge_job_service = KnowledgeJobService(
+                        knowledge_repository,
+                        probe=self.official_source_probe,
+                        clock=self.clock,
+                    )
+                    self.knowledge_search_adapter_unavailable = (
+                        not self.official_source_probe.available
+                    )
+                    self.knowledge_error = (
+                        "knowledge_search_adapter_unavailable"
+                        if self.knowledge_search_adapter_unavailable
+                        else None
+                    )
                 except Exception:
                     knowledge_service = None
                     knowledge_resolver = None
+                    knowledge_job_service = None
+                    self.knowledge_search_adapter_unavailable = False
                     self.knowledge_error = "knowledge_seed_unavailable"
             else:
+                self.knowledge_search_adapter_unavailable = False
                 self.knowledge_error = None
             manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
@@ -880,11 +917,14 @@ class AstrBotSocialRuntimeBridge:
                     await profile_service.start()
                 if knowledge_service is not None:
                     await knowledge_service.start()
+                if knowledge_job_service is not None:
+                    await knowledge_job_service.start()
                 self._manager = manager
                 self._cognition_client = cognition_client
                 self._profile_client = profile_client
                 self._profile_service = profile_service
                 self._knowledge_service = knowledge_service
+                self._knowledge_job_service = knowledge_job_service
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
@@ -911,6 +951,7 @@ class AstrBotSocialRuntimeBridge:
                 self._profile_client = None
                 self._profile_service = None
                 self._knowledge_service = None
+                self._knowledge_job_service = None
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
@@ -921,6 +962,9 @@ class AstrBotSocialRuntimeBridge:
                 if knowledge_service is not None:
                     with suppress(Exception):
                         await knowledge_service.close()
+                if knowledge_job_service is not None:
+                    with suppress(Exception):
+                        await knowledge_job_service.close()
                 with suppress(Exception):
                     await manager.close()
                 close = getattr(cognition_client, "close", None)
@@ -1016,7 +1060,11 @@ class AstrBotSocialRuntimeBridge:
             return
         try:
             await service.observe(event)
-            self.knowledge_error = None
+            self.knowledge_error = (
+                "knowledge_search_adapter_unavailable"
+                if self.knowledge_search_adapter_unavailable
+                else None
+            )
         except Exception:
             # Knowledge learning is optional and must never break chat ingest.
             self.knowledge_error = "knowledge_observation_failed"
@@ -1588,15 +1636,24 @@ class AstrBotSocialRuntimeBridge:
         cognition_client = self._cognition_client
         profile_service = self._profile_service
         knowledge_service = self._knowledge_service
+        knowledge_job_service = self._knowledge_job_service
         profile_client = self._profile_client
         self._manager = None
         self._cognition_client = None
         self._profile_service = None
         self._knowledge_service = None
+        self._knowledge_job_service = None
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None
         try:
+            if knowledge_job_service is not None:
+                await knowledge_job_service.close()
+            probe_close = getattr(self.official_source_probe, "close", None)
+            if callable(probe_close):
+                result = probe_close()
+                if inspect.isawaitable(result):
+                    await result
             if knowledge_service is not None:
                 await knowledge_service.close()
             if profile_service is not None:
