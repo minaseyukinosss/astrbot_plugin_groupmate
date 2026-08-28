@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from groupmate.social_runtime.contracts import SocialEventEnvelope
+from groupmate.social_runtime.knowledge.observation import (
+    KnowledgeObservationService,
+    KnowledgeOriginClassifier,
+)
+from groupmate.social_runtime.knowledge.contracts import OriginClass
+from groupmate.social_runtime.knowledge.repository import KnowledgeRepository
+from groupmate.social_runtime.knowledge.retrieval import KnowledgeNeedAssessor
+from groupmate.social_runtime.knowledge.resolver import KnowledgeEntityResolver
+from groupmate.social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
 
 
 def _metrics(records):
@@ -80,3 +95,246 @@ def test_metrics_return_zero_for_empty_denominators():
 def test_metrics_reject_malformed_records(record):
     with pytest.raises(ValueError, match="record"):
         _metrics((record,))
+
+
+def test_corpus_runner_surfaces_real_safety_probe_failures():
+    report = importlib.import_module(
+        "eval.knowledge"
+    ).run_frozen_game_knowledge_corpus(
+        (),
+        resolver=object(),
+        assessor=object(),
+        safety_records=(
+            _record(cross_group_leak=True),
+            _record(promoted_origin="external_bot"),
+            _record(promoted_origin="command"),
+        ),
+    )
+
+    assert report["metrics"]["cross_group_leaks"] == 1
+    assert report["metrics"]["bot_promotions"] == 1
+    assert report["metrics"]["command_promotions"] == 1
+
+
+def test_safety_probe_uses_fixture_origin_and_requires_positive_scope_control():
+    mislabeled_admission = SimpleNamespace(
+        admitted=True, origin_class=OriginClass.HUMAN_CHAT
+    )
+    bot_record = _promotion_record(
+        mislabeled_admission, OriginClass.EXTERNAL_BOT
+    )
+    assert bot_record["promoted_origin"] == "external_bot"
+
+    resolver = SimpleNamespace(
+        resolve=lambda *_args: SimpleNamespace(game_ids=())
+    )
+    with pytest.raises(AssertionError, match="positive control"):
+        _cross_group_safety_record(
+            resolver,
+            _knowledge_event("same", "鸟游", group_id="safety:g1"),
+            _knowledge_event("other", "鸟游", group_id="safety:g2"),
+            "game:genshin-impact",
+        )
+
+
+def test_frozen_game_understanding_corpus_passes_gate_one(tmp_path):
+    corpus_path = (
+        Path(__file__).parents[2]
+        / "scenarios"
+        / "game_knowledge_understanding.jsonl"
+    )
+    cases = [
+        json.loads(line)
+        for line in corpus_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(cases) >= 240
+    assert len({case["case_id"] for case in cases}) == len(cases)
+    assert all(
+        set(case)
+        == {"case_id", "group_id", "occurred_at", "text", "context", "expected"}
+        and set(case["expected"])
+        == {"games", "entities", "terms", "version", "need", "ambiguity"}
+        for case in cases
+    )
+    categories = {
+        prefix: sum(case["case_id"].startswith(prefix + ":") for case in cases)
+        for prefix in ("stable", "ambiguous", "version", "control")
+    }
+    assert categories == {
+        "stable": 180,
+        "ambiguous": 30,
+        "version": 20,
+        "control": 10,
+    }
+    ambiguity_cases = [
+        case for case in cases if case["case_id"].startswith("ambiguous:")
+    ]
+    assert len({case["text"] for case in ambiguity_cases}) == 30
+    assert sum(bool(case["context"]) for case in ambiguity_cases) == 15
+    assert sum(case["expected"]["ambiguity"] for case in ambiguity_cases) == 15
+    stable_games = {
+        game_id: sum(
+            case["case_id"].startswith("stable:")
+            and case["expected"]["games"] == [game_id]
+            for case in cases
+        )
+        for game_id in {
+            "game:genshin-impact",
+            "game:delta-force",
+            "game:wuthering-waves",
+            "game:honkai-star-rail",
+            "game:zenless-zone-zero",
+        }
+    }
+    assert set(stable_games.values()) == {36}
+
+    repository = KnowledgeRepository(tmp_path / "knowledge-v4.db")
+    SeedImporter(repository, clock=lambda: 1_786_000_000).import_all(
+        load_bundled_seeds()
+    )
+    report = importlib.import_module(
+        "eval.knowledge"
+    ).run_frozen_game_knowledge_corpus(
+        cases,
+        resolver=KnowledgeEntityResolver(repository),
+        assessor=KnowledgeNeedAssessor(),
+        safety_records=_safety_records(repository),
+    )
+    result = report["metrics"]
+    assert result["understanding_accuracy"] >= 0.95
+    assert result["high_confidence_wrong_merge_rate"] < 0.01
+    assert result["cross_group_leaks"] == 0
+    assert result["bot_promotions"] == 0
+    assert result["command_promotions"] == 0
+    assert result["temporal_need_recall"] == 1.0
+    assert all(
+        item["latency_ms"] >= 0 and item["error_type"] is None
+        for item in report["case_results"]
+    )
+
+
+def _safety_records(repository):
+    classifier = KnowledgeOriginClassifier()
+    bot = classifier.classify(
+        _knowledge_event("bot", "鸟游就是原神", sender_role="bot")
+    )
+    command = classifier.classify(
+        _knowledge_event(
+            "command",
+            "/鸟游就是原神",
+            social_eligible=False,
+            owner="EXTERNAL_PLUGIN",
+        )
+    )
+    own_output = classifier.classify(
+        _knowledge_event("self", "鸟游就是原神", is_self=True)
+    )
+    service = KnowledgeObservationService(
+        repository=repository,
+        group_ids=("safety:g1", "safety:g2"),
+        install_salt="frozen-evaluation-install-salt",
+        clock=lambda: 1_786_000_000,
+    )
+
+    async def learn_group_alias():
+        await service.observe(
+            _knowledge_event(
+                "define",
+                "鸟游就是原神",
+                group_id="safety:g1",
+                scene_ref="scene:definition",
+            )
+        )
+        await service.process_pending()
+        await service.observe(
+            _knowledge_event(
+                "use",
+                "鸟游今天真好玩",
+                group_id="safety:g1",
+                scene_ref="scene:use",
+            )
+        )
+        await service.process_pending()
+
+    asyncio.run(learn_group_alias())
+    resolver = KnowledgeEntityResolver(repository)
+    same_group = _knowledge_event(
+        "same-group", "鸟游", group_id="safety:g1"
+    )
+    other_group = _knowledge_event(
+        "other-group", "鸟游", group_id="safety:g2"
+    )
+    return (
+        _promotion_record(bot, OriginClass.EXTERNAL_BOT),
+        _promotion_record(command, OriginClass.COMMAND),
+        _promotion_record(own_output, OriginClass.OWN_OUTPUT),
+        _cross_group_safety_record(
+            resolver,
+            same_group,
+            other_group,
+            "game:genshin-impact",
+        ),
+    )
+
+
+def _promotion_record(decision, expected_origin):
+    return _record(
+        promoted_origin=(expected_origin.value if decision.admitted else None)
+    )
+
+
+def _cross_group_safety_record(
+    resolver, same_group_event, other_group_event, target_game_id
+):
+    same_group = resolver.resolve(
+        same_group_event,
+        (),
+        str(same_group_event.group_id),
+        1_786_000_000,
+    )
+    if target_game_id not in same_group.game_ids:
+        raise AssertionError("cross-group probe positive control did not resolve")
+    other_group = resolver.resolve(
+        other_group_event,
+        (),
+        str(other_group_event.group_id),
+        1_786_000_000,
+    )
+    return _record(cross_group_leak=target_game_id in other_group.game_ids)
+
+
+def _knowledge_event(
+    event_id,
+    text,
+    *,
+    group_id="safety:g1",
+    scene_ref="scene:1",
+    sender_role=None,
+    is_self=False,
+    social_eligible=True,
+    owner="UNKNOWN",
+):
+    payload = {
+        "text": text,
+        "segments": [{"type": "text", "data": {"text": text}}],
+        "scene_ref": scene_ref,
+        "social_eligible": social_eligible,
+        "interaction_owner": owner,
+        "is_self": is_self,
+    }
+    if sender_role is not None:
+        payload["sender_role"] = sender_role
+    return SocialEventEnvelope.create(
+        event_id=f"safety:{event_id}",
+        event_type="platform.message",
+        occurred_at=1_786_000_000,
+        received_at=1_786_000_000,
+        persona_id="groupmate:default",
+        group_id=group_id,
+        actor_id="anonymous-member",
+        source_message_id=event_id,
+        correlation_id=f"safety:{event_id}",
+        causation_id=None,
+        payload=payload,
+    )

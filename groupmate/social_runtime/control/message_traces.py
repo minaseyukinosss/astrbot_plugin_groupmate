@@ -79,6 +79,28 @@ _TERMINAL_DELIVERY_STATUSES = {
     "FAILED",
     "UNKNOWN",
 }
+_GAME_LABELS = {
+    "game:genshin-impact": "原神",
+    "game:delta-force": "三角洲行动",
+    "game:wuthering-waves": "鸣潮",
+    "game:honkai-star-rail": "崩坏：星穹铁道",
+    "game:zenless-zone-zero": "绝区零",
+}
+_KNOWLEDGE_DIAGNOSTIC_CODES = {
+    "ambiguous_entity",
+    "ambiguous_term",
+    "too_many_games",
+    "ambiguous_game_for_version",
+    "direct_unresolved",
+    "unknown_game_entity",
+    "knowledge_local_resolution_failed",
+    "risk:version_state",
+    "risk:date_time",
+    "risk:entity_list",
+    "risk:numeric",
+    "risk:official_status",
+    "risk:rumor_status",
+}
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -400,6 +422,7 @@ class MessageTraceRepository:
             if relationship_decisions
             else None
         )
+        knowledge_summary = self._knowledge_summary(evaluation)
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
@@ -413,6 +436,7 @@ class MessageTraceRepository:
                 "candidate_count": len(candidates),
                 "candidate_source": candidate_source,
                 "participation_diagnostics": participation_diagnostics,
+                **knowledge_summary,
             }
             summary["judgement"] = judgement
             if relationship is not None:
@@ -660,6 +684,112 @@ class MessageTraceRepository:
         if evidence:
             judgement["evidence"] = evidence
         return judgement
+
+    @classmethod
+    def _knowledge_summary(cls, evaluation: object) -> dict[str, object]:
+        frame = getattr(evaluation, "topic_understanding", None)
+        if frame is None:
+            return {
+                "games": [],
+                "entities": [],
+                "terms": [],
+                "version_reference": None,
+                "need": "none",
+                "diagnostic_codes": [],
+            }
+
+        resolved_entities = tuple(
+            getattr(frame, "resolved_entities", ()) or ()
+        )
+        game_labels = dict(_GAME_LABELS)
+        for item in resolved_entities:
+            if str(getattr(item, "entity_type", "")) == "game":
+                game_labels[str(getattr(item, "canonical_game_id", ""))] = (
+                    cls._safe_text(getattr(item, "canonical_name", ""), 80)
+                )
+
+        game_ids = tuple(getattr(frame, "game_ids", ()) or ())
+        games = [
+            game_labels.get(str(game_id), "未知游戏") for game_id in game_ids
+        ]
+        entities = [
+            {
+                "name": cls._safe_text(
+                    getattr(item, "canonical_name", ""), 80
+                ),
+                "type": cls._safe_text(getattr(item, "entity_type", ""), 48),
+                "game": game_labels.get(
+                    str(getattr(item, "canonical_game_id", "")), "未知游戏"
+                ),
+            }
+            for item in resolved_entities
+            if str(getattr(item, "entity_type", "")) != "game"
+        ][:8]
+        terms = [
+            {
+                "name": cls._safe_text(
+                    getattr(item, "canonical_text", ""), 48
+                ),
+                "kind": cls._safe_text(getattr(item, "term_kind", ""), 48),
+                "game": game_labels.get(
+                    str(getattr(item, "game_id", "")), "未知游戏"
+                ),
+            }
+            for item in tuple(getattr(frame, "resolved_terms", ()) or ())
+        ][:12]
+        version = getattr(frame, "version_reference", None)
+        version_summary = (
+            None
+            if version is None
+            else {
+                "game": game_labels.get(
+                    str(getattr(version, "game_id", "")), "未知游戏"
+                ),
+                "relative_kind": cls._safe_text(
+                    getattr(version, "relative_kind", ""), 32
+                ),
+                "disclosure_kind": cls._safe_text(
+                    getattr(version, "disclosure_kind", ""), 32
+                ),
+                "region": (
+                    cls._safe_text(getattr(version, "region", ""), 48) or None
+                ),
+                "platform": (
+                    cls._safe_text(getattr(version, "platform", ""), 48)
+                    or None
+                ),
+            }
+        )
+        raw_codes = tuple(getattr(frame, "ambiguity_codes", ()) or ()) + tuple(
+            getattr(evaluation, "knowledge_diagnostics", ()) or ()
+        )
+        diagnostic_codes = list(
+            dict.fromkeys(
+                str(code)
+                for code in raw_codes
+                if str(code) in _KNOWLEDGE_DIAGNOSTIC_CODES
+            )
+        )[:12]
+        if "direct_unresolved" in diagnostic_codes:
+            need = "unresolvable"
+        elif version is not None or any(
+            code.startswith("risk:") for code in diagnostic_codes
+        ):
+            need = "fresh_evidence_required"
+        elif "unknown_game_entity" in diagnostic_codes:
+            need = "background_learning"
+        elif games or entities or terms:
+            need = "local_sufficient"
+        else:
+            need = "none"
+        return {
+            "games": games,
+            "entities": entities,
+            "terms": terms,
+            "version_reference": version_summary,
+            "need": need,
+            "diagnostic_codes": diagnostic_codes,
+        }
 
     def _evidence_preview(
         self, evaluation: object, evidence_event_ids: tuple[object, ...]

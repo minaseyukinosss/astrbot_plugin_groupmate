@@ -94,6 +94,18 @@
     "slider": {"min": 5, "max": 120, "step": 5},
     "hint": "仅影响后台画像提取；超时会安全重试，不影响群聊回复。"
   },
+  "knowledge_enabled": {
+    "description": "启用群聊游戏知识",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后加载五款预装游戏语义，并在后台学习当前群的称呼约定；关闭后不启动解析和观察服务。"
+  },
+  "knowledge_web_search_enabled": {
+    "description": "允许知识联网检索",
+    "type": "bool",
+    "default": true,
+    "hint": "为后续版本事实检索预留。本阶段只记录配置，不会发起任何网络请求。"
+  },
   "vision_provider": {
     "description": "Groupmate 视觉模型（可选）",
     "type": "string",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
+from groupmate.settings import SocialRuntimeSettings
 from groupmate.social_runtime.contracts import RuntimeMode, SocialEventEnvelope
 from groupmate.social_runtime.knowledge.contracts import TopicUnderstandingFrame
 from groupmate.social_runtime.manager import ShadowEvaluation, SocialRuntimeManager
@@ -155,3 +157,29 @@ def test_topic_frame_capture_round_trip_is_backward_compatible():
         }
     )
     assert with_topic.topic_understanding.frame_id == "knowledge-frame:test"
+
+
+def test_knowledge_off_does_not_start_resolver_or_observer(tmp_path):
+    async def scenario():
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["g1"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:test",
+                "profile_enabled": False,
+                "knowledge_enabled": False,
+                "knowledge_web_search_enabled": False,
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(object(), settings, tmp_path)
+        await bridge.start()
+        resolver = bridge.manager.knowledge_resolver
+        observer = bridge._knowledge_service
+        await bridge.close()
+        return resolver, observer
+
+    resolver, observer = asyncio.run(scenario())
+
+    assert resolver is None
+    assert observer is None
+    assert not (tmp_path / ".groupmate-knowledge-salt").exists()

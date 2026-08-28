@@ -36,6 +36,8 @@ class SocialRuntimeSettings:
     profile_batch_messages: int = 20
     profile_batch_interval_seconds: int = 600
     profile_timeout_seconds: int = 30
+    knowledge_enabled: bool = True
+    knowledge_web_search_enabled: bool = True
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -145,6 +147,13 @@ class SocialRuntimeSettings:
                 "profile_timeout_seconds",
                 minimum=5,
                 maximum=120,
+            ),
+            knowledge_enabled=cls._boolean(
+                source.get("knowledge_enabled", True), "knowledge_enabled"
+            ),
+            knowledge_web_search_enabled=cls._boolean(
+                source.get("knowledge_web_search_enabled", True),
+                "knowledge_web_search_enabled",
             ),
         )
 

@@ -7,6 +7,7 @@ from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.control.message_traces import MessageTraceRepository
 from groupmate.social_runtime.governor import GovernorResult
+from groupmate.social_runtime.knowledge.contracts import TopicUnderstandingFrame
 from groupmate.social_runtime.society.relationship_events import (
     RelationshipEventDecision,
     RelationshipEventProposal,
@@ -343,6 +344,94 @@ def test_shadow_act_keeps_pre_gate_decision_separate_from_delivery(tmp_path):
     assert summary["understanding"]["candidate_source"] == "deterministic"
     assert "chain_of_thought" not in str(summary)
     assert "prompt" not in str(summary)
+
+
+def test_trace_projects_only_safe_game_understanding_summary(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("knowledge-summary")
+    evaluation = _evaluation(event, outcome="SILENCE")
+    evaluation.topic_understanding = TopicUnderstandingFrame.create(
+        frame_id="knowledge-frame:private",
+        game_ids=("game:genshin-impact",),
+        resolved_entities=(
+            {
+                "entity_id": "entity:genshin:traveler",
+                "entity_type": "character",
+                "canonical_name": "旅行者",
+                "canonical_game_id": "game:genshin-impact",
+                "matched_alias": "内部命中别名",
+                "confidence": 0.991,
+                "supporting_knowledge_ids": ("private:evidence:author-42",),
+            },
+        ),
+        resolved_terms=(
+            {
+                "term_id": "term:genshin:primogem",
+                "canonical_text": "原石",
+                "meaning_summary": "这段内部证据摘要不能进入 trace",
+                "game_id": "game:genshin-impact",
+                "term_kind": "official",
+                "confidence": 0.987,
+                "supporting_knowledge_ids": ("private:claim:raw",),
+            },
+        ),
+        discourse_referents=(),
+        version_reference={
+            "game_id": "game:genshin-impact",
+            "relative_kind": "new",
+            "disclosure_kind": "none",
+            "region": None,
+            "platform": None,
+            "confidence": 0.9,
+        },
+        conversation_intent_hint="version_question",
+        ambiguity_codes=("risk:version_state", "untrusted:raw-diagnostic"),
+        confidence=0.99,
+        supporting_knowledge_ids=("private:frame:evidence",),
+    )
+    evaluation.knowledge_diagnostics = (
+        "knowledge_local_resolution_failed",
+        "untrusted:exception-message",
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.record_evaluation(evaluation, now=12)
+
+    understanding = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["understanding"]
+    assert understanding["games"] == ["原神"]
+    assert understanding["entities"] == [
+        {"name": "旅行者", "type": "character", "game": "原神"}
+    ]
+    assert understanding["terms"] == [
+        {"name": "原石", "kind": "official", "game": "原神"}
+    ]
+    assert understanding["version_reference"] == {
+        "game": "原神",
+        "relative_kind": "new",
+        "disclosure_kind": "none",
+        "region": None,
+        "platform": None,
+    }
+    assert understanding["need"] == "fresh_evidence_required"
+    assert understanding["diagnostic_codes"] == [
+        "risk:version_state",
+        "knowledge_local_resolution_failed",
+    ]
+    serialized = json.dumps(understanding, ensure_ascii=False)
+    for private_value in (
+        "0.991",
+        "0.987",
+        "内部命中别名",
+        "这段内部证据摘要不能进入 trace",
+        "private:evidence:author-42",
+        "private:claim:raw",
+        "private:frame:evidence",
+        "untrusted:raw-diagnostic",
+        "untrusted:exception-message",
+    ):
+        assert private_value not in serialized
 
 
 def test_reply_plan_projects_only_safe_expression_summary(tmp_path):

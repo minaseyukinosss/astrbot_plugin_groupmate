@@ -769,27 +769,30 @@ class AstrBotSocialRuntimeBridge:
                 raise RuntimeError("direct cognition client is unavailable")
             knowledge_service = None
             knowledge_resolver = None
-            try:
-                knowledge_repository = KnowledgeRepository(
-                    self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
-                )
-                SeedImporter(
-                    knowledge_repository, clock=self.clock
-                ).import_all(load_bundled_seeds())
-                knowledge_service = KnowledgeObservationService(
-                    repository=knowledge_repository,
-                    group_ids=self.settings.enabled_groups,
-                    install_salt=self._knowledge_install_salt(),
-                    clock=self.clock,
-                )
-                knowledge_resolver = KnowledgeEntityResolver(
-                    knowledge_repository
-                )
+            if self.settings.knowledge_enabled:
+                try:
+                    knowledge_repository = KnowledgeRepository(
+                        self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+                    )
+                    SeedImporter(
+                        knowledge_repository, clock=self.clock
+                    ).import_all(load_bundled_seeds())
+                    knowledge_service = KnowledgeObservationService(
+                        repository=knowledge_repository,
+                        group_ids=self.settings.enabled_groups,
+                        install_salt=self._knowledge_install_salt(),
+                        clock=self.clock,
+                    )
+                    knowledge_resolver = KnowledgeEntityResolver(
+                        knowledge_repository
+                    )
+                    self.knowledge_error = None
+                except Exception:
+                    knowledge_service = None
+                    knowledge_resolver = None
+                    self.knowledge_error = "knowledge_seed_unavailable"
+            else:
                 self.knowledge_error = None
-            except Exception:
-                knowledge_service = None
-                knowledge_resolver = None
-                self.knowledge_error = "knowledge_seed_unavailable"
             manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,

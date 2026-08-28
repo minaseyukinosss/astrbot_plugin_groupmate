@@ -405,35 +405,37 @@ Commit: `git commit -m "feat: ground social cognition in local knowledge"`
 - `knowledge_web_search_enabled: bool = True`，本阶段只记录配置，绝不调用网络。
 - trace understanding 增加 `games`、`entities`、`terms`、`version_reference`、`need`、`diagnostic_codes`，不显示内部置信分和作者引用。
 
-- [ ] **Step 1: 写配置和 trace 失败测试**
+- [x] **Step 1: 写配置和 trace 失败测试**
 
 验证两个开关默认 true、拒绝字符串布尔值、knowledge off 时 resolver/observer 都不启动、web search off 在本阶段无网络副作用。Trace 只显示 canonical label 和限定诊断，不泄漏 safe summary 之外的证据。
 
-- [ ] **Step 2: 建立冻结评测集**
+- [x] **Step 2: 建立冻结评测集**
 
 写入至少 240 条匿名 JSONL：五款游戏各 36 条稳定语义/术语，跨游戏歧义 30 条，版本指代 20 条，非游戏对照 10 条。每条固定 `case_id`、`group_id`、`occurred_at`、`text`、`context`、expected games/entities/terms/version/need/ambiguity。
 
-- [ ] **Step 3: 运行发布门并确认初次失败**
+- [x] **Step 3: 运行发布门并确认初次失败**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_message_traces.py tests/evaluation/test_game_knowledge.py tests/scenarios/test_game_knowledge_shadow.py`
 
 Expected: 新配置/trace/corpus 断言失败，随后按失败类别补 seed 或消歧规则，不降低断言阈值。
 
-- [ ] **Step 4: 完成安全 trace 投影和 corpus runner**
+- [x] **Step 4: 完成安全 trace 投影和 corpus runner**
 
 MessageTraceRepository 只投影 frame 摘要和 need；未知旧 evaluation 默认空知识摘要。评测 runner 逐条从临时 v4 DB 导入 seed 后解析，记录耗时和错误类型。
 
-- [ ] **Step 5: 运行本地认知 Gate 1**
+- [x] **Step 5: 运行本地认知 Gate 1**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_events.py tests/contracts/test_message_traces.py tests/scenarios/test_game_knowledge_shadow.py tests/evaluation/test_game_knowledge.py`
 
 Expected: PASS；`understanding_accuracy >= 0.95`、`high_confidence_wrong_merge_rate < 0.01`、`cross_group_leaks == 0`、`bot_promotions == 0`、`command_promotions == 0`。
 
-- [ ] **Step 6: 运行回归和提交**
+- [x] **Step 6: 运行回归和提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime tests/contracts tests/shared tests/scenarios`
 
 Expected: PASS。
+
+执行记录：默认导入模式因两个既有同名 `test_contracts.py` 在 collection 阶段冲突；改用 `--import-mode=importlib` 后为 880 passed、1 个与本任务无关的既有断言失败（旧测试仍禁止 `member_context` / `relationship_memories`）。本地知识 Gate 1 独立 127 passed。
 
 Run: `git diff --check`
 
