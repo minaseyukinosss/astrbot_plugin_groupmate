@@ -22,6 +22,12 @@ from .observation import (
     KnowledgeOriginClassifier,
     OriginDecision,
 )
+from .resolver import KnowledgeEntityResolver
+from .retrieval import (
+    KnowledgeHit,
+    KnowledgeNeedAssessor,
+    KnowledgeRetriever,
+)
 
 
 __all__ = (
@@ -30,10 +36,14 @@ __all__ = (
     "DiscourseReferent",
     "EvidenceLevel",
     "KnowledgeNeed",
+    "KnowledgeNeedAssessor",
     "KnowledgeNeedOutcome",
     "KnowledgeObservation",
     "KnowledgeObservationService",
     "KnowledgeOriginClassifier",
+    "KnowledgeEntityResolver",
+    "KnowledgeHit",
+    "KnowledgeRetriever",
     "KnowledgeScope",
     "ObservationStatus",
     "OriginClass",

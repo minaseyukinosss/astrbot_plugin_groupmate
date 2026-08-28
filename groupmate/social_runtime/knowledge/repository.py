@@ -119,6 +119,27 @@ class GroupConventionRecord:
         return len(self.evidence_observation_ids)
 
 
+@dataclass(frozen=True)
+class KnowledgeEntityRecord:
+    entity_id: str
+    entity_type: str
+    canonical_name: str
+    canonical_game_id: str
+    status: str
+
+
+@dataclass(frozen=True)
+class KnowledgeClaimRecord:
+    claim_id: str
+    subject_entity_id: str
+    predicate: str
+    safe_summary: str
+    claim_kind: str
+    evidence_level: str
+    status: str
+    checked_at: int | None
+
+
 class KnowledgeRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -262,6 +283,104 @@ class KnowledgeRepository:
             if alias in normalized_text and value not in result:
                 result.append(value)
         return tuple(result)
+
+    def active_seed_manifests(self) -> tuple[Mapping[str, Any], ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT manifest_json FROM knowledge_seeds "
+                "WHERE status='active' ORDER BY seed_id,seed_version"
+            ).fetchall()
+        return tuple(json.loads(str(row[0])) for row in rows)
+
+    def active_group_aliases(
+        self, group_id: str
+    ) -> tuple[KnowledgeAliasRecord, ...]:
+        scope = _required_text(group_id, "group_id")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM group_knowledge_aliases "
+                "WHERE group_id=? AND status='active' "
+                "ORDER BY LENGTH(normalized_alias) DESC,confidence DESC,alias_id",
+                (scope,),
+            ).fetchall()
+        return tuple(
+            KnowledgeAliasRecord(
+                alias_id=str(row["alias_id"]),
+                scope_kind="group",
+                group_id=scope,
+                entity_id=str(row["entity_id"]),
+                normalized_alias=str(row["normalized_alias"]),
+                alias_kind="community",
+                ambiguity_level="contextual",
+                confidence=float(row["confidence"]),
+                status=str(row["status"]),
+            )
+            for row in rows
+        )
+
+    def entities(
+        self, entity_ids: Iterable[str]
+    ) -> tuple[KnowledgeEntityRecord, ...]:
+        identities = tuple(
+            dict.fromkeys(_required_text(value, "entity_id") for value in entity_ids)
+        )
+        if not identities:
+            return ()
+        placeholders = ",".join("?" for _ in identities)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM knowledge_entities WHERE entity_id IN ({}) "
+                "ORDER BY entity_id".format(placeholders),
+                identities,
+            ).fetchall()
+        return tuple(
+            KnowledgeEntityRecord(
+                entity_id=str(row["entity_id"]),
+                entity_type=str(row["entity_type"]),
+                canonical_name=str(row["canonical_name"]),
+                canonical_game_id=str(row["canonical_game_id"]),
+                status=str(row["status"]),
+            )
+            for row in rows
+        )
+
+    def active_claims(
+        self, entity_ids: Iterable[str], *, limit: int
+    ) -> tuple[KnowledgeClaimRecord, ...]:
+        identities = tuple(
+            dict.fromkeys(_required_text(value, "entity_id") for value in entity_ids)
+        )
+        maximum = max(1, min(32, int(limit)))
+        if not identities:
+            return ()
+        placeholders = ",".join("?" for _ in identities)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM knowledge_claims "
+                "WHERE subject_entity_id IN ({}) AND status='active' "
+                "ORDER BY CASE evidence_level "
+                "WHEN 'official' THEN 0 WHEN 'bundled' THEN 1 "
+                "WHEN 'corroborated' THEN 2 WHEN 'secondary' THEN 3 ELSE 4 END,"
+                "claim_id LIMIT ?".format(placeholders),
+                (*identities, maximum),
+            ).fetchall()
+        return tuple(
+            KnowledgeClaimRecord(
+                claim_id=str(row["claim_id"]),
+                subject_entity_id=str(row["subject_entity_id"]),
+                predicate=str(row["predicate"]),
+                safe_summary=str(row["safe_summary"]),
+                claim_kind=str(row["claim_kind"]),
+                evidence_level=str(row["evidence_level"]),
+                status=str(row["status"]),
+                checked_at=(
+                    None
+                    if row["checked_at"] is None
+                    else int(row["checked_at"])
+                ),
+            )
+            for row in rows
+        )
 
     def record_convention_evidence(
         self,
@@ -1180,6 +1299,8 @@ __all__ = (
     "AFFINITY_HALF_LIFE_SECONDS",
     "GroupConventionRecord",
     "KnowledgeAliasRecord",
+    "KnowledgeClaimRecord",
+    "KnowledgeEntityRecord",
     "KnowledgeRepository",
     "SeedVersionConflict",
     "SeedVersionOrderConflict",

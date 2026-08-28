@@ -303,33 +303,33 @@ Commit: `git commit -m "feat: learn group knowledge conventions"`
 - Produces: `KnowledgeRetriever.retrieve(frame, group_id, now, limit=8) -> tuple[KnowledgeHit, ...]`。
 - Produces: `KnowledgeNeedAssessor.assess(frame, hits, now) -> KnowledgeNeed`。
 
-- [ ] **Step 1: 写实体和群 alias 失败测试**
+- [x] **Step 1: 写实体和群 alias 失败测试**
 
 覆盖五款游戏官方名/简称、跨游戏同名词、群 alias 仅在本群生效、高 affinity 只能消歧不能凭空归类、无上下文高歧义 alias 保持 unresolved、seed disable 后不再命中。
 
-- [ ] **Step 2: 写版本指代与意图提示失败测试**
+- [x] **Step 2: 写版本指代与意图提示失败测试**
 
 固定消息时间覆盖“新版本”“下版本”“刚更新”“前瞻”“爆料”“测试服”“这期”；本阶段只输出 `VersionReference(relative_kind, disclosure_kind, game_id, confidence)`，不能猜版本号。没有唯一游戏时加 `ambiguous_game_for_version`。
 
-- [ ] **Step 3: 写 need assessor 失败测试**
+- [x] **Step 3: 写 need assessor 失败测试**
 
 稳定术语聊天为 `local_sufficient`；未知游戏为 `background_learning`；明确版本/日期/阵容/数值/官方/爆料为 `fresh_evidence_required`；无法唯一解析的 direct 为 `unresolvable`；普通非知识聊天为 `none`。
 
-- [ ] **Step 4: 运行测试并确认 RED**
+- [x] **Step 4: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
 
 Expected: resolver/retriever 缺失。
 
-- [ ] **Step 5: 实现确定性 longest-match + 上下文消歧**
+- [x] **Step 5: 实现确定性 longest-match + 上下文消歧**
 
 归一化 NFKC、大小写和常见标点；先群 exact alias，再全局 exact alias，再受上下文约束的 alias。排序键固定为 exact、context requirements、current discourse、group affinity、seed/source priority；confidence 未达 0.75 不输出 resolved entity。
 
-- [ ] **Step 6: 实现有界召回和风险词法判定**
+- [x] **Step 6: 实现有界召回和风险词法判定**
 
 召回最多 8 个实体/术语，只返回 ID 与安全摘要；risk classifier 对版本、时间、清单、数值、官方/非官方状态采用保守匹配，命中时本阶段只标记 fresh evidence need，不让模型用内在知识回答。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_resolver.py tests/social_runtime/knowledge/test_retrieval.py`
 
