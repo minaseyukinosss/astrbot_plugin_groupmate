@@ -297,3 +297,100 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
     assert no_next.version_slot_id is None
     assert no_next.relative_kind == "next"
     assert no_next.ambiguity_code == "ambiguous_next_slot"
+
+
+@pytest.mark.parametrize(
+    ("reader_result", "reason_code"),
+    [
+        (
+            VersionSlot.create(
+                version_slot_id="slot:future-check",
+                game_entity_id="game:genshin-impact",
+                official_label="5.8",
+                region="cn",
+                platform="all",
+                release_state="current",
+                official_state="released",
+                rumor_state="none_observed",
+                announced_at=100,
+                release_at=150,
+                effective_until=500,
+                official_checked_at=250,
+                rumor_checked_at=None,
+                fresh_until=1_000,
+                status="active",
+                revision=1,
+            ),
+            "future_official_check",
+        ),
+        (
+            VersionSlot.create(
+                version_slot_id="slot:expired",
+                game_entity_id="game:genshin-impact",
+                official_label="5.8",
+                region="cn",
+                platform="all",
+                release_state="current",
+                official_state="released",
+                rumor_state="none_observed",
+                announced_at=100,
+                release_at=150,
+                effective_until=200,
+                official_checked_at=180,
+                rumor_checked_at=None,
+                fresh_until=1_000,
+                status="active",
+                revision=1,
+            ),
+            "expired_version_slot",
+        ),
+        (
+            VersionSlot.create(
+                version_slot_id="slot:foreign",
+                game_entity_id="game:other",
+                official_label="5.8",
+                region="cn",
+                platform="all",
+                release_state="current",
+                official_state="released",
+                rumor_state="none_observed",
+                announced_at=100,
+                release_at=150,
+                effective_until=500,
+                official_checked_at=180,
+                rumor_checked_at=None,
+                fresh_until=1_000,
+                status="active",
+                revision=1,
+            ),
+            "ambiguous_version_slot",
+        ),
+        ("not-a-version-slot", "invalid_reader_result"),
+    ],
+)
+def test_release_reader_never_binds_future_expired_or_foreign_slots(
+    tmp_path, reader_result, reason_code
+):
+    """Catches reader data that would leak future or foreign release labels."""
+    resolver_module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.resolver"
+    )
+    state_module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.release_state"
+    )
+    repository = _repository(tmp_path)
+    resolver = resolver_module.KnowledgeEntityResolver(
+        repository,
+        release_state_service=state_module.GameReleaseStateService(
+            lambda _game, _region, _platform: (reader_result,)
+        ),
+    )
+    frame = resolver.resolve(
+        _event("reader", "原神这期怎么样"), (), "g1", now=200
+    )
+
+    resolved = resolver.resolve_reference(frame, 200, "cn", "all")
+
+    assert resolved.version_slot_id is None
+    assert resolved.relative_kind == "current"
+    assert resolved.ambiguity_code == reason_code

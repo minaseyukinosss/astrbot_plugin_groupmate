@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -33,10 +34,16 @@ class KnowledgeAdmissionPolicy:
             for item in existing_items
         ):
             raise TypeError("existing must contain KnowledgeClaimCandidate")
+        base_decision = self._ladder_decision(candidate)
+        if base_decision.outcome != "activate":
+            return base_decision
         comparable = tuple(
             item
             for item in existing_items
-            if self._same_claim_scope(candidate, item)
+            if (
+                self._same_claim_scope(candidate, item)
+                and self._ladder_decision(item).outcome == "activate"
+            )
         )
 
         official_existing = tuple(
@@ -45,6 +52,28 @@ class KnowledgeAdmissionPolicy:
             if item.evidence_level is EvidenceLevel.OFFICIAL
         )
         if candidate.evidence_level is EvidenceLevel.OFFICIAL:
+            newest_official_at = max(
+                (item.checked_at for item in official_existing), default=None
+            )
+            if (
+                newest_official_at is not None
+                and candidate.checked_at < newest_official_at
+            ):
+                return AdmissionDecision("reject", "older_official_evidence")
+            equal_time_official = tuple(
+                item
+                for item in official_existing
+                if item.checked_at == candidate.checked_at
+            )
+            if any(
+                self._conflicts(candidate, item)
+                for item in equal_time_official
+            ):
+                return AdmissionDecision("dispute", "equal_evidence_conflict")
+            if equal_time_official:
+                return AdmissionDecision(
+                    "keep_pending", "official_evidence_not_newer"
+                )
             older_official = tuple(
                 item
                 for item in official_existing
@@ -57,12 +86,6 @@ class KnowledgeAdmissionPolicy:
                     tuple(item.candidate_id for item in older_official),
                 )
             if any(
-                item.safe_summary != candidate.safe_summary
-                and item.checked_at == candidate.checked_at
-                for item in official_existing
-            ):
-                return AdmissionDecision("dispute", "equal_evidence_conflict")
-            if any(
                 item.evidence_level is not EvidenceLevel.OFFICIAL
                 for item in comparable
             ):
@@ -72,11 +95,15 @@ class KnowledgeAdmissionPolicy:
 
         if any(
             item.evidence_level is candidate.evidence_level
-            and item.safe_summary != candidate.safe_summary
+            and self._conflicts(candidate, item)
             for item in comparable
         ):
             return AdmissionDecision("dispute", "equal_evidence_conflict")
 
+        return base_decision
+
+    @staticmethod
+    def _ladder_decision(candidate: KnowledgeClaimCandidate) -> AdmissionDecision:
         if candidate.evidence_level is EvidenceLevel.BUNDLED:
             if candidate.claim_kind.value == "stable_semantic":
                 return AdmissionDecision("activate", "bundled_stable_semantic")
@@ -84,7 +111,7 @@ class KnowledgeAdmissionPolicy:
                 "reject", "bundled_requires_stable_semantic"
             )
         if candidate.evidence_level is EvidenceLevel.OFFICIAL:
-            if candidate.claim_kind.value == "rumor":
+            if candidate.claim_kind.value != "public_fact":
                 return AdmissionDecision("reject", "official_requires_public_fact")
             return AdmissionDecision("activate", "official_public_fact")
         if candidate.evidence_level is EvidenceLevel.CORROBORATED:
@@ -104,6 +131,45 @@ class KnowledgeAdmissionPolicy:
                 return AdmissionDecision("activate", "unofficial_rumor")
             return AdmissionDecision("reject", "unofficial_requires_rumor")
         raise ValueError("candidate evidence level is unsupported")
+
+    @classmethod
+    def _conflicts(
+        cls, candidate: KnowledgeClaimCandidate, existing: KnowledgeClaimCandidate
+    ) -> bool:
+        return cls._overlaps(candidate, existing) and (
+            cls._normalized_value(candidate.safe_summary)
+            != cls._normalized_value(existing.safe_summary)
+        )
+
+    @staticmethod
+    def _overlaps(
+        candidate: KnowledgeClaimCandidate, existing: KnowledgeClaimCandidate
+    ) -> bool:
+        candidate_start = (
+            candidate.valid_from
+            if candidate.valid_from is not None
+            else candidate.checked_at
+        )
+        existing_start = (
+            existing.valid_from
+            if existing.valid_from is not None
+            else existing.checked_at
+        )
+        return (
+            existing.valid_until is None or candidate_start < existing.valid_until
+        ) and (
+            candidate.valid_until is None or existing_start < candidate.valid_until
+        )
+
+    @staticmethod
+    def _normalized_value(summary: str) -> str:
+        normalized = unicodedata.normalize("NFKC", summary).casefold()
+        return "".join(
+            character
+            for character in normalized
+            if not character.isspace()
+            and not unicodedata.category(character).startswith("P")
+        )
 
     @staticmethod
     def _same_claim_scope(

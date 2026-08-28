@@ -28,8 +28,8 @@ _NEXT_STATES = {
     },
     "rumor": {
         "none_observed": {"weak"},
-        "weak": {"corroborated", "conflicted", "stale"},
-        "corroborated": {"conflicted", "stale"},
+        "weak": {"corroborated"},
+        "corroborated": {"conflicted"},
         "conflicted": {"stale"},
         "stale": set(),
     },
@@ -161,6 +161,47 @@ class GameReleaseStateService:
         if not isinstance(evidence, ReleaseEvidence):
             raise TypeError("evidence must be ReleaseEvidence")
         current = getattr(state, f"{evidence.track}_state")
+        last_checked_at = self._last_checked_at(state, evidence.track)
+        if (
+            last_checked_at is not None
+            and evidence.observed_at < last_checked_at
+        ):
+            return self._transition(
+                state,
+                state,
+                False,
+                f"stale_{evidence.track}_evidence",
+                evidence,
+                False,
+            )
+        if (
+            evidence.track == "release"
+            and evidence.target_state == "current"
+            and state.release_at is not None
+            and evidence.observed_at < state.release_at
+        ):
+            return self._transition(
+                state,
+                state,
+                False,
+                "release_before_verified_release_at",
+                evidence,
+                False,
+            )
+        if (
+            evidence.track == "official"
+            and evidence.target_state == "released"
+            and state.release_at is not None
+            and evidence.observed_at < state.release_at
+        ):
+            return self._transition(
+                state,
+                state,
+                False,
+                "official_release_before_verified_release_at",
+                evidence,
+                False,
+            )
         revalidation_required = bool(
             state.release_at is not None
             and evidence.observed_at >= state.release_at
@@ -239,11 +280,11 @@ class GameReleaseStateService:
             return self._unresolved(
                 reference, region, platform, "ambiguous_region_or_platform"
             )
-        slots = tuple(
-            slot
-            for slot in self._load_slots(reference.game_id, region, platform)
-            if self._is_verified(slot, message_at)
+        slots, reader_code = self._load_slots(
+            reference.game_id, region, platform
         )
+        if reader_code is not None:
+            return self._unresolved(reference, region, platform, reader_code)
         desired_state = {
             "current": "current",
             "new": "current",
@@ -255,14 +296,28 @@ class GameReleaseStateService:
             return self._unresolved(
                 reference, region, platform, "ambiguous_relative_reference"
             )
-        candidates = tuple(
+        matching_slots = tuple(
             slot for slot in slots if slot.release_state == desired_state
         )
         if reference.relative_kind == "recent_update":
-            candidates = tuple(
-                slot for slot in candidates if slot.official_state == "released"
+            matching_slots = tuple(
+                slot
+                for slot in matching_slots
+                if slot.official_state == "released"
             )
+        candidates = []
+        safety_codes = []
+        for slot in matching_slots:
+            safety_code = self._slot_safety_code(slot, message_at)
+            if safety_code is None:
+                candidates.append(slot)
+            else:
+                safety_codes.append(safety_code)
         if len(candidates) != 1:
+            if not candidates and safety_codes:
+                return self._unresolved(
+                    reference, region, platform, safety_codes[0]
+                )
             return self._unresolved(
                 reference,
                 region,
@@ -295,27 +350,57 @@ class GameReleaseStateService:
 
     def _load_slots(
         self, game_id: str, region: str, platform: str
-    ) -> tuple[VersionSlot, ...]:
+    ) -> tuple[tuple[VersionSlot, ...], str | None]:
         if self._reader is not None:
-            return tuple(self._reader(game_id, region, platform))
-        return tuple(
-            slot
-            for slot in self._slots
-            if (
-                slot.game_entity_id,
-                slot.region,
-                slot.platform,
-            ) == (game_id, region, platform)
+            try:
+                values = tuple(self._reader(game_id, region, platform))
+            except TypeError:
+                return (), "invalid_reader_result"
+            if not all(isinstance(slot, VersionSlot) for slot in values):
+                return (), "invalid_reader_result"
+        else:
+            values = self._slots
+        return (
+            tuple(
+                slot
+                for slot in values
+                if (
+                    slot.game_entity_id,
+                    slot.region,
+                    slot.platform,
+                ) == (game_id, region, platform)
+            ),
+            None,
         )
 
     @staticmethod
-    def _is_verified(slot: VersionSlot, message_at: int) -> bool:
-        return (
-            slot.status == "active"
-            and slot.official_state != "none"
-            and slot.official_checked_at is not None
-            and slot.fresh_until > message_at
+    def _slot_safety_code(
+        slot: VersionSlot, message_at: int
+    ) -> str | None:
+        if slot.status != "active" or slot.official_state == "none":
+            return "unverified_version_slot"
+        if slot.official_checked_at is None:
+            return "unverified_version_slot"
+        if slot.official_checked_at > message_at:
+            return "future_official_check"
+        if slot.effective_until is not None and slot.effective_until <= message_at:
+            return "expired_version_slot"
+        if slot.fresh_until <= message_at:
+            return "stale_version_slot"
+        return None
+
+    @staticmethod
+    def _last_checked_at(state: VersionSlot, track: str) -> int | None:
+        if track == "official":
+            return state.official_checked_at
+        if track == "rumor":
+            return state.rumor_checked_at
+        checks = tuple(
+            value
+            for value in (state.official_checked_at, state.rumor_checked_at)
+            if value is not None
         )
+        return max(checks, default=None)
 
     @staticmethod
     def _transition(

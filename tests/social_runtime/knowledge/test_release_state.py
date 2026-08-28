@@ -32,7 +32,15 @@ def _repository(path):
     return repository
 
 
-def _slot(*, revision: int, official_state: str = "none"):
+def _slot(
+    *,
+    revision: int,
+    official_state: str = "none",
+    release_state: str = "future",
+    rumor_state: str = "none_observed",
+    official_checked_at: int | None = None,
+    rumor_checked_at: int | None = None,
+):
     has_official = official_state != "none"
     return VersionSlot.create(
         version_slot_id="slot:wuthering-waves:next",
@@ -40,14 +48,18 @@ def _slot(*, revision: int, official_state: str = "none"):
         official_label="3.0" if has_official else None,
         region="cn",
         platform="all",
-        release_state="future",
+        release_state=release_state,
         official_state=official_state,
-        rumor_state="none_observed",
+        rumor_state=rumor_state,
         announced_at=150 if has_official else None,
         release_at=300,
         effective_until=600,
-        official_checked_at=200 if has_official else None,
-        rumor_checked_at=None,
+        official_checked_at=(
+            200 if has_official and official_checked_at is None else official_checked_at
+        ),
+        rumor_checked_at=(
+            rumor_checked_at if rumor_state != "none_observed" else None
+        ),
         fresh_until=86_600,
         status="active",
         revision=revision,
@@ -259,7 +271,7 @@ def test_release_service_advances_each_truth_track_without_clock_release():
                 evidence_id=evidence_id,
                 track=track,
                 target_state=target_state,
-                observed_at=200,
+                observed_at=300,
                 official_label="3.0",
             ),
         )
@@ -279,7 +291,7 @@ def test_release_service_advances_each_truth_track_without_clock_release():
             evidence_id="evidence:release-backward",
             track="release",
             target_state="current",
-            observed_at=250,
+            observed_at=350,
         ),
     )
     boundary = service.apply_evidence(
@@ -298,3 +310,69 @@ def test_release_service_advances_each_truth_track_without_clock_release():
     assert boundary.revalidation_required is True
     assert boundary.state.release_state == "future"
     assert boundary.state.official_state == "none"
+
+
+@pytest.mark.parametrize(
+    ("state", "track", "target_state", "observed_at", "reason_code"),
+    [
+        (_slot(revision=1), "rumor", "corroborated", 100, "invalid_rumor_transition"),
+        (
+            _slot(revision=1, rumor_state="weak", rumor_checked_at=100),
+            "rumor",
+            "conflicted",
+            200,
+            "invalid_rumor_transition",
+        ),
+        (
+            _slot(revision=1, rumor_state="weak", rumor_checked_at=250),
+            "rumor",
+            "corroborated",
+            200,
+            "stale_rumor_evidence",
+        ),
+        (
+            _slot(revision=1, official_state="teaser", official_checked_at=250),
+            "official",
+            "preview",
+            200,
+            "stale_official_evidence",
+        ),
+        (
+            _slot(revision=1, rumor_state="weak", rumor_checked_at=250),
+            "release",
+            "current",
+            200,
+            "stale_release_evidence",
+        ),
+        (_slot(revision=1), "release", "current", 299, "release_before_verified_release_at"),
+        (
+            _slot(revision=1, release_state="current", official_state="notice"),
+            "official",
+            "released",
+            299,
+            "official_release_before_verified_release_at",
+        ),
+    ],
+)
+def test_release_service_rejects_skipped_stale_and_early_evidence(
+    state, track, target_state, observed_at, reason_code
+):
+    """Catches skip, stale timestamp, and pre-release transition acceptance."""
+    module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.release_state"
+    )
+
+    transition = module.GameReleaseStateService().apply_evidence(
+        state,
+        module.ReleaseEvidence.create(
+            evidence_id=f"evidence:{reason_code}",
+            track=track,
+            target_state=target_state,
+            observed_at=observed_at,
+        ),
+    )
+
+    assert transition.accepted is False
+    assert transition.reason_code == reason_code
+    assert transition.old_revision == transition.new_revision == state.revision
+    assert transition.state == state
