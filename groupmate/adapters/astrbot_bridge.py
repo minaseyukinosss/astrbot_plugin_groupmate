@@ -57,7 +57,10 @@ from ..social_runtime.actions.member_style import (
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
 from .astrbot_models import AstrBotModelPort
-from .astrbot_official_sources import AstrBotOfficialSourceProbe
+from .astrbot_official_sources import (
+    AstrBotOfficialSourceProbe,
+    OfficialSourceHostCapability,
+)
 from .social_scene_model import SceneJsonModel
 from .affection_card import AffectionCardPresenter
 from .affection_query import AffectionQuery, is_affection_query
@@ -101,6 +104,7 @@ class AstrBotSocialRuntimeBridge:
         | None = None,
         member_style_client_factory: Callable[[SocialRuntimeSettings], object]
         | None = None,
+        official_source_capability: OfficialSourceHostCapability | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
@@ -126,7 +130,7 @@ class AstrBotSocialRuntimeBridge:
         )
         # Task scheduling remains deliberately outside this composition step.
         self.official_source_probe = AstrBotOfficialSourceProbe(
-            context,
+            official_source_capability,
             SafeSourceUrlPolicy(),
             timeout_seconds=5.0,
         )

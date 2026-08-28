@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from ..social_runtime.knowledge.contracts import SourceClass, SourceEvidence
 from ..social_runtime.knowledge.sources import (
@@ -36,6 +37,28 @@ _METADATA_KEYS = frozenset(
         "date",
     }
 )
+
+
+class OfficialSourceHostCapability(Protocol):
+    """Pinned host fetch capability required for official-source probing.
+
+    ``resolve_official_source`` returns every address approved before a fetch.
+    ``fetch_official_source`` receives that exact set and returns a mapping or
+    attribute object with ``final_url``, ``redirects`` (each with URL,
+    addresses, and peer address), ``peer_address``, ``pinned_address``,
+    ``post_fetch_addresses``, ``status_code``, and ``body``.  The host must
+    pin the fetch to an approved address and attest the redirect/final chain.
+    """
+
+    async def resolve_official_source(self, *, hostname: str) -> object: ...
+
+    async def fetch_official_source(
+        self,
+        *,
+        url: str,
+        approved_addresses: tuple[str, ...],
+        timeout_seconds: float,
+    ) -> object: ...
 
 
 class _MetadataParser(HTMLParser):
@@ -120,6 +143,50 @@ def _value(response: object, name: str) -> object:
     return getattr(response, name, None)
 
 
+def _hostname(canonical_url: str) -> str:
+    from urllib.parse import urlsplit
+
+    hostname = urlsplit(canonical_url).hostname
+    if hostname is None:
+        raise ValueError("canonical URL must contain a hostname")
+    return hostname
+
+
+def _public_address(value: object) -> str | None:
+    try:
+        address = ipaddress.ip_address(str(value or ""))
+    except ValueError:
+        return None
+    return str(address) if address.is_global else None
+
+
+def _public_addresses(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)) or not value:
+        raise ValueError("host address attestation is missing")
+    addresses = tuple(_public_address(item) for item in value)
+    if any(address is None for address in addresses):
+        raise ValueError("host address attestation is unsafe")
+    return tuple(dict.fromkeys(address for address in addresses if address))
+
+
+def _valid_redirects(value: object) -> bool:
+    if value is None or not isinstance(value, (tuple, list)):
+        return False
+    policy = SafeSourceUrlPolicy()
+    for item in value:
+        if not isinstance(item, Mapping):
+            return False
+        try:
+            policy.canonicalize(item.get("url"))
+            addresses = _public_addresses(item.get("addresses"))
+        except ValueError:
+            return False
+        peer_address = _public_address(item.get("peer_address"))
+        if peer_address is None or peer_address not in addresses:
+            return False
+    return True
+
+
 class AstrBotOfficialSourceProbe:
     """Probe registered URLs with an optional host-provided fetch capability."""
 
@@ -137,15 +204,22 @@ class AstrBotOfficialSourceProbe:
         self.timeout_seconds = timeout
 
     async def probe(self, request: OfficialProbeRequest) -> OfficialProbeResult:
+        resolve = getattr(self.context, "resolve_official_source", None)
         fetch = getattr(self.context, "fetch_official_source", None)
-        if not callable(fetch):
-            return self._result(request, "unavailable", (), (), "official_probe_unavailable")
+        if not callable(resolve) or not callable(fetch):
+            return self._result(
+                request,
+                "unavailable",
+                (),
+                (),
+                "official_probe_unavailable",
+            )
 
         fetched: dict[str, tuple[_FetchedMetadata | None, str]] = {}
         for source in request.sources:
             if source.canonical_url not in fetched:
                 fetched[source.canonical_url] = await self._fetch_metadata(
-                    fetch, source.canonical_url
+                    resolve, fetch, source.canonical_url
                 )
 
         evidence: list[SourceEvidence] = []
@@ -154,7 +228,7 @@ class AstrBotOfficialSourceProbe:
         for source in request.sources:
             metadata, failure = fetched[source.canonical_url]
             if metadata is None or metadata.publisher != source.publisher:
-                failures.append(failure or "failed")
+                failures.append(failure or "publisher")
                 continue
             try:
                 evidence.append(
@@ -182,7 +256,10 @@ class AstrBotOfficialSourceProbe:
                 continue
             covered.append(source.source_id)
 
-        if len(covered) == len(request.sources):
+        required = {
+            source.source_id for source in request.sources if source.required
+        }
+        if required.issubset(covered):
             return self._result(request, "complete", evidence, covered, None)
         if evidence:
             return self._result(
@@ -190,6 +267,14 @@ class AstrBotOfficialSourceProbe:
                 "partial",
                 evidence,
                 covered,
+                "official_probe_partial",
+            )
+        if "publisher" in failures:
+            return self._result(
+                request,
+                "partial",
+                (),
+                (),
                 "official_probe_partial",
             )
         if "timed_out" in failures:
@@ -203,12 +288,30 @@ class AstrBotOfficialSourceProbe:
         )
 
     async def _fetch_metadata(
-        self, fetch: object, canonical_url: str
+        self, resolve: object, fetch: object, canonical_url: str
     ) -> tuple[_FetchedMetadata | None, str]:
+        async def resolve_addresses() -> object:
+            result = resolve(hostname=_hostname(canonical_url))
+            return await result if inspect.isawaitable(result) else result
+
         async def call() -> object:
-            response = fetch(url=canonical_url, timeout_seconds=self.timeout_seconds)
+            response = fetch(
+                url=canonical_url,
+                approved_addresses=approved_addresses,
+                timeout_seconds=self.timeout_seconds,
+            )
             return await response if inspect.isawaitable(response) else response
 
+        try:
+            approved_addresses = _public_addresses(
+                await asyncio.wait_for(
+                    resolve_addresses(), timeout=self.timeout_seconds
+                )
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            return None, "timed_out"
+        except Exception:
+            return None, "failed"
         try:
             response = await asyncio.wait_for(call(), timeout=self.timeout_seconds)
         except (TimeoutError, asyncio.TimeoutError):
@@ -218,9 +321,27 @@ class AstrBotOfficialSourceProbe:
 
         final_url = _value(response, "final_url") or canonical_url
         try:
+            if not _valid_redirects(_value(response, "redirects")):
+                return None, "failed"
             if self.url_policy.canonicalize(final_url) != canonical_url:
                 return None, "failed"
         except ValueError:
+            return None, "failed"
+        peer_address = _public_address(_value(response, "peer_address"))
+        pinned_address = _public_address(_value(response, "pinned_address"))
+        if (
+            peer_address is None
+            or pinned_address != peer_address
+            or peer_address not in approved_addresses
+        ):
+            return None, "failed"
+        try:
+            post_fetch_addresses = _public_addresses(
+                _value(response, "post_fetch_addresses")
+            )
+        except ValueError:
+            return None, "failed"
+        if peer_address not in post_fetch_addresses:
             return None, "failed"
         status_code = _value(response, "status_code")
         if status_code is not None and status_code != 200:
@@ -267,4 +388,4 @@ class AstrBotOfficialSourceProbe:
         )
 
 
-__all__ = ("AstrBotOfficialSourceProbe",)
+__all__ = ("AstrBotOfficialSourceProbe", "OfficialSourceHostCapability")
