@@ -132,3 +132,29 @@ rg -n '^def test_' tests/contracts/test_official_source_probe.py
 317:def test_probe_fails_closed_without_leaking_transport_or_redirect_details(
 336:def test_bridge_exposes_an_installed_attested_probe_without_scheduling(tmp_path):
 ```
+
+## Fix round 2 — missing publisher classification
+
+### Changes
+
+- The metadata extractor now returns the non-transport `publisher` incomplete
+  outcome when a page has a title but lacks publisher metadata. Probe
+  aggregation therefore returns the fixed `official_probe_partial` diagnostic
+  with no domain evidence, matching publisher mismatch behavior.
+- Added a table-driven missing-only publisher row to the existing aggregate
+  contract test. It requires `partial`, empty evidence, and the fixed partial
+  diagnostic. The file still contains exactly four test functions.
+
+### Verification
+
+```text
+.venv/bin/python -m pytest -q tests/contracts/test_official_source_probe.py tests/shared/test_astrbot_package_loading.py
+.................                                                        [100%]
+17 passed in 0.54s
+
+rg -n '^def test_' tests/contracts/test_official_source_probe.py
+117:def test_probe_emits_only_bounded_deterministic_metadata(page, expected_published):
+260:def test_probe_aggregates_sources_without_bypassing_the_registry(
+331:def test_probe_fails_closed_without_leaking_transport_or_redirect_details(
+350:def test_bridge_exposes_an_installed_attested_probe_without_scheduling(tmp_path):
+```

@@ -359,8 +359,10 @@ class AstrBotOfficialSourceProbe:
             return None, "failed"
         title = parser.title()
         publisher = parser.publisher()
-        if not title or not publisher:
+        if not title:
             return None, "failed"
+        if not publisher:
+            return None, "publisher"
         return (
             _FetchedMetadata(
                 title=title,

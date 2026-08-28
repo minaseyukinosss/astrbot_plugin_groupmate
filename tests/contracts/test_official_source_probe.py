@@ -164,6 +164,18 @@ def test_probe_emits_only_bounded_deterministic_metadata(page, expected_publishe
             ),
         ),
         (
+            (_source("official:one", "https://official.example.com/news/one"),),
+            {
+                "https://official.example.com/news/one": _page(
+                    publisher="",
+                    final_url="https://official.example.com/news/one",
+                ),
+            },
+            "partial",
+            (),
+            ("https://official.example.com/news/one",),
+        ),
+        (
             (
                 _source("official:one", "https://official.example.com/news/one"),
                 _source("official:two", "https://official.example.com/news/two"),
@@ -255,6 +267,8 @@ def test_probe_aggregates_sources_without_bypassing_the_registry(
 
     assert result.status == expected_status
     assert result.covered_source_ids == expected_covered
+    if expected_status == "partial":
+        assert result.diagnostic_code == "official_probe_partial"
     assert [url for url, _timeout, _addresses in context.calls] == list(expected_calls)
     assert set(url for url, _timeout, _addresses in context.calls) <= {
         source.canonical_url for source in sources
