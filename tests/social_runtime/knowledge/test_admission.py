@@ -535,6 +535,27 @@ def test_admission_policy_enforces_evidence_ladder_and_conflict_history(
         ),
         (
             _candidate_window(
+                "claim:decimal",
+                summary="倍率为 1.0%。",
+                checked_at=200,
+                valid_from=200,
+                valid_until=400,
+            ),
+            (
+                _candidate_window(
+                    "claim:integer",
+                    summary="倍率为 10%。",
+                    checked_at=200,
+                    valid_from=100,
+                    valid_until=300,
+                ),
+            ),
+            "dispute",
+            "equal_evidence_conflict",
+            (),
+        ),
+        (
+            _candidate_window(
                 "claim:latest",
                 summary="正式版本已实装。",
                 checked_at=300,

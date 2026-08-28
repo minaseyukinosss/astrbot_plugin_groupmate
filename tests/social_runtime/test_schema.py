@@ -91,7 +91,7 @@ KNOWLEDGE_TABLES = {
 }
 
 
-def test_new_database_bootstraps_complete_v4_schema(tmp_path):
+def test_new_database_bootstraps_complete_v5_schema(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
 
     initialize_database(path)
@@ -107,7 +107,7 @@ def test_new_database_bootstraps_complete_v4_schema(tmp_path):
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
         ).fetchone()[0]
         assert REQUIRED_TABLES <= names
-        assert SCHEMA_VERSION == version == 4
+        assert SCHEMA_VERSION == version == 5
         assert db.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
@@ -141,7 +141,7 @@ def test_owned_v3_database_migrates_without_losing_runtime_profile_or_style_rows
     with connect_database(path) as db:
         assert db.execute(
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 5
         assert db.execute(
             "SELECT event_id FROM inbox WHERE event_id='evt-v3'"
         ).fetchone()[0] == "evt-v3"
@@ -156,6 +156,42 @@ def test_owned_v3_database_migrates_without_losing_runtime_profile_or_style_rows
             )
         }
         assert KNOWLEDGE_TABLES <= names
+        assert "release_checked_at" in {
+            row[1]
+            for row in db.execute("PRAGMA table_info(game_release_states)")
+        }
+
+    with connect_database(path) as db:
+        db.execute(
+            "INSERT INTO knowledge_entities("
+            "entity_id,entity_type,canonical_name,canonical_game_id,status,"
+            "created_at,updated_at) VALUES("
+            "'game:migration','game','迁移游戏','game:migration','active',1,1)"
+        )
+        db.execute(
+            "INSERT INTO game_release_states("
+            "version_slot_id,game_entity_id,region,platform,release_state,"
+            "official_state,rumor_state,fresh_until,status,revision) VALUES("
+            "'slot:migration','game:migration','cn','all','future','none',"
+            "'none_observed',100,'active',1)"
+        )
+        db.execute("ALTER TABLE game_release_states DROP COLUMN release_checked_at")
+        db.execute("UPDATE social_runtime_schema SET version=4 WHERE singleton=1")
+
+    initialize_database(path)
+
+    with connect_database(path) as db:
+        assert db.execute(
+            "SELECT version FROM social_runtime_schema WHERE singleton=1"
+        ).fetchone()[0] == 5
+        assert "release_checked_at" in {
+            row[1]
+            for row in db.execute("PRAGMA table_info(game_release_states)")
+        }
+        assert db.execute(
+            "SELECT release_checked_at FROM game_release_states "
+            "WHERE version_slot_id='slot:migration'"
+        ).fetchone()[0] is None
 
 
 def test_knowledge_schema_rejects_invalid_scope_and_truth_states(tmp_path):

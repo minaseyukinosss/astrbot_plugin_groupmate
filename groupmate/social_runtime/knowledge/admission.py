@@ -163,12 +163,16 @@ class KnowledgeAdmissionPolicy:
 
     @staticmethod
     def _normalized_value(summary: str) -> str:
-        normalized = unicodedata.normalize("NFKC", summary).casefold()
+        normalized = "".join(
+            unicodedata.normalize("NFKC", summary).casefold().split()
+        )
         return "".join(
             character
             for character in normalized
-            if not character.isspace()
-            and not unicodedata.category(character).startswith("P")
+            if (
+                not unicodedata.category(character).startswith("P")
+                or character in {".", "%", "-", "/"}
+            )
         )
 
     @staticmethod

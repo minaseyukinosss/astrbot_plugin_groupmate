@@ -801,6 +801,7 @@ class KnowledgeRepository:
                     "announced_at",
                     "release_at",
                     "effective_until",
+                    "release_checked_at",
                     "official_checked_at",
                     "rumor_checked_at",
                     "fresh_until",
@@ -832,8 +833,9 @@ class KnowledgeRepository:
                 "INSERT INTO game_release_states(version_slot_id,game_entity_id,"
                 "official_label,region,platform,release_state,official_state,"
                 "rumor_state,announced_at,release_at,effective_until,"
-                "official_checked_at,rumor_checked_at,fresh_until,status,revision) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "release_checked_at,official_checked_at,rumor_checked_at,"
+                "fresh_until,status,revision) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(version_slot_id) DO UPDATE SET "
                 "game_entity_id=excluded.game_entity_id,"
                 "official_label=excluded.official_label,region=excluded.region,"
@@ -842,6 +844,7 @@ class KnowledgeRepository:
                 "rumor_state=excluded.rumor_state,announced_at=excluded.announced_at,"
                 "release_at=excluded.release_at,"
                 "effective_until=excluded.effective_until,"
+                "release_checked_at=excluded.release_checked_at,"
                 "official_checked_at=excluded.official_checked_at,"
                 "rumor_checked_at=excluded.rumor_checked_at,"
                 "fresh_until=excluded.fresh_until,status=excluded.status,"
@@ -858,6 +861,7 @@ class KnowledgeRepository:
                     state.announced_at,
                     state.release_at,
                     state.effective_until,
+                    state.release_checked_at,
                     state.official_checked_at,
                     state.rumor_checked_at,
                     state.fresh_until,
@@ -1102,6 +1106,7 @@ class KnowledgeRepository:
             announced_at=row["announced_at"],
             release_at=row["release_at"],
             effective_until=row["effective_until"],
+            release_checked_at=row["release_checked_at"],
             official_checked_at=row["official_checked_at"],
             rumor_checked_at=row["rumor_checked_at"],
             fresh_until=row["fresh_until"],

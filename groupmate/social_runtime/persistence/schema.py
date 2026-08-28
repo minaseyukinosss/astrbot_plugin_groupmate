@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class ForeignDatabaseError(RuntimeError):
@@ -91,6 +91,9 @@ def initialize_database(path: Path) -> None:
                 version = 3
             if version == 3:
                 _migrate_v3_to_v4(db)
+                version = 4
+            if version == 4:
+                _migrate_v4_to_v5(db)
             verify_schema(db)
             return
         db.executescript(
@@ -140,6 +143,22 @@ def _migrate_v3_to_v4(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v4_to_v5(db: sqlite3.Connection) -> None:
+    """Add independent release evidence time without rewriting v4 rows."""
+
+    columns = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(game_release_states)")
+    }
+    db.execute("BEGIN IMMEDIATE")
+    if "release_checked_at" not in columns:
+        db.execute(
+            "ALTER TABLE game_release_states ADD COLUMN release_checked_at INTEGER"
+        )
+    db.execute("UPDATE social_runtime_schema SET version=5 WHERE singleton=1")
+    db.execute("COMMIT")
+
+
 def verify_schema(db: sqlite3.Connection) -> None:
     names = {
         row[0]
@@ -160,6 +179,14 @@ def verify_schema(db: sqlite3.Connection) -> None:
     integrity = db.execute("PRAGMA integrity_check").fetchone()
     if integrity is None or integrity[0] != "ok":
         raise SchemaVerificationError("Social Runtime database integrity check failed")
+    release_columns = {
+        str(row[1])
+        for row in db.execute("PRAGMA table_info(game_release_states)")
+    }
+    if "release_checked_at" not in release_columns:
+        raise SchemaVerificationError(
+            "game_release_states is missing release_checked_at"
+        )
 
 
 _SCHEMA_SQL = """
@@ -723,6 +750,7 @@ CREATE TABLE game_release_states (
     announced_at INTEGER,
     release_at INTEGER,
     effective_until INTEGER,
+    release_checked_at INTEGER,
     official_checked_at INTEGER,
     rumor_checked_at INTEGER,
     fresh_until INTEGER NOT NULL,

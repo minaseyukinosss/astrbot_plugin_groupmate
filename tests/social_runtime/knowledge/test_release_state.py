@@ -38,6 +38,7 @@ def _slot(
     official_state: str = "none",
     release_state: str = "future",
     rumor_state: str = "none_observed",
+    release_checked_at: int | None = None,
     official_checked_at: int | None = None,
     rumor_checked_at: int | None = None,
 ):
@@ -54,6 +55,7 @@ def _slot(
         announced_at=150 if has_official else None,
         release_at=300,
         effective_until=600,
+        release_checked_at=release_checked_at,
         official_checked_at=(
             200 if has_official and official_checked_at is None else official_checked_at
         ),
@@ -115,22 +117,33 @@ def _key():
 def test_release_state_uses_optimistic_aggregate_revision(tmp_path):
     repository = _repository(tmp_path / "groupmate-social-runtime-v2.db")
 
-    saved = repository.save_release_state(_slot(revision=1), expected_revision=0)
+    saved = repository.save_release_state(
+        _slot(revision=1, release_checked_at=100), expected_revision=0
+    )
     assert saved.revision == 1
     with pytest.raises(_module().ReleaseStateConflict):
         repository.save_release_state(
-            _slot(revision=2, official_state="preview"),
+            _slot(
+                revision=2,
+                official_state="preview",
+                release_checked_at=100,
+            ),
             expected_revision=0,
         )
 
     updated = repository.save_release_state(
-        _slot(revision=2, official_state="preview"),
+        _slot(
+            revision=2,
+            official_state="preview",
+            release_checked_at=100,
+        ),
         expected_revision=1,
     )
     assert updated.revision == 2
     assert repository.load_release_state(
         "game:wuthering-waves", "cn", "all"
     ) == (updated,)
+    assert updated.release_checked_at == 100
 
 
 def test_unchanged_release_state_does_not_advance_revision(tmp_path):
@@ -311,6 +324,31 @@ def test_release_service_advances_each_truth_track_without_clock_release():
     assert boundary.state.release_state == "future"
     assert boundary.state.official_state == "none"
 
+    current = service.apply_evidence(
+        _slot(revision=1),
+        module.ReleaseEvidence.create(
+            evidence_id="evidence:release-current-at-boundary",
+            track="release",
+            target_state="current",
+            observed_at=300,
+        ),
+    )
+    stale_past = service.apply_evidence(
+        current.state,
+        module.ReleaseEvidence.create(
+            evidence_id="evidence:release-past-stale",
+            track="release",
+            target_state="past",
+            observed_at=200,
+        ),
+    )
+
+    assert current.accepted is True
+    assert current.state.release_checked_at == 300
+    assert stale_past.accepted is False
+    assert stale_past.reason_code == "stale_release_evidence"
+    assert stale_past.state == current.state
+
 
 @pytest.mark.parametrize(
     ("state", "track", "target_state", "observed_at", "reason_code"),
@@ -338,7 +376,7 @@ def test_release_service_advances_each_truth_track_without_clock_release():
             "stale_official_evidence",
         ),
         (
-            _slot(revision=1, rumor_state="weak", rumor_checked_at=250),
+            _slot(revision=1, release_checked_at=250),
             "release",
             "current",
             200,

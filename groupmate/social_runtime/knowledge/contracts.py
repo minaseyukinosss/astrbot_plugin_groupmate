@@ -862,6 +862,7 @@ class VersionSlot:
     announced_at: int | None
     release_at: int | None
     effective_until: int | None
+    release_checked_at: int | None
     official_checked_at: int | None
     rumor_checked_at: int | None
     fresh_until: int
@@ -914,6 +915,9 @@ class VersionSlot:
         announced_at = _optional_timestamp(
             values.get("announced_at"), "announced_at"
         )
+        release_checked_at = _optional_timestamp(
+            values.get("release_checked_at"), "release_checked_at"
+        )
         official_checked_at = _optional_timestamp(
             values.get("official_checked_at"), "official_checked_at"
         )
@@ -950,7 +954,11 @@ class VersionSlot:
             raise ValueError("effective_until must follow release_at")
         supporting_checks = tuple(
             value
-            for value in (official_checked_at, rumor_checked_at)
+            for value in (
+                release_checked_at,
+                official_checked_at,
+                rumor_checked_at,
+            )
             if value is not None
         )
         if supporting_checks and fresh_until <= max(supporting_checks):
@@ -982,6 +990,7 @@ class VersionSlot:
             announced_at=announced_at,
             release_at=release_at,
             effective_until=effective_until,
+            release_checked_at=release_checked_at,
             official_checked_at=official_checked_at,
             rumor_checked_at=rumor_checked_at,
             fresh_until=fresh_until,

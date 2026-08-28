@@ -252,6 +252,8 @@ class GameReleaseStateService:
             )
         elif evidence.track == "rumor":
             values["rumor_checked_at"] = evidence.observed_at
+        else:
+            values["release_checked_at"] = evidence.observed_at
         new_state = VersionSlot.create(**values)
         return self._transition(
             state,
@@ -395,12 +397,7 @@ class GameReleaseStateService:
             return state.official_checked_at
         if track == "rumor":
             return state.rumor_checked_at
-        checks = tuple(
-            value
-            for value in (state.official_checked_at, state.rumor_checked_at)
-            if value is not None
-        )
-        return max(checks, default=None)
+        return state.release_checked_at
 
     @staticmethod
     def _transition(
