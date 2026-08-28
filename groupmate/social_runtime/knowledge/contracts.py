@@ -903,9 +903,9 @@ class VersionSlot:
         release_at = _optional_timestamp(
             values.get("release_at"), "release_at"
         )
-        if (official_state == "released") != (
-            release_state in {"current", "past"}
-        ):
+        if official_state == "released" and release_state not in {
+            "current", "past"
+        }:
             raise ValueError(
                 "released official state must match current or past release state"
             )

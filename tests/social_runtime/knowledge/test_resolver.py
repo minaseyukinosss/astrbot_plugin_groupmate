@@ -6,6 +6,7 @@ import pytest
 
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.knowledge.repository import KnowledgeRepository
+from groupmate.social_runtime.knowledge.contracts import VersionSlot
 from groupmate.social_runtime.knowledge.seeds import (
     SeedImporter,
     load_bundled_seeds,
@@ -212,3 +213,87 @@ def test_version_reference_with_multiple_games_is_explicitly_ambiguous(tmp_path)
     }
     assert frame.version_reference is None
     assert "ambiguous_game_for_version" in frame.ambiguity_codes
+
+
+def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
+    """Catches inferred labels and ambiguous region or next-slot bindings."""
+    module = importlib.import_module("groupmate.social_runtime.knowledge.resolver")
+    state_module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.release_state"
+    )
+    repository = _repository(tmp_path)
+    current = VersionSlot.create(
+        version_slot_id="slot:genshin:current",
+        game_entity_id="game:genshin-impact",
+        official_label="5.8",
+        region="cn",
+        platform="all",
+        release_state="current",
+        official_state="released",
+        rumor_state="none_observed",
+        announced_at=100,
+        release_at=150,
+        effective_until=500,
+        official_checked_at=180,
+        rumor_checked_at=None,
+        fresh_until=1_000,
+        status="active",
+        revision=1,
+    )
+    next_slot = VersionSlot.create(
+        version_slot_id="slot:genshin:next",
+        game_entity_id="game:genshin-impact",
+        official_label="6.0",
+        region="cn",
+        platform="all",
+        release_state="future",
+        official_state="preview",
+        rumor_state="none_observed",
+        announced_at=180,
+        release_at=600,
+        effective_until=900,
+        official_checked_at=190,
+        rumor_checked_at=None,
+        fresh_until=1_000,
+        status="active",
+        revision=2,
+    )
+    service = state_module.GameReleaseStateService((current, next_slot))
+    resolver = module.KnowledgeEntityResolver(
+        repository, release_state_service=service
+    )
+
+    for text, expected_slot, expected_label in (
+        ("原神这期怎么样", "slot:genshin:current", "5.8"),
+        ("原神下版本怎么样", "slot:genshin:next", "6.0"),
+        ("原神刚更新了什么", "slot:genshin:current", "5.8"),
+    ):
+        frame = resolver.resolve(_event(text, text), (), "g1", now=200)
+        resolved = resolver.resolve_reference(frame, 200, "cn", "all")
+
+        assert resolved.version_slot_id == expected_slot
+        assert resolved.official_label == expected_label
+        assert resolved.ambiguity_code is None
+        assert frame.version_reference is not None
+        assert not hasattr(frame.version_reference, "official_label")
+
+    current_frame = resolver.resolve(
+        _event("region", "原神这期怎么样"), (), "g1", now=200
+    )
+    no_region = resolver.resolve_reference(current_frame, 200, None, "all")
+    no_next = module.KnowledgeEntityResolver(
+        repository,
+        release_state_service=state_module.GameReleaseStateService((current,)),
+    ).resolve_reference(
+        resolver.resolve(_event("next", "原神下版本怎么样"), (), "g1", now=200),
+        200,
+        "cn",
+        "all",
+    )
+
+    assert no_region.version_slot_id is None
+    assert no_region.relative_kind == "current"
+    assert no_region.ambiguity_code == "ambiguous_region_or_platform"
+    assert no_next.version_slot_id is None
+    assert no_next.relative_kind == "next"
+    assert no_next.ambiguity_code == "ambiguous_next_slot"

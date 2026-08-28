@@ -15,6 +15,7 @@ from .contracts import (
     TopicUnderstandingFrame,
     VersionReference,
 )
+from .release_state import GameReleaseStateService, ResolvedVersionReference
 from .repository import KnowledgeRepository
 
 
@@ -65,8 +66,28 @@ class _Alias:
 
 
 class KnowledgeEntityResolver:
-    def __init__(self, repository: KnowledgeRepository) -> None:
+    def __init__(
+        self,
+        repository: KnowledgeRepository,
+        *,
+        release_state_service: GameReleaseStateService | None = None,
+    ) -> None:
         self.repository = repository
+        self.release_state_service = (
+            release_state_service or GameReleaseStateService(repository)
+        )
+
+    def resolve_reference(
+        self,
+        frame: TopicUnderstandingFrame,
+        message_time: int,
+        region: str | None,
+        platform: str | None,
+    ) -> ResolvedVersionReference:
+        """Bind lexical version wording only through verified local slots."""
+        return self.release_state_service.resolve_reference(
+            frame, message_time, region, platform
+        )
 
     def resolve(
         self,

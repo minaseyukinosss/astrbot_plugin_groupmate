@@ -383,14 +383,15 @@ def test_version_slot_rejects_collapsed_or_impossible_truth_tracks():
                 "official_state": "released",
             }
         )
-    with pytest.raises(ValueError, match="released official state"):
-        contracts.VersionSlot.create(
-            **{
-                **values,
-                "release_state": "current",
-                "official_state": "preview",
-            }
-        )
+    current_preview = contracts.VersionSlot.create(
+        **{
+            **values,
+            "release_state": "current",
+            "official_state": "preview",
+        }
+    )
+    assert current_preview.release_state == "current"
+    assert current_preview.official_state == "preview"
 
 
 @pytest.mark.parametrize(

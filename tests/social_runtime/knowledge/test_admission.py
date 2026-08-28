@@ -206,3 +206,152 @@ def test_official_claim_preserves_rumor_history_and_classification(tmp_path):
         ).fetchone()
     assert tuple(rumor) == ("rumor", "unofficial", "active")
     assert source[0] == "unofficial"
+
+
+@pytest.mark.parametrize(
+    ("candidate", "existing", "outcome", "reason_code", "superseded_ids"),
+    [
+        (
+            _candidate(
+                "claim:bundled-semantic",
+                summary="提瓦特是原神世界。",
+                checked_at=100,
+                evidence_level="bundled",
+                claim_kind="stable_semantic",
+            ),
+            (),
+            "activate",
+            "bundled_stable_semantic",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:bundled-fact",
+                summary="版本已经发布。",
+                checked_at=100,
+                evidence_level="bundled",
+            ),
+            (),
+            "reject",
+            "bundled_requires_stable_semantic",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:official",
+                summary="官方预告已公开。",
+                checked_at=100,
+            ),
+            (),
+            "activate",
+            "official_public_fact",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:secondary",
+                summary="可靠媒体报道版本消息。",
+                checked_at=100,
+                evidence_level="secondary",
+                claim_kind="stable_semantic",
+            ),
+            (),
+            "keep_pending",
+            "secondary_requires_corroboration",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:corroborated",
+                summary="可靠媒体一致报道版本消息。",
+                checked_at=100,
+                evidence_level="corroborated",
+                claim_kind="stable_semantic",
+            ),
+            (),
+            "activate",
+            "corroborated_stable_semantic",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:unofficial",
+                summary="传闻下版本有角色。",
+                checked_at=100,
+                evidence_level="unofficial",
+                claim_kind="rumor",
+            ),
+            (),
+            "activate",
+            "unofficial_rumor",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:conflict",
+                summary="没有预告。",
+                checked_at=100,
+            ),
+            (
+                _candidate(
+                    "claim:existing",
+                    summary="官方预告已公开。",
+                    checked_at=100,
+                ),
+            ),
+            "dispute",
+            "equal_evidence_conflict",
+            (),
+        ),
+        (
+            _candidate(
+                "claim:newer",
+                summary="官方预告已公开。",
+                checked_at=200,
+            ),
+            (
+                _candidate(
+                    "claim:older",
+                    summary="尚未公开预告。",
+                    checked_at=100,
+                ),
+            ),
+            "supersede",
+            "newer_official_supersedes",
+            ("claim:older",),
+        ),
+        (
+            _candidate(
+                "claim:release",
+                summary="正式版本已实装。",
+                checked_at=200,
+                claim_kind="public_fact",
+            ),
+            (
+                _candidate(
+                    "claim:test-server",
+                    summary="测试服数值变动。",
+                    checked_at=100,
+                    evidence_level="unofficial",
+                    claim_kind="rumor",
+                ),
+            ),
+            "activate",
+            "official_release_outranks_nonofficial",
+            (),
+        ),
+    ],
+)
+def test_admission_policy_enforces_evidence_ladder_and_conflict_history(
+    candidate, existing, outcome, reason_code, superseded_ids
+):
+    """Catches unsafe activation, incorrect conflict ranking, or rumor rewrites."""
+    module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.admission"
+    )
+
+    decision = module.KnowledgeAdmissionPolicy().evaluate(candidate, existing)
+
+    assert decision.outcome == outcome
+    assert decision.reason_code == reason_code
+    assert decision.superseded_claim_ids == superseded_ids

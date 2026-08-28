@@ -231,3 +231,70 @@ def test_new_official_claim_invalidates_negative_snapshot_in_same_commit(tmp_pat
             "SELECT status,diagnostic_code FROM negative_search_snapshots"
         ).fetchone()
     assert tuple(row) == ("invalidated", "new_official_evidence")
+
+
+def test_release_service_advances_each_truth_track_without_clock_release():
+    """Catches illegal track jumps, cross-track overwrites, and clock releases."""
+    module = importlib.import_module(
+        "groupmate.social_runtime.knowledge.release_state"
+    )
+    service = module.GameReleaseStateService()
+    state = _slot(revision=1)
+
+    for evidence_id, track, target_state, expected_release, expected_official, expected_rumor in (
+        ("evidence:release-current", "release", "current", "current", "none", "none_observed"),
+        ("evidence:teaser", "official", "teaser", "current", "teaser", "none_observed"),
+        ("evidence:preview", "official", "preview", "current", "preview", "none_observed"),
+        ("evidence:notice", "official", "notice", "current", "notice", "none_observed"),
+        ("evidence:released", "official", "released", "current", "released", "none_observed"),
+        ("evidence:rumor-weak", "rumor", "weak", "current", "released", "weak"),
+        ("evidence:rumor-corroborated", "rumor", "corroborated", "current", "released", "corroborated"),
+        ("evidence:rumor-conflicted", "rumor", "conflicted", "current", "released", "conflicted"),
+        ("evidence:rumor-stale", "rumor", "stale", "current", "released", "stale"),
+        ("evidence:release-past", "release", "past", "past", "released", "stale"),
+    ):
+        transition = service.apply_evidence(
+            state,
+            module.ReleaseEvidence.create(
+                evidence_id=evidence_id,
+                track=track,
+                target_state=target_state,
+                observed_at=200,
+                official_label="3.0",
+            ),
+        )
+
+        assert transition.accepted is True
+        assert transition.old_revision == state.revision
+        assert transition.new_revision == state.revision + 1
+        assert transition.evidence_ids == (evidence_id,)
+        assert transition.state.release_state == expected_release
+        assert transition.state.official_state == expected_official
+        assert transition.state.rumor_state == expected_rumor
+        state = transition.state
+
+    invalid = service.apply_evidence(
+        state,
+        module.ReleaseEvidence.create(
+            evidence_id="evidence:release-backward",
+            track="release",
+            target_state="current",
+            observed_at=250,
+        ),
+    )
+    boundary = service.apply_evidence(
+        _slot(revision=1),
+        module.ReleaseEvidence.create(
+            evidence_id="evidence:release-boundary",
+            track="release",
+            target_state="future",
+            observed_at=300,
+        ),
+    )
+
+    assert invalid.accepted is False
+    assert invalid.reason_code == "invalid_release_transition"
+    assert invalid.old_revision == invalid.new_revision == state.revision
+    assert boundary.revalidation_required is True
+    assert boundary.state.release_state == "future"
+    assert boundary.state.official_state == "none"
