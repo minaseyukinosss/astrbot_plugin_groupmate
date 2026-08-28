@@ -143,26 +143,26 @@ Commit: `git commit -m "feat: define game knowledge contracts"`
 **Interfaces:**
 - Produces: `KnowledgeRepository(path)`。
 - Produces: `.append_observation(observation) -> bool`，按稳定 ID 幂等。
-- Produces: `.upsert_seed_entity(entity, aliases, seed)`、`.aliases_for_text(text, group_id)`、`.group_conventions(group_id, normalized_expression)`、`.record_qualified_mention(observation_id, entity_id, scene_ref)`。
+- Produces: `.upsert_entity(entity_id, entity_type, canonical_name, canonical_game_id, status, now)`、`.put_alias(alias_id, entity_id, normalized_alias, alias_kind, ambiguity_level, source_id, status)`、`.put_group_alias(alias_id, group_id, entity_id, normalized_alias, evidence_observation_ids, confidence, last_used_at, status)`、`.aliases_for_text(text, group_id)`、`.record_qualified_mention(observation_id, entity_id, scene_ref)`；群约定读写 API 在 Task 4 随激活规则一起增加。
 - Reserves for later plans: claim/source/evidence、release state、job/usage 表和短事务 API。
 
-- [ ] **Step 1: 写 v4 bootstrap 和 v3 migration 失败测试**
+- [x] **Step 1: 写 v4 bootstrap 和 v3 migration 失败测试**
 
-断言 clean bootstrap 与 owned v3 migration 都得到版本 4 和这些表：`knowledge_observations`、`knowledge_entities`、`knowledge_aliases`、`group_knowledge_aliases`、`knowledge_claims`、`knowledge_sources`、`knowledge_claim_evidence`、`group_conventions`、`group_topic_affinity`、`game_release_states`、`negative_search_snapshots`、`knowledge_jobs`、`knowledge_usage`、`knowledge_seeds`。迁移必须保留现有 inbox、profile、style 行。
+断言 clean bootstrap 与 owned v3 migration 都得到版本 4 和这些表：`knowledge_observations`、`knowledge_entities`、`knowledge_aliases`、`group_knowledge_aliases`、`knowledge_claims`、`knowledge_sources`、`knowledge_claim_evidence`、`group_conventions`、`group_topic_affinity`、`group_topic_mentions`、`game_release_states`、`negative_search_snapshots`、`knowledge_jobs`、`knowledge_usage`、`knowledge_seeds`。迁移必须保留现有 inbox、profile、style 行。
 
-- [ ] **Step 2: 写作用域和约束失败测试**
+- [x] **Step 2: 写作用域和约束失败测试**
 
 验证：全局/群 scope 的互斥 CHECK、`content_hash` 幂等、同群 alias 唯一、相同表达可存在于两个群、查询 g1 永远不返回 g2、claim status/release 三轨非法值被 SQLite 拒绝、所有 group 表没有 `persona_id` 列。
 
-- [ ] **Step 3: 运行 schema/repository 测试并确认 RED**
+- [x] **Step 3: 运行 schema/repository 测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
 
 Expected: schema 仍是 v3、知识表和 repository 缺失导致失败。
 
-- [ ] **Step 4: 实现加法迁移和短事务仓储**
+- [x] **Step 4: 实现加法迁移和短事务仓储**
 
-`_migrate_v3_to_v4()` 使用 `BEGIN IMMEDIATE`，创建全部知识表后最后更新版本；repository 每个写操作自行打开连接并短提交，不持有跨网络事务。`author_ref` 使用 `sha256(group_id + "\x1f" + actor_id + install_salt)[:24]`，原始 actor ID 不进入知识表。
+`_migrate_v3_to_v4()` 使用 `BEGIN IMMEDIATE`，创建全部知识表后最后更新版本；repository 每个写操作自行打开连接并短提交，不持有跨网络事务。Repository 只接受已经不透明化的 `author_ref`；Task 4 的来源分类边界使用 `sha256(group_id + "\x1f" + actor_id + install_salt)[:24]`，原始 actor ID 不进入知识表。
 
 ```python
 def append_observation(self, value: KnowledgeObservation) -> bool:
@@ -177,11 +177,11 @@ def append_observation(self, value: KnowledgeObservation) -> bool:
         return cursor.rowcount == 1
 ```
 
-- [ ] **Step 5: 实现 7 天半衰期 affinity 投影**
+- [x] **Step 5: 实现 7 天半衰期 affinity 投影**
 
 同一 `source_event_id × entity_id` 幂等；只有 qualified human observation 计数；distinct actor/scene 分开计数；读取时按 `0.5 ** (age_seconds / 604800)` 衰减，Bot、command、forward 路径不能调用投影更新。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_schema.py tests/social_runtime/knowledge/test_repository.py tests/shared/test_group_scope_privacy.py`
 

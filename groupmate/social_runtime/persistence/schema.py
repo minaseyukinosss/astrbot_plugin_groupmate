@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class ForeignDatabaseError(RuntimeError):
@@ -34,6 +34,11 @@ _REQUIRED_TABLES = {
     "profile_audit",
     "member_style_settings", "member_speech_style_versions",
     "imitation_sessions",
+    "knowledge_seeds", "knowledge_observations", "knowledge_entities",
+    "knowledge_aliases", "group_knowledge_aliases", "knowledge_claims",
+    "knowledge_sources", "knowledge_claim_evidence", "group_conventions",
+    "group_topic_affinity", "group_topic_mentions", "game_release_states",
+    "negative_search_snapshots", "knowledge_jobs", "knowledge_usage",
 }
 
 
@@ -83,10 +88,16 @@ def initialize_database(path: Path) -> None:
                 version = 2
             if version == 2:
                 _migrate_v2_to_v3(db)
+                version = 3
+            if version == 3:
+                _migrate_v3_to_v4(db)
             verify_schema(db)
             return
         db.executescript(
-            _SCHEMA_SQL + _PROFILE_SCHEMA_SQL + _MEMBER_STYLE_SCHEMA_SQL
+            _SCHEMA_SQL
+            + _PROFILE_SCHEMA_SQL
+            + _MEMBER_STYLE_SCHEMA_SQL
+            + _KNOWLEDGE_SCHEMA_SQL
         )
         db.execute(
             "INSERT INTO social_runtime_schema(singleton, version, created_at) "
@@ -114,6 +125,17 @@ def _migrate_v2_to_v3(db: sqlite3.Connection) -> None:
         "BEGIN IMMEDIATE;\n"
         + _MEMBER_STYLE_SCHEMA_SQL
         + "\nUPDATE social_runtime_schema SET version=3 WHERE singleton=1;\n"
+        + "COMMIT;"
+    )
+
+
+def _migrate_v3_to_v4(db: sqlite3.Connection) -> None:
+    """Add persona-independent knowledge tables without rebuilding v3 data."""
+
+    db.executescript(
+        "BEGIN IMMEDIATE;\n"
+        + _KNOWLEDGE_SCHEMA_SQL
+        + "\nUPDATE social_runtime_schema SET version=4 WHERE singleton=1;\n"
         + "COMMIT;"
     )
 
@@ -507,4 +529,260 @@ CREATE TABLE imitation_sessions (
 );
 CREATE INDEX idx_imitation_sessions_active
     ON imitation_sessions(group_id, stopped_at, expires_at, started_at);
+"""
+
+
+_KNOWLEDGE_SCHEMA_SQL = """
+CREATE TABLE knowledge_seeds (
+    seed_id TEXT NOT NULL,
+    seed_version INTEGER NOT NULL CHECK(seed_version > 0),
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','superseded','rejected')),
+    manifest_json TEXT NOT NULL,
+    imported_at INTEGER NOT NULL,
+    PRIMARY KEY(seed_id, seed_version),
+    UNIQUE(seed_id, content_hash)
+);
+CREATE TABLE knowledge_observations (
+    observation_id TEXT PRIMARY KEY,
+    origin_class TEXT NOT NULL CHECK(origin_class IN
+      ('seed','human_chat','own_output','external_bot','unknown_actor','command',
+       'forward','official_page','search_result','admin')),
+    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('global','group')),
+    group_id TEXT,
+    author_ref TEXT,
+    source_event_id TEXT,
+    source_id TEXT,
+    entity_hint TEXT,
+    safe_summary TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','admitted','rejected','expired')),
+    CHECK(
+      (scope_kind='global' AND group_id IS NULL)
+      OR (scope_kind='group' AND group_id IS NOT NULL)
+    ),
+    CHECK(
+      author_ref IS NULL
+      OR (scope_kind='group' AND origin_class='human_chat')
+    )
+);
+CREATE UNIQUE INDEX idx_knowledge_observation_scoped_hash
+    ON knowledge_observations(scope_kind, COALESCE(group_id, ''), content_hash);
+CREATE INDEX idx_knowledge_observation_status
+    ON knowledge_observations(status, recorded_at, observation_id);
+CREATE INDEX idx_knowledge_observation_group
+    ON knowledge_observations(group_id, occurred_at, observation_id);
+CREATE TABLE knowledge_entities (
+    entity_id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    canonical_game_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+      ('candidate','active','stale','superseded','rejected')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_knowledge_entities_game
+    ON knowledge_entities(canonical_game_id, entity_type, status, canonical_name);
+CREATE TABLE knowledge_aliases (
+    alias_id TEXT PRIMARY KEY,
+    entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    normalized_alias TEXT NOT NULL,
+    alias_kind TEXT NOT NULL CHECK(alias_kind IN
+      ('official','translation','abbreviation','community')),
+    ambiguity_level TEXT NOT NULL CHECK(ambiguity_level IN
+      ('none','contextual','high')),
+    source_id TEXT,
+    status TEXT NOT NULL CHECK(status IN ('candidate','active','stale','rejected')),
+    UNIQUE(entity_id, normalized_alias, alias_kind)
+);
+CREATE INDEX idx_knowledge_alias_lookup
+    ON knowledge_aliases(normalized_alias, status, ambiguity_level);
+CREATE TABLE group_knowledge_aliases (
+    alias_id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    normalized_alias TEXT NOT NULL,
+    evidence_observation_ids_json TEXT NOT NULL,
+    confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    last_used_at INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+      ('candidate','active','stale','rejected','disputed')),
+    UNIQUE(group_id, normalized_alias, entity_id)
+);
+CREATE INDEX idx_group_knowledge_alias_lookup
+    ON group_knowledge_aliases(group_id, normalized_alias, status);
+CREATE TABLE knowledge_claims (
+    claim_id TEXT PRIMARY KEY,
+    subject_entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    predicate TEXT NOT NULL,
+    safe_summary TEXT NOT NULL,
+    claim_kind TEXT NOT NULL CHECK(claim_kind IN
+      ('stable_semantic','public_fact','rumor')),
+    evidence_level TEXT NOT NULL CHECK(evidence_level IN
+      ('bundled','official','corroborated','secondary','unofficial')),
+    status TEXT NOT NULL CHECK(status IN
+      ('pending','active','stale','superseded','rejected','disputed')),
+    applies_to_version_slot_id TEXT,
+    region TEXT,
+    platform TEXT,
+    valid_from INTEGER,
+    valid_until INTEGER,
+    checked_at INTEGER,
+    supersedes_claim_id TEXT REFERENCES knowledge_claims(claim_id),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_knowledge_claim_lookup
+    ON knowledge_claims(subject_entity_id, predicate, status, checked_at);
+CREATE TABLE knowledge_sources (
+    source_id TEXT PRIMARY KEY,
+    canonical_url TEXT NOT NULL UNIQUE,
+    domain TEXT NOT NULL,
+    publisher TEXT NOT NULL,
+    source_class TEXT NOT NULL CHECK(source_class IN
+      ('official','secondary','unofficial')),
+    published_at INTEGER,
+    fetched_at INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    evidence_excerpt TEXT NOT NULL
+);
+CREATE INDEX idx_knowledge_sources_domain
+    ON knowledge_sources(domain, source_class, fetched_at);
+CREATE TABLE knowledge_claim_evidence (
+    evidence_id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL REFERENCES knowledge_claims(claim_id),
+    source_id TEXT REFERENCES knowledge_sources(source_id),
+    observation_id TEXT REFERENCES knowledge_observations(observation_id),
+    relation_kind TEXT NOT NULL CHECK(relation_kind IN
+      ('supports','refutes','context')),
+    created_at INTEGER NOT NULL,
+    CHECK(source_id IS NOT NULL OR observation_id IS NOT NULL)
+);
+CREATE INDEX idx_knowledge_claim_evidence_claim
+    ON knowledge_claim_evidence(claim_id, relation_kind);
+CREATE TABLE group_conventions (
+    convention_id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    normalized_expression TEXT NOT NULL,
+    resolved_entity_id TEXT REFERENCES knowledge_entities(entity_id),
+    meaning_summary TEXT NOT NULL,
+    evidence_observation_ids_json TEXT NOT NULL,
+    distinct_actor_count INTEGER NOT NULL,
+    distinct_scene_count INTEGER NOT NULL,
+    confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    status TEXT NOT NULL CHECK(status IN
+      ('candidate','active','stale','rejected','disputed')),
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(group_id, normalized_expression, resolved_entity_id)
+);
+CREATE INDEX idx_group_convention_lookup
+    ON group_conventions(group_id, normalized_expression, status);
+CREATE TABLE group_topic_affinity (
+    group_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    qualified_mention_count INTEGER NOT NULL,
+    distinct_actor_count INTEGER NOT NULL,
+    distinct_scene_count INTEGER NOT NULL,
+    salience REAL NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(group_id, entity_id)
+);
+CREATE INDEX idx_group_topic_affinity_salience
+    ON group_topic_affinity(group_id, salience DESC, last_seen_at DESC);
+CREATE TABLE group_topic_mentions (
+    group_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    observation_id TEXT NOT NULL REFERENCES knowledge_observations(observation_id),
+    source_event_id TEXT NOT NULL,
+    author_ref TEXT NOT NULL,
+    scene_ref TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL,
+    PRIMARY KEY(group_id, entity_id, source_event_id)
+);
+CREATE INDEX idx_group_topic_mentions_projection
+    ON group_topic_mentions(group_id, entity_id, occurred_at);
+CREATE TABLE game_release_states (
+    version_slot_id TEXT PRIMARY KEY,
+    game_entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    official_label TEXT,
+    region TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    release_state TEXT NOT NULL CHECK(release_state IN
+      ('future','current','past')),
+    official_state TEXT NOT NULL CHECK(official_state IN
+      ('none','teaser','preview','notice','released')),
+    rumor_state TEXT NOT NULL CHECK(rumor_state IN
+      ('none_observed','weak','corroborated','conflicted','stale')),
+    announced_at INTEGER,
+    release_at INTEGER,
+    effective_until INTEGER,
+    official_checked_at INTEGER,
+    rumor_checked_at INTEGER,
+    fresh_until INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','superseded','disputed')),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    UNIQUE(game_entity_id, region, platform, version_slot_id)
+);
+CREATE INDEX idx_game_release_lookup
+    ON game_release_states(game_entity_id, region, platform, status, release_state);
+CREATE TABLE negative_search_snapshots (
+    snapshot_id TEXT PRIMARY KEY,
+    game_entity_id TEXT NOT NULL REFERENCES knowledge_entities(entity_id),
+    query_intent TEXT NOT NULL,
+    region TEXT,
+    platform TEXT,
+    covered_source_ids_json TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    version_state_revision INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','invalidated','expired')),
+    diagnostic_code TEXT
+);
+CREATE INDEX idx_negative_search_lookup
+    ON negative_search_snapshots(
+      game_entity_id, query_intent, region, platform, status, expires_at
+    );
+CREATE TABLE knowledge_jobs (
+    job_id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    job_kind TEXT NOT NULL CHECK(job_kind IN
+      ('seed_import','official_daily_probe','instant_enrichment',
+       'unknown_entity_learning','group_topic_warmup',
+       'time_boundary_revalidation','correction_rebuild',
+       'long_tail_official_refresh')),
+    group_id TEXT,
+    entity_id TEXT,
+    request_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+      ('pending','running','retry','completed','discarded')),
+    attempt INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    diagnostic_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_knowledge_jobs_due
+    ON knowledge_jobs(status, next_attempt_at, created_at);
+CREATE TABLE knowledge_usage (
+    usage_id TEXT PRIMARY KEY,
+    group_id TEXT,
+    source_event_id TEXT,
+    knowledge_ids_json TEXT NOT NULL,
+    source_domains_json TEXT NOT NULL,
+    query_intent_hash TEXT,
+    latency_ms INTEGER NOT NULL,
+    cache_hit INTEGER NOT NULL CHECK(cache_hit IN (0,1)),
+    result_kind TEXT NOT NULL,
+    diagnostic_code TEXT,
+    recorded_at INTEGER NOT NULL
+);
+CREATE INDEX idx_knowledge_usage_time
+    ON knowledge_usage(recorded_at, result_kind);
 """

@@ -1,0 +1,422 @@
+"""SQLite persistence for persona-independent knowledge projections."""
+
+from __future__ import annotations
+
+import json
+import math
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+from ..persistence.schema import connect_database, initialize_database
+from .contracts import KnowledgeObservation, KnowledgeScope, OriginClass
+
+
+AFFINITY_HALF_LIFE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _required_text(value: object, name: str, *, maximum: int = 128) -> str:
+    normalized = " ".join(
+        unicodedata.normalize("NFKC", str(value or "")).split()
+    )
+    if not normalized:
+        raise ValueError(f"{name} must not be empty")
+    if len(normalized) > maximum:
+        raise ValueError(f"{name} is too long")
+    return normalized
+
+
+def _expression(value: object) -> str:
+    return _required_text(value, "normalized_alias", maximum=48).casefold()
+
+
+def _json(values: Iterable[object]) -> str:
+    return json.dumps(
+        list(values),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+@dataclass(frozen=True)
+class KnowledgeAliasRecord:
+    alias_id: str
+    scope_kind: str
+    group_id: str | None
+    entity_id: str
+    normalized_alias: str
+    alias_kind: str
+    ambiguity_level: str
+    confidence: float
+    status: str
+
+
+@dataclass(frozen=True)
+class TopicAffinity:
+    group_id: str
+    entity_id: str
+    qualified_mention_count: int
+    distinct_actor_count: int
+    distinct_scene_count: int
+    salience: float
+    first_seen_at: int
+    last_seen_at: int
+    updated_at: int
+
+
+class KnowledgeRepository:
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        initialize_database(self.path)
+
+    def append_observation(self, value: KnowledgeObservation) -> bool:
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO knowledge_observations("
+                "observation_id,origin_class,scope_kind,group_id,author_ref,"
+                "source_event_id,source_id,entity_hint,safe_summary,content_hash,"
+                "occurred_at,recorded_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    value.observation_id,
+                    value.origin_class.value,
+                    value.scope_kind.value,
+                    value.group_id,
+                    value.author_ref,
+                    value.source_event_id,
+                    value.source_id,
+                    value.entity_hint,
+                    value.safe_summary,
+                    value.content_hash,
+                    int(value.occurred_at),
+                    int(value.recorded_at),
+                    value.status.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def observation_count(self, *, group_id: str) -> int:
+        scope = _required_text(group_id, "group_id")
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM knowledge_observations WHERE group_id=?",
+                (scope,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def upsert_entity(
+        self,
+        *,
+        entity_id: str,
+        entity_type: str,
+        canonical_name: str,
+        canonical_game_id: str,
+        status: str,
+        now: int,
+    ) -> None:
+        identity = _required_text(entity_id, "entity_id")
+        entity_kind = _required_text(entity_type, "entity_type", maximum=48)
+        name = _required_text(canonical_name, "canonical_name", maximum=80)
+        game_id = _required_text(canonical_game_id, "canonical_game_id")
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("now must not be negative")
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO knowledge_entities("
+                "entity_id,entity_type,canonical_name,canonical_game_id,status,"
+                "created_at,updated_at) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(entity_id) DO UPDATE SET "
+                "entity_type=CASE WHEN excluded.updated_at>=updated_at "
+                "THEN excluded.entity_type ELSE entity_type END,"
+                "canonical_name=CASE WHEN excluded.updated_at>=updated_at "
+                "THEN excluded.canonical_name ELSE canonical_name END,"
+                "canonical_game_id=CASE WHEN excluded.updated_at>=updated_at "
+                "THEN excluded.canonical_game_id ELSE canonical_game_id END,"
+                "status=CASE WHEN excluded.updated_at>=updated_at "
+                "THEN excluded.status ELSE status END,"
+                "updated_at=MAX(updated_at,excluded.updated_at)",
+                (
+                    identity,
+                    entity_kind,
+                    name,
+                    game_id,
+                    _required_text(status, "status", maximum=24),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+    def put_alias(
+        self,
+        *,
+        alias_id: str,
+        entity_id: str,
+        normalized_alias: str,
+        alias_kind: str,
+        ambiguity_level: str,
+        source_id: str | None,
+        status: str,
+    ) -> None:
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO knowledge_aliases("
+                "alias_id,entity_id,normalized_alias,alias_kind,ambiguity_level,"
+                "source_id,status) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(entity_id,normalized_alias,alias_kind) DO UPDATE SET "
+                "ambiguity_level=excluded.ambiguity_level,"
+                "source_id=excluded.source_id,status=excluded.status",
+                (
+                    _required_text(alias_id, "alias_id"),
+                    _required_text(entity_id, "entity_id"),
+                    _expression(normalized_alias),
+                    _required_text(alias_kind, "alias_kind", maximum=24),
+                    _required_text(
+                        ambiguity_level, "ambiguity_level", maximum=24
+                    ),
+                    (
+                        None
+                        if source_id is None
+                        else _required_text(source_id, "source_id")
+                    ),
+                    _required_text(status, "status", maximum=24),
+                ),
+            )
+
+    def put_group_alias(
+        self,
+        *,
+        alias_id: str,
+        group_id: str,
+        entity_id: str,
+        normalized_alias: str,
+        evidence_observation_ids: Iterable[str],
+        confidence: float,
+        last_used_at: int,
+        status: str,
+    ) -> None:
+        evidence = tuple(
+            dict.fromkeys(
+                _required_text(value, "evidence_observation_id")
+                for value in evidence_observation_ids
+            )
+        )
+        if not evidence:
+            raise ValueError("evidence_observation_ids must not be empty")
+        score = float(confidence)
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO group_knowledge_aliases("
+                "alias_id,group_id,entity_id,normalized_alias,"
+                "evidence_observation_ids_json,confidence,last_used_at,status) "
+                "VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(group_id,normalized_alias,entity_id) DO UPDATE SET "
+                "evidence_observation_ids_json=excluded.evidence_observation_ids_json,"
+                "confidence=excluded.confidence,last_used_at=excluded.last_used_at,"
+                "status=excluded.status",
+                (
+                    _required_text(alias_id, "alias_id"),
+                    _required_text(group_id, "group_id"),
+                    _required_text(entity_id, "entity_id"),
+                    _expression(normalized_alias),
+                    _json(evidence),
+                    score,
+                    int(last_used_at),
+                    _required_text(status, "status", maximum=24),
+                ),
+            )
+
+    def aliases_for_text(
+        self, text: str, *, group_id: str
+    ) -> tuple[KnowledgeAliasRecord, ...]:
+        expression = _expression(text)
+        scope = _required_text(group_id, "group_id")
+        with connect_database(self.path) as db:
+            group_rows = db.execute(
+                "SELECT * FROM group_knowledge_aliases "
+                "WHERE group_id=? AND normalized_alias=? AND status='active' "
+                "ORDER BY confidence DESC,alias_id",
+                (scope, expression),
+            ).fetchall()
+            global_rows = db.execute(
+                "SELECT * FROM knowledge_aliases "
+                "WHERE normalized_alias=? AND status='active' "
+                "ORDER BY CASE ambiguity_level "
+                "WHEN 'none' THEN 0 WHEN 'contextual' THEN 1 ELSE 2 END,alias_id",
+                (expression,),
+            ).fetchall()
+        return tuple(
+            KnowledgeAliasRecord(
+                alias_id=str(row["alias_id"]),
+                scope_kind="group",
+                group_id=str(row["group_id"]),
+                entity_id=str(row["entity_id"]),
+                normalized_alias=str(row["normalized_alias"]),
+                alias_kind="community",
+                ambiguity_level="contextual",
+                confidence=float(row["confidence"]),
+                status=str(row["status"]),
+            )
+            for row in group_rows
+        ) + tuple(
+            KnowledgeAliasRecord(
+                alias_id=str(row["alias_id"]),
+                scope_kind="global",
+                group_id=None,
+                entity_id=str(row["entity_id"]),
+                normalized_alias=str(row["normalized_alias"]),
+                alias_kind=str(row["alias_kind"]),
+                ambiguity_level=str(row["ambiguity_level"]),
+                confidence=1.0,
+                status=str(row["status"]),
+            )
+            for row in global_rows
+        )
+
+    def record_qualified_mention(
+        self, observation_id: str, entity_id: str, scene_ref: str
+    ) -> bool:
+        observation_key = _required_text(observation_id, "observation_id")
+        entity_key = _required_text(entity_id, "entity_id")
+        scene_key = _required_text(scene_ref, "scene_ref")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            observation = db.execute(
+                "SELECT * FROM knowledge_observations WHERE observation_id=?",
+                (observation_key,),
+            ).fetchone()
+            if observation is None:
+                raise ValueError("knowledge observation does not exist")
+            if (
+                str(observation["origin_class"]) != OriginClass.HUMAN_CHAT.value
+                or str(observation["scope_kind"]) != KnowledgeScope.GROUP.value
+                or observation["group_id"] is None
+                or observation["author_ref"] is None
+                or observation["source_event_id"] is None
+                or str(observation["status"]) not in {"pending", "admitted"}
+            ):
+                raise ValueError("observation is not a qualified human mention")
+            entity = db.execute(
+                "SELECT status FROM knowledge_entities WHERE entity_id=?",
+                (entity_key,),
+            ).fetchone()
+            if entity is None or str(entity["status"]) != "active":
+                raise ValueError("mentioned entity is not active")
+            group_id = str(observation["group_id"])
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO group_topic_mentions("
+                "group_id,entity_id,observation_id,source_event_id,author_ref,"
+                "scene_ref,occurred_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    group_id,
+                    entity_key,
+                    observation_key,
+                    str(observation["source_event_id"]),
+                    str(observation["author_ref"]),
+                    scene_key,
+                    int(observation["occurred_at"]),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return False
+            self._refresh_affinity(db, group_id, entity_key)
+            return True
+
+    def topic_affinity(
+        self, group_id: str, entity_id: str, *, now: int
+    ) -> TopicAffinity | None:
+        scope = _required_text(group_id, "group_id")
+        entity_key = _required_text(entity_id, "entity_id")
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("now must not be negative")
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT * FROM group_topic_affinity "
+                "WHERE group_id=? AND entity_id=?",
+                (scope, entity_key),
+            ).fetchone()
+            if row is None:
+                return None
+            mentions = db.execute(
+                "SELECT occurred_at FROM group_topic_mentions "
+                "WHERE group_id=? AND entity_id=?",
+                (scope, entity_key),
+            ).fetchall()
+        salience = sum(
+            self._decayed_weight(timestamp, int(item["occurred_at"]))
+            for item in mentions
+        )
+        return TopicAffinity(
+            group_id=scope,
+            entity_id=entity_key,
+            qualified_mention_count=int(row["qualified_mention_count"]),
+            distinct_actor_count=int(row["distinct_actor_count"]),
+            distinct_scene_count=int(row["distinct_scene_count"]),
+            salience=salience,
+            first_seen_at=int(row["first_seen_at"]),
+            last_seen_at=int(row["last_seen_at"]),
+            updated_at=int(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _refresh_affinity(db, group_id: str, entity_id: str) -> None:
+        aggregate = db.execute(
+            "SELECT COUNT(*) AS mention_count,"
+            "COUNT(DISTINCT author_ref) AS actor_count,"
+            "COUNT(DISTINCT scene_ref) AS scene_count,"
+            "MIN(occurred_at) AS first_seen_at,MAX(occurred_at) AS last_seen_at "
+            "FROM group_topic_mentions WHERE group_id=? AND entity_id=?",
+            (group_id, entity_id),
+        ).fetchone()
+        last_seen_at = int(aggregate["last_seen_at"])
+        mentions = db.execute(
+            "SELECT occurred_at FROM group_topic_mentions "
+            "WHERE group_id=? AND entity_id=?",
+            (group_id, entity_id),
+        ).fetchall()
+        salience = sum(
+            KnowledgeRepository._decayed_weight(
+                last_seen_at, int(item["occurred_at"])
+            )
+            for item in mentions
+        )
+        db.execute(
+            "INSERT INTO group_topic_affinity("
+            "group_id,entity_id,qualified_mention_count,distinct_actor_count,"
+            "distinct_scene_count,salience,first_seen_at,last_seen_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(group_id,entity_id) DO UPDATE SET "
+            "qualified_mention_count=excluded.qualified_mention_count,"
+            "distinct_actor_count=excluded.distinct_actor_count,"
+            "distinct_scene_count=excluded.distinct_scene_count,"
+            "salience=excluded.salience,first_seen_at=excluded.first_seen_at,"
+            "last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at",
+            (
+                group_id,
+                entity_id,
+                int(aggregate["mention_count"]),
+                int(aggregate["actor_count"]),
+                int(aggregate["scene_count"]),
+                salience,
+                int(aggregate["first_seen_at"]),
+                last_seen_at,
+                last_seen_at,
+            ),
+        )
+
+    @staticmethod
+    def _decayed_weight(now: int, occurred_at: int) -> float:
+        age = max(0, int(now) - int(occurred_at))
+        return 0.5 ** (age / AFFINITY_HALF_LIFE_SECONDS)
+
+
+__all__ = (
+    "AFFINITY_HALF_LIFE_SECONDS",
+    "KnowledgeAliasRecord",
+    "KnowledgeRepository",
+    "TopicAffinity",
+)
