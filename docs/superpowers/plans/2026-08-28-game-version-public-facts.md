@@ -213,27 +213,27 @@ Commit: `git commit -m "feat: model game release truth tracks"`
 - Consumes: seed source registry，不使用成员/Persona/关系数据。
 - 返回严格 `OfficialProbeResult`，不把网页正文传入 knowledge domain。
 
-- [ ] **Step 1: 用 fake AstrBot context 写失败契约测试**
+- [x] **Step 1: 用 fake AstrBot context 写失败契约测试**
 
 覆盖成功、多 source partial、timeout、provider unavailable、redirect 到 private IP、页面诱导指令、重复 URL、发布时间缺失、异常消息含 secret。断言最多使用 registry 中 URL、诊断不含 secret、输出证据有界。
 
-- [ ] **Step 2: 运行 adapter 测试并确认 RED**
+- [x] **Step 2: 运行 adapter 测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_official_source_probe.py`
 
 Expected: adapter 不存在。
 
-- [ ] **Step 3: 实现最小 AstrBot adapter**
+- [x] **Step 3: 实现最小 AstrBot adapter**
 
 使用 Bridge 注入的 host capability，不通过插件 HTTP 自调用，不保存 API key。每个来源独立 timeout，最终聚合完整性；页面文本只交给确定性 metadata extractor，无法确定 publisher/time 时保留 evidence pending。
 
-- [ ] **Step 4: 运行最低兼容契约**
+- [x] **Step 4: 运行最低兼容契约**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_official_source_probe.py tests/shared/test_astrbot_package_loading.py`
 
 Expected: PASS，并且 import 在无 AstrBot 测试环境使用现有 shim/延迟导入方式。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 Commit: `git commit -m "feat: probe official game sources"`
 
