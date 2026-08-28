@@ -6,6 +6,7 @@ from groupmate.social_runtime.chorus import ChorusEvidence
 from groupmate.social_runtime.manager import SocialRuntimeManager
 from groupmate.social_runtime.profile.contracts import MemberAlias
 from groupmate.social_runtime.social_context import SceneContextBuilder
+from groupmate.social_runtime.knowledge.contracts import TopicUnderstandingFrame
 
 
 def _event(
@@ -79,6 +80,38 @@ def test_scene_context_keeps_structured_member_and_evidence_references():
     assert facts["persona"]["aliases"] == ["爱弥斯", "小爱"]
     assert facts["member_refs"] == {"u9": ["小林", "林林"]}
     assert isinstance(context.member_refs, MappingProxyType)
+
+
+def test_scene_context_reuses_the_frozen_topic_understanding_frame():
+    topic = TopicUnderstandingFrame.create(
+        frame_id="knowledge-frame:1",
+        game_ids=("game:genshin-impact",),
+        resolved_entities=(),
+        resolved_terms=(),
+        discourse_referents=(),
+        version_reference=None,
+        conversation_intent_hint="stable_game_chat",
+        ambiguity_codes=(),
+        confidence=0.9,
+        supporting_knowledge_ids=("game-semantic:genshin-impact",),
+    )
+    context = SceneContextBuilder(max_chars=800).build(
+        source_event=_event("m1", "原神保底"),
+        context_events=(),
+        focus_event_ids=("m1",),
+        target_id="u1",
+        topic_id="m1",
+        persona_actor_id="aemeath",
+        persona_aliases=("爱弥斯",),
+        member_refs={},
+        profile=None,
+        relationship_memories=(),
+        topic_understanding=topic,
+    )
+
+    facts = context.to_model_facts()["facts"]["topic_understanding"]
+    assert facts["frame_id"] == "knowledge-frame:1"
+    assert facts == topic.to_prompt_facts()
 
 
 def test_current_message_is_not_reduced_to_the_legacy_32_character_preview():

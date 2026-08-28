@@ -356,29 +356,29 @@ Commit: `git commit -m "feat: resolve local game knowledge"`
 - `SceneContextBuilder.build()` 增加关键字参数 `topic_understanding: TopicUnderstandingFrame | None = None`；输出 `facts["topic_understanding"]`。
 - Bridge 必须复用 evaluation 上的同一个 frame，不能在生成前重新解析。
 
-- [ ] **Step 1: 写 cognition 注入失败测试**
+- [x] **Step 1: 写 cognition 注入失败测试**
 
 Spy worker 断言 `world_summary["topic_understanding"]` 在 `cognition.evaluate()` 前存在，只含有界安全字段；resolver 异常时产生空 frame 和 `knowledge_local_resolution_failed` diagnostic，原有 cognition 仍继续。
 
-- [ ] **Step 2: 写 scene 复用与授权不变失败测试**
+- [x] **Step 2: 写 scene 复用与授权不变失败测试**
 
 同一个 `frame_id` 同时出现在 CognitiveContext 和 SceneContext；knowledge hit 不新增 intention、不改变 Governor 的 SILENCE；SHADOW 与 SOCIAL_RUNTIME 对参与判断使用相同 frame。
 
-- [ ] **Step 3: 运行集成测试并确认 RED**
+- [x] **Step 3: 运行集成测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py`
 
 Expected: Manager/SceneContext 尚无 topic frame 接口。
 
-- [ ] **Step 4: 注入 resolver Port 与冻结 evaluation 数据**
+- [x] **Step 4: 注入 resolver Port 与冻结 evaluation 数据**
 
 在 `_evaluate_cycle()` 获取 focus/context events 后、构造 `world_summary` 前同步调用本地 resolver；将 `frame.to_prompt_facts()` 作为 world summary 子对象。`ShadowEvaluation.to_capture_evidence()/from_capture_evidence()` 支持可选字段，保证旧 capture 可重放。
 
-- [ ] **Step 5: 在 Bridge 场景构建中复用 frame**
+- [x] **Step 5: 在 Bridge 场景构建中复用 frame**
 
 `_handle_evaluations()` 创建 `SceneContext` 时传 evaluation frame；后续 scene model 只看到同一快照。任何二次数据库更新都留到下一轮，不改变本轮理解。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_context.py tests/scenarios/test_chat_mainline.py tests/scenarios/test_game_knowledge_shadow.py tests/recovery/test_phase_a_replay.py`
 

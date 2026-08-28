@@ -8,7 +8,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, Mapping, TypeVar
+from typing import Iterable, Mapping, Protocol, TypeVar
 
 
 MAX_FRAME_GAMES = 4
@@ -615,6 +615,17 @@ class KnowledgeNeed:
         )
 
 
+class KnowledgeResolverPort(Protocol):
+    def resolve(
+        self,
+        event: object,
+        context_events: Iterable[object],
+        group_id: str,
+        now: int,
+    ) -> TopicUnderstandingFrame:
+        """Resolve a bounded local frame without network or side effects."""
+
+
 __all__ = (
     "ClaimKind",
     "ClaimStatus",
@@ -623,6 +634,7 @@ __all__ = (
     "KnowledgeNeed",
     "KnowledgeNeedOutcome",
     "KnowledgeObservation",
+    "KnowledgeResolverPort",
     "KnowledgeScope",
     "ObservationStatus",
     "OriginClass",

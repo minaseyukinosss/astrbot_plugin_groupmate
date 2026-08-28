@@ -35,6 +35,10 @@ from .governor import (
     SocialGovernor,
 )
 from .intentions import CandidateIntention, IntentionEngine
+from .knowledge.contracts import (
+    KnowledgeResolverPort,
+    TopicUnderstandingFrame,
+)
 from .participation import ParticipationPolicy
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
@@ -99,6 +103,8 @@ class ShadowEvaluation:
     candidates: tuple[CandidateIntention, ...]
     accepted: bool
     status: str
+    topic_understanding: TopicUnderstandingFrame | None = None
+    knowledge_diagnostics: tuple[str, ...] = ()
     participation_lane: str = "AMBIENT"
     participation_diagnostics: tuple[str, ...] = ()
     chorus_evidence: ChorusEvidence | None = None
@@ -134,6 +140,12 @@ class ShadowEvaluation:
                     event.to_dict() for event in self.context_events
                 ],
                 "candidates": [asdict(candidate) for candidate in self.candidates],
+                "topic_understanding": (
+                    asdict(self.topic_understanding)
+                    if self.topic_understanding is not None
+                    else None
+                ),
+                "knowledge_diagnostics": list(self.knowledge_diagnostics),
                 "participation_lane": self.participation_lane,
                 "participation_diagnostics": list(
                     self.participation_diagnostics
@@ -253,6 +265,38 @@ class ShadowEvaluation:
                 RelationshipEventDecision(**decision)
             )
         chorus_values = values.get("chorus_evidence")
+        topic_values = values.get("topic_understanding")
+        topic_understanding = None
+        if isinstance(topic_values, Mapping):
+            topic_data = dict(topic_values)
+            fallback_confidence = float(topic_data.get("confidence", 0.0))
+            for field in ("resolved_entities", "resolved_terms"):
+                normalized_items = []
+                for item in topic_data.get(field, ()):
+                    normalized = dict(item)
+                    normalized.setdefault("confidence", fallback_confidence)
+                    normalized.setdefault("supporting_knowledge_ids", ())
+                    normalized_items.append(normalized)
+                topic_data[field] = tuple(normalized_items)
+            normalized_referents = []
+            for item in topic_data.get("discourse_referents", ()):
+                normalized = dict(item)
+                normalized.setdefault("confidence", fallback_confidence)
+                normalized_referents.append(normalized)
+            topic_data["discourse_referents"] = tuple(normalized_referents)
+            version_data = topic_data.get("version_reference")
+            if isinstance(version_data, Mapping):
+                version_data = dict(version_data)
+                version_data.setdefault("confidence", fallback_confidence)
+                topic_data["version_reference"] = version_data
+            topic_data["game_ids"] = tuple(topic_data.get("game_ids", ()))
+            topic_data["ambiguity_codes"] = tuple(
+                topic_data.get("ambiguity_codes", ())
+            )
+            topic_data["supporting_knowledge_ids"] = tuple(
+                topic_data.get("supporting_knowledge_ids", ())
+            )
+            topic_understanding = TopicUnderstandingFrame.create(**topic_data)
         return cls(
             persona_id=str(values["persona_id"]),
             request_id=str(values["request_id"]),
@@ -269,6 +313,10 @@ class ShadowEvaluation:
             candidates=tuple(candidates),
             accepted=bool(values["accepted"]),
             status=str(values["status"]),
+            topic_understanding=topic_understanding,
+            knowledge_diagnostics=tuple(
+                values.get("knowledge_diagnostics", ())
+            ),
             participation_lane=str(
                 values.get("participation_lane") or "AMBIENT"
             ),
@@ -361,6 +409,7 @@ class SocialRuntimeManager:
         worker_timeout_seconds: float = 8.0,
         governance_state: RuntimeGovernanceState | None = None,
         persona_profile_loader: Callable[[str], object] | None = None,
+        knowledge_resolver: KnowledgeResolverPort | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         resolved_mode = RuntimeMode(mode)
@@ -391,6 +440,7 @@ class SocialRuntimeManager:
         self.social_runtime_test_groups = test_groups
         self.config_version = config_version
         self._persona_profile_loader = persona_profile_loader
+        self.knowledge_resolver = knowledge_resolver
         self._persona_profiles: dict[
             tuple[str, int], GroupmatePersonaProfile
         ] = {}
@@ -928,7 +978,42 @@ class SocialRuntimeManager:
             if loaded.version != frame.config_version:
                 raise RuntimeError("persona profile changed during frozen cognition")
             profile = loaded.profile
+        topic_understanding = None
+        knowledge_diagnostics: tuple[str, ...] = ()
+        if self.knowledge_resolver is not None:
+            try:
+                topic_understanding = self.knowledge_resolver.resolve(
+                    request.event,
+                    context_events,
+                    request.group_id,
+                    now,
+                )
+            except Exception:
+                topic_understanding = TopicUnderstandingFrame.create(
+                    frame_id="knowledge-frame:error:"
+                    + hashlib.sha256(
+                        request.event.event_id.encode("utf-8")
+                    ).hexdigest()[:20],
+                    game_ids=(),
+                    resolved_entities=(),
+                    resolved_terms=(),
+                    discourse_referents=(),
+                    version_reference=None,
+                    conversation_intent_hint=None,
+                    ambiguity_codes=(
+                        "knowledge_local_resolution_failed",
+                    ),
+                    confidence=0.0,
+                    supporting_knowledge_ids=(),
+                )
+                knowledge_diagnostics = (
+                    "knowledge_local_resolution_failed",
+                )
         world_summary = self._cognitive_world_view(request, frame, profile)
+        if topic_understanding is not None:
+            world_summary["topic_understanding"] = (
+                topic_understanding.to_prompt_facts()
+            )
         context = CognitiveContext.create(
             group_id=request.group_id,
             scene_version=frame.scene_version,
@@ -989,6 +1074,8 @@ class SocialRuntimeManager:
             candidates=candidates,
             accepted=True,
             status="accepted",
+            topic_understanding=topic_understanding,
+            knowledge_diagnostics=knowledge_diagnostics,
             participation_lane=proposal.lane.value,
             participation_diagnostics=proposal.diagnostics,
             chorus_evidence=chorus_evidence,

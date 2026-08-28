@@ -10,6 +10,7 @@ from .contracts import SocialEventEnvelope
 
 if TYPE_CHECKING:
     from .chorus import ChorusEvidence
+    from .knowledge.contracts import TopicUnderstandingFrame
 
 
 MAX_CONTEXT_EVENTS = 16
@@ -170,6 +171,7 @@ class SceneContextBuilder:
         member_refs: Mapping[str, Iterable[str]],
         profile: object | None,
         relationship_memories: Iterable[object],
+        topic_understanding: "TopicUnderstandingFrame | None" = None,
     ) -> SceneContext:
         events = self._deduplicate((*tuple(context_events), source_event))
         source_fact = SceneEventFact.from_event(source_event)
@@ -192,6 +194,11 @@ class SceneContextBuilder:
             {
                 "profile": profile_facts,
                 "relationship_memories": memory_facts,
+                "topic_understanding": (
+                    None
+                    if topic_understanding is None
+                    else topic_understanding.to_prompt_facts()
+                ),
             }
         )
         return SceneContext(

@@ -27,6 +27,7 @@ from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.knowledge.observation import KnowledgeObservationService
 from ..social_runtime.knowledge.repository import KnowledgeRepository
+from ..social_runtime.knowledge.resolver import KnowledgeEntityResolver
 from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
@@ -766,6 +767,29 @@ class AstrBotSocialRuntimeBridge:
             cognition_client = self._cognition_client_factory(self.settings)
             if cognition_client is None:
                 raise RuntimeError("direct cognition client is unavailable")
+            knowledge_service = None
+            knowledge_resolver = None
+            try:
+                knowledge_repository = KnowledgeRepository(
+                    self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+                )
+                SeedImporter(
+                    knowledge_repository, clock=self.clock
+                ).import_all(load_bundled_seeds())
+                knowledge_service = KnowledgeObservationService(
+                    repository=knowledge_repository,
+                    group_ids=self.settings.enabled_groups,
+                    install_salt=self._knowledge_install_salt(),
+                    clock=self.clock,
+                )
+                knowledge_resolver = KnowledgeEntityResolver(
+                    knowledge_repository
+                )
+                self.knowledge_error = None
+            except Exception:
+                knowledge_service = None
+                knowledge_resolver = None
+                self.knowledge_error = "knowledge_seed_unavailable"
             manager = SocialRuntimeManager(
                 database_path=self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME,
                 persona_id=self.settings.persona_id,
@@ -780,11 +804,11 @@ class AstrBotSocialRuntimeBridge:
                 worker_concurrency_limit=self.settings.worker_concurrency_limit,
                 worker_timeout_seconds=self.settings.cognition_timeout_seconds,
                 persona_profile_loader=self._persona_config_snapshot,
+                knowledge_resolver=knowledge_resolver,
                 clock=self.clock,
             )
             profile_client = None
             profile_service = None
-            knowledge_service = None
             member_style_service = None
             member_style_repository = self.member_style_repository
             imitation_controller = ImitationSessionController(
@@ -835,23 +859,6 @@ class AstrBotSocialRuntimeBridge:
                     clock=self.clock,
                     style_service=member_style_service,
                 )
-            try:
-                knowledge_repository = KnowledgeRepository(
-                    self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
-                )
-                SeedImporter(
-                    knowledge_repository, clock=self.clock
-                ).import_all(load_bundled_seeds())
-                knowledge_service = KnowledgeObservationService(
-                    repository=knowledge_repository,
-                    group_ids=self.settings.enabled_groups,
-                    install_salt=self._knowledge_install_salt(),
-                    clock=self.clock,
-                )
-                self.knowledge_error = None
-            except Exception:
-                knowledge_service = None
-                self.knowledge_error = "knowledge_seed_unavailable"
             try:
                 await manager.start()
                 if profile_service is not None:
@@ -1234,6 +1241,9 @@ class AstrBotSocialRuntimeBridge:
                     member_refs=self._manager.group_member_refs(group_id),
                     profile=profile_retrieval,
                     relationship_memories=relationship_memories,
+                    topic_understanding=getattr(
+                        evaluation, "topic_understanding", None
+                    ),
                 ).with_chorus(getattr(evaluation, "chorus_evidence", None))
                 if (
                     source_event.event_type == "temporal.opportunity_due"
