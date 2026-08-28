@@ -166,9 +166,21 @@ class KnowledgeAdmissionPolicy:
         normalized = "".join(
             unicodedata.normalize("NFKC", summary).casefold().split()
         )
+        start = 0
+        end = len(normalized)
+        while (
+            start < end
+            and unicodedata.category(normalized[start]).startswith("P")
+        ):
+            start += 1
+        while (
+            start < end
+            and unicodedata.category(normalized[end - 1]).startswith("P")
+        ):
+            end -= 1
         return "".join(
             character
-            for character in normalized
+            for character in normalized[start:end]
             if (
                 not unicodedata.category(character).startswith("P")
                 or character in {".", "%", "-", "/"}

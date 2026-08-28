@@ -208,6 +208,35 @@ class GameReleaseStateService:
             and state.official_state != "released"
         )
         if evidence.target_state == current:
+            if (
+                last_checked_at is None
+                or evidence.observed_at > last_checked_at
+            ):
+                values = asdict(state)
+                values["revision"] = state.revision + 1
+                values["fresh_until"] = max(
+                    state.fresh_until, evidence.observed_at + 1
+                )
+                if evidence.track == "official":
+                    values["official_checked_at"] = evidence.observed_at
+                    values["announced_at"] = (
+                        state.announced_at or evidence.observed_at
+                    )
+                    values["official_label"] = (
+                        evidence.official_label or state.official_label
+                    )
+                elif evidence.track == "rumor":
+                    values["rumor_checked_at"] = evidence.observed_at
+                else:
+                    values["release_checked_at"] = evidence.observed_at
+                return self._transition(
+                    state,
+                    VersionSlot.create(**values),
+                    True,
+                    "revalidation_required",
+                    evidence,
+                    revalidation_required,
+                )
             return self._transition(
                 state,
                 state,

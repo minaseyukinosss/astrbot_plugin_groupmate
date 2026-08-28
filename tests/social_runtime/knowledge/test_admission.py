@@ -556,6 +556,27 @@ def test_admission_policy_enforces_evidence_ladder_and_conflict_history(
         ),
         (
             _candidate_window(
+                "claim:decimal-edge",
+                summary="value 1.0.",
+                checked_at=200,
+                valid_from=200,
+                valid_until=400,
+            ),
+            (
+                _candidate_window(
+                    "claim:decimal-no-edge",
+                    summary="value 1.0",
+                    checked_at=200,
+                    valid_from=100,
+                    valid_until=300,
+                ),
+            ),
+            "keep_pending",
+            "official_evidence_not_newer",
+            (),
+        ),
+        (
+            _candidate_window(
                 "claim:latest",
                 summary="正式版本已实装。",
                 checked_at=300,

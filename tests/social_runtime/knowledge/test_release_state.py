@@ -333,21 +333,37 @@ def test_release_service_advances_each_truth_track_without_clock_release():
             observed_at=300,
         ),
     )
-    stale_past = service.apply_evidence(
+    refreshed = service.apply_evidence(
         current.state,
+        module.ReleaseEvidence.create(
+            evidence_id="evidence:release-current-refreshed",
+            track="release",
+            target_state="current",
+            observed_at=400,
+        ),
+    )
+    stale_past = service.apply_evidence(
+        refreshed.state,
         module.ReleaseEvidence.create(
             evidence_id="evidence:release-past-stale",
             track="release",
             target_state="past",
-            observed_at=200,
+            observed_at=350,
         ),
     )
 
     assert current.accepted is True
     assert current.state.release_checked_at == 300
+    assert refreshed.accepted is True
+    assert refreshed.reason_code == "revalidation_required"
+    assert refreshed.old_revision == current.new_revision
+    assert refreshed.new_revision == current.new_revision + 1
+    assert refreshed.state.release_checked_at == 400
+    assert refreshed.state.official_checked_at == current.state.official_checked_at
+    assert refreshed.state.rumor_checked_at == current.state.rumor_checked_at
     assert stale_past.accepted is False
     assert stale_past.reason_code == "stale_release_evidence"
-    assert stale_past.state == current.state
+    assert stale_past.state == refreshed.state
 
 
 @pytest.mark.parametrize(
