@@ -8,6 +8,7 @@ from collections import deque
 from contextlib import suppress
 from dataclasses import asdict, replace
 import inspect
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,9 @@ from ..social_runtime.control.config_versions import (
 from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
+from ..social_runtime.knowledge.observation import KnowledgeObservationService
+from ..social_runtime.knowledge.repository import KnowledgeRepository
+from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
@@ -122,6 +126,7 @@ class AstrBotSocialRuntimeBridge:
         self._cognition_client: object | None = None
         self._profile_client: object | None = None
         self._profile_service: ProfileService | None = None
+        self._knowledge_service: KnowledgeObservationService | None = None
         self._member_style_repository: MemberStyleRepository | None = None
         self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
@@ -133,6 +138,7 @@ class AstrBotSocialRuntimeBridge:
         self.reply_error: str | None = None
         self.member_style_overlay_error: str | None = None
         self.member_style_worker_error: str | None = None
+        self.knowledge_error: str | None = None
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._scene_context_builder = SceneContextBuilder()
@@ -602,6 +608,12 @@ class AstrBotSocialRuntimeBridge:
         return self._profile_service
 
     @property
+    def knowledge_service(self) -> KnowledgeObservationService:
+        if self._knowledge_service is None:
+            raise RuntimeError("knowledge observation is unavailable")
+        return self._knowledge_service
+
+    @property
     def member_style_repository(self) -> MemberStyleRepository:
         repository = self._member_style_repository
         if repository is None:
@@ -772,6 +784,7 @@ class AstrBotSocialRuntimeBridge:
             )
             profile_client = None
             profile_service = None
+            knowledge_service = None
             member_style_service = None
             member_style_repository = self.member_style_repository
             imitation_controller = ImitationSessionController(
@@ -823,13 +836,33 @@ class AstrBotSocialRuntimeBridge:
                     style_service=member_style_service,
                 )
             try:
+                knowledge_repository = KnowledgeRepository(
+                    self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+                )
+                SeedImporter(
+                    knowledge_repository, clock=self.clock
+                ).import_all(load_bundled_seeds())
+                knowledge_service = KnowledgeObservationService(
+                    repository=knowledge_repository,
+                    group_ids=self.settings.enabled_groups,
+                    install_salt=self._knowledge_install_salt(),
+                    clock=self.clock,
+                )
+                self.knowledge_error = None
+            except Exception:
+                knowledge_service = None
+                self.knowledge_error = "knowledge_seed_unavailable"
+            try:
                 await manager.start()
                 if profile_service is not None:
                     await profile_service.start()
+                if knowledge_service is not None:
+                    await knowledge_service.start()
                 self._manager = manager
                 self._cognition_client = cognition_client
                 self._profile_client = profile_client
                 self._profile_service = profile_service
+                self._knowledge_service = knowledge_service
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
@@ -855,6 +888,7 @@ class AstrBotSocialRuntimeBridge:
                 self._cognition_client = None
                 self._profile_client = None
                 self._profile_service = None
+                self._knowledge_service = None
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
@@ -862,6 +896,9 @@ class AstrBotSocialRuntimeBridge:
                 if profile_service is not None:
                     with suppress(Exception):
                         await profile_service.close()
+                if knowledge_service is not None:
+                    with suppress(Exception):
+                        await knowledge_service.close()
                 with suppress(Exception):
                     await manager.close()
                 close = getattr(cognition_client, "close", None)
@@ -901,6 +938,7 @@ class AstrBotSocialRuntimeBridge:
             )
         result = await self._manager.ingest(translated)
         if result is not None and result.inserted:
+            await self._observe_knowledge(translated)
             evaluations = await self._manager.drain()
             await self._handle_evaluations(evaluations)
             self._attention_changed.set()
@@ -949,6 +987,40 @@ class AstrBotSocialRuntimeBridge:
         ):
             return
         await service.observe(event)
+
+    async def _observe_knowledge(self, event: SocialEventEnvelope) -> None:
+        service = self._knowledge_service
+        if service is None:
+            return
+        try:
+            await service.observe(event)
+            self.knowledge_error = None
+        except Exception:
+            # Knowledge learning is optional and must never break chat ingest.
+            self.knowledge_error = "knowledge_observation_failed"
+
+    def _knowledge_install_salt(self) -> str:
+        """Return a stable per-install salt without putting it in SQLite."""
+
+        path = self.data_dir / ".groupmate-knowledge-salt"
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            generated = secrets.token_hex(32)
+            try:
+                with path.open("x", encoding="utf-8") as stream:
+                    stream.write(generated)
+                with suppress(OSError):
+                    path.chmod(0o600)
+                value = generated
+            except FileExistsError:
+                value = path.read_text(encoding="utf-8").strip()
+        if len(value) != 64 or any(
+            character not in "0123456789abcdef" for character in value
+        ):
+            raise RuntimeError("knowledge install salt is invalid")
+        return value
 
     def _resolve_interaction(
         self, event: SocialEventEnvelope
@@ -1490,14 +1562,18 @@ class AstrBotSocialRuntimeBridge:
         manager = self._manager
         cognition_client = self._cognition_client
         profile_service = self._profile_service
+        knowledge_service = self._knowledge_service
         profile_client = self._profile_client
         self._manager = None
         self._cognition_client = None
         self._profile_service = None
+        self._knowledge_service = None
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None
         try:
+            if knowledge_service is not None:
+                await knowledge_service.close()
             if profile_service is not None:
                 await profile_service.close()
             if manager is not None:

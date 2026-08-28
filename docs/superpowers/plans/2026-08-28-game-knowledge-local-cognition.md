@@ -254,33 +254,33 @@ Commit: `git commit -m "feat: bundle five game semantic seeds"`
 - Consumes: resolved interaction payload fields and durable event IDs。
 - Produces active convention only after repository evidence thresholds are satisfied。
 
-- [ ] **Step 1: 写来源矩阵失败测试**
+- [x] **Step 1: 写来源矩阵失败测试**
 
 覆盖 human、own output、known bot、unknown actor、external command、Groupmate 管理命令、forward、card、纯链接和正常带链接人类讨论。Event translator 只保留 `is_self`、segment kind、ownership 与可选 `sender_role/automation_hint`；classifier 才决定 origin class。
 
-- [ ] **Step 2: 写队列/恢复失败测试**
+- [x] **Step 2: 写队列/恢复失败测试**
 
 `observe()` 只持久化或入有界队列，不等待模型/网络；重复 event 幂等；close 排空已接收项；异常记录安全 diagnostic 后重试；队列满时丢弃最低信任项而不阻塞主链路。
 
-- [ ] **Step 3: 写群约定阈值失败测试**
+- [x] **Step 3: 写群约定阈值失败测试**
 
 覆盖“一人解释 + 另一场景一致使用”、“两人三场景一致使用”和管理员确认三条激活路径；单人刷屏、三个 Bot、跨群证据、相反定义和 90 天未使用分别保持 candidate/disputed/stale。
 
-- [ ] **Step 4: 运行测试并确认 RED**
+- [x] **Step 4: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py`
 
 Expected: observation service/classifier 缺失，event 来源事实断言失败。
 
-- [ ] **Step 5: 实现过滤和独立后台服务**
+- [x] **Step 5: 实现过滤和独立后台服务**
 
 复用 `ProfileService` 的 start/wake/close 形状，但使用独立 repository 和 admission policy。Bridge 只在 `_resolve_interaction()` 之后且 `manager.ingest()` 已接受事件时调用 `knowledge_service.observe(translated)`；`observe_event()` 没有 Social Runtime durable ingest，因此不产生知识观察，外部兼容命令正文也不会沉淀。
 
-- [ ] **Step 6: 实现 convention candidate 与 affinity 投影**
+- [x] **Step 6: 实现 convention candidate 与 affinity 投影**
 
 只保存裁剪表达、安全释义、opaque author ref、scene ref 与 event ID；相反释义将 active 降回 disputed，不覆盖历史证据。约定激活不修改全局 alias，只写 `group_knowledge_aliases`。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_observation.py tests/contracts/test_astrbot_events.py tests/scenarios/test_profile_background_pipeline.py`
 

@@ -210,6 +210,24 @@ def test_translator_derives_bot_identity_from_astrbot_message_object():
     assert translated.payload["mentions_bot"] is True
 
 
+def test_translator_preserves_optional_sender_and_automation_facts():
+    translated = AstrBotEventTranslator("aemeath").translate(
+        {
+            "message_id": "source-facts",
+            "self_id": "bot-1",
+            "group_id": "group-1",
+            "user_id": "42",
+            "time": 10,
+            "sender": {"nickname": "小夏", "role": "admin"},
+            "automation_hint": "known_bot",
+            "message": [{"type": "text", "data": {"text": "测试"}}],
+        }
+    )
+
+    assert translated.payload["sender_role"] == "admin"
+    assert translated.payload["automation_hint"] == "known_bot"
+
+
 def test_translator_marks_only_configured_deployment_triggers_as_external():
     policy = ExternalTriggerPolicy.create(
         command_prefixes={"xw": "astrbot.waves"},

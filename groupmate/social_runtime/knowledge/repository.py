@@ -84,6 +84,41 @@ class SeedVersionOrderConflict(ValueError):
     """Raised when an absent older seed follows a newer active version."""
 
 
+@dataclass(frozen=True)
+class StoredKnowledgeObservation:
+    observation_id: str
+    group_id: str
+    author_ref: str
+    source_event_id: str
+    scene_ref: str
+    entity_hint: str | None
+    safe_summary: str
+    occurred_at: int
+    recorded_at: int
+    status: str
+
+
+@dataclass(frozen=True)
+class GroupConventionRecord:
+    convention_id: str
+    group_id: str
+    normalized_expression: str
+    resolved_entity_id: str
+    meaning_summary: str
+    evidence_observation_ids: tuple[str, ...]
+    distinct_actor_count: int
+    distinct_scene_count: int
+    confidence: float
+    status: str
+    first_seen_at: int
+    last_seen_at: int
+    updated_at: int
+
+    @property
+    def evidence_count(self) -> int:
+        return len(self.evidence_observation_ids)
+
+
 class KnowledgeRepository:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -122,6 +157,394 @@ class KnowledgeRepository:
                 (scope,),
             ).fetchone()
         return 0 if row is None else int(row[0])
+
+    def pending_observations(self) -> tuple[StoredKnowledgeObservation, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM knowledge_observations "
+                "WHERE status='pending' AND origin_class='human_chat' "
+                "ORDER BY recorded_at,observation_id"
+            ).fetchall()
+        return tuple(self._stored_observation(row) for row in rows)
+
+    def observation_status_for_event(self, event_id: str) -> str | None:
+        source_event_id = _required_text(event_id, "event_id")
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT status FROM knowledge_observations "
+                "WHERE source_event_id=? ORDER BY recorded_at DESC LIMIT 1",
+                (source_event_id,),
+            ).fetchone()
+        return None if row is None else str(row["status"])
+
+    def set_observation_status(
+        self, observation_id: str, status: str
+    ) -> None:
+        identity = _required_text(observation_id, "observation_id")
+        normalized_status = _required_text(status, "status", maximum=24)
+        if normalized_status not in {
+            "pending", "admitted", "rejected", "expired"
+        }:
+            raise ValueError("unsupported observation status")
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE knowledge_observations SET status=? "
+                "WHERE observation_id=?",
+                (normalized_status, identity),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("knowledge observation does not exist")
+
+    def convention(
+        self, group_id: str, expression: str
+    ) -> GroupConventionRecord | None:
+        values = self.conventions_for_expression(group_id, expression)
+        if not values:
+            return None
+        return sorted(
+            values,
+            key=lambda item: (
+                {
+                    "active": 0,
+                    "candidate": 1,
+                    "disputed": 2,
+                    "stale": 3,
+                }.get(item.status, 4),
+                -item.updated_at,
+                item.convention_id,
+            ),
+        )[0]
+
+    def conventions_for_expression(
+        self, group_id: str, expression: str
+    ) -> tuple[GroupConventionRecord, ...]:
+        scope = _required_text(group_id, "group_id")
+        normalized = _expression(expression)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT * FROM group_conventions "
+                "WHERE group_id=? AND normalized_expression=? "
+                "ORDER BY convention_id",
+                (scope, normalized),
+            ).fetchall()
+        return tuple(self._convention_record(row) for row in rows)
+
+    def convention_expressions(self, group_id: str) -> tuple[str, ...]:
+        scope = _required_text(group_id, "group_id")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT DISTINCT normalized_expression FROM group_conventions "
+                "WHERE group_id=? AND status IN ('candidate','active') "
+                "ORDER BY LENGTH(normalized_expression) DESC,normalized_expression",
+                (scope,),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def game_alias_matches(self, text: str) -> tuple[tuple[str, str], ...]:
+        normalized_text = unicodedata.normalize(
+            "NFKC", str(text or "")
+        ).casefold()
+        if not normalized_text:
+            return ()
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT a.entity_id,a.normalized_alias "
+                "FROM knowledge_aliases AS a "
+                "JOIN knowledge_entities AS e ON e.entity_id=a.entity_id "
+                "WHERE a.status='active' AND a.ambiguity_level='none' "
+                "AND e.entity_type='game' AND e.status='active' "
+                "ORDER BY LENGTH(a.normalized_alias) DESC,a.alias_id"
+            ).fetchall()
+        result = []
+        for row in rows:
+            alias = str(row["normalized_alias"])
+            value = (str(row["entity_id"]), alias)
+            if alias in normalized_text and value not in result:
+                result.append(value)
+        return tuple(result)
+
+    def record_convention_evidence(
+        self,
+        *,
+        group_id: str,
+        expression: str,
+        entity_id: str,
+        meaning_summary: str,
+        observation_id: str,
+        evidence_kind: str,
+        admin_confirmed: bool,
+        now: int,
+    ) -> GroupConventionRecord:
+        scope = _required_text(group_id, "group_id")
+        normalized = _expression(expression)
+        target = _required_text(entity_id, "entity_id")
+        summary = _required_text(
+            meaning_summary, "meaning_summary", maximum=240
+        )
+        observation_key = _required_text(observation_id, "observation_id")
+        kind = _required_text(evidence_kind, "evidence_kind", maximum=24)
+        if kind not in {"definition", "usage"}:
+            raise ValueError("unsupported convention evidence kind")
+        timestamp = int(now)
+        convention_id = "convention:" + hashlib.sha256(
+            "{}\0{}\0{}".format(scope, normalized, target).encode("utf-8")
+        ).hexdigest()[:24]
+
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            observation = db.execute(
+                "SELECT * FROM knowledge_observations WHERE observation_id=?",
+                (observation_key,),
+            ).fetchone()
+            if (
+                observation is None
+                or str(observation["origin_class"]) != "human_chat"
+                or str(observation["group_id"] or "") != scope
+                or observation["author_ref"] is None
+            ):
+                raise ValueError(
+                    "convention evidence is not qualified human chat"
+                )
+            entity = db.execute(
+                "SELECT canonical_name,status FROM knowledge_entities "
+                "WHERE entity_id=?",
+                (target,),
+            ).fetchone()
+            if entity is None or str(entity["status"]) != "active":
+                raise ValueError("convention target entity is not active")
+            existing = db.execute(
+                "SELECT evidence_observation_ids_json FROM group_conventions "
+                "WHERE convention_id=?",
+                (convention_id,),
+            ).fetchone()
+            evidence_ids = []
+            if existing is not None:
+                evidence_ids.extend(
+                    str(value)
+                    for value in json.loads(
+                        str(existing["evidence_observation_ids_json"])
+                    )
+                )
+            if observation_key not in evidence_ids:
+                evidence_ids.append(observation_key)
+            placeholders = ",".join("?" for _ in evidence_ids)
+            evidence_rows = db.execute(
+                "SELECT observation_id,author_ref,source_id,safe_summary,"
+                "occurred_at FROM knowledge_observations "
+                "WHERE observation_id IN ({})".format(placeholders),
+                tuple(evidence_ids),
+            ).fetchall()
+            actor_count = len(
+                {str(row["author_ref"]) for row in evidence_rows}
+            )
+            scene_count = len(
+                {str(row["source_id"]) for row in evidence_rows}
+            )
+            definition_count = 0
+            for evidence_row in evidence_rows:
+                try:
+                    safe_value = json.loads(
+                        str(evidence_row["safe_summary"])
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if safe_value.get("kind") == "definition":
+                    definition_count += 1
+            first_seen = min(
+                int(row["occurred_at"]) for row in evidence_rows
+            )
+            last_seen = max(int(row["occurred_at"]) for row in evidence_rows)
+            status = (
+                "active"
+                if admin_confirmed
+                or (definition_count >= 1 and scene_count >= 2)
+                else "candidate"
+            )
+            confidence = (
+                1.0
+                if admin_confirmed
+                else (0.85 if status == "active" else 0.5)
+            )
+            db.execute(
+                "INSERT INTO group_conventions(convention_id,group_id,"
+                "normalized_expression,resolved_entity_id,meaning_summary,"
+                "evidence_observation_ids_json,distinct_actor_count,"
+                "distinct_scene_count,confidence,status,first_seen_at,"
+                "last_seen_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(convention_id) DO UPDATE SET "
+                "meaning_summary=excluded.meaning_summary,"
+                "evidence_observation_ids_json=excluded.evidence_observation_ids_json,"
+                "distinct_actor_count=excluded.distinct_actor_count,"
+                "distinct_scene_count=excluded.distinct_scene_count,"
+                "confidence=excluded.confidence,status=excluded.status,"
+                "first_seen_at=MIN(first_seen_at,excluded.first_seen_at),"
+                "last_seen_at=MAX(last_seen_at,excluded.last_seen_at),"
+                "updated_at=excluded.updated_at",
+                (
+                    convention_id,
+                    scope,
+                    normalized,
+                    target,
+                    summary,
+                    _json(evidence_ids),
+                    actor_count,
+                    scene_count,
+                    confidence,
+                    status,
+                    first_seen,
+                    last_seen,
+                    timestamp,
+                ),
+            )
+            conflicts = db.execute(
+                "SELECT convention_id FROM group_conventions "
+                "WHERE group_id=? AND normalized_expression=? "
+                "AND resolved_entity_id<>? "
+                "AND status IN ('candidate','active','disputed')",
+                (scope, normalized, target),
+            ).fetchall()
+            if conflicts:
+                conflict_ids = [str(row["convention_id"]) for row in conflicts]
+                conflict_ids.append(convention_id)
+                conflict_placeholders = ",".join("?" for _ in conflict_ids)
+                db.execute(
+                    "UPDATE group_conventions SET status='disputed',"
+                    "confidence=0.0,updated_at=? WHERE convention_id IN ({})".format(
+                        conflict_placeholders
+                    ),
+                    (timestamp, *conflict_ids),
+                )
+                db.execute(
+                    "UPDATE group_knowledge_aliases SET status='disputed' "
+                    "WHERE group_id=? AND normalized_alias=?",
+                    (scope, normalized),
+                )
+            elif status == "active":
+                alias_id = "alias:group:" + hashlib.sha256(
+                    "{}\0{}\0{}".format(scope, normalized, target).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()[:24]
+                db.execute(
+                    "INSERT INTO group_knowledge_aliases(alias_id,group_id,"
+                    "entity_id,normalized_alias,evidence_observation_ids_json,"
+                    "confidence,last_used_at,status) VALUES(?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(group_id,normalized_alias,entity_id) DO UPDATE SET "
+                    "evidence_observation_ids_json=excluded.evidence_observation_ids_json,"
+                    "confidence=excluded.confidence,last_used_at=excluded.last_used_at,"
+                    "status='active'",
+                    (
+                        alias_id,
+                        scope,
+                        target,
+                        normalized,
+                        _json(evidence_ids),
+                        confidence,
+                        last_seen,
+                        "active",
+                    ),
+                )
+            row = db.execute(
+                "SELECT * FROM group_conventions WHERE convention_id=?",
+                (convention_id,),
+            ).fetchone()
+        return self._convention_record(row)
+
+    def expire_stale_conventions(
+        self, *, now: int, max_age_seconds: int
+    ) -> int:
+        timestamp = int(now)
+        maximum_age = int(max_age_seconds)
+        if timestamp < 0 or maximum_age <= 0:
+            raise ValueError("stale convention timestamps are invalid")
+        threshold = timestamp - maximum_age
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT group_id,normalized_expression,resolved_entity_id "
+                "FROM group_conventions WHERE status IN ('candidate','active') "
+                "AND last_seen_at<=?",
+                (threshold,),
+            ).fetchall()
+            cursor = db.execute(
+                "UPDATE group_conventions SET status='stale',confidence=0.0,"
+                "updated_at=? WHERE status IN ('candidate','active') "
+                "AND last_seen_at<=?",
+                (timestamp, threshold),
+            )
+            for row in rows:
+                db.execute(
+                    "UPDATE group_knowledge_aliases SET status='stale' "
+                    "WHERE group_id=? AND normalized_alias=? AND entity_id=?",
+                    (
+                        row["group_id"],
+                        row["normalized_expression"],
+                        row["resolved_entity_id"],
+                    ),
+                )
+        return int(cursor.rowcount)
+
+    def knowledge_storage_text(self) -> str:
+        """Return knowledge table text for privacy regression auditing."""
+
+        tables = (
+            "knowledge_observations",
+            "group_conventions",
+            "group_knowledge_aliases",
+            "group_topic_mentions",
+        )
+        values = []
+        with connect_database(self.path) as db:
+            for table in tables:
+                rows = db.execute("SELECT * FROM {}".format(table)).fetchall()
+                for row in rows:
+                    values.extend(
+                        str(value)
+                        for value in tuple(row)
+                        if value is not None
+                    )
+        return "\n".join(values)
+
+    @staticmethod
+    def _stored_observation(row) -> StoredKnowledgeObservation:
+        return StoredKnowledgeObservation(
+            observation_id=str(row["observation_id"]),
+            group_id=str(row["group_id"]),
+            author_ref=str(row["author_ref"]),
+            source_event_id=str(row["source_event_id"]),
+            scene_ref=str(row["source_id"]),
+            entity_hint=(
+                None
+                if row["entity_hint"] is None
+                else str(row["entity_hint"])
+            ),
+            safe_summary=str(row["safe_summary"]),
+            occurred_at=int(row["occurred_at"]),
+            recorded_at=int(row["recorded_at"]),
+            status=str(row["status"]),
+        )
+
+    @staticmethod
+    def _convention_record(row) -> GroupConventionRecord:
+        return GroupConventionRecord(
+            convention_id=str(row["convention_id"]),
+            group_id=str(row["group_id"]),
+            normalized_expression=str(row["normalized_expression"]),
+            resolved_entity_id=str(row["resolved_entity_id"]),
+            meaning_summary=str(row["meaning_summary"]),
+            evidence_observation_ids=tuple(
+                str(value)
+                for value in json.loads(
+                    str(row["evidence_observation_ids_json"])
+                )
+            ),
+            distinct_actor_count=int(row["distinct_actor_count"]),
+            distinct_scene_count=int(row["distinct_scene_count"]),
+            confidence=float(row["confidence"]),
+            status=str(row["status"]),
+            first_seen_at=int(row["first_seen_at"]),
+            last_seen_at=int(row["last_seen_at"]),
+            updated_at=int(row["updated_at"]),
+        )
 
     def seed_versions(self, seed_id: str) -> tuple[SeedVersionRecord, ...]:
         identity = _required_text(seed_id, "seed_id")
@@ -174,6 +597,13 @@ class KnowledgeRepository:
             ).fetchone()
             if existing is not None:
                 if str(existing["content_hash"]) == content_hash:
+                    self._upsert_seed_alias(
+                        db,
+                        entity_id=game_id,
+                        text=game["canonical_name"],
+                        alias_kind="official",
+                        ambiguity_level="none",
+                    )
                     return "unchanged"
                 raise SeedVersionConflict(
                     "seed {!r} version {} already has a different hash".format(
@@ -233,6 +663,11 @@ class KnowledgeRepository:
                 now=timestamp,
             )
             aliases = list(game["aliases"]) + [
+                {
+                    "text": game["canonical_name"],
+                    "kind": "official",
+                    "ambiguity_level": "none",
+                },
                 {
                     "text": game["english_name"],
                     "kind": "translation",
@@ -743,10 +1178,12 @@ class KnowledgeRepository:
 
 __all__ = (
     "AFFINITY_HALF_LIFE_SECONDS",
+    "GroupConventionRecord",
     "KnowledgeAliasRecord",
     "KnowledgeRepository",
     "SeedVersionConflict",
     "SeedVersionOrderConflict",
     "SeedVersionRecord",
+    "StoredKnowledgeObservation",
     "TopicAffinity",
 )

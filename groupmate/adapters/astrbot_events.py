@@ -112,6 +112,12 @@ class AstrBotEventTranslator:
         )
         sender = raw.get("sender") if isinstance(raw.get("sender"), Mapping) else {}
         sender_name = str(sender.get("card") or sender.get("nickname") or _call_text(host_event, "get_sender_name"))
+        sender_role = str(
+            raw.get("sender_role") or sender.get("role") or ""
+        ).strip().casefold()
+        automation_hint = str(
+            raw.get("automation_hint") or ""
+        ).strip().casefold()
         message_obj = getattr(host_event, "message_obj", None)
         bot_id = str(
             getattr(message_obj, "self_id", "")
@@ -162,6 +168,8 @@ class AstrBotEventTranslator:
                 "mentions_bot": bool(bot_id and bot_id in mentions),
                 "media": media,
                 "sender": {"id": actor_id, "name": sender_name},
+                "sender_role": sender_role or None,
+                "automation_hint": automation_hint or None,
                 "is_self": is_self,
                 "interaction_owner": ownership.owner.value,
                 "social_eligible": ownership.social_eligible,

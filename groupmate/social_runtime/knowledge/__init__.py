@@ -17,6 +17,11 @@ from .contracts import (
     TopicUnderstandingFrame,
     VersionReference,
 )
+from .observation import (
+    KnowledgeObservationService,
+    KnowledgeOriginClassifier,
+    OriginDecision,
+)
 
 
 __all__ = (
@@ -27,9 +32,12 @@ __all__ = (
     "KnowledgeNeed",
     "KnowledgeNeedOutcome",
     "KnowledgeObservation",
+    "KnowledgeObservationService",
+    "KnowledgeOriginClassifier",
     "KnowledgeScope",
     "ObservationStatus",
     "OriginClass",
+    "OriginDecision",
     "ResolvedEntity",
     "ResolvedTerm",
     "RiskClass",
