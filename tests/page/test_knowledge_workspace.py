@@ -38,11 +38,14 @@ def test_knowledge_workspace_is_reachable_and_loads_scoped_views():
     }
     assert '"/knowledge": [' in store
     for endpoint in (
-        "knowledge/overview",
-        "knowledge/entities",
-        "knowledge/claims",
-        "knowledge/conventions",
-        "knowledge/jobs",
+        "knowledge/library/overview",
+        "knowledge/library/entities",
+        "knowledge/library/claims",
+        "knowledge/library/jobs",
+        "knowledge/group/overview",
+        "knowledge/group/aliases",
+        "knowledge/group/conventions",
+        "knowledge/group/jobs",
     ):
         assert endpoint in store
     assert 'import { renderKnowledge } from "./workspaces/knowledge.js"' in app
@@ -55,12 +58,16 @@ def test_workspace_exposes_review_states_actions_and_mobile_safe_layout():
     layout = (PAGE / "styles" / "layout.css").read_text(encoding="utf-8")
 
     for label in (
-        "知识健康",
+        "本群认知",
+        "共享知识库",
+        "所有群共享",
+        "仅影响本群",
         "群内热门游戏",
         "版本核验",
         "群内约定",
         "冲突与过期",
-        "后台任务",
+        "群触发任务",
+        "共享刷新任务",
         "近期使用",
         "加载中",
         "暂时无法读取",
@@ -89,3 +96,26 @@ def test_workspace_exposes_review_states_actions_and_mobile_safe_layout():
     assert "flex: 0 1 auto;" in shell_mobile
     assert ".sidebar-quick { display: none;" in shell_mobile
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in shell_mobile
+
+
+def test_workspace_exposes_accessible_entity_detail_with_safe_public_sources():
+    """Catches removal of the detail affordance or unsafe source rendering."""
+    source = (PAGE / "workspaces" / "knowledge.js").read_text(encoding="utf-8")
+    styles = (PAGE / "styles" / "components.css").read_text(encoding="utf-8")
+
+    assert "knowledge/library/entity-detail" in source
+    assert "knowledge/group/entity-context" in source
+    assert "查看详情" in source
+    assert 'element("dialog"' in source
+    assert 'aria-labelledby' in source
+    assert 'rel: "noreferrer noopener"' in source
+    assert 'target: "_blank"' in source
+    assert "证据链" in source
+    assert "支持这条事实" in source
+    assert "反驳这条事实" in source
+    assert "群内别名" in source
+    assert "所属游戏" in source
+    assert "同游戏相关实体" in source
+    assert "原始群聊不会在这里展示" in source
+    assert ".knowledge-detail" in styles
+    assert "innerHTML" not in source

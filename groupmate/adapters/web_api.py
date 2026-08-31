@@ -69,12 +69,23 @@ class WebResponse:
 
 
 class ControlPlaneWebAPI:
+    KNOWLEDGE_LIBRARY_QUERY_ENDPOINTS = (
+        "knowledge/library/overview",
+        "knowledge/library/entities",
+        "knowledge/library/claims",
+        "knowledge/library/entity-detail",
+        "knowledge/library/jobs",
+    )
+    KNOWLEDGE_GROUP_QUERY_ENDPOINTS = (
+        "knowledge/group/overview",
+        "knowledge/group/aliases",
+        "knowledge/group/conventions",
+        "knowledge/group/entity-context",
+        "knowledge/group/usage",
+        "knowledge/group/jobs",
+    )
     KNOWLEDGE_QUERY_ENDPOINTS = (
-        "knowledge/overview",
-        "knowledge/entities",
-        "knowledge/claims",
-        "knowledge/conventions",
-        "knowledge/jobs",
+        KNOWLEDGE_LIBRARY_QUERY_ENDPOINTS + KNOWLEDGE_GROUP_QUERY_ENDPOINTS
     )
     QUERY_ENDPOINTS = (
         "bootstrap",
@@ -286,8 +297,11 @@ class ControlPlaneWebAPI:
             return self._error(403, "administrator_forbidden")
         if endpoint in self.KNOWLEDGE_QUERY_ENDPOINTS:
             return self._knowledge_query(endpoint, request)
-        if endpoint == "knowledge/actions":
-            return await self._knowledge_action(request)
+        if endpoint in {"knowledge/library/actions", "knowledge/group/actions"}:
+            return await self._knowledge_action(
+                request,
+                scope_kind="library" if "/library/" in endpoint else "group",
+            )
         if endpoint in self.QUERY_ENDPOINTS:
             if str(request.method).upper() != "GET":
                 return self._error(405, "method_not_allowed")
@@ -465,35 +479,52 @@ class ControlPlaneWebAPI:
             return self._knowledge_error(405, "method_not_allowed")
         if self.knowledge_queries is None:
             return self._knowledge_error(503, "knowledge_query_unavailable")
-        group_id = str(request.query.get("group_id") or "").strip()
-        if not group_id:
-            return self._knowledge_error(400, "group_id_required")
         try:
-            persona_id, group_id = self._scope_values(
-                request.query.get("persona_id") or self.persona_id,
-                group_id,
-            )
-            name = endpoint.removeprefix("knowledge/")
-            if name == "overview":
-                body = self.knowledge_queries.overview(
-                    group_id, now=int(time.time())
-                )
-            else:
-                cursor = self._optional_text(request.query.get("cursor"))
-                filters = {
-                    key: request.query.get(key)
-                    for key in (
-                        "status",
-                        "entity_type",
-                        "claim_kind",
-                        "entity_id",
-                        "job_kind",
+            if endpoint in self.KNOWLEDGE_LIBRARY_QUERY_ENDPOINTS:
+                name = endpoint.removeprefix("knowledge/library/")
+                if name == "overview":
+                    body = self.knowledge_queries.library_overview(
+                        now=int(time.time())
                     )
-                    if request.query.get(key) is not None
-                }
-                body = getattr(self.knowledge_queries, name)(
-                    group_id, cursor, filters
+                elif name == "entity-detail":
+                    body = self.knowledge_queries.library_entity_detail(
+                        str(request.query.get("entity_id") or "")
+                    )
+                else:
+                    cursor = self._optional_text(request.query.get("cursor"))
+                    filters = self._knowledge_filters(request)
+                    body = getattr(self.knowledge_queries, f"library_{name}")(
+                        cursor, filters
+                    )
+                response_scope = {"kind": "library"}
+            else:
+                group_id = str(request.query.get("group_id") or "").strip()
+                if not group_id:
+                    return self._knowledge_error(400, "group_id_required")
+                _, group_id = self._scope_values(
+                    request.query.get("persona_id") or self.persona_id,
+                    group_id,
                 )
+                name = endpoint.removeprefix("knowledge/group/")
+                if name == "overview":
+                    body = self.knowledge_queries.group_overview(
+                        group_id, now=int(time.time())
+                    )
+                elif name == "entity-context":
+                    body = self.knowledge_queries.group_entity_context(
+                        group_id,
+                        str(request.query.get("entity_id") or ""),
+                    )
+                else:
+                    cursor = self._optional_text(request.query.get("cursor"))
+                    filters = self._knowledge_filters(request)
+                    method = (
+                        self.knowledge_queries.conventions
+                        if name == "conventions"
+                        else getattr(self.knowledge_queries, f"group_{name}")
+                    )
+                    body = method(group_id, cursor, filters)
+                response_scope = {"kind": "group", "group_id": group_id}
         except LookupError:
             return self._knowledge_error(404, "scope_not_found")
         except (TypeError, ValueError):
@@ -504,12 +535,14 @@ class ControlPlaneWebAPI:
             200,
             {
                 **body,
-                "scope": {"persona_id": persona_id, "group_id": group_id},
+                "scope": response_scope,
             },
             self._knowledge_headers(),
         )
 
-    async def _knowledge_action(self, request: WebRequest) -> WebResponse:
+    async def _knowledge_action(
+        self, request: WebRequest, *, scope_kind: str
+    ) -> WebResponse:
         if str(request.method).upper() != "POST":
             return self._knowledge_error(405, "method_not_allowed")
         content_type = str(self._header(request.headers, "content-type") or "")
@@ -526,15 +559,20 @@ class ControlPlaneWebAPI:
         if len(encoded) > 16_384:
             return self._knowledge_error(413, "command_payload_too_large")
         body = dict(request.json_body or {})
-        if str(body.get("type") or "") not in {
-            "knowledge_convention_confirm",
-            "knowledge_convention_reject",
-            "knowledge_alias_supersede",
+        library_actions = {
             "knowledge_claim_dispute",
             "knowledge_job_retry",
             "knowledge_cache_invalidate",
+        }
+        group_actions = {
+            "knowledge_convention_confirm",
+            "knowledge_convention_reject",
+            "knowledge_alias_supersede",
+            "knowledge_job_retry",
             "knowledge_ambient_canary_set",
-        }:
+        }
+        allowed = library_actions if scope_kind == "library" else group_actions
+        if str(body.get("type") or "") not in allowed:
             return self._knowledge_error(400, "unsupported_knowledge_action")
         body.setdefault("persona_id", self.persona_id)
         delegated = WebRequest(
@@ -547,6 +585,20 @@ class ControlPlaneWebAPI:
         )
         response = await self._command(delegated)
         return WebResponse(response.status, response.body, self._knowledge_headers())
+
+    @staticmethod
+    def _knowledge_filters(request: WebRequest) -> dict[str, object]:
+        return {
+            key: request.query.get(key)
+            for key in (
+                "status",
+                "entity_type",
+                "claim_kind",
+                "entity_id",
+                "job_kind",
+            )
+            if request.query.get(key) is not None
+        }
 
     async def _command(self, request: WebRequest) -> WebResponse:
         username = str(request.username or "").strip()
@@ -839,7 +891,14 @@ class AstrBotControlPlaneRoutes:
     ENDPOINTS = (
         ControlPlaneWebAPI.QUERY_ENDPOINTS
         + ControlPlaneWebAPI.KNOWLEDGE_QUERY_ENDPOINTS
-        + ("knowledge/actions", "avatar", "media", "commands", "events")
+        + (
+            "knowledge/library/actions",
+            "knowledge/group/actions",
+            "avatar",
+            "media",
+            "commands",
+            "events",
+        )
     )
 
     def __init__(self, context: object, *, api_factory: Callable[[], object]) -> None:
@@ -853,7 +912,11 @@ class AstrBotControlPlaneRoutes:
         for endpoint in self.ENDPOINTS:
             methods = (
                 ["POST"]
-                if endpoint in {"commands", "knowledge/actions"}
+                if endpoint in {
+                    "commands",
+                    "knowledge/library/actions",
+                    "knowledge/group/actions",
+                }
                 else ["GET"]
             )
             registrar(

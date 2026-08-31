@@ -29,8 +29,9 @@ export class ApiBridge {
     return this.bridge.apiPost("commands", body);
   }
 
-  knowledgeAction(body) {
-    return this.bridge.apiPost("knowledge/actions", body);
+  knowledgeAction(scopeKind, body) {
+    const scope = scopeKind === "library" ? "library" : "group";
+    return this.bridge.apiPost(`knowledge/${scope}/actions`, body);
   }
 
   async connect({ params, onEvent, onState, onPoll }) {

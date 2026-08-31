@@ -217,10 +217,11 @@ Commit: `git commit -m "feat: administer scoped game knowledge"`
 - Create: `tests/page/test_knowledge_workspace.py`
 
 **Interfaces:**
-- GET `/api/groupmate/knowledge/overview?group_id={group_id}`
-- GET `/api/groupmate/knowledge/{entities|claims|conventions|jobs}?group_id={group_id}&cursor={cursor}`
-- POST `/api/groupmate/knowledge/actions`，沿用现有管理员 token/origin/CSRF 安全边界。
-- Workspace panels: health、热门游戏、版本 freshness、群约定、冲突/过期、jobs、recent usage。
+- 全局共享 GET：`/api/groupmate/knowledge/library/{overview|entities|claims|entity-detail|jobs}`，不依赖当前群。
+- 群级 GET：`/api/groupmate/knowledge/group/{overview|aliases|conventions|entity-context|usage|jobs}?group_id={group_id}`。
+- mutation 分为 `/api/groupmate/knowledge/library/actions` 与 `/api/groupmate/knowledge/group/actions`，沿用现有管理员 token/origin/CSRF 安全边界。
+- Workspace 默认“本群认知”，另设“共享知识库”；详情同时组合共享公开知识与当前群语境，但保持字段隔离。
+- 共享实体按 `canonical_game_id` 自动归到所属游戏；列表显示所属游戏，详情展示同游戏相关实体与公开证据链。
 
 - [x] **Step 1: 写 API 安全契约失败测试**
 

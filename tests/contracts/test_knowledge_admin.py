@@ -210,17 +210,17 @@ def test_remaining_admin_mutations_are_audited_and_preserve_history(tmp_path):
     service = _service(path)
 
     commands = (
-        SupersedeKnowledgeAlias(
+        (0, SupersedeKnowledgeAlias(
             "alias:old", "game:wuthering", command_id="cmd:supersede"
-        ),
-        DisputeKnowledgeClaim("claim:mode", command_id="cmd:dispute"),
-        RetryKnowledgeJob("job:retry", command_id="cmd:retry"),
-        InvalidateKnowledgeCache("game:delta", command_id="cmd:invalidate"),
-        SetKnowledgeAmbientCanary(True, command_id="cmd:canary"),
+        )),
+        (60, DisputeKnowledgeClaim("claim:mode", command_id="cmd:dispute")),
+        (2, RetryKnowledgeJob("job:retry", command_id="cmd:retry")),
+        (20, InvalidateKnowledgeCache("game:delta", command_id="cmd:invalidate")),
+        (4, SetKnowledgeAmbientCanary(True, command_id="cmd:canary")),
     )
-    for version, command in enumerate(commands):
-        result = service.execute(command, _context(version=version))
-        assert result.version == version + 1
+    for result_version, (expected_version, command) in enumerate(commands, start=1):
+        result = service.execute(command, _context(version=expected_version))
+        assert result.version == result_version
 
     with connect_database(path) as db:
         old_alias = db.execute(

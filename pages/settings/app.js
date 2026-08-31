@@ -104,7 +104,10 @@ function renderWorkspace(route = activeRoute) {
 }
 
 function queryWorkspaceData(endpoint, params = {}, options = {}) {
-  return bridge.query(endpoint, { ...scopeParams(), ...params }, options);
+  const scoped = String(endpoint || "").startsWith("knowledge/library/")
+    ? params
+    : { ...scopeParams(), ...params };
+  return bridge.query(endpoint, scoped, options);
 }
 
 async function avatarSource(avatarRef) {
@@ -288,7 +291,8 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
   const projections = workspaceProjectionNames(route.path, route.endpoint);
   const results = await Promise.all(projections.map(async (projection) => {
     try {
-      const view = await bridge.query(projection, scopeParams(), { timeoutMs });
+      const params = projection.startsWith("knowledge/library/") ? {} : scopeParams();
+      const view = await bridge.query(projection, params, { timeoutMs });
       if (projection === "traces") store.mergeTracePage(view);
       else if (projection.startsWith("knowledge/")) {
         store.mergeKnowledge(projection, view);
@@ -355,9 +359,11 @@ async function submitWorkspaceCommand(spec) {
     expected_version: Number(spec.expected_version || 0),
   });
   try {
-    const body = { ...spec, command_id: commandId, ...scopeParams() };
+    const knowledgeScope = spec.knowledge_scope === "library" ? "library" : "group";
+    const { knowledge_scope: _knowledgeScope, ...command } = spec;
+    const body = { ...command, command_id: commandId, ...scopeParams() };
     const result = String(spec.type || "").startsWith("knowledge_")
-      ? await bridge.knowledgeAction(body)
+      ? await bridge.knowledgeAction(knowledgeScope, body)
       : await bridge.command(body);
     store.setConnection({ state: "connected", impact: "命令已接受，等待运行状态更新" });
     return result;

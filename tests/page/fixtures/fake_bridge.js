@@ -385,45 +385,81 @@
       },
     }],
   };
-  const knowledgeScope = { persona_id: "groupmate:default", group_id: "72819823" };
+  const libraryScope = { kind: "library" };
+  const knowledgeScope = { kind: "group", group_id: "72819823" };
+  const releaseStates = [
+    { version_slot_id: "slot:delta:current", entity_id: "game:delta", canonical_name: "三角洲行动", official_label: "S7", official_state: "released", region: "CN", platform: "all", last_successful_check_at: now - 1800, last_attempt_at: now - 900, fresh_until: now + 86400, fresh: true, status: "active", revision: 3 },
+    { version_slot_id: "slot:wuthering:next", entity_id: "game:wuthering", canonical_name: "鸣潮", official_label: null, official_state: "none", region: "CN", platform: "all", last_successful_check_at: now - 86400, last_attempt_at: now - 600, fresh_until: now - 120, fresh: false, status: "active", revision: 2 },
+  ];
+  const recentKnowledgeUsage = [
+    { source_domains: ["df.qq.com"], latency_ms: 24, cache_hit: false, result_kind: "grounded_reply", diagnostic: null, recorded_at: now - 60 },
+    { source_domains: [], latency_ms: 3, cache_hit: true, result_kind: "local_resolution", diagnostic: null, recorded_at: now - 180 },
+  ];
   const knowledgeViews = {
-    "knowledge/overview": {
+    "knowledge/library/overview": {
+      scope: libraryScope,
+      as_of: now,
+      revision: 8,
+      counts: { entities: 18, active_claims: 42, disputed_claims: 1, stale_claims: 2, global_jobs: 1 },
+      release_states: releaseStates,
+    },
+    "knowledge/group/overview": {
       scope: knowledgeScope,
       as_of: now,
       revision: 8,
-      counts: { entities: 18, active_claims: 42, review_conventions: 2, retry_jobs: 1 },
+      counts: { review_conventions: 2, retry_jobs: 1 },
       ambient_canary_enabled: false,
       popular_games: [
         { entity_id: "game:delta", canonical_name: "三角洲行动", status: "active", salience: 0.92, qualified_mention_count: 34, distinct_actor_count: 8, distinct_scene_count: 11, last_seen_at: now },
         { entity_id: "game:wuthering", canonical_name: "鸣潮", status: "active", salience: 0.74, qualified_mention_count: 21, distinct_actor_count: 6, distinct_scene_count: 8, last_seen_at: now - 1200 },
         { entity_id: "game:starrail", canonical_name: "崩坏：星穹铁道", status: "active", salience: 0.51, qualified_mention_count: 13, distinct_actor_count: 5, distinct_scene_count: 5, last_seen_at: now - 3600 },
       ],
-      release_states: [
-        { version_slot_id: "slot:delta:current", entity_id: "game:delta", canonical_name: "三角洲行动", official_label: "S7", official_state: "released", last_successful_check_at: now - 1800, last_attempt_at: now - 900, fresh_until: now + 86400, fresh: true, status: "active", revision: 3 },
-        { version_slot_id: "slot:wuthering:next", entity_id: "game:wuthering", canonical_name: "鸣潮", official_label: null, official_state: "none", last_successful_check_at: now - 86400, last_attempt_at: now - 600, fresh_until: now - 120, fresh: false, status: "active", revision: 2 },
-      ],
-      recent_usage: [
-        { source_domains: ["df.qq.com"], latency_ms: 24, cache_hit: false, result_kind: "grounded_reply", diagnostic: null, recorded_at: now - 60 },
-        { source_domains: [], latency_ms: 3, cache_hit: true, result_kind: "local_resolution", diagnostic: null, recorded_at: now - 180 },
-      ],
+      recent_usage: recentKnowledgeUsage,
     },
-    "knowledge/entities": { scope: knowledgeScope, revision: 8, next_cursor: null, items: [] },
-    "knowledge/claims": {
-      scope: knowledgeScope, revision: 8, next_cursor: null, items: [
+    "knowledge/library/entities": { scope: libraryScope, revision: 8, next_cursor: null, items: [
+      { entity_id: "game:delta", entity_type: "game", canonical_name: "三角洲行动", canonical_game_id: "game:delta", canonical_game_name: "三角洲行动", status: "active", revision: now - 1800 },
+      { entity_id: "game:wuthering", entity_type: "game", canonical_name: "鸣潮", canonical_game_id: "game:wuthering", canonical_game_name: "鸣潮", status: "active", revision: now - 86400 },
+    ] },
+    "knowledge/library/claims": {
+      scope: libraryScope, revision: 8, next_cursor: null, items: [
         { claim_id: "claim:delta:genre", entity_id: "game:delta", canonical_name: "三角洲行动", predicate: "genre", safe_summary: "多人战术射击游戏", claim_kind: "stable_semantic", evidence_level: "official", status: "active", checked_at: now - 1800, revision: 3, sources: [{ domain: "df.qq.com", source_class: "official" }] },
         { claim_id: "claim:wuthering:next", entity_id: "game:wuthering", canonical_name: "鸣潮", predicate: "next_version", safe_summary: "下一版本资料需要重新核验", claim_kind: "public_fact", evidence_level: "secondary", status: "stale", checked_at: now - 86400, revision: 2, sources: [] },
       ],
     },
-    "knowledge/conventions": {
+    "knowledge/group/aliases": { scope: knowledgeScope, revision: 8, next_cursor: null, items: [
+      { alias_id: "alias:group:wuthering", entity_id: "game:wuthering", canonical_name: "鸣潮", expression: "潮", confidence: 1, last_used_at: now - 300, status: "active" },
+    ] },
+    "knowledge/group/conventions": {
       scope: knowledgeScope, revision: 8, next_cursor: null, items: [
         { convention_id: "convention:delta", expression: "洲", entity_id: "game:delta", canonical_name: "三角洲行动", meaning_summary: "群内通常指三角洲行动", alias_id: null, scope: "group", group_id: "72819823", status: "candidate", confidence: 0.7, distinct_actor_count: 4, distinct_scene_count: 3, first_seen_at: now - 86400, last_seen_at: now - 600, revision: 7 },
         { convention_id: "convention:wuthering", expression: "潮", entity_id: "game:wuthering", canonical_name: "鸣潮", meaning_summary: "群内简称鸣潮", alias_id: "alias:group:wuthering", scope: "group", group_id: "72819823", status: "active", confidence: 1, distinct_actor_count: 6, distinct_scene_count: 5, first_seen_at: now - 172800, last_seen_at: now - 300, revision: 6 },
       ],
     },
-    "knowledge/jobs": {
+    "knowledge/group/jobs": {
       scope: knowledgeScope, revision: 8, next_cursor: null, items: [
         { job_id: "job:learning", job_kind: "unknown_entity_learning", scope: "group", group_id: "72819823", entity_id: "game:delta", canonical_name: "三角洲行动", status: "retry", attempt: 2, next_attempt_at: now + 3600, diagnostic: "source_unavailable", created_at: now - 7200, revision: 5 },
       ],
+    },
+    "knowledge/group/usage": { scope: knowledgeScope, revision: 8, next_cursor: null, items: recentKnowledgeUsage },
+    "knowledge/library/jobs": { scope: libraryScope, revision: 8, next_cursor: null, items: [
+      { job_id: "job:official", job_kind: "official_daily_probe", scope: "library", group_id: null, entity_id: "game:delta", canonical_name: "三角洲行动", status: "completed", attempt: 1, next_attempt_at: now + 86400, diagnostic: null, created_at: now - 3600, revision: now - 600 },
+    ] },
+    "knowledge/library/entity-detail": {
+      scope: libraryScope,
+      revision: 8,
+      entity: { entity_id: "game:delta", entity_type: "game", canonical_name: "三角洲行动", canonical_game_id: "game:delta", canonical_game_name: "三角洲行动", status: "active" },
+      related_entities: [{ entity_id: "character:delta:red-wolf", entity_type: "character", canonical_name: "红狼", status: "active" }],
+      release_states: [{ version_slot_id: "slot:delta:current", official_label: "S7", official_state: "released", region: "CN", platform: "all", release_at: now - 86400, fresh_until: now + 86400, status: "active", revision: 3 }],
+      claims_truncated: false,
+      claims: [{ claim_id: "claim:delta:s7", predicate: "current_version", safe_summary: "S7 已正式发布", claim_kind: "public_fact", evidence_level: "official", status: "active", version_slot_id: "slot:delta:current", region: "CN", platform: "all", valid_from: now - 86400, valid_until: null, checked_at: now - 1800, supersedes_claim_id: null, superseded_by_claim_ids: [], sources: [{ publisher: "腾讯游戏", domain: "df.qq.com", source_class: "official", url: "https://df.qq.com/news/s7", published_at: now - 90000, fetched_at: now - 1800, excerpt: "官方公告确认 S7 已正式发布。", relation_kind: "supports" }] }],
+    },
+    "knowledge/group/entity-context": {
+      scope: knowledgeScope,
+      revision: 8,
+      entity_id: "game:delta",
+      affinity: { salience: 0.92, qualified_mention_count: 34, distinct_actor_count: 8, distinct_scene_count: 11, first_seen_at: now - 864000, last_seen_at: now },
+      group_aliases: [{ expression: "洲", confidence: 0.9, last_used_at: now - 60, status: "active" }],
+      group_conventions: [{ expression: "洲", meaning_summary: "群内通常指三角洲行动", distinct_actor_count: 4, distinct_scene_count: 3, confidence: 0.7, status: "candidate", first_seen_at: now - 86400, last_seen_at: now - 600 }],
     },
   };
   const response = (projection) => ({

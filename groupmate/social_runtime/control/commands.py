@@ -1159,6 +1159,31 @@ class CommandService:
                 (context.group_id, actor_id),
             ).fetchone()
             return int(row[0]) if row is not None else 0
+        if isinstance(command, DisputeKnowledgeClaim):
+            row = db.execute(
+                "SELECT updated_at FROM knowledge_claims WHERE claim_id=?",
+                (command.claim_id,),
+            ).fetchone()
+            if row is None:
+                raise CommandNotFound("knowledge target is not available")
+            return int(row[0])
+        if isinstance(command, InvalidateKnowledgeCache):
+            row = db.execute(
+                "SELECT updated_at FROM knowledge_entities WHERE entity_id=?",
+                (command.entity_id,),
+            ).fetchone()
+            if row is None:
+                raise CommandNotFound("knowledge target is not available")
+            return int(row[0])
+        if isinstance(command, RetryKnowledgeJob):
+            row = db.execute(
+                "SELECT group_id,updated_at FROM knowledge_jobs WHERE job_id=?",
+                (command.job_id,),
+            ).fetchone()
+            if row is None:
+                raise CommandNotFound("knowledge target is not available")
+            if row["group_id"] is None:
+                return int(row["updated_at"])
         return self._control_version_on(db, context)
 
     @classmethod

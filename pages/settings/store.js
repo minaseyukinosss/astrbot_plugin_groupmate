@@ -7,11 +7,15 @@ const WORKSPACE_PROJECTIONS = Object.freeze({
   "/runtime": ["runtime", "traces", "health", "persona", "governance"],
   "/profiles": ["profiles", "group-portrait", "health"],
   "/knowledge": [
-    "knowledge/overview",
-    "knowledge/entities",
-    "knowledge/claims",
-    "knowledge/conventions",
-    "knowledge/jobs",
+    "knowledge/library/overview",
+    "knowledge/library/entities",
+    "knowledge/library/claims",
+    "knowledge/library/jobs",
+    "knowledge/group/overview",
+    "knowledge/group/aliases",
+    "knowledge/group/conventions",
+    "knowledge/group/usage",
+    "knowledge/group/jobs",
   ],
 });
 
@@ -162,11 +166,8 @@ export class ProjectionStore {
       return false;
     }
     if (
-      view.scope
-      && (
-        String(view.scope.persona_id || "") !== String(this.scope.persona_id || "")
-        || String(view.scope.group_id || "") !== String(this.scope.group_id || "")
-      )
+      view.scope?.kind === "group"
+      && String(view.scope.group_id || "") !== String(this.scope.group_id || "")
     ) return false;
     this.views.set(String(name), clone(view));
     this.emit();
