@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol
 
 from .actions.contracts import (
     DeliveryBundle,
@@ -31,6 +32,11 @@ from .contracts import SocialEventEnvelope
 from .delivery.outbox import OutboxService
 from .expression import ExpressionPlan, ExpressionPlanner
 from .knowledge.contracts import KnowledgeSnapshot, RiskClass
+from .knowledge.grounding import (
+    GroundedReplyReviewer,
+    KnowledgeFactRenderer,
+    StrictReplyAssembler,
+)
 from .persona.modes import PersonaModeState
 from .persistence.schema import connect_database, initialize_database
 from .persona.canon import PersonaCanon
@@ -708,6 +714,7 @@ class ReplyExecutor:
             "used_memory_ids",
             "used_capability_ids",
             "source_event_ids",
+            "used_knowledge_ids",
         }
     )
 
@@ -718,11 +725,20 @@ class ReplyExecutor:
         model: TextModelPort,
         *,
         firewall: OutputFirewall | None = None,
+        clock: Callable[[], float] | None = None,
+        knowledge_revision_provider: Callable[[ReplyPlan], int] | None = None,
+        knowledge_renderer: KnowledgeFactRenderer | None = None,
     ) -> None:
         self.repository = repository
         self.outbox = outbox
         self.model = model
         self.firewall = firewall or OutputFirewall()
+        self.clock = clock or time.time
+        self.knowledge_revision_provider = (
+            knowledge_revision_provider or self._snapshot_revision
+        )
+        self.knowledge_renderer = knowledge_renderer or KnowledgeFactRenderer()
+        self.knowledge_reviewer = GroundedReplyReviewer()
         self.social_reviewer = SocialOutputReviewer()
         self.identity_imitation_guard = IdentityImitationGuard()
 
@@ -738,6 +754,12 @@ class ReplyExecutor:
             return ReplyPreview(
                 None, "REJECTED", "knowledge_evidence_unavailable"
             )
+        if self._knowledge_authority_violations(plan):
+            return ReplyPreview(
+                self._knowledge_fallback_text(plan),
+                "REJECTED",
+                "knowledge_review_rejected",
+            )
         if plan.move.primary_move is SocialMove.JOIN_CHORUS:
             realized = self._exact_chorus_reply(plan)
             if not self.social_reviewer.review(realized, plan).accepted:
@@ -747,6 +769,13 @@ class ReplyExecutor:
             if not review.accepted:
                 return ReplyPreview(None, "REJECTED", "output_firewall_rejected")
             return ReplyPreview(realized.text, "READY")
+        if plan.move.knowledge_policy is KnowledgePolicy.STRICT:
+            return await self._preview_strict(
+                plan,
+                context_events=context_events,
+                persona_profile=persona_profile,
+                recent_outputs=recent_outputs,
+            )
         request = GenerationRequest(
             directive=plan.style,
             required=plan.required,
@@ -762,7 +791,7 @@ class ReplyExecutor:
         except Exception:
             return ReplyPreview(None, "MODEL_FAILED", "reply_model_failed")
         realized, violations = self._review_generated_reply(raw, plan, request)
-        if violations:
+        if violations and self._violations_repairable(violations):
             try:
                 repaired = await self._repair_generated_reply(
                     plan, raw=raw, violations=violations
@@ -772,7 +801,11 @@ class ReplyExecutor:
                 )
             except Exception:
                 return ReplyPreview(None, "MODEL_FAILED", "reply_repair_failed")
-        if violations and plan.member_style_overlay is not None:
+        if (
+            violations
+            and plan.member_style_overlay is not None
+            and plan.move.knowledge_policy is KnowledgePolicy.NONE
+        ):
             try:
                 realized, violations = await self._retry_without_member_style(
                     plan,
@@ -785,6 +818,12 @@ class ReplyExecutor:
                     None, "MODEL_FAILED", "reply_style_fallback_failed"
                 )
         if violations or realized is None:
+            if plan.move.knowledge_policy is KnowledgePolicy.GROUNDED:
+                return ReplyPreview(
+                    self._knowledge_fallback_text(plan),
+                    "REJECTED",
+                    "knowledge_review_rejected",
+                )
             return ReplyPreview(None, "REJECTED", "reply_review_rejected")
         return ReplyPreview(realized.text, "READY")
 
@@ -827,6 +866,13 @@ class ReplyExecutor:
                 "REJECTED",
                 "knowledge_evidence_unavailable",
             )
+        if self._knowledge_authority_violations(plan):
+            request = self._generation_request_for_plan(plan, recent_outputs)
+            return ReplyExecutionResult(
+                self._knowledge_failed(plan, request),
+                "REJECTED",
+                "knowledge_review_rejected",
+            )
         if plan.move.primary_move is SocialMove.JOIN_CHORUS:
             realized = self._exact_chorus_reply(plan)
             if not self.social_reviewer.review(realized, plan).accepted:
@@ -839,6 +885,13 @@ class ReplyExecutor:
             self.repository.mark(plan.plan_id, "generated")
             return ReplyExecutionResult(
                 self._enqueue(plan, realized.text), "READY"
+            )
+        if plan.move.knowledge_policy is KnowledgePolicy.STRICT:
+            return await self._execute_strict(
+                plan,
+                context_events=context_events,
+                persona_profile=persona_profile,
+                recent_outputs=recent_outputs,
             )
         request = GenerationRequest(
             directive=plan.style,
@@ -859,7 +912,7 @@ class ReplyExecutor:
                 "reply_model_failed",
             )
         realized, violations = self._review_generated_reply(raw, plan, request)
-        if violations:
+        if violations and self._violations_repairable(violations):
             try:
                 repaired = await self._repair_generated_reply(
                     plan, raw=raw, violations=violations
@@ -873,7 +926,11 @@ class ReplyExecutor:
                     "MODEL_FAILED",
                     "reply_repair_failed",
                 )
-        if violations and plan.member_style_overlay is not None:
+        if (
+            violations
+            and plan.member_style_overlay is not None
+            and plan.move.knowledge_policy is KnowledgePolicy.NONE
+        ):
             try:
                 realized, violations = await self._retry_without_member_style(
                     plan,
@@ -888,6 +945,12 @@ class ReplyExecutor:
                     "reply_style_fallback_failed",
                 )
         if violations or realized is None:
+            if plan.move.knowledge_policy is KnowledgePolicy.GROUNDED:
+                return ReplyExecutionResult(
+                    self._knowledge_failed(plan, request),
+                    "REJECTED",
+                    "knowledge_review_rejected",
+                )
             return ReplyExecutionResult(
                 self._failed(plan, request),
                 "REJECTED",
@@ -895,6 +958,253 @@ class ReplyExecutor:
             )
         self.repository.mark(plan.plan_id, "generated")
         return ReplyExecutionResult(self._enqueue(plan, realized.text), "READY")
+
+    async def _preview_strict(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        recent_outputs: tuple[str, ...],
+    ) -> ReplyPreview:
+        request = self._generation_request_for_plan(plan, recent_outputs)
+        try:
+            realized, violations = await self._strict_generation_cycle(
+                plan,
+                context_events=context_events,
+                persona_profile=persona_profile,
+                request=request,
+            )
+        except Exception:
+            return ReplyPreview(None, "MODEL_FAILED", "reply_model_failed")
+        if violations or realized is None:
+            fallback = self._knowledge_fallback_text(plan)
+            return ReplyPreview(
+                fallback,
+                "REJECTED",
+                "knowledge_review_rejected",
+            )
+        return ReplyPreview(realized.text, "READY")
+
+    async def _execute_strict(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        recent_outputs: tuple[str, ...],
+    ) -> ReplyExecutionResult:
+        request = self._generation_request_for_plan(plan, recent_outputs)
+        try:
+            realized, violations = await self._strict_generation_cycle(
+                plan,
+                context_events=context_events,
+                persona_profile=persona_profile,
+                request=request,
+            )
+        except Exception:
+            return ReplyExecutionResult(
+                self._knowledge_failed(plan, request),
+                "MODEL_FAILED",
+                "reply_model_failed",
+            )
+        if violations or realized is None:
+            return ReplyExecutionResult(
+                self._knowledge_failed(plan, request),
+                "REJECTED",
+                "knowledge_review_rejected",
+            )
+        self.repository.mark(plan.plan_id, "generated")
+        return ReplyExecutionResult(self._enqueue(plan, realized.text), "READY")
+
+    async def _strict_generation_cycle(
+        self,
+        plan: ReplyPlan,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...],
+        persona_profile: Mapping[str, object],
+        request: GenerationRequest,
+    ) -> tuple[RealizedReply | None, tuple[str, ...]]:
+        raw = await self.model.complete_text(
+            system_prompt=self._strict_system_prompt(plan, persona_profile),
+            prompt=self._strict_prompt(plan, context_events),
+        )
+        realized, violations = self._review_strict_reply(
+            raw, plan, persona_profile, request
+        )
+        if not violations:
+            return realized, ()
+        if not self._violations_repairable(violations):
+            return realized, violations
+        repaired = await self.model.complete_text(
+            system_prompt=(
+                "修正严格知识回复。只输出 JSON，不要输出 Markdown 或解释。"
+                "只能使用给定结构与 fragment_id；不得新增、改写或猜测事实。"
+            ),
+            prompt=self._strict_repair_prompt(plan, violations),
+        )
+        return self._review_strict_reply(
+            repaired, plan, persona_profile, request
+        )
+
+    def _review_strict_reply(
+        self,
+        raw: str,
+        plan: ReplyPlan,
+        persona_profile: Mapping[str, object],
+        request: GenerationRequest,
+    ) -> tuple[RealizedReply | None, tuple[str, ...]]:
+        snapshot = plan.knowledge_snapshot
+        if snapshot is None:
+            return None, ("knowledge_snapshot_missing",)
+        text = str(raw or "").strip()
+        if len(text.encode("utf-8")) > self._MAX_MODEL_REPLY_BYTES:
+            return None, ("reply_json_too_large",)
+        try:
+            values = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None, ("invalid_strict_reply_json",)
+        if not isinstance(values, Mapping) or set(values) != {
+            "parts",
+            "used_knowledge_ids",
+        }:
+            return None, ("strict_reply_schema_invalid",)
+        parts = values.get("parts")
+        used_ids = values.get("used_knowledge_ids")
+        if (
+            not isinstance(parts, list)
+            or not isinstance(used_ids, list)
+            or any(not isinstance(item, Mapping) for item in parts)
+            or any(not isinstance(item, str) for item in used_ids)
+        ):
+            return None, ("strict_reply_schema_invalid",)
+        identity = persona_profile.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        addresses = tuple(
+            value
+            for value in (
+                str(identity.get("name") or "").strip(),
+                str(identity.get("default_address") or "").strip(),
+            )
+            if value
+        )
+        assembler = StrictReplyAssembler(
+            self.knowledge_renderer, allowed_addresses=addresses
+        )
+        try:
+            realized = assembler.assemble(
+                parts,
+                snapshot,
+                plan.move.must_use_knowledge_ids,
+                declared_used_knowledge_ids=used_ids,
+            )
+        except (TypeError, ValueError):
+            return None, ("strict_reply_assembly_rejected",)
+        return self._review_realized_reply(realized, plan, request)
+
+    def _strict_system_prompt(
+        self,
+        plan: ReplyPlan,
+        persona_profile: Mapping[str, object],
+    ) -> str:
+        identity = persona_profile.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        return (
+            "生成严格知识回复。只输出一个 JSON 对象，字段只能是 parts 和 "
+            "used_knowledge_ids。parts 只能包含纯语气连接 text part，或按给定"
+            "顺序引用 knowledge_fragment；不得在 text 中写数字、日期、版本、"
+            "游戏专名、状态、URL 或任何事实。不得改写 fragment。"
+            + json.dumps(
+                {
+                    "schema": {
+                        "parts": [
+                            {"kind": "text", "text": "string"},
+                            {
+                                "kind": "knowledge_fragment",
+                                "fragment_id": "string",
+                            },
+                        ],
+                        "used_knowledge_ids": ["string"],
+                    },
+                    "style": asdict(plan.style),
+                    "persona_name": str(identity.get("name") or "Groupmate")[:24],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+
+    def _strict_prompt(
+        self,
+        plan: ReplyPlan,
+        context_events: tuple[SocialEventEnvelope, ...],
+    ) -> str:
+        snapshot = plan.knowledge_snapshot
+        if snapshot is None:
+            raise ValueError("strict knowledge snapshot is missing")
+        fragments = self.knowledge_renderer.render(snapshot)
+        return json.dumps(
+            {
+                "messages": [
+                    {
+                        "event_id": event.event_id,
+                        "actor_id": event.actor_id,
+                        "text": str(event.payload.get("text") or ""),
+                    }
+                    for event in context_events[-12:]
+                    if str(event.payload.get("text") or "").strip()
+                ],
+                "required_knowledge_ids": list(
+                    plan.move.must_use_knowledge_ids
+                ),
+                "fragments": [
+                    {
+                        "fragment_id": item.fragment_id,
+                        "knowledge_id": item.knowledge_id,
+                        "text": item.text,
+                    }
+                    for item in fragments
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _strict_repair_prompt(
+        self, plan: ReplyPlan, violations: tuple[str, ...]
+    ) -> str:
+        snapshot = plan.knowledge_snapshot
+        if snapshot is None:
+            raise ValueError("strict knowledge snapshot is missing")
+        fragments = self.knowledge_renderer.render(snapshot)
+        required = set(plan.move.must_use_knowledge_ids)
+        return json.dumps(
+            {
+                "violations": list(violations),
+                "required_fragment_ids": [
+                    item.fragment_id
+                    for item in fragments
+                    if item.knowledge_id in required
+                ],
+                "allowed_fragment_ids": [
+                    item.fragment_id for item in fragments
+                ],
+                "schema": {
+                    "parts": [
+                        {"kind": "text", "text": "pure connector only"},
+                        {
+                            "kind": "knowledge_fragment",
+                            "fragment_id": "allowed fragment_id",
+                        },
+                    ],
+                    "used_knowledge_ids": list(
+                        plan.move.must_use_knowledge_ids
+                    ),
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def _review_generated_reply(
         self,
@@ -905,6 +1215,28 @@ class ReplyExecutor:
         realized, parse_violations = self._parse_realized_reply(raw, plan)
         if realized is None:
             return None, parse_violations
+        return self._review_realized_reply(realized, plan, request)
+
+    def _review_realized_reply(
+        self,
+        realized: RealizedReply,
+        plan: ReplyPlan,
+        request: GenerationRequest,
+    ) -> tuple[RealizedReply, tuple[str, ...]]:
+        knowledge_violations: tuple[str, ...] = ()
+        if plan.move.knowledge_policy is not KnowledgePolicy.NONE:
+            try:
+                knowledge = self.knowledge_reviewer.review(
+                    realized,
+                    plan,
+                    now=int(self.clock()),
+                    current_revision=int(
+                        self.knowledge_revision_provider(plan)
+                    ),
+                )
+                knowledge_violations = knowledge.violations
+            except Exception:
+                knowledge_violations = ("knowledge_revision_unavailable",)
         social = self.social_reviewer.review(realized, plan)
         firewall = self.firewall.review(GeneratedDraft(realized.text), request)
         imitation_violations = (
@@ -916,10 +1248,20 @@ class ReplyExecutor:
         )
         violations = tuple(
             dict.fromkeys(
-                (*social.violations, *firewall.violations, *imitation_violations)
+                (
+                    *knowledge_violations,
+                    *social.violations,
+                    *firewall.violations,
+                    *imitation_violations,
+                )
             )
         )
         return realized, violations
+
+    @staticmethod
+    def _snapshot_revision(plan: ReplyPlan) -> int:
+        snapshot = plan.knowledge_snapshot
+        return 0 if snapshot is None else snapshot.version_state_revision
 
     @staticmethod
     def _knowledge_evidence_unavailable(plan: ReplyPlan) -> bool:
@@ -927,6 +1269,36 @@ class ReplyExecutor:
             plan.move.prohibited_assertion_classes
             and plan.move.primary_move is not SocialMove.REQUEST_NEEDED_EVIDENCE
         )
+
+    def _knowledge_authority_violations(
+        self, plan: ReplyPlan
+    ) -> tuple[str, ...]:
+        if plan.move.knowledge_policy is KnowledgePolicy.NONE:
+            return ()
+        snapshot = plan.knowledge_snapshot
+        if snapshot is None:
+            return ("knowledge_snapshot_missing",)
+        violations = []
+        if int(self.clock()) >= snapshot.expires_at:
+            violations.append("knowledge_snapshot_expired")
+        try:
+            current_revision = int(self.knowledge_revision_provider(plan))
+        except Exception:
+            violations.append("knowledge_revision_unavailable")
+        else:
+            if current_revision != snapshot.version_state_revision:
+                violations.append("knowledge_revision_changed")
+        return tuple(violations)
+
+    @staticmethod
+    def _violations_repairable(violations: tuple[str, ...]) -> bool:
+        non_repairable = {
+            "knowledge_snapshot_missing",
+            "knowledge_snapshot_expired",
+            "knowledge_revision_changed",
+            "knowledge_revision_unavailable",
+        }
+        return not (set(violations) & non_repairable)
 
     async def _retry_without_member_style(
         self,
@@ -981,6 +1353,7 @@ class ReplyExecutor:
             "used_memory_ids",
             "used_capability_ids",
             "source_event_ids",
+            "used_knowledge_ids",
         )
         if any(
             not isinstance(values.get(field, []), list)
@@ -996,6 +1369,9 @@ class ReplyExecutor:
                     used_memory_ids=tuple(values["used_memory_ids"]),
                     used_capability_ids=tuple(values["used_capability_ids"]),
                     source_event_ids=tuple(values.get("source_event_ids", ())),
+                    used_knowledge_ids=tuple(
+                        values.get("used_knowledge_ids", ())
+                    ),
                 ),
                 (),
             )
@@ -1034,6 +1410,7 @@ class ReplyExecutor:
                 fact.fact_id for fact in (*plan.move.must_say, *plan.move.may_say)
             ],
             "allowed_source_event_ids": list(plan.scene.continuity_event_ids),
+            "allowed_knowledge": self._safe_knowledge_context(plan),
             "ending": plan.move.ending.value,
             "max_chars": plan.style.max_chars,
             "schema": {
@@ -1042,6 +1419,7 @@ class ReplyExecutor:
                 "used_memory_ids": ["string"],
                 "used_capability_ids": ["string"],
                 "source_event_ids": ["string"],
+                "used_knowledge_ids": ["string"],
             },
         }
         if imitation_identity_boundary is not None:
@@ -1085,6 +1463,18 @@ class ReplyExecutor:
             exact_chorus_allowance=allowance,
         )
 
+    @staticmethod
+    def _generation_request_for_plan(
+        plan: ReplyPlan, recent_outputs: tuple[str, ...]
+    ) -> GenerationRequest:
+        return GenerationRequest(
+            directive=plan.style,
+            required=plan.required,
+            recent_outputs=tuple(recent_outputs),
+            allowed_media_references=(),
+            verified_capability_results=(),
+        )
+
     def _failed(
         self, plan: ReplyPlan, request: GenerationRequest
     ) -> OutboxPart | None:
@@ -1101,6 +1491,25 @@ class ReplyExecutor:
             return None
         self.repository.mark(plan.plan_id, "generated")
         return self._enqueue(plan, fallback.text)
+
+    def _knowledge_failed(
+        self, plan: ReplyPlan, request: GenerationRequest
+    ) -> OutboxPart | None:
+        text = self._knowledge_fallback_text(plan)
+        if text is None:
+            self.repository.mark(plan.plan_id, "silent")
+            return None
+        if not self.firewall.review(GeneratedDraft(text), request).accepted:
+            self.repository.mark(plan.plan_id, "silent")
+            return None
+        self.repository.mark(plan.plan_id, "generated")
+        return self._enqueue(plan, text)
+
+    @staticmethod
+    def _knowledge_fallback_text(plan: ReplyPlan) -> str | None:
+        if plan.participation_lane == "AMBIENT":
+            return None
+        return "我现在没核实到可靠信息，先不乱说。"
 
     @staticmethod
     def _fallback_reply(plan: ReplyPlan) -> RealizedReply:
@@ -1171,7 +1580,8 @@ class ReplyExecutor:
         )
         structured_contract = (
             "只输出一个 JSON 对象，字段为 text、covered_fact_ids、"
-            "used_memory_ids、used_capability_ids、source_event_ids；"
+            "used_memory_ids、used_capability_ids、source_event_ids、"
+            "used_knowledge_ids；"
             "所有 ID 必须来自下方明确提供的事实和事件。不要输出 Markdown。"
             if plan.scene.scene_kind != "legacy_conservative"
             else "只输出回复正文，不要输出 Markdown。"
@@ -1246,11 +1656,34 @@ class ReplyExecutor:
                         "avoidances": plan.expression.persona_avoidances,
                     },
                     "relevant_member_context": plan.member_context,
+                    "allowed_knowledge": ReplyExecutor._safe_knowledge_context(
+                        plan
+                    ),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
             )
         )
+
+    @staticmethod
+    def _safe_knowledge_context(plan: ReplyPlan) -> list[dict[str, object]]:
+        snapshot = plan.knowledge_snapshot
+        if snapshot is None:
+            return []
+        allowed = {
+            *plan.move.must_use_knowledge_ids,
+            *plan.move.may_use_knowledge_ids,
+        }
+        return [
+            {
+                "knowledge_id": fact.knowledge_id,
+                "safe_summary": fact.safe_summary,
+                "qualifier": fact.qualifier.value,
+                "risk_class": fact.risk_class.value,
+            }
+            for fact in snapshot.allowed_knowledge_facts
+            if fact.knowledge_id in allowed
+        ]
 
     @staticmethod
     def _prompt(

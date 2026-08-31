@@ -474,6 +474,166 @@ def test_missing_high_risk_evidence_fails_closed_without_calling_model(tmp_path)
     assert result.part.part.payload["text"] == "这次我先不乱说。"
 
 
+def test_strict_reply_uses_frozen_fragment_instead_of_model_fact_text(tmp_path):
+    evaluation = _evaluation(text="原神下个版本有消息了吗")
+    evaluation.knowledge_snapshot = _knowledge_snapshot()
+    evaluation.topic_understanding = SimpleNamespace(
+        frame_id="knowledge-frame:1",
+        ambiguity_codes=("risk:version_state",),
+    )
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile()
+    )
+
+    class PartsModel:
+        def __init__(self):
+            self.calls = []
+
+        async def complete_text(self, **kwargs):
+            self.calls.append(kwargs)
+            return json.dumps(
+                {
+                    "parts": [
+                        {"kind": "text", "text": "那目前只能说："},
+                        {
+                            "kind": "knowledge_fragment",
+                            "fragment_id": "fragment:version",
+                        },
+                    ],
+                    "used_knowledge_ids": ["knowledge:version"],
+                },
+                ensure_ascii=False,
+            )
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = PartsModel()
+    result = asyncio.run(
+        ReplyExecutor(
+            repository,
+            outbox,
+            model,
+            clock=lambda: 110,
+            knowledge_revision_provider=lambda current: 3,
+        ).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.payload["text"] == (
+        "那目前只能说：官方前瞻已公布：下一版本官方前瞻已经公布。"
+    )
+    assert len(model.calls) == 1
+    assert "parts" in model.calls[0]["system_prompt"]
+
+
+def test_strict_reply_repairs_once_then_uses_fact_free_fallback(tmp_path):
+    evaluation = _evaluation(text="原神下个版本有消息了吗")
+    evaluation.knowledge_snapshot = _knowledge_snapshot()
+    evaluation.topic_understanding = SimpleNamespace(
+        frame_id="knowledge-frame:1",
+        ambiguity_codes=("risk:version_state",),
+    )
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile()
+    )
+
+    class UnsafeTwiceModel:
+        def __init__(self):
+            self.calls = []
+
+        async def complete_text(self, **kwargs):
+            self.calls.append(kwargs)
+            return json.dumps(
+                {
+                    "parts": [{"kind": "text", "text": "2.0版本明天上线"}],
+                    "used_knowledge_ids": ["knowledge:version"],
+                },
+                ensure_ascii=False,
+            )
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    model = UnsafeTwiceModel()
+    result = asyncio.run(
+        ReplyExecutor(
+            repository,
+            outbox,
+            model,
+            clock=lambda: 110,
+            knowledge_revision_provider=lambda current: 3,
+        ).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "REJECTED"
+    assert result.diagnostic_code == "knowledge_review_rejected"
+    assert result.part.part.payload["text"] == "我现在没核实到可靠信息，先不乱说。"
+    assert len(model.calls) == 2
+    assert "下一版本官方前瞻已经公布" not in model.calls[1]["prompt"]
+
+
+def test_grounded_reply_declares_the_stable_knowledge_it_used(tmp_path):
+    evaluation = _evaluation(text="原神里的树脂是什么")
+    evaluation.knowledge_snapshot = _knowledge_snapshot(
+        risk_class="stable_semantic"
+    )
+    evaluation.topic_understanding = SimpleNamespace(
+        frame_id="knowledge-frame:1", ambiguity_codes=()
+    )
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile()
+    )
+
+    class GroundedModel:
+        async def complete_text(self, **kwargs):
+            return json.dumps(
+                {
+                    "text": "树脂就是游戏里的体力资源。",
+                    "covered_fact_ids": [],
+                    "used_knowledge_ids": ["knowledge:stable"],
+                    "used_memory_ids": [],
+                    "used_capability_ids": [],
+                    "source_event_ids": [],
+                },
+                ensure_ascii=False,
+            )
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    result = asyncio.run(
+        ReplyExecutor(
+            repository,
+            outbox,
+            GroundedModel(),
+            clock=lambda: 110,
+            knowledge_revision_provider=lambda current: 0,
+        ).execute_with_result(
+            plan,
+            context_events=evaluation.context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.payload["text"] == "树脂就是游戏里的体力资源。"
+
+
 def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_path):
     class FailIfCalledModel:
         def __init__(self):

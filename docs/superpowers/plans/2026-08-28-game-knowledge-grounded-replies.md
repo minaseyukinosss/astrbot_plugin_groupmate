@@ -310,11 +310,11 @@ Commit: `git commit -m "feat: authorize grounded reply knowledge"`
 - `GroundedReplyReviewer.review(reply, plan, now, current_revision) -> KnowledgeReview`。
 - `RealizedReply.used_knowledge_ids: tuple[str, ...]`。
 
-- [ ] **Step 1: 写 renderer 限定语失败测试**
+- [x] **Step 1: 写 renderer 限定语失败测试**
 
 官方 preview、released、unofficial rumor、conflicted、negative official/search 使用各自固定措辞；renderer 不接受 stale/disputed 作为肯定事实；URL 只由 source ID 本地组装且最多 2 条。
 
-- [ ] **Step 2: 写 strict parts 攻击失败测试**
+- [x] **Step 2: 写 strict parts 攻击失败测试**
 
 拒绝未知/重复 fragment、漏 required、text part 中新增数字/日期/版本号/专名/status、模型 URL、顺序越界、总字数超限、fragment 文本被改写。允许纯语气连接如“那目前只能说：”。
 
@@ -328,25 +328,25 @@ Commit: `git commit -m "feat: authorize grounded reply knowledge"`
 }
 ```
 
-- [ ] **Step 3: 写 grounded 封闭审查失败测试**
+- [x] **Step 3: 写 grounded 封闭审查失败测试**
 
 稳定背景自然转述必须声明 snapshot 中 IDs；review model 只看到 reply + allowed evidence，不能看到网页/工具；unsupported assertion、官方/rumor 混淆和 snapshot revision 变化失败。一次修复后仍失败使用固定 fallback。
 
-- [ ] **Step 4: 运行并确认 RED**
+- [x] **Step 4: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
 
 Expected: grounding 模块和 knowledge review 缺失。
 
-- [ ] **Step 5: 实现 deterministic strict 路径**
+- [x] **Step 5: 实现 deterministic strict 路径**
 
 ReplyExecutor 在 strict 时要求 JSON parts，不走现有完整 text parser；assembler 替换 fragment ID 后产生最终 text 和 used IDs。数字/日期/知识域专名 allowlist 从 fragment tokens 生成；SceneContext 已验证的称呼只进入独立 address allowlist，允许自然称呼群成员但不能引入新游戏实体。text part 执行 Unicode 规范化后检查。
 
-- [ ] **Step 6: 实现审查顺序与单次修复**
+- [x] **Step 6: 实现审查顺序与单次修复**
 
 顺序固定为 parse/assemble→GroundedReplyReviewer→现有 SocialOutputReviewer→OutputFirewall→enqueue。修复 Prompt 只包含 violation code 和允许结构；不得搜索。第二次失败 ambient（未来）沉默，direct/continuation 返回不带外部事实的固定“我现在没核实到可靠信息，先不乱说”。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_grounding.py tests/social_runtime/actions/test_replying.py tests/social_runtime/actions/test_social_review.py`
 

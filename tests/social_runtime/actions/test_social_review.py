@@ -50,6 +50,23 @@ def test_reviewer_requires_every_must_say_fact_to_be_covered():
     assert "required_fact_missing" in review.violations
 
 
+def test_social_fact_coverage_never_treats_knowledge_ids_as_decision_facts():
+    fact = _plan().move.must_say[0]
+    reply = RealizedReply(
+        "请补充报错首段和版本号？",
+        (fact.fact_id,),
+        (),
+        (),
+        used_knowledge_ids=("knowledge:stable",),
+    )
+
+    review = SocialOutputReviewer().review(reply, _plan(ending="QUESTION"))
+
+    assert review.accepted is True
+    assert reply.covered_fact_ids == (fact.fact_id,)
+    assert reply.used_knowledge_ids == ("knowledge:stable",)
+
+
 def test_exact_chorus_reviewer_rejects_changed_or_previously_joined_payload():
     scene = SocialScene.create(
         scene_kind="group_chorus",

@@ -24,6 +24,7 @@ class RealizedReply:
     used_memory_ids: tuple[str, ...]
     used_capability_ids: tuple[str, ...]
     source_event_ids: tuple[str, ...] = ()
+    used_knowledge_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         text = str(self.text or "").strip()
@@ -35,6 +36,7 @@ class RealizedReply:
             "used_memory_ids",
             "used_capability_ids",
             "source_event_ids",
+            "used_knowledge_ids",
         ):
             values = tuple(
                 dict.fromkeys(

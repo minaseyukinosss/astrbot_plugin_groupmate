@@ -1020,6 +1020,10 @@ class AstrBotSocialRuntimeBridge:
                     manager.reply_plans,
                     manager.outbox,
                     reply_model,
+                    clock=self.clock,
+                    knowledge_revision_provider=(
+                        self._current_reply_knowledge_revision
+                    ),
                 )
                 self._reply_model = reply_model
                 self._dispatcher = DeliveryDispatcher(
@@ -1649,6 +1653,28 @@ class AstrBotSocialRuntimeBridge:
             version_state_revision=revision,
             region=region,
             platform=platform,
+        )
+
+    def _current_reply_knowledge_revision(self, plan: object) -> int:
+        snapshot = getattr(plan, "knowledge_snapshot", None)
+        if snapshot is None:
+            return 0
+        strict_facts = tuple(
+            fact
+            for fact in snapshot.allowed_knowledge_facts
+            if fact.risk_class.value != "stable_semantic"
+        )
+        if not strict_facts or self._knowledge_repository is None:
+            return int(snapshot.version_state_revision)
+        fact = strict_facts[0]
+        states = self._knowledge_repository.load_release_state(
+            fact.game_entity_id,
+            fact.region or "global",
+            fact.platform or "all",
+        )
+        return max(
+            (int(state.revision) for state in states),
+            default=0,
         )
 
     async def _revalidate_knowledge_evaluation(
