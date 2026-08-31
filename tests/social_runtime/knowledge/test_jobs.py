@@ -108,11 +108,10 @@ def test_daily_jobs_use_shanghai_keyed_jitter_and_survive_restart(tmp_path):
     asyncio.run(service.wake())
 
     jobs = repository.knowledge_jobs()
-    assert len(jobs) == 5
+    assert len(jobs) == 4
     midnight = _at(28, 0, 0)
     assert {job.request["game_entity_id"] for job in jobs} == {
         "game:delta-force",
-        "game:genshin-impact",
         "game:honkai-star-rail",
         "game:wuthering-waves",
         "game:zenless-zone-zero",
@@ -122,9 +121,9 @@ def test_daily_jobs_use_shanghai_keyed_jitter_and_survive_restart(tmp_path):
 
     restarted = KnowledgeJobService(repository, probe=_Probe(), clock=lambda: now)
     asyncio.run(restarted.wake())
-    assert len(repository.knowledge_jobs()) == 5
+    assert len(repository.knowledge_jobs()) == 4
 
-    for _ in range(5):
+    for _ in range(4):
         claimed = repository.claim_due_knowledge_job(now)
         assert claimed is not None
         repository.complete_knowledge_job(claimed.job_id, now)
@@ -134,7 +133,7 @@ def test_daily_jobs_use_shanghai_keyed_jitter_and_survive_restart(tmp_path):
             repository, probe=_Probe(), clock=lambda: before_twenty_four_hours
         ).wake()
     )
-    assert len(repository.knowledge_jobs()) == 5
+    assert len(repository.knowledge_jobs()) == 4
 
     seed = load_bundled_seeds()[0]
     with connect_database(repository.path) as db:

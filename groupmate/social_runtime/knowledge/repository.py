@@ -2273,6 +2273,66 @@ class KnowledgeRepository:
             for row in rows
         )
 
+    def retire_bundled_seed(self, seed_id: str, *, retired_at: int) -> bool:
+        """Retire only bundled projections while preserving learned evidence."""
+
+        identity = _required_text(seed_id, "seed_id")
+        timestamp = int(retired_at)
+        if timestamp < 0:
+            raise ValueError("retired_at must not be negative")
+        claim_prefix = "claim:seed:{}:%".format(identity)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT manifest_json FROM knowledge_seeds WHERE seed_id=? "
+                "AND status='active' ORDER BY seed_version DESC LIMIT 1",
+                (identity,),
+            ).fetchone()
+            if row is None:
+                return False
+            manifest = json.loads(str(row["manifest_json"]))
+            game_id = _required_text(
+                manifest["game"]["entity_id"], "game.entity_id"
+            )
+            db.execute(
+                "UPDATE knowledge_seeds SET status='superseded' "
+                "WHERE seed_id=? AND status='active'",
+                (identity,),
+            )
+            db.execute(
+                "UPDATE knowledge_claims SET status='superseded',updated_at=? "
+                "WHERE evidence_level='bundled' AND status='active' "
+                "AND claim_id LIKE ?",
+                (timestamp, claim_prefix),
+            )
+            db.execute(
+                "UPDATE knowledge_aliases SET status='stale' WHERE source_id IS NULL "
+                "AND alias_id LIKE 'alias:seed:%' AND entity_id IN ("
+                "SELECT entity_id FROM knowledge_entities "
+                "WHERE canonical_game_id=?)",
+                (game_id,),
+            )
+            db.execute(
+                "UPDATE game_release_states SET status='superseded' "
+                "WHERE game_entity_id=? AND status!='superseded'",
+                (game_id,),
+            )
+            db.execute(
+                "UPDATE negative_search_snapshots SET status='invalidated',"
+                "diagnostic_code='bundled_seed_retired' "
+                "WHERE game_entity_id=? AND status='active'",
+                (game_id,),
+            )
+            db.execute(
+                "UPDATE knowledge_jobs SET status='discarded',"
+                "diagnostic_code='bundled_seed_retired',updated_at=? "
+                "WHERE entity_id=? AND job_kind IN ("
+                "'official_daily_probe','time_boundary_revalidation') "
+                "AND status IN ('pending','running','retry')",
+                (timestamp, game_id),
+            )
+        return True
+
     def import_seed_manifest(
         self, manifest: Mapping[str, Any], *, imported_at: int
     ) -> str:

@@ -162,6 +162,15 @@ _SAFE_DOMAIN = re.compile(
     r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
 )
+_SAFE_DIAGNOSTIC_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+_KNOWLEDGE_ENRICHMENT_STATUSES = {
+    "complete",
+    "partial",
+    "disabled",
+    "expired",
+    "timed_out",
+    "failed",
+}
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -750,6 +759,13 @@ class MessageTraceRepository:
     def _knowledge_summary(cls, evaluation: object) -> dict[str, object]:
         frame = getattr(evaluation, "topic_understanding", None)
         release_diagnostic = cls._knowledge_release_diagnostic(evaluation)
+        enrichment_diagnostic = cls._knowledge_enrichment_diagnostic(
+            evaluation
+        )
+        if release_diagnostic is not None and enrichment_diagnostic is not None:
+            release_diagnostic["enrichment"] = enrichment_diagnostic
+        elif release_diagnostic is None and enrichment_diagnostic is not None:
+            release_diagnostic = {"enrichment": enrichment_diagnostic}
         if frame is None:
             summary = {
                 "games": [],
@@ -915,6 +931,37 @@ class MessageTraceRepository:
             "tracks": tracks,
         }
 
+    @classmethod
+    def _knowledge_enrichment_diagnostic(
+        cls, evaluation: object
+    ) -> dict[str, object] | None:
+        raw = getattr(evaluation, "knowledge_diagnostic", None)
+        if not isinstance(raw, Mapping):
+            return None
+        nested = raw.get("enrichment")
+        values = nested if isinstance(nested, Mapping) else raw
+        status = str(values.get("status") or "")
+        if status not in _KNOWLEDGE_ENRICHMENT_STATUSES:
+            return None
+        domains = []
+        for value in tuple(values.get("source_domains") or ()):
+            domain = str(value or "").strip().casefold()
+            if _SAFE_DOMAIN.fullmatch(domain) and domain not in domains:
+                domains.append(domain)
+        diagnostic = str(values.get("diagnostic_code") or "")
+        return {
+            "status": status,
+            "cache_hit": values.get("cache_hit") is True,
+            "knowledge_committed": values.get("knowledge_committed") is True,
+            "reply_still_valid": values.get("reply_still_valid") is True,
+            "source_domains": domains[:8],
+            "diagnostic_code": (
+                diagnostic
+                if _SAFE_DIAGNOSTIC_CODE.fullmatch(diagnostic)
+                else None
+            ),
+        }
+
     def _evidence_preview(
         self, evaluation: object, evidence_event_ids: tuple[object, ...]
     ) -> dict[str, object] | None:
@@ -995,6 +1042,53 @@ class MessageTraceRepository:
             self._project_social_summary(
                 summary, scene=scene, stance=stance, move=move, style=style
             )
+            snapshot = getattr(plan, "knowledge_snapshot", None)
+            policy = str(
+                getattr(getattr(move, "knowledge_policy", None), "value", "none")
+            )
+            if snapshot is not None and policy != "none":
+                summary["knowledge_grounding"] = {
+                    "policy": policy,
+                    "snapshot_id": self._safe_text(
+                        getattr(snapshot, "snapshot_id", ""), 128
+                    ),
+                    "release_revision": max(
+                        0,
+                        int(
+                            getattr(
+                                snapshot, "version_state_revision", 0
+                            )
+                            or 0
+                        ),
+                    ),
+                    "expires_at": max(
+                        0, int(getattr(snapshot, "expires_at", 0) or 0)
+                    ),
+                    "required_knowledge_ids": [
+                        self._safe_text(value, 128)
+                        for value in tuple(
+                            getattr(move, "must_use_knowledge_ids", ()) or ()
+                        )[:8]
+                    ],
+                    "optional_knowledge_ids": [
+                        self._safe_text(value, 128)
+                        for value in tuple(
+                            getattr(move, "may_use_knowledge_ids", ()) or ()
+                        )[:8]
+                    ],
+                    "fragment_ids": [
+                        self._safe_text(
+                            getattr(fragment, "fragment_id", ""), 128
+                        )
+                        for fragment in tuple(
+                            getattr(snapshot, "strict_fact_fragments", ()) or ()
+                        )[:8]
+                    ],
+                    "source_count": min(
+                        2,
+                        len(tuple(getattr(snapshot, "source_ids", ()) or ())),
+                    ),
+                }
 
         self._mutate(
             event_id,

@@ -508,6 +508,83 @@ def test_trace_projects_bounded_game_release_diagnostics(tmp_path):
             assert private_value not in serialized
 
 
+def test_trace_projects_grounding_ids_and_bounded_enrichment_summary(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "grounding-trace.db")
+    event = _platform_event("grounding-trace")
+    evaluation = _evaluation(event, outcome="ACT")
+    evaluation.knowledge_diagnostic = {
+        "status": "official_complete",
+        "probe_status": "complete",
+        "probe_reason": "official_evidence_fresh",
+        "source_domains": ["game.example.com"],
+        "evidence_level": "official",
+        "checked_at": 100,
+        "fresh_until": 200,
+        "release_revision": 3,
+        "tracks": {
+            "release": "future",
+            "official": "preview",
+            "rumor": "none_observed",
+        },
+        "enrichment": {
+            "status": "complete",
+            "cache_hit": True,
+            "knowledge_committed": True,
+            "reply_still_valid": True,
+            "source_domains": ["game.example.com"],
+            "diagnostic_code": None,
+            "evidence_excerpt": "不得公开的网页片段",
+        },
+    }
+    plan = SimpleNamespace(
+        expression=None,
+        scene=None,
+        stance=None,
+        style=None,
+        move=SimpleNamespace(
+            knowledge_policy=SimpleNamespace(value="strict"),
+            must_use_knowledge_ids=("knowledge:version:1",),
+            may_use_knowledge_ids=(),
+        ),
+        knowledge_snapshot=SimpleNamespace(
+            snapshot_id="snapshot:public:1",
+            version_state_revision=3,
+            expires_at=200,
+            strict_fact_fragments=(
+                SimpleNamespace(fragment_id="fragment:public:1"),
+            ),
+            source_ids=("source:private:1",),
+        ),
+    )
+
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    repo.record_evaluation(evaluation, now=11)
+    repo.record_plan(event.event_id, plan, now=12)
+
+    summary = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]
+    assert summary["knowledge_grounding"] == {
+        "policy": "strict",
+        "snapshot_id": "snapshot:public:1",
+        "release_revision": 3,
+        "expires_at": 200,
+        "required_knowledge_ids": ["knowledge:version:1"],
+        "optional_knowledge_ids": [],
+        "fragment_ids": ["fragment:public:1"],
+        "source_count": 1,
+    }
+    assert summary["understanding"]["knowledge_diagnostic"]["enrichment"] == {
+        "status": "complete",
+        "cache_hit": True,
+        "knowledge_committed": True,
+        "reply_still_valid": True,
+        "source_domains": ["game.example.com"],
+        "diagnostic_code": None,
+    }
+    assert "不得公开的网页片段" not in json.dumps(summary, ensure_ascii=False)
+
+
 def test_reply_plan_projects_only_safe_expression_summary(tmp_path):
     repo = MessageTraceRepository(tmp_path / "runtime.db")
     event = _platform_event("expression")

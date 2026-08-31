@@ -184,7 +184,7 @@ def test_only_fresh_act_is_enriched_and_attaches_current_guard(tmp_path):
 
     frame = TopicUnderstandingFrame.create(
         frame_id="knowledge-frame:1",
-        game_ids=("game:genshin-impact",),
+        game_ids=("game:wuthering-waves",),
         resolved_entities=(),
         resolved_terms=(),
         discourse_referents=(),

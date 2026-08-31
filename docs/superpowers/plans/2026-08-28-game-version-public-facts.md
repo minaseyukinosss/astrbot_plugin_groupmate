@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在仍不正式输出网页事实的 SHADOW 阶段，为五款预装游戏建立可审计的公开 claim、来源、版本三轨、按天官方刷新和严格负向核验语义。
+**Goal:** 在仍不正式输出网页事实的 SHADOW 阶段，为四款预装游戏建立可审计的公开 claim、来源、版本三轨、按天官方刷新和严格负向核验语义。
 
-**Architecture:** 复用 schema v4 预建的 claim/source/release/job 表；领域层通过 `OfficialSourceProbePort` 获取规范化候选，`KnowledgeAdmissionPolicy` 决定证据等级、冲突、替代和有效期，`GameReleaseStateService` 独立维护发布、官方披露和 rumor 三条轨道。持久 scheduler 以 Asia/Shanghai 日期边界调度五款 baseline 游戏，只在完整成功时推进 `official_checked_at`。
+**Architecture:** 复用 schema v4 预建的 claim/source/release/job 表；领域层通过 `OfficialSourceProbePort` 获取规范化候选，`KnowledgeAdmissionPolicy` 决定证据等级、冲突、替代和有效期，`GameReleaseStateService` 独立维护发布、官方披露和 rumor 三条轨道。持久 scheduler 以 Asia/Shanghai 日期边界调度四款 baseline 游戏，只在完整成功时推进 `official_checked_at`。
 
 **Tech Stack:** Python 3.11+、asyncio、SQLite/WAL、HTTP(S) 安全 URL 规范化、pytest/frozen fixtures、AstrBot adapter boundary
 
@@ -75,7 +75,7 @@ def test_negative_snapshot_requires_complete_covered_probe():
     with pytest.raises(ValueError, match="complete covered probe"):
         NegativeSearchSnapshot.create(
             snapshot_id="negative:1",
-            game_entity_id="game:genshin-impact",
+            game_entity_id="game:wuthering-waves",
             query_intent="next_version_official",
             probe_status="partial",
             covered_source_ids=("source:official-news",),
@@ -255,7 +255,7 @@ Commit: `git commit -m "feat: probe official game sources"`
 
 - [x] **Step 1: 写日界与抖动失败测试**
 
-五款 seed 永远 baseline active；每款距最后成功 ≥24h 时最多一个 daily job；使用 Asia/Shanghai 日界和基于 stable key 的 0–20 分钟确定性抖动；重启不生成重复 job。
+四款 seed 永远 baseline active；每款距最后成功 ≥24h 时最多一个 daily job；使用 Asia/Shanghai 日界和基于 stable key 的 0–20 分钟确定性抖动；重启不生成重复 job。
 
 - [x] **Step 2: 写失败与恢复测试**
 
@@ -335,7 +335,7 @@ Commit: `git commit -m "feat: ship shadow game release grounding"`
 
 ## 子项目验收
 
-- 五款游戏的官方轨道以每 24 小时成功核验为目标，失败不伪造成功时间。
+- 四款游戏的官方轨道以每 24 小时成功核验为目标，失败不伪造成功时间。
 - “新版本”可绑定已验证槽位；不能唯一绑定时保持歧义，不猜版本号。
 - 官方、发布和 rumor 三轨可并存，证据纠正保留历史。
 - 只有完整、覆盖充分的成功 probe 能形成限定性的 negative snapshot。

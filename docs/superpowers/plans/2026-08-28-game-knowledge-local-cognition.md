@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在不联网、不改变 Governor 授权和不正式输出知识事实的前提下，让 Groupmate 在认知判断前理解五款预装游戏、常见术语、版本指代和每个群自己的约定，并形成可持续积累的知识观察账本。
+**Goal:** 在不联网、不改变 Governor 授权和不正式输出知识事实的前提下，让 Groupmate 在认知判断前理解四款预装游戏、常见术语、版本指代和每个群自己的约定，并形成可持续积累的知识观察账本。
+
+> 2026-08-31 范围修订：原神不再作为 bundled seed；已有安装只退休 seed 派生投影，群内已学习内容继续保留。
 
 **Architecture:** 新建纯领域 `social_runtime/knowledge` 包，schema v4 一次性建立总设计需要的知识表。本阶段只激活 seed、本地实体解析、群观察/约定/热度投影和 `TopicUnderstandingFrame` 注入；Bridge 负责过滤合格来源和生命周期编排，Manager 只消费一个只读 resolver Port。所有结果进入 SHADOW trace，不进入 ReplyPlan 的事实内容。
 
@@ -34,7 +36,6 @@
 - `groupmate/social_runtime/knowledge/observation.py`：来源分类、异步队列、准入与群投影编排。
 - `groupmate/social_runtime/knowledge/resolver.py`：确定性实体/术语/相对版本本地解析。
 - `groupmate/social_runtime/knowledge/retrieval.py`：有界只读召回和 `KnowledgeNeedAssessor`。
-- `groupmate/social_runtime/knowledge/assets/genshin-impact.v1.json`
 - `groupmate/social_runtime/knowledge/assets/delta-force.v1.json`
 - `groupmate/social_runtime/knowledge/assets/wuthering-waves.v1.json`
 - `groupmate/social_runtime/knowledge/assets/honkai-star-rail.v1.json`
@@ -92,7 +93,7 @@
 def test_topic_frame_is_bounded_and_immutable():
     frame = TopicUnderstandingFrame.create(
         frame_id="knowledge-frame:1",
-        game_ids=("game:genshin-impact",),
+        game_ids=("game:wuthering-waves",),
         resolved_entities=(),
         resolved_terms=(),
         discourse_referents=(),
@@ -100,9 +101,9 @@ def test_topic_frame_is_bounded_and_immutable():
         conversation_intent_hint="version_question",
         ambiguity_codes=(),
         confidence=0.9,
-        supporting_knowledge_ids=("seed:genshin:v1",),
+        supporting_knowledge_ids=("seed:waves:v1",),
     )
-    assert frame.game_ids == ("game:genshin-impact",)
+    assert frame.game_ids == ("game:wuthering-waves",)
     with pytest.raises(dataclasses.FrozenInstanceError):
         frame.confidence = 0.1
 ```
@@ -191,11 +192,10 @@ Commit: `git commit -m "feat: persist scoped game knowledge"`
 
 ---
 
-### Task 3: 导入五款版本化稳定语义包
+### Task 3: 导入四款版本化稳定语义包
 
 **Files:**
 - Create: `groupmate/social_runtime/knowledge/seeds.py`
-- Create: `groupmate/social_runtime/knowledge/assets/genshin-impact.v1.json`
 - Create: `groupmate/social_runtime/knowledge/assets/delta-force.v1.json`
 - Create: `groupmate/social_runtime/knowledge/assets/wuthering-waves.v1.json`
 - Create: `groupmate/social_runtime/knowledge/assets/honkai-star-rail.v1.json`
@@ -209,7 +209,7 @@ Commit: `git commit -m "feat: persist scoped game knowledge"`
 
 - [x] **Step 1: 写 seed schema 与禁区失败测试**
 
-五个资产必须各有唯一 canonical game ID、中文官方名、英文名/常见简称、至少 5 类稳定实体、20 个稳定术语/讨论模式和官方来源注册表。测试拒绝 `current_banner`、`current_version`、`latest_numbers`、`tier_list`、`leak_content` 等时效字段，并拒绝 source 非 HTTPS 或非登记官方域名。
+四个资产必须各有唯一 canonical game ID、中文官方名、英文名/常见简称、至少 5 类稳定实体、20 个稳定术语/讨论模式和官方来源注册表。测试拒绝 `current_banner`、`current_version`、`latest_numbers`、`tier_list`、`leak_content` 等时效字段，并拒绝 source 非 HTTPS 或非登记官方域名。
 
 - [x] **Step 2: 写幂等升级失败测试**
 
@@ -223,7 +223,7 @@ Expected: loader、资产和 importer 缺失。
 
 - [x] **Step 4: 分别编写并校验五个 seed 资产**
 
-每个游戏以官方名称和稳定玩法结构为骨架，社区术语显式标 `community`；歧义 alias 必须给 `requires_any_context` 或 `ambiguity_level=high`。原神/星铁/鸣潮/绝区零覆盖抽卡、角色、配队、资源、版本讨论；三角洲覆盖行动、烽火地带、全面战场、干员、地图、装备和赛季讨论。不得写当前卡池、当前赛季和当期角色。
+每个游戏以官方名称和稳定玩法结构为骨架，社区术语显式标 `community`；歧义 alias 必须给 `requires_any_context` 或 `ambiguity_level=high`。星铁/鸣潮/绝区零覆盖抽卡、角色、配队、资源、版本讨论；三角洲覆盖行动、烽火地带、全面战场、干员、地图、装备和赛季讨论。不得写当前卡池、当前赛季和当期角色。
 
 - [x] **Step 5: 实现严格 loader、hash 和幂等 importer**
 
@@ -305,7 +305,7 @@ Commit: `git commit -m "feat: learn group knowledge conventions"`
 
 - [x] **Step 1: 写实体和群 alias 失败测试**
 
-覆盖五款游戏官方名/简称、跨游戏同名词、群 alias 仅在本群生效、高 affinity 只能消歧不能凭空归类、无上下文高歧义 alias 保持 unresolved、seed disable 后不再命中。
+覆盖四款游戏官方名/简称、跨游戏同名词、群 alias 仅在本群生效、高 affinity 只能消歧不能凭空归类、无上下文高歧义 alias 保持 unresolved、seed disable 后不再命中。
 
 - [x] **Step 2: 写版本指代与意图提示失败测试**
 
@@ -411,7 +411,7 @@ Commit: `git commit -m "feat: ground social cognition in local knowledge"`
 
 - [x] **Step 2: 建立冻结评测集**
 
-写入至少 240 条匿名 JSONL：五款游戏各 36 条稳定语义/术语，跨游戏歧义 30 条，版本指代 20 条，非游戏对照 10 条。每条固定 `case_id`、`group_id`、`occurred_at`、`text`、`context`、expected games/entities/terms/version/need/ambiguity。
+写入 196 条匿名 JSONL：四款游戏各 36 条稳定语义/术语，跨游戏歧义 26 条，版本指代 16 条，非游戏对照 10 条。每条固定 `case_id`、`group_id`、`occurred_at`、`text`、`context`、expected games/entities/terms/version/need/ambiguity。
 
 - [x] **Step 3: 运行发布门并确认初次失败**
 
@@ -447,7 +447,7 @@ Commit: `git commit -m "feat: ship shadow game cognition"`
 
 ## 子项目验收
 
-- 五款游戏稳定聊天在参与判断前得到同一 `TopicUnderstandingFrame`。
+- 四款预装游戏稳定聊天在参与判断前得到同一 `TopicUnderstandingFrame`。
 - 群约定只在本群生效，不与 Persona 绑定，不更改公共真值。
 - 观察过滤矩阵对自身、Bot、命令和转发失败关闭。
 - 本阶段没有任何网络调用，也没有知识事实进入正式 ReplyPlan。

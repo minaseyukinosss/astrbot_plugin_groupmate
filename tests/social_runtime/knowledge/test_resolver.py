@@ -49,14 +49,13 @@ def _event(
 @pytest.mark.parametrize(
     ("text", "game_id"),
     [
-        ("原神", "game:genshin-impact"),
         ("三角洲行动", "game:delta-force"),
         ("鸣潮", "game:wuthering-waves"),
         ("星铁", "game:honkai-star-rail"),
         ("绝区零", "game:zenless-zone-zero"),
     ],
 )
-def test_resolver_recognizes_five_bundled_games_and_common_names(
+def test_resolver_recognizes_four_bundled_games_and_common_names(
     tmp_path, text, game_id
 ):
     resolver = _module().KnowledgeEntityResolver(_repository(tmp_path))
@@ -73,32 +72,32 @@ def test_cross_game_term_requires_current_or_discourse_game_context(tmp_path):
 
     unresolved = resolver.resolve(_event("u", "歪了"), (), "g1", now=200)
     current = resolver.resolve(
-        _event("c", "原神抽卡又歪了"), (), "g1", now=200
+        _event("c", "鸣潮抽卡又歪了"), (), "g1", now=200
     )
     discourse = resolver.resolve(
         _event("d", "又歪了"),
-        (_event("previous", "刚才在原神抽卡"),),
+        (_event("previous", "刚才在鸣潮抽卡"),),
         "g1",
         now=200,
     )
 
     assert unresolved.resolved_terms == ()
     assert "ambiguous_term" in unresolved.ambiguity_codes
-    assert any(item.term_id == "term:genshin:lose-5050" for item in current.resolved_terms)
-    assert any(item.term_id == "term:genshin:lose-5050" for item in discourse.resolved_terms)
+    assert any(item.term_id == "term:waves:lose-5050" for item in current.resolved_terms)
+    assert any(item.term_id == "term:waves:lose-5050" for item in discourse.resolved_terms)
 
 
 def test_stable_named_entities_can_identify_their_game_without_a_title(tmp_path):
     resolver = _module().KnowledgeEntityResolver(_repository(tmp_path))
 
     frame = resolver.resolve(
-        _event("e", "旅行者还在提瓦特探索"), (), "g1", now=200
+        _event("e", "漂泊者还在索拉里斯探索"), (), "g1", now=200
     )
 
-    assert frame.game_ids == ("game:genshin-impact",)
+    assert frame.game_ids == ("game:wuthering-waves",)
     assert {item.entity_id for item in frame.resolved_entities} == {
-        "entity:genshin:traveler",
-        "entity:genshin:teyvat",
+        "entity:waves:rover",
+        "entity:waves:solaris",
     }
 
 
@@ -107,8 +106,8 @@ def test_group_alias_is_scoped_to_its_group(tmp_path):
     repository.put_group_alias(
         alias_id="alias:g1:bird",
         group_id="g1",
-        entity_id="game:genshin-impact",
-        normalized_alias="鸟游",
+        entity_id="game:wuthering-waves",
+        normalized_alias="潮游",
         evidence_observation_ids=("observation:1",),
         confidence=0.9,
         last_used_at=100,
@@ -116,12 +115,12 @@ def test_group_alias_is_scoped_to_its_group(tmp_path):
     )
     resolver = _module().KnowledgeEntityResolver(repository)
 
-    g1 = resolver.resolve(_event("g1", "鸟游真好玩"), (), "g1", now=200)
+    g1 = resolver.resolve(_event("g1", "潮游真好玩"), (), "g1", now=200)
     g2 = resolver.resolve(
-        _event("g2", "鸟游真好玩", group_id="g2"), (), "g2", now=200
+        _event("g2", "潮游真好玩", group_id="g2"), (), "g2", now=200
     )
 
-    assert g1.game_ids == ("game:genshin-impact",)
+    assert g1.game_ids == ("game:wuthering-waves",)
     assert g2.game_ids == ()
 
 
@@ -163,11 +162,11 @@ def test_disabled_seed_is_not_resolved_even_if_projection_rows_remain(tmp_path):
     with connect_database(repository.path) as db:
         db.execute(
             "UPDATE knowledge_seeds SET status='rejected' "
-            "WHERE seed_id='game-semantic:genshin-impact'"
+            "WHERE seed_id='game-semantic:wuthering-waves'"
         )
     resolver = _module().KnowledgeEntityResolver(repository)
 
-    frame = resolver.resolve(_event("e", "原神抽卡"), (), "g1", now=200)
+    frame = resolver.resolve(_event("e", "鸣潮抽卡"), (), "g1", now=200)
 
     assert frame.game_ids == ()
     assert frame.resolved_entities == ()
@@ -177,13 +176,13 @@ def test_disabled_seed_is_not_resolved_even_if_projection_rows_remain(tmp_path):
 @pytest.mark.parametrize(
     ("text", "relative_kind", "disclosure_kind"),
     [
-        ("原神新版本怎么样", "new", "none"),
-        ("原神下版本怎么样", "next", "none"),
-        ("原神刚更新了什么", "recent_update", "release"),
-        ("原神前瞻说了什么", "next", "preview"),
-        ("原神有什么爆料", "unspecified", "rumor"),
-        ("原神测试服改了什么", "unspecified", "test_server"),
-        ("原神这期怎么样", "current", "none"),
+        ("鸣潮新版本怎么样", "new", "none"),
+        ("鸣潮下版本怎么样", "next", "none"),
+        ("鸣潮刚更新了什么", "recent_update", "release"),
+        ("鸣潮前瞻说了什么", "next", "preview"),
+        ("鸣潮有什么爆料", "unspecified", "rumor"),
+        ("鸣潮测试服改了什么", "unspecified", "test_server"),
+        ("鸣潮这期怎么样", "current", "none"),
     ],
 )
 def test_version_reference_is_relative_and_never_guesses_a_version_number(
@@ -194,7 +193,7 @@ def test_version_reference_is_relative_and_never_guesses_a_version_number(
     frame = resolver.resolve(_event("e", text), (), "g1", now=200)
 
     assert frame.version_reference is not None
-    assert frame.version_reference.game_id == "game:genshin-impact"
+    assert frame.version_reference.game_id == "game:wuthering-waves"
     assert frame.version_reference.relative_kind == relative_kind
     assert frame.version_reference.disclosure_kind == disclosure_kind
     assert not hasattr(frame.version_reference, "version_number")
@@ -204,12 +203,12 @@ def test_version_reference_with_multiple_games_is_explicitly_ambiguous(tmp_path)
     resolver = _module().KnowledgeEntityResolver(_repository(tmp_path))
 
     frame = resolver.resolve(
-        _event("e", "原神和鸣潮下版本哪个更好"), (), "g1", now=200
+        _event("e", "鸣潮和星铁下版本哪个更好"), (), "g1", now=200
     )
 
     assert set(frame.game_ids) == {
-        "game:genshin-impact",
         "game:wuthering-waves",
+        "game:honkai-star-rail",
     }
     assert frame.version_reference is None
     assert "ambiguous_game_for_version" in frame.ambiguity_codes
@@ -223,8 +222,8 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
     )
     repository = _repository(tmp_path)
     current = VersionSlot.create(
-        version_slot_id="slot:genshin:current",
-        game_entity_id="game:genshin-impact",
+        version_slot_id="slot:waves:current",
+        game_entity_id="game:wuthering-waves",
         official_label="5.8",
         region="cn",
         platform="all",
@@ -241,8 +240,8 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
         revision=1,
     )
     next_slot = VersionSlot.create(
-        version_slot_id="slot:genshin:next",
-        game_entity_id="game:genshin-impact",
+        version_slot_id="slot:waves:next",
+        game_entity_id="game:wuthering-waves",
         official_label="6.0",
         region="cn",
         platform="all",
@@ -264,9 +263,9 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
     )
 
     for text, expected_slot, expected_label in (
-        ("原神这期怎么样", "slot:genshin:current", "5.8"),
-        ("原神下版本怎么样", "slot:genshin:next", "6.0"),
-        ("原神刚更新了什么", "slot:genshin:current", "5.8"),
+        ("鸣潮这期怎么样", "slot:waves:current", "5.8"),
+        ("鸣潮下版本怎么样", "slot:waves:next", "6.0"),
+        ("鸣潮刚更新了什么", "slot:waves:current", "5.8"),
     ):
         frame = resolver.resolve(_event(text, text), (), "g1", now=200)
         resolved = resolver.resolve_reference(frame, 200, "cn", "all")
@@ -278,14 +277,14 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
         assert not hasattr(frame.version_reference, "official_label")
 
     current_frame = resolver.resolve(
-        _event("region", "原神这期怎么样"), (), "g1", now=200
+        _event("region", "鸣潮这期怎么样"), (), "g1", now=200
     )
     no_region = resolver.resolve_reference(current_frame, 200, None, "all")
     no_next = module.KnowledgeEntityResolver(
         repository,
         release_state_service=state_module.GameReleaseStateService((current,)),
     ).resolve_reference(
-        resolver.resolve(_event("next", "原神下版本怎么样"), (), "g1", now=200),
+        resolver.resolve(_event("next", "鸣潮下版本怎么样"), (), "g1", now=200),
         200,
         "cn",
         "all",
@@ -305,7 +304,7 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
         (
             VersionSlot.create(
                 version_slot_id="slot:future-check",
-                game_entity_id="game:genshin-impact",
+                game_entity_id="game:wuthering-waves",
                 official_label="5.8",
                 region="cn",
                 platform="all",
@@ -326,7 +325,7 @@ def test_resolver_delegate_binds_only_verified_unique_release_slots(tmp_path):
         (
             VersionSlot.create(
                 version_slot_id="slot:expired",
-                game_entity_id="game:genshin-impact",
+                game_entity_id="game:wuthering-waves",
                 official_label="5.8",
                 region="cn",
                 platform="all",
@@ -386,7 +385,7 @@ def test_release_reader_never_binds_future_expired_or_foreign_slots(
         ),
     )
     frame = resolver.resolve(
-        _event("reader", "原神这期怎么样"), (), "g1", now=200
+        _event("reader", "鸣潮这期怎么样"), (), "g1", now=200
     )
 
     resolved = resolver.resolve_reference(frame, 200, "cn", "all")

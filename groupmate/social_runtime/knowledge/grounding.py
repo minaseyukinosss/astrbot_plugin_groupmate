@@ -46,6 +46,9 @@ _STRICT_STATUS_WORDS = (
     "确认",
     "有消息",
 )
+# Retiring a seed removes its knowledge projections, not the strict renderer's
+# injection guard. The game may still be learned from scoped group evidence.
+_RETIRED_BUNDLED_SAFETY_TOKENS = ("原神", "Genshin", "Genshin Impact")
 _UNSUPPORTED_GROUNDED_ASSERTION = re.compile(
     r"(?:https?://|www\.|\d|版本|前瞻|上线|发布|更新|测试服|卡池|日期|概率|"
     r"官方(?:确认|公布|表示)|爆料|传闻)",
@@ -249,6 +252,7 @@ class StrictReplyAssembler:
             if normalized:
                 checked = checked.replace(normalized, "")
         forbidden = set(_STRICT_STATUS_WORDS)
+        forbidden.update(_RETIRED_BUNDLED_SAFETY_TOKENS)
         for seed in load_bundled_seeds():
             forbidden.add(seed.game.canonical_name)
             forbidden.add(seed.game.english_name)

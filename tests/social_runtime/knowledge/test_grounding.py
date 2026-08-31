@@ -139,6 +139,10 @@ def test_strict_assembler_accepts_only_connectors_and_frozen_fragments():
         (({"kind": "knowledge_fragment", "fragment_id": "fragment:unknown"},), "unknown"),
         (({"kind": "text", "text": "2.0版本明天上线"},), "text"),
         (({"kind": "text", "text": "https://model.example/source"},), "URL"),
+        ((
+            {"kind": "text", "text": "原神这边呢："},
+            {"kind": "knowledge_fragment", "fragment_id": fragment_id},
+        ), "knowledge assertion"),
         (({"kind": "knowledge_fragment", "fragment_id": fragment_id, "text": "改写"},), "field"),
         ((
             {"kind": "knowledge_fragment", "fragment_id": fragment_id},

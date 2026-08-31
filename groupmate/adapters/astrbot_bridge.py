@@ -56,6 +56,7 @@ from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
 from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
 from ..social_runtime.social_context import SceneContextBuilder
 from ..social_runtime.social_moves import (
+    KnowledgePolicy,
     RealizationMode,
     SocialMove,
     SocialMovePlanner,
@@ -1982,7 +1983,20 @@ class AstrBotSocialRuntimeBridge:
                     )
                     continue
                 mode = self._manager.group_mode(group_id)
-                if mode is RuntimeMode.SHADOW and self._reply_executor is not None:
+                rollout_action = self._knowledge_reply_rollout_action(
+                    mode,
+                    plan.participation_lane,
+                    plan.move.knowledge_policy,
+                )
+                if rollout_action == "BLOCK":
+                    evaluation = replace(
+                        evaluation,
+                        reply_diagnostic="ambient_knowledge_reply_disabled",
+                    )
+                if (
+                    rollout_action == "PREVIEW"
+                    and self._reply_executor is not None
+                ):
                     preview = await self._reply_executor.preview(
                         plan,
                         context_events=tuple(
@@ -2013,7 +2027,11 @@ class AstrBotSocialRuntimeBridge:
                     )
                 handled_groups.add(group_id)
                 try:
-                    if mode is RuntimeMode.SHADOW:
+                    if rollout_action == "BLOCK":
+                        self._manager.reply_plans.save(plan)
+                        self._manager.reply_plans.mark(plan.plan_id, "silent")
+                        continue
+                    if rollout_action == "PREVIEW":
                         self._manager.reply_plans.save(plan)
                         continue
                     if self._reply_executor is None:
@@ -2039,6 +2057,31 @@ class AstrBotSocialRuntimeBridge:
                     self.reply_error = None
                 except Exception as exc:
                     self.reply_error = f"{type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _knowledge_reply_rollout_action(
+        mode: RuntimeMode | str,
+        participation_lane: str,
+        knowledge_policy: KnowledgePolicy | str,
+    ) -> str:
+        runtime_mode = RuntimeMode(mode)
+        policy = KnowledgePolicy(knowledge_policy)
+        lane = str(participation_lane or "AMBIENT").upper()
+        if runtime_mode not in {
+            RuntimeMode.SHADOW,
+            RuntimeMode.SOCIAL_RUNTIME,
+        }:
+            return "BLOCK"
+        if policy is not KnowledgePolicy.NONE and lane not in {
+            "DIRECT_FAST",
+            "CONTINUATION",
+        }:
+            return "BLOCK"
+        return (
+            "PREVIEW"
+            if runtime_mode is RuntimeMode.SHADOW
+            else "SEND"
+        )
 
     def _attach_shadow_knowledge_diagnostic(
         self, evaluation: object, *, now: int

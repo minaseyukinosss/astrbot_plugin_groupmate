@@ -55,9 +55,9 @@ def _resolve(runtime, text, *, direct=False):
 
 def test_retrieval_is_bounded_and_contains_only_safe_local_summaries(tmp_path):
     runtime = _runtime(tmp_path)
-    frame, hits, _need = _resolve(runtime, "原神抽卡保底圣遗物怎么配队")
+    frame, hits, _need = _resolve(runtime, "鸣潮抽卡保底圣遗物怎么配队")
 
-    assert frame.game_ids == ("game:genshin-impact",)
+    assert frame.game_ids == ("game:wuthering-waves",)
     assert 1 <= len(hits) <= 8
     assert all(hit.knowledge_id and hit.safe_summary for hit in hits)
     assert all(hit.evidence_level == "bundled" for hit in hits)
@@ -65,7 +65,7 @@ def test_retrieval_is_bounded_and_contains_only_safe_local_summaries(tmp_path):
 
 
 def test_stable_term_chat_is_local_sufficient(tmp_path):
-    _frame, hits, need = _resolve(_runtime(tmp_path), "原神保底怎么理解")
+    _frame, hits, need = _resolve(_runtime(tmp_path), "鸣潮保底怎么理解")
 
     assert hits
     assert need.outcome.value == "local_sufficient"
@@ -85,12 +85,12 @@ def test_unknown_game_requests_background_learning(tmp_path):
 @pytest.mark.parametrize(
     "text",
     [
-        "原神新版本有什么",
-        "原神明天更新吗",
-        "原神新角色有哪些",
-        "原神这个伤害有多少",
-        "原神官方公布了吗",
-        "原神最近有什么爆料",
+        "鸣潮新版本有什么",
+        "鸣潮明天更新吗",
+        "鸣潮新角色有哪些",
+        "鸣潮这个伤害有多少",
+        "鸣潮官方公布了吗",
+        "鸣潮最近有什么爆料",
     ],
 )
 def test_temporal_lists_numbers_and_status_require_fresh_evidence(

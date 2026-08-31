@@ -13,7 +13,6 @@ from groupmate.social_runtime.persistence.schema import connect_database
 
 
 EXPECTED_GAMES = {
-    "game:genshin-impact": "原神",
     "game:delta-force": "三角洲行动",
     "game:wuthering-waves": "鸣潮",
     "game:honkai-star-rail": "崩坏：星穹铁道",
@@ -106,14 +105,14 @@ def _minimal_manifest():
     }
 
 
-def test_bundled_seeds_cover_five_games_with_stable_semantics_only():
+def test_bundled_seeds_cover_four_games_with_stable_semantics_only():
     module = _seeds_module()
     seeds = module.load_bundled_seeds()
 
     assert {seed.game.entity_id: seed.game.canonical_name for seed in seeds} == (
         EXPECTED_GAMES
     )
-    assert len({seed.seed_id for seed in seeds}) == 5
+    assert len({seed.seed_id for seed in seeds}) == 4
     for seed in seeds:
         assert seed.seed_version == 1
         assert len(seed.entity_types) >= 5
@@ -126,6 +125,80 @@ def test_bundled_seeds_cover_five_games_with_stable_semantics_only():
             assert parsed.scheme == "https"
             assert parsed.hostname == source.domain
         assert seed.content_hash == _canonical_hash(seed.manifest)
+
+
+def test_import_retires_former_genshin_bundle_but_preserves_group_learning(
+    tmp_path,
+):
+    module = _seeds_module()
+    repository = KnowledgeRepository(
+        tmp_path / "groupmate-social-runtime-v2.db"
+    )
+    legacy = _minimal_manifest()
+    legacy["seed_id"] = "game-semantic:genshin-impact"
+    legacy["game"].update(
+        {
+            "entity_id": "game:genshin-impact",
+            "canonical_name": "原神",
+            "english_name": "Genshin Impact",
+            "aliases": [
+                {
+                    "text": "原神",
+                    "kind": "official",
+                    "ambiguity_level": "none",
+                    "requires_any_context": [],
+                }
+            ],
+        }
+    )
+    for relation in legacy["stable_relations"]:
+        relation["subject_entity_id"] = "game:genshin-impact"
+    legacy["content_hash"] = _canonical_hash(legacy)
+    repository.import_seed_manifest(legacy, imported_at=10)
+    repository.put_group_alias(
+        alias_id="group-alias:genshin",
+        group_id="g1",
+        entity_id="game:genshin-impact",
+        normalized_alias="原神",
+        evidence_observation_ids=("observation:group-learned",),
+        confidence=0.95,
+        last_used_at=11,
+        status="active",
+    )
+    with connect_database(repository.path) as db:
+        db.execute(
+            "INSERT INTO knowledge_jobs(job_id,idempotency_key,job_kind,"
+            "group_id,entity_id,request_json,status,attempt,next_attempt_at,"
+            "diagnostic_code,created_at,updated_at) VALUES("
+            "'job:genshin','daily:genshin','official_daily_probe',NULL,"
+            "'game:genshin-impact','{}','pending',0,20,NULL,10,10)"
+        )
+
+    module.SeedImporter(repository, clock=lambda: 20).import_all(
+        module.load_bundled_seeds()
+    )
+
+    assert [
+        item.status
+        for item in repository.seed_versions(
+            "game-semantic:genshin-impact"
+        )
+    ] == ["superseded"]
+    assert repository.game_alias_matches("原神新版本") == ()
+    assert [
+        item.entity_id for item in repository.active_group_aliases("g1")
+    ] == ["game:genshin-impact"]
+    assert [
+        item.status
+        for item in repository.knowledge_jobs()
+        if item.entity_id == "game:genshin-impact"
+    ] == ["discarded"]
+    with connect_database(repository.path) as db:
+        active_bundled = db.execute(
+            "SELECT COUNT(*) FROM knowledge_claims WHERE claim_id LIKE "
+            "'claim:seed:game-semantic:genshin-impact:%' AND status='active'"
+        ).fetchone()[0]
+    assert active_bundled == 0
 
 
 @pytest.mark.parametrize(

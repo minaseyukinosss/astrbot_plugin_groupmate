@@ -369,35 +369,37 @@ Commit: `git commit -m "feat: render strict grounded game facts"`
 - Bridge 按现有 `runtime_mode` 派生知识发送范围：`SHADOW` 只生成 preview，`SOCIAL_RUNTIME` 允许 DIRECT / CONTINUATION；AMBIENT 在本阶段代码路径固定关闭，不增加普通配置项。
 - trace 显示 need、cache/search、source domains、evidence level、snapshot/fragment IDs、revalidation 与 review code。
 
-- [ ] **Step 1: 建立冻结根据回复场景**
+- [x] **Step 1: 建立冻结根据回复场景**
 
-至少覆盖五款游戏各 8 条：本地稳定知识、最新版本、下一版本未披露、已 preview、rumor 无结果、rumor 有非官方证据、来源冲突、搜索失败；另含 continuation 复用、用户索要来源、场景前进和插件命令对照。
+至少覆盖四款预装游戏各 8 条：本地稳定知识、最新版本、下一版本未披露、已 preview、rumor 无结果、rumor 有非官方证据、来源冲突、搜索失败；另含 continuation 复用、用户索要来源、场景前进和插件命令对照。
 
-- [ ] **Step 2: 写 SHADOW side-effect 失败测试**
+- [x] **Step 2: 写 SHADOW side-effect 失败测试**
 
 SHADOW 可完整执行 search/admission/snapshot/render/review preview，但 outbox 与平台 sender 为 0；trace 可人工审查本来会使用的 fragment。`SOCIAL_RUNTIME` 仅开放 DIRECT / CONTINUATION，AMBIENT 搜索固定关闭。
 
-- [ ] **Step 3: 写 direct/continuation 正式路径失败测试**
+- [x] **Step 3: 写 direct/continuation 正式路径失败测试**
 
 仅 direct/continuation 可在 rollout 后 enqueue；ambient 即使相同问题也不 search/send；search adapter off 时稳定语义可用，高风险问题固定失败关闭；要求来源最多 2 条且来自 snapshot。
 
-- [ ] **Step 4: 运行场景并修复实现**
+- [x] **Step 4: 运行场景并修复实现**
 
 Run: `.venv/bin/python -m pytest -q tests/scenarios/test_game_grounded_reply.py tests/contracts/test_message_traces.py`
 
 Expected: 初次因 rollout/trace 缺失失败；实现后 PASS。
 
-- [ ] **Step 5: 运行 Gate 3**
+- [x] **Step 5: 运行 Gate 3**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_astrbot_knowledge_search.py tests/recovery/test_knowledge_enrichment_recovery.py tests/scenarios/test_game_grounded_reply.py`
 
 Expected: PASS；`unsupported_temporal_claims=0`、`rumor_as_official=0`、`false_negative_claims=0`、`stale_scene_sends=0`、`search_under_reply_lock=0`。
 
-- [ ] **Step 6: 全量回归和提交**
+- [x] **Step 6: 全量回归和提交**
 
 Run: `.venv/bin/python -m pytest -q`
 
 Expected: PASS。
+
+执行记录：Gate 3 为 226 passed。全量回归为 1257 passed、12 failed；其中本次范围内唯一受 seed 变更影响的旧原神 enrichment 夹具已迁移并单测通过。其余 11 项为 5 项沙箱禁止本地端口、3 项既有页面断言、以及既有 runtime status、Gate C 文案和 world summary 精确断言，不由本任务改写。
 
 Run: `git diff --check`
 

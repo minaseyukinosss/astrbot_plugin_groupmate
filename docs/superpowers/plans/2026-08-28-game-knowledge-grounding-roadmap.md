@@ -4,7 +4,7 @@
 
 **Goal:** 按可独立验收的四个子项目，把共享游戏语义、版本事实核验、根据回复和持续扩展接入 Groupmate，同时保证它不编造、不抢答、不跨群泄漏约定。
 
-**Architecture:** 一个总设计约束四个串行交付面。先建立无网络的 schema v4、知识契约、五款 seed、本地解析和 SHADOW 评测；再接入公开事实、版本三轨和每日官方核验；随后接入 AstrBot 搜索、冻结快照和确定性事实回复；最后才开放 AMBIENT 即时搜索、非预装游戏学习与完整控制面。每个子项目在前一个子项目的公开接口上工作，不允许用临时自由搜索绕过后续安全边界。
+**Architecture:** 一个总设计约束四个串行交付面。先建立无网络的 schema v4、知识契约、四款 seed、本地解析和 SHADOW 评测；再接入公开事实、版本三轨和每日官方核验；随后接入 AstrBot 搜索、冻结快照和确定性事实回复；最后才开放 AMBIENT 即时搜索、非预装游戏学习与完整控制面。每个子项目在前一个子项目的公开接口上工作，不允许用临时自由搜索绕过后续安全边界。
 
 **Tech Stack:** Python 3.11+、asyncio、SQLite/WAL、AstrBot 4.24–4.x AI ToolSet、JSON seed assets、pytest、原生 ES Modules
 
@@ -28,7 +28,7 @@
 
 | 顺序 | 计划 | 交付后可独立证明的能力 | 正式发送状态 |
 |---|---|---|---|
-| 1 | `2026-08-28-game-knowledge-local-cognition.md` | 五款游戏和群约定可在参与判断前被本地理解，观察来源被正确隔离 | 仅 SHADOW，不使用知识生成事实回复 |
+| 1 | `2026-08-28-game-knowledge-local-cognition.md` | 四款预装游戏和群约定可在参与判断前被本地理解，观察来源被正确隔离 | 仅 SHADOW，不使用知识生成事实回复 |
 | 2 | `2026-08-28-game-version-public-facts.md` | 官方版本状态按天刷新，三轨状态、冲突与负向核验可审计 | 仍仅 SHADOW |
 | 3 | `2026-08-28-game-knowledge-grounded-replies.md` | DIRECT / CONTINUATION 可有界即时核验，并只用冻结证据回答高风险事实 | SHADOW 通过后开放 DIRECT / CONTINUATION |
 | 4 | `2026-08-28-game-knowledge-ambient-expansion.md` | AMBIENT 有界搜索、非预装游戏持续学习、人工纠正和完整运营能力 | 单群 canary 后逐步开放 |
@@ -55,7 +55,7 @@ local contracts + schema v4 + resolver
 
 | 设计章节 | 实施落点 |
 |---|---|
-| §4 四层知识、§10 持续学习、§11 五款 seed | 本地认知 Task 2–5；持续扩展 Task 2–3 |
+| §4 四层知识、§10 持续学习、§11 四款 seed | 本地认知 Task 2–5；持续扩展 Task 2–3 |
 | §5 TopicUnderstandingFrame、§7 同步链路、§8 通道策略 | 本地认知 Task 5–7；根据回复 Task 3–4；持续扩展 Task 1 |
 | §9 持久化模型 | 本地认知 Task 2 一次性建 schema v4；后三阶段分别启用预建表的 repository API |
 | §12 版本与时效 | 版本公开事实 Task 1–6 |
@@ -116,7 +116,7 @@ class KnowledgeSnapshot:
 
 ## 全局发布门
 
-- [ ] **Gate 1 — 本地认知：** 五款固定理解集正确率 ≥95%，高置信歧义误归并 <1%，跨群约定泄漏为 0，本地解析 P95 <50ms。
+- [ ] **Gate 1 — 本地认知：** 四款固定理解集正确率 ≥95%，高置信歧义误归并 <1%，跨群约定泄漏为 0，本地解析 P95 <50ms。
 - [ ] **Gate 2 — 版本事实：** 24 小时成功时间只在完整官方探测成功后更新；超时、部分失败和空结果不产生“官方没有”结论；三轨迁移和来源冲突全覆盖。
 - [ ] **Gate 3 — 根据回复：** 无新鲜证据的高风险断言为 0，片段外数字/日期/版本/专名为 0，搜索后过期场景发送为 0，外部插件工具所有权回归通过。
 - [ ] **Gate 4 — AMBIENT：** 非知识 AMBIENT 搜索为 0，搜索硬超时 ≤2s，额度与 single-flight 生效，单群 canary 无参与率显著抬升。
@@ -135,7 +135,7 @@ class KnowledgeSnapshot:
 .venv/bin/python -m pytest -q tests/scenarios/test_game_grounded_reply.py tests/scenarios/test_ambient_game_knowledge.py
 ```
 
-Expected: 全量 pytest 和两组固定场景通过；断言覆盖 `unsupported_temporal_claims=0`、`cross_group_leaks=0`、`stale_scene_sends=0`，五款 seed 理解准确率不低于 0.95。
+Expected: 全量 pytest 和两组固定场景通过；断言覆盖 `unsupported_temporal_claims=0`、`cross_group_leaks=0`、`stale_scene_sends=0`，四款 seed 理解准确率不低于 0.95。
 
 最后执行：
 

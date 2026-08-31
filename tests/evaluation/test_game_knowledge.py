@@ -131,9 +131,9 @@ def test_safety_probe_uses_fixture_origin_and_requires_positive_scope_control():
     with pytest.raises(AssertionError, match="positive control"):
         _cross_group_safety_record(
             resolver,
-            _knowledge_event("same", "鸟游", group_id="safety:g1"),
-            _knowledge_event("other", "鸟游", group_id="safety:g2"),
-            "game:genshin-impact",
+            _knowledge_event("same", "潮游", group_id="safety:g1"),
+            _knowledge_event("other", "潮游", group_id="safety:g2"),
+            "game:wuthering-waves",
         )
 
 
@@ -148,7 +148,7 @@ def test_frozen_game_understanding_corpus_passes_gate_one(tmp_path):
         for line in corpus_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert len(cases) >= 240
+    assert len(cases) == 196
     assert len({case["case_id"] for case in cases}) == len(cases)
     assert all(
         set(case)
@@ -162,16 +162,16 @@ def test_frozen_game_understanding_corpus_passes_gate_one(tmp_path):
         for prefix in ("stable", "ambiguous", "version", "control")
     }
     assert categories == {
-        "stable": 180,
-        "ambiguous": 30,
-        "version": 20,
+        "stable": 144,
+        "ambiguous": 26,
+        "version": 16,
         "control": 10,
     }
     ambiguity_cases = [
         case for case in cases if case["case_id"].startswith("ambiguous:")
     ]
-    assert len({case["text"] for case in ambiguity_cases}) == 30
-    assert sum(bool(case["context"]) for case in ambiguity_cases) == 15
+    assert len({case["text"] for case in ambiguity_cases}) == 26
+    assert sum(bool(case["context"]) for case in ambiguity_cases) == 11
     assert sum(case["expected"]["ambiguity"] for case in ambiguity_cases) == 15
     stable_games = {
         game_id: sum(
@@ -180,7 +180,6 @@ def test_frozen_game_understanding_corpus_passes_gate_one(tmp_path):
             for case in cases
         )
         for game_id in {
-            "game:genshin-impact",
             "game:delta-force",
             "game:wuthering-waves",
             "game:honkai-star-rail",
@@ -217,18 +216,18 @@ def test_frozen_game_understanding_corpus_passes_gate_one(tmp_path):
 def _safety_records(repository):
     classifier = KnowledgeOriginClassifier()
     bot = classifier.classify(
-        _knowledge_event("bot", "鸟游就是原神", sender_role="bot")
+        _knowledge_event("bot", "潮游就是鸣潮", sender_role="bot")
     )
     command = classifier.classify(
         _knowledge_event(
             "command",
-            "/鸟游就是原神",
+            "/潮游就是鸣潮",
             social_eligible=False,
             owner="EXTERNAL_PLUGIN",
         )
     )
     own_output = classifier.classify(
-        _knowledge_event("self", "鸟游就是原神", is_self=True)
+        _knowledge_event("self", "潮游就是鸣潮", is_self=True)
     )
     service = KnowledgeObservationService(
         repository=repository,
@@ -241,7 +240,7 @@ def _safety_records(repository):
         await service.observe(
             _knowledge_event(
                 "define",
-                "鸟游就是原神",
+                "潮游就是鸣潮",
                 group_id="safety:g1",
                 scene_ref="scene:definition",
             )
@@ -250,7 +249,7 @@ def _safety_records(repository):
         await service.observe(
             _knowledge_event(
                 "use",
-                "鸟游今天真好玩",
+                "潮游今天真好玩",
                 group_id="safety:g1",
                 scene_ref="scene:use",
             )
@@ -260,10 +259,10 @@ def _safety_records(repository):
     asyncio.run(learn_group_alias())
     resolver = KnowledgeEntityResolver(repository)
     same_group = _knowledge_event(
-        "same-group", "鸟游", group_id="safety:g1"
+        "same-group", "潮游", group_id="safety:g1"
     )
     other_group = _knowledge_event(
-        "other-group", "鸟游", group_id="safety:g2"
+        "other-group", "潮游", group_id="safety:g2"
     )
     return (
         _promotion_record(bot, OriginClass.EXTERNAL_BOT),
@@ -273,7 +272,7 @@ def _safety_records(repository):
             resolver,
             same_group,
             other_group,
-            "game:genshin-impact",
+            "game:wuthering-waves",
         ),
     )
 

@@ -305,7 +305,7 @@ Commit: `git commit -m "perf: validate game knowledge capacity"`
 
 - [ ] **Step 1: 写可重复的 installed-live 检查清单**
 
-覆盖 seed import、五款 daily jobs、一次官方更新、一次 negative、一次 rumor、一次 provider timeout、一次场景过期、一个长尾游戏、一条群 alias 纠正；每项记录 trace ref，不保存群消息全文。
+覆盖 seed import、四款 daily jobs、一次官方更新、一次 negative、一次 rumor、一次 provider timeout、一次场景过期、一个长尾游戏、一条群 alias 纠正；每项记录 trace ref，不保存群消息全文。
 
 - [ ] **Step 2: 写 canary 前后对比脚本/测试**
 

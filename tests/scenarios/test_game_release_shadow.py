@@ -17,7 +17,7 @@ from groupmate.social_runtime.manager import ShadowEvaluation, SocialRuntimeMana
 
 
 _NOW = 10_000
-_GAME_ID = "game:genshin-impact"
+_GAME_ID = "game:wuthering-waves"
 
 
 class _ObserveOnlyWorker:
@@ -56,7 +56,7 @@ def _slot(
     checked_at = _NOW - 20
     released = official_state == "released"
     return VersionSlot.create(
-        version_slot_id=f"slot:genshin:{release_state}:{official_state}:{rumor_state}",
+        version_slot_id=f"slot:waves:{release_state}:{official_state}:{rumor_state}",
         game_entity_id=_GAME_ID,
         official_label="6.0" if official_state != "none" else None,
         region="global",
@@ -132,7 +132,7 @@ def _prepare_case(repository: KnowledgeRepository, case: str) -> None:
         source_ids = tuple(item.source_id for item in seed.official_sources)
         repository.save_negative_snapshot(
             NegativeSearchSnapshot.create(
-                snapshot_id="negative:genshin:next",
+                snapshot_id="negative:waves:next",
                 game_entity_id=_GAME_ID,
                 query_intent="verify_version_state",
                 probe_status="complete",
@@ -230,20 +230,20 @@ def _evaluate(repository: KnowledgeRepository, case: str, text: str):
 
 def test_shadow_release_scenarios_are_auditable_without_fact_replies(tmp_path):
     cases = (
-        ("current", "原神这期版本怎么样", "official_complete", "released", "none_observed"),
-        ("negative", "原神下版本有消息吗", "negative_snapshot_valid", "none", "none_observed"),
-        ("preview", "原神下版本前瞻呢", "official_complete", "preview", "none_observed"),
-        ("select_next", "原神下版本前瞻呢", "official_complete", "preview", "none_observed"),
-        ("rumor_not_probed", "原神新版本有爆料吗", "rumor_not_probed", None, None),
-        ("coexisting_tracks", "原神新版本爆料呢", "rumor_observed", "preview", "corroborated"),
-        ("empty_complete", "原神新版本有消息吗", "official_complete", None, None),
-        ("partial", "原神新版本有消息吗", "official_partial", "preview", "none_observed"),
-        ("timed_out", "原神新版本有消息吗", "official_timed_out", "preview", "none_observed"),
-        ("recovered", "原神新版本有消息吗", "official_failed", None, None),
-        ("unsafe_diagnostic", "原神新版本有消息吗", "official_failed", None, None),
-        ("boundary", "原神新版本是不是上线了", "knowledge_stale", "preview", "none_observed"),
-        ("stale", "原神新版本有消息吗", "knowledge_stale", "preview", "none_observed"),
-        ("disputed", "原神新版本到底什么情况", "evidence_disputed", "preview", "conflicted"),
+        ("current", "鸣潮这期版本怎么样", "official_complete", "released", "none_observed"),
+        ("negative", "鸣潮下版本有消息吗", "negative_snapshot_valid", "none", "none_observed"),
+        ("preview", "鸣潮下版本前瞻呢", "official_complete", "preview", "none_observed"),
+        ("select_next", "鸣潮下版本前瞻呢", "official_complete", "preview", "none_observed"),
+        ("rumor_not_probed", "鸣潮新版本有爆料吗", "rumor_not_probed", None, None),
+        ("coexisting_tracks", "鸣潮新版本爆料呢", "rumor_observed", "preview", "corroborated"),
+        ("empty_complete", "鸣潮新版本有消息吗", "official_complete", None, None),
+        ("partial", "鸣潮新版本有消息吗", "official_partial", "preview", "none_observed"),
+        ("timed_out", "鸣潮新版本有消息吗", "official_timed_out", "preview", "none_observed"),
+        ("recovered", "鸣潮新版本有消息吗", "official_failed", None, None),
+        ("unsafe_diagnostic", "鸣潮新版本有消息吗", "official_failed", None, None),
+        ("boundary", "鸣潮新版本是不是上线了", "knowledge_stale", "preview", "none_observed"),
+        ("stale", "鸣潮新版本有消息吗", "knowledge_stale", "preview", "none_observed"),
+        ("disputed", "鸣潮新版本到底什么情况", "evidence_disputed", "preview", "conflicted"),
     )
 
     for case, text, expected_status, official_state, rumor_state in cases:

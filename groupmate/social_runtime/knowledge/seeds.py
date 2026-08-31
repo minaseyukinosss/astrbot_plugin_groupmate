@@ -19,6 +19,7 @@ from .repository import (
 
 
 _ASSET_DIRECTORY = Path(__file__).with_name("assets")
+RETIRED_BUNDLED_SEED_IDS = ("game-semantic:genshin-impact",)
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _BANNED_KEYS = frozenset(
     {
@@ -117,6 +118,7 @@ class GameSemanticSeed:
 class SeedImportReport:
     imported_seed_ids: tuple[str, ...] = ()
     unchanged_seed_ids: tuple[str, ...] = ()
+    retired_seed_ids: tuple[str, ...] = ()
 
 
 def _text(value: object, field: str, *, maximum: int = 500) -> str:
@@ -433,10 +435,19 @@ class SeedImporter:
     ) -> SeedImportReport:
         imported = []
         unchanged = []
+        retired = []
+        timestamp = int(self._clock())
+        for seed_id in RETIRED_BUNDLED_SEED_IDS:
+            if self._repository.retire_bundled_seed(
+                seed_id, retired_at=timestamp
+            ):
+                retired.append(seed_id)
         for seed in seeds:
+            if seed.seed_id in RETIRED_BUNDLED_SEED_IDS:
+                continue
             try:
                 outcome = self._repository.import_seed_manifest(
-                    seed.manifest, imported_at=int(self._clock())
+                    seed.manifest, imported_at=timestamp
                 )
             except SeedVersionConflict as error:
                 raise SeedHashConflict(
@@ -454,12 +465,15 @@ class SeedImporter:
                 imported.append(seed.seed_id)
             else:
                 unchanged.append(seed.seed_id)
-        return SeedImportReport(tuple(imported), tuple(unchanged))
+        return SeedImportReport(
+            tuple(imported), tuple(unchanged), tuple(retired)
+        )
 
 
 __all__ = (
     "GameSemanticSeed",
     "OfficialSourceSeed",
+    "RETIRED_BUNDLED_SEED_IDS",
     "SeedAlias",
     "SeedEntity",
     "SeedGame",

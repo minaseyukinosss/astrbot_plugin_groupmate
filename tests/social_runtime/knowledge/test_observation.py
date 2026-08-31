@@ -69,15 +69,15 @@ def _event(
 @pytest.mark.parametrize(
     ("event", "origin", "admitted"),
     [
-        (_event("human", "原神真好玩"), "human_chat", True),
-        (_event("self", "原神真好玩", is_self=True), "own_output", False),
+        (_event("human", "鸣潮真好玩"), "human_chat", True),
+        (_event("self", "鸣潮真好玩", is_self=True), "own_output", False),
         (
-            _event("bot", "原神真好玩", sender_role="bot"),
+            _event("bot", "鸣潮真好玩", sender_role="bot"),
             "external_bot",
             False,
         ),
         (
-            _event("unknown", "原神真好玩", automation_hint="unknown"),
+            _event("unknown", "鸣潮真好玩", automation_hint="unknown"),
             "unknown_actor",
             False,
         ),
@@ -116,7 +116,7 @@ def _event(
             False,
         ),
         (
-            _event("human-link", "原神这个讨论 https://example.com/a"),
+            _event("human-link", "鸣潮这个讨论 https://example.com/a"),
             "human_chat",
             True,
         ),
@@ -148,7 +148,7 @@ def _service(tmp_path, *, capacity=16):
 
 def test_observe_is_idempotent_and_close_drains_accepted_work(tmp_path):
     repository, service = _service(tmp_path)
-    event = _event("definition", "鸟游就是原神")
+    event = _event("definition", "潮游就是鸣潮")
 
     async def scenario():
         assert await service.observe(event) is True
@@ -157,7 +157,7 @@ def test_observe_is_idempotent_and_close_drains_accepted_work(tmp_path):
 
     asyncio.run(scenario())
 
-    convention = repository.convention("g1", "鸟游")
+    convention = repository.convention("g1", "潮游")
     assert convention is not None
     assert convention.status == "candidate"
     assert repository.observation_count(group_id="g1") == 1
@@ -178,7 +178,7 @@ def test_worker_failure_is_safely_diagnosed_and_retried(tmp_path, monkeypatch):
     monkeypatch.setattr(repository, "record_convention_evidence", flaky)
 
     async def scenario():
-        await service.observe(_event("retry", "鸟游就是原神"))
+        await service.observe(_event("retry", "潮游就是鸣潮"))
         await service.process_pending()
         first = service.health()
         await service.process_pending()
@@ -190,14 +190,14 @@ def test_worker_failure_is_safely_diagnosed_and_retried(tmp_path, monkeypatch):
     assert first["pending_count"] == 1
     assert recovered["pending_count"] == 0
     assert recovered["last_diagnostic"] is None
-    assert repository.convention("g1", "鸟游") is not None
+    assert repository.convention("g1", "潮游") is not None
 
 
 def test_pending_observation_is_recovered_after_service_restart(tmp_path):
     repository, first = _service(tmp_path)
 
     async def scenario():
-        await first.observe(_event("recover", "鸟游就是原神"))
+        await first.observe(_event("recover", "潮游就是鸣潮"))
         recovered = _module().KnowledgeObservationService(
             repository=repository,
             group_ids=("g1", "g2"),
@@ -211,14 +211,14 @@ def test_pending_observation_is_recovered_after_service_restart(tmp_path):
     asyncio.run(scenario())
 
     assert repository.observation_status_for_event("recover") == "admitted"
-    assert repository.convention("g1", "鸟游") is not None
+    assert repository.convention("g1", "潮游") is not None
 
 
 def test_full_queue_evicts_lower_trust_work_without_blocking(tmp_path):
     repository, service = _service(tmp_path, capacity=1)
 
     async def scenario():
-        low = await service.observe(_event("low", "鸟游就是原神"))
+        low = await service.observe(_event("low", "潮游就是鸣潮"))
         high = await service.observe(
             _event("high", "潮游就是鸣潮", sender_role="admin")
         )
@@ -241,26 +241,26 @@ def test_definition_plus_consistent_use_in_another_scene_activates_group_alias(
 
     async def scenario():
         await service.observe(
-            _event("define", "鸟游就是原神", scene_ref="scene:1")
+            _event("define", "潮游就是鸣潮", scene_ref="scene:1")
         )
         await service.process_pending()
         await service.observe(
-            _event("use", "鸟游今天真好玩", scene_ref="scene:2")
+            _event("use", "潮游今天真好玩", scene_ref="scene:2")
         )
         await service.process_pending()
 
     asyncio.run(scenario())
 
-    convention = repository.convention("g1", "鸟游")
+    convention = repository.convention("g1", "潮游")
     assert convention is not None
     assert convention.status == "active"
     assert convention.distinct_actor_count == 1
     assert convention.distinct_scene_count == 2
     assert [
         item.entity_id
-        for item in repository.aliases_for_text("鸟游", group_id="g1")
-    ] == ["game:genshin-impact"]
-    assert repository.aliases_for_text("鸟游", group_id="g2") == ()
+        for item in repository.aliases_for_text("潮游", group_id="g1")
+    ] == ["game:wuthering-waves"]
+    assert repository.aliases_for_text("潮游", group_id="g2") == ()
 
 
 def test_two_people_three_scenes_are_counted_but_bot_spam_is_not(tmp_path):
@@ -319,12 +319,12 @@ def test_ordinary_human_game_mentions_update_affinity_but_bots_do_not(tmp_path):
 
     async def scenario():
         assert await service.observe(
-            _event("human-game", "今天继续玩原神", scene_ref="game-scene")
+            _event("human-game", "今天继续玩鸣潮", scene_ref="game-scene")
         ) is True
         assert await service.observe(
             _event(
                 "bot-game",
-                "原神原神",
+                "鸣潮鸣潮",
                 actor_id="bot-1",
                 sender_role="bot",
                 scene_ref="bot-scene",
@@ -335,7 +335,7 @@ def test_ordinary_human_game_mentions_update_affinity_but_bots_do_not(tmp_path):
     asyncio.run(scenario())
 
     affinity = repository.topic_affinity(
-        "g1", "game:genshin-impact", now=200
+        "g1", "game:wuthering-waves", now=200
     )
     assert affinity is not None
     assert affinity.qualified_mention_count == 1
@@ -350,12 +350,12 @@ def test_same_group_expression_can_resolve_differently_in_another_group(
 
     async def scenario():
         await service.observe(
-            _event("g1-admin", "鸟游就是原神", sender_role="admin")
+            _event("g1-admin", "潮游就是鸣潮", sender_role="admin")
         )
         await service.observe(
             _event(
                 "g2-admin",
-                "鸟游就是鸣潮",
+                "潮游就是星铁",
                 group_id="g2",
                 sender_role="admin",
             )
@@ -364,16 +364,16 @@ def test_same_group_expression_can_resolve_differently_in_another_group(
 
     asyncio.run(scenario())
 
-    assert repository.convention("g1", "鸟游").status == "active"
-    assert repository.convention("g2", "鸟游").status == "active"
+    assert repository.convention("g1", "潮游").status == "active"
+    assert repository.convention("g2", "潮游").status == "active"
     assert [
         item.entity_id
-        for item in repository.aliases_for_text("鸟游", group_id="g1")
-    ] == ["game:genshin-impact"]
-    assert [
-        item.entity_id
-        for item in repository.aliases_for_text("鸟游", group_id="g2")
+        for item in repository.aliases_for_text("潮游", group_id="g1")
     ] == ["game:wuthering-waves"]
+    assert [
+        item.entity_id
+        for item in repository.aliases_for_text("潮游", group_id="g2")
+    ] == ["game:honkai-star-rail"]
 
 
 def test_single_scene_spam_stays_candidate_and_raw_actor_is_not_stored(
@@ -382,15 +382,15 @@ def test_single_scene_spam_stays_candidate_and_raw_actor_is_not_stored(
     repository, service = _service(tmp_path)
 
     async def scenario():
-        await service.observe(_event("s1", "鸟游就是原神"))
+        await service.observe(_event("s1", "潮游就是鸣潮"))
         await service.process_pending()
         for index in range(3):
-            await service.observe(_event(f"s{index + 2}", "鸟游真好玩"))
+            await service.observe(_event(f"s{index + 2}", "潮游真好玩"))
         await service.process_pending()
 
     asyncio.run(scenario())
 
-    convention = repository.convention("g1", "鸟游")
+    convention = repository.convention("g1", "潮游")
     assert convention is not None
     assert convention.status == "candidate"
     assert convention.distinct_scene_count == 1
@@ -403,38 +403,38 @@ def test_conflicting_definition_marks_conventions_disputed_without_erasing_evide
     repository, service = _service(tmp_path)
 
     async def scenario():
-        await service.observe(_event("d1", "鸟游就是原神", scene_ref="s1"))
+        await service.observe(_event("d1", "潮游就是鸣潮", scene_ref="s1"))
         await service.process_pending()
-        await service.observe(_event("u1", "鸟游不错", scene_ref="s2"))
+        await service.observe(_event("u1", "潮游不错", scene_ref="s2"))
         await service.process_pending()
         await service.observe(
-            _event("d2", "鸟游就是鸣潮", actor_id="human-2", scene_ref="s3")
+            _event("d2", "潮游就是星铁", actor_id="human-2", scene_ref="s3")
         )
         await service.process_pending()
 
     asyncio.run(scenario())
 
-    conventions = repository.conventions_for_expression("g1", "鸟游")
+    conventions = repository.conventions_for_expression("g1", "潮游")
     assert {item.resolved_entity_id for item in conventions} == {
-        "game:genshin-impact",
+        "game:honkai-star-rail",
         "game:wuthering-waves",
     }
     assert {item.status for item in conventions} == {"disputed"}
     assert sum(item.evidence_count for item in conventions) == 3
-    assert repository.aliases_for_text("鸟游", group_id="g1") == ()
+    assert repository.aliases_for_text("潮游", group_id="g1") == ()
 
 
 def test_inactive_convention_becomes_stale_after_ninety_days(tmp_path):
     repository, service = _service(tmp_path)
 
     async def scenario():
-        await service.observe(_event("old", "鸟游就是原神"))
+        await service.observe(_event("old", "潮游就是鸣潮"))
         await service.process_pending()
 
     asyncio.run(scenario())
     service.expire_stale(now=100 + 90 * 24 * 60 * 60 + 1)
 
-    convention = repository.convention("g1", "鸟游")
+    convention = repository.convention("g1", "潮游")
     assert convention is not None
     assert convention.status == "stale"
 
@@ -483,7 +483,7 @@ def test_bridge_observes_only_after_durable_runtime_ingest(tmp_path):
             "user_id": "human-1",
             "time": 100,
             "message": [
-                {"type": "text", "data": {"text": "鸟游就是原神"}}
+                {"type": "text", "data": {"text": "潮游就是鸣潮"}}
             ],
         }
 
