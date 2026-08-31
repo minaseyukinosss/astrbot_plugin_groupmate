@@ -6,6 +6,13 @@ const INITIAL_CONNECTION = Object.freeze({
 const WORKSPACE_PROJECTIONS = Object.freeze({
   "/runtime": ["runtime", "traces", "health", "persona", "governance"],
   "/profiles": ["profiles", "group-portrait", "health"],
+  "/knowledge": [
+    "knowledge/overview",
+    "knowledge/entities",
+    "knowledge/claims",
+    "knowledge/conventions",
+    "knowledge/jobs",
+  ],
 });
 
 export function workspaceProjectionNames(path, fallbackEndpoint) {
@@ -148,6 +155,22 @@ export class ProjectionStore {
     }
     this.views.set("bootstrap", clone(bootstrap));
     this.emit();
+  }
+
+  mergeKnowledge(name, view) {
+    if (!String(name || "").startsWith("knowledge/") || !view || typeof view !== "object") {
+      return false;
+    }
+    if (
+      view.scope
+      && (
+        String(view.scope.persona_id || "") !== String(this.scope.persona_id || "")
+        || String(view.scope.group_id || "") !== String(this.scope.group_id || "")
+      )
+    ) return false;
+    this.views.set(String(name), clone(view));
+    this.emit();
+    return true;
   }
 
   mergeEntity(item) {

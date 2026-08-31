@@ -385,6 +385,47 @@
       },
     }],
   };
+  const knowledgeScope = { persona_id: "groupmate:default", group_id: "72819823" };
+  const knowledgeViews = {
+    "knowledge/overview": {
+      scope: knowledgeScope,
+      as_of: now,
+      revision: 8,
+      counts: { entities: 18, active_claims: 42, review_conventions: 2, retry_jobs: 1 },
+      ambient_canary_enabled: false,
+      popular_games: [
+        { entity_id: "game:delta", canonical_name: "三角洲行动", status: "active", salience: 0.92, qualified_mention_count: 34, distinct_actor_count: 8, distinct_scene_count: 11, last_seen_at: now },
+        { entity_id: "game:wuthering", canonical_name: "鸣潮", status: "active", salience: 0.74, qualified_mention_count: 21, distinct_actor_count: 6, distinct_scene_count: 8, last_seen_at: now - 1200 },
+        { entity_id: "game:starrail", canonical_name: "崩坏：星穹铁道", status: "active", salience: 0.51, qualified_mention_count: 13, distinct_actor_count: 5, distinct_scene_count: 5, last_seen_at: now - 3600 },
+      ],
+      release_states: [
+        { version_slot_id: "slot:delta:current", entity_id: "game:delta", canonical_name: "三角洲行动", official_label: "S7", official_state: "released", last_successful_check_at: now - 1800, last_attempt_at: now - 900, fresh_until: now + 86400, fresh: true, status: "active", revision: 3 },
+        { version_slot_id: "slot:wuthering:next", entity_id: "game:wuthering", canonical_name: "鸣潮", official_label: null, official_state: "none", last_successful_check_at: now - 86400, last_attempt_at: now - 600, fresh_until: now - 120, fresh: false, status: "active", revision: 2 },
+      ],
+      recent_usage: [
+        { source_domains: ["df.qq.com"], latency_ms: 24, cache_hit: false, result_kind: "grounded_reply", diagnostic: null, recorded_at: now - 60 },
+        { source_domains: [], latency_ms: 3, cache_hit: true, result_kind: "local_resolution", diagnostic: null, recorded_at: now - 180 },
+      ],
+    },
+    "knowledge/entities": { scope: knowledgeScope, revision: 8, next_cursor: null, items: [] },
+    "knowledge/claims": {
+      scope: knowledgeScope, revision: 8, next_cursor: null, items: [
+        { claim_id: "claim:delta:genre", entity_id: "game:delta", canonical_name: "三角洲行动", predicate: "genre", safe_summary: "多人战术射击游戏", claim_kind: "stable_semantic", evidence_level: "official", status: "active", checked_at: now - 1800, revision: 3, sources: [{ domain: "df.qq.com", source_class: "official" }] },
+        { claim_id: "claim:wuthering:next", entity_id: "game:wuthering", canonical_name: "鸣潮", predicate: "next_version", safe_summary: "下一版本资料需要重新核验", claim_kind: "public_fact", evidence_level: "secondary", status: "stale", checked_at: now - 86400, revision: 2, sources: [] },
+      ],
+    },
+    "knowledge/conventions": {
+      scope: knowledgeScope, revision: 8, next_cursor: null, items: [
+        { convention_id: "convention:delta", expression: "洲", entity_id: "game:delta", canonical_name: "三角洲行动", meaning_summary: "群内通常指三角洲行动", alias_id: null, scope: "group", group_id: "72819823", status: "candidate", confidence: 0.7, distinct_actor_count: 4, distinct_scene_count: 3, first_seen_at: now - 86400, last_seen_at: now - 600, revision: 7 },
+        { convention_id: "convention:wuthering", expression: "潮", entity_id: "game:wuthering", canonical_name: "鸣潮", meaning_summary: "群内简称鸣潮", alias_id: "alias:group:wuthering", scope: "group", group_id: "72819823", status: "active", confidence: 1, distinct_actor_count: 6, distinct_scene_count: 5, first_seen_at: now - 172800, last_seen_at: now - 300, revision: 6 },
+      ],
+    },
+    "knowledge/jobs": {
+      scope: knowledgeScope, revision: 8, next_cursor: null, items: [
+        { job_id: "job:learning", job_kind: "unknown_entity_learning", scope: "group", group_id: "72819823", entity_id: "game:delta", canonical_name: "三角洲行动", status: "retry", attempt: 2, next_attempt_at: now + 3600, diagnostic: "source_unavailable", created_at: now - 7200, revision: 5 },
+      ],
+    },
+  };
   const response = (projection) => ({
     projection,
     scope: { persona_id: "groupmate:default", group_id: "72819823" },
@@ -438,6 +479,11 @@
       }
       if (endpoint === "media") throw new Error("preview unavailable");
       if (endpoint === "profile") return profileDetail;
+      if (endpoint.startsWith("knowledge/")) {
+        const value = knowledgeViews[endpoint] || { scope: knowledgeScope, revision: 8, next_cursor: null, items: [] };
+        if (!params.status || !Array.isArray(value.items)) return value;
+        return { ...value, items: value.items.filter((item) => item.status === params.status) };
+      }
       const value = response(endpoint);
       if (!params.entity_ref) return value;
       return { ...value, items: value.items.filter((item) => item.entity_ref === params.entity_ref) };

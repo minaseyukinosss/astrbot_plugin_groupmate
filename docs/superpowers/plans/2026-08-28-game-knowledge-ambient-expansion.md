@@ -222,29 +222,29 @@ Commit: `git commit -m "feat: administer scoped game knowledge"`
 - POST `/api/groupmate/knowledge/actions`，沿用现有管理员 token/origin/CSRF 安全边界。
 - Workspace panels: health、热门游戏、版本 freshness、群约定、冲突/过期、jobs、recent usage。
 
-- [ ] **Step 1: 写 API 安全契约失败测试**
+- [x] **Step 1: 写 API 安全契约失败测试**
 
 缺 group、非法 cursor、跨群、未授权 mutation、错误 content type、stale revision、超大 payload 拒绝；分页 cursor 不泄漏 rowid；响应头沿用现有 no-store/security policy。
 
-- [ ] **Step 2: 写前端静态/交互失败测试**
+- [x] **Step 2: 写前端静态/交互失败测试**
 
 导航可达、窄屏无横向溢出、empty/loading/error states、filter/pagination、confirm/reject/retry dialog、键盘焦点、status 不只靠颜色、所有动态文本用 `textContent`。
 
-- [ ] **Step 3: 运行并确认 RED**
+- [x] **Step 3: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py`
 
 Expected: routes/workspace 缺失。
 
-- [ ] **Step 4: 实现薄 API adapter**
+- [x] **Step 4: 实现薄 API adapter**
 
 Web API 只验证请求并调用 Task 3 control service，不拼 SQL、不返回 domain objects。mutation 响应返回新 revision 与安全 audit ref；冲突用 409，权限用 403。
 
-- [ ] **Step 5: 实现工作区**
+- [x] **Step 5: 实现工作区**
 
 复用现有 store/router/component tokens；默认显示本群摘要而不是全局百科。版本卡明确“最近成功核验”与“最近尝试”，negative snapshot 使用限定性中文，不展示“网络上没有”。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/page/test_accessibility_contract.py tests/page/test_frontend_security.py`
 

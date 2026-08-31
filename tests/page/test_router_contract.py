@@ -26,7 +26,7 @@ def _run_module(filename: str, body: str):
     return json.loads(result.stdout)
 
 
-def test_router_has_runtime_and_profile_routes_with_safe_fallback():
+def test_router_has_product_routes_with_safe_fallback():
     result = _run_module(
         "router.js",
         "console.log(JSON.stringify({"
@@ -38,7 +38,7 @@ def test_router_has_runtime_and_profile_routes_with_safe_fallback():
     )
 
     assert result == {
-        "routes": ["/runtime", "/profiles"],
+        "routes": ["/runtime", "/profiles", "/knowledge"],
         "known": "/profiles",
         "unknown": "/runtime",
         "empty": "/runtime",

@@ -436,6 +436,12 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
                 "profiles",
                 "profile",
                 "group-portrait",
+                "knowledge/overview",
+                "knowledge/entities",
+                "knowledge/claims",
+                "knowledge/conventions",
+                "knowledge/jobs",
+                "knowledge/actions",
                 "avatar",
             "media",
             "commands",
@@ -444,6 +450,7 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
     }
     methods = {call[0].rsplit("/", 1)[-1]: call[2] for call in context.calls}
     assert methods["commands"] == ["POST"]
+    assert methods["actions"] == ["POST"]
     assert methods["events"] == ["GET"]
 
 

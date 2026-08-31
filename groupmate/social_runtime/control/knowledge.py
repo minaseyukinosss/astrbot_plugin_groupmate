@@ -72,6 +72,76 @@ class KnowledgeControlQueries:
                 }
                 for row in popular_rows
             ]
+            release_rows = db.execute(
+                "SELECT r.version_slot_id,r.game_entity_id,e.canonical_name,"
+                "r.official_label,r.region,r.platform,r.release_state,"
+                "r.official_state,r.rumor_state,r.release_checked_at,"
+                "r.official_checked_at,r.rumor_checked_at,r.fresh_until,"
+                "r.status,r.revision,(SELECT MAX(j.updated_at) FROM knowledge_jobs AS j "
+                "WHERE j.entity_id=r.game_entity_id AND (j.group_id IS NULL OR j.group_id=?)) "
+                "AS last_attempt_at FROM game_release_states AS r "
+                "JOIN knowledge_entities AS e ON e.entity_id=r.game_entity_id "
+                "WHERE r.status IN ('active','disputed') "
+                "ORDER BY r.fresh_until ASC,e.canonical_name LIMIT 24",
+                (scope,),
+            ).fetchall()
+            release_states = [
+                {
+                    "version_slot_id": str(row["version_slot_id"]),
+                    "entity_id": str(row["game_entity_id"]),
+                    "canonical_name": str(row["canonical_name"]),
+                    "official_label": (
+                        None
+                        if row["official_label"] is None
+                        else str(row["official_label"])
+                    ),
+                    "region": str(row["region"]),
+                    "platform": str(row["platform"]),
+                    "release_state": str(row["release_state"]),
+                    "official_state": str(row["official_state"]),
+                    "rumor_state": str(row["rumor_state"]),
+                    "last_successful_check_at": max(
+                        value
+                        for value in (
+                            self._nullable_int(row["release_checked_at"]),
+                            self._nullable_int(row["official_checked_at"]),
+                            self._nullable_int(row["rumor_checked_at"]),
+                            0,
+                        )
+                        if value is not None
+                    ),
+                    "last_attempt_at": self._nullable_int(row["last_attempt_at"]),
+                    "fresh_until": int(row["fresh_until"]),
+                    "fresh": int(row["fresh_until"]) >= timestamp,
+                    "status": str(row["status"]),
+                    "revision": int(row["revision"]),
+                }
+                for row in release_rows
+            ]
+            usage_rows = db.execute(
+                "SELECT source_domains_json,latency_ms,cache_hit,result_kind,"
+                "diagnostic_code,recorded_at FROM knowledge_usage WHERE group_id=? "
+                "ORDER BY recorded_at DESC,usage_id DESC LIMIT 20",
+                (scope,),
+            ).fetchall()
+            recent_usage = [
+                {
+                    "source_domains": [
+                        str(value)
+                        for value in json.loads(str(row["source_domains_json"]))
+                    ],
+                    "latency_ms": int(row["latency_ms"]),
+                    "cache_hit": bool(row["cache_hit"]),
+                    "result_kind": str(row["result_kind"]),
+                    "diagnostic": (
+                        None
+                        if row["diagnostic_code"] is None
+                        else str(row["diagnostic_code"])
+                    ),
+                    "recorded_at": int(row["recorded_at"]),
+                }
+                for row in usage_rows
+            ]
             revision = self._control_revision_on(db, scope)
             canary = self._ambient_canary_on(db, scope)
         return {
@@ -80,6 +150,8 @@ class KnowledgeControlQueries:
             "revision": revision,
             "counts": counts,
             "popular_games": popular,
+            "release_states": release_states,
+            "recent_usage": recent_usage,
             "ambient_canary_enabled": canary,
         }
 
@@ -229,8 +301,11 @@ class KnowledgeControlQueries:
                 "SELECT c.convention_id,c.normalized_expression,c.resolved_entity_id,"
                 "e.canonical_name,c.meaning_summary,c.distinct_actor_count,"
                 "c.distinct_scene_count,c.confidence,c.status,c.first_seen_at,"
-                "c.last_seen_at,c.updated_at FROM group_conventions AS c "
+                "c.last_seen_at,c.updated_at,a.alias_id FROM group_conventions AS c "
                 "LEFT JOIN knowledge_entities AS e ON e.entity_id=c.resolved_entity_id "
+                "LEFT JOIN group_knowledge_aliases AS a ON a.group_id=c.group_id "
+                "AND a.normalized_alias=c.normalized_expression "
+                "AND a.entity_id=c.resolved_entity_id AND a.status='active' "
                 "WHERE " + " AND ".join(clauses) +
                 " ORDER BY c.updated_at DESC,c.convention_id LIMIT ? OFFSET ?",
                 (*parameters, self._PAGE_SIZE + 1, offset),
@@ -252,6 +327,9 @@ class KnowledgeControlQueries:
                         else str(row["canonical_name"])
                     ),
                     "meaning_summary": str(row["meaning_summary"]),
+                    "alias_id": (
+                        None if row["alias_id"] is None else str(row["alias_id"])
+                    ),
                     "scope": "group",
                     "group_id": scope,
                     "status": str(row["status"]),

@@ -16,6 +16,7 @@ from .groupmate.adapters.web_api import (
 )
 from .groupmate.settings import SOCIAL_RUNTIME_DATABASE_NAME, SocialRuntimeSettings
 from .groupmate.social_runtime.control.commands import CommandService
+from .groupmate.social_runtime.control.knowledge import KnowledgeControlQueries
 from .groupmate.social_runtime.control.projections import ProjectionConsumer
 from .groupmate.social_runtime.control.queries import ProjectionQueries
 from .groupmate.social_runtime.control.stream import ProjectionStream
@@ -53,6 +54,9 @@ class GroupmatePlugin(Star):
             )
             self._control_api = ControlPlaneWebAPI(
                 queries=ProjectionQueries(path),
+                knowledge_queries=KnowledgeControlQueries(
+                    path, persona_id=self.settings.persona_id
+                ),
                 stream=ProjectionStream(path),
                 command_service_for=lambda username: CommandService(
                     path,

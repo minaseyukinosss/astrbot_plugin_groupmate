@@ -29,6 +29,10 @@ export class ApiBridge {
     return this.bridge.apiPost("commands", body);
   }
 
+  knowledgeAction(body) {
+    return this.bridge.apiPost("knowledge/actions", body);
+  }
+
   async connect({ params, onEvent, onState, onPoll }) {
     await this.disconnect();
     onState({ state: "connecting", impact: "正在建立实时连接" });

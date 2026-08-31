@@ -9,6 +9,7 @@ import {
 } from "./store.js";
 import { renderRuntime } from "./workspaces/runtime.js";
 import { renderProfiles } from "./workspaces/profiles.js";
+import { renderKnowledge } from "./workspaces/knowledge.js";
 import { safeMediaPreview } from "./components/security.js";
 
 const bridge = new ApiBridge();
@@ -26,6 +27,7 @@ const mediaRequests = new Map();
 const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
   "/profiles": renderProfiles,
+  "/knowledge": renderKnowledge,
 });
 
 const elements = {
@@ -64,9 +66,10 @@ function renderNavigation(route) {
   const [title, description] = workspaceCopy(route.path, locale);
   elements.title.textContent = title;
   elements.description.textContent = description;
-  elements.context.textContent = route.path === "/profiles"
-    ? "持续认知 · 当前群组成员与关系"
-    : "此刻 · 当前群组实时消息链路";
+  elements.context.textContent = ({
+    "/profiles": "持续认知 · 当前群组成员与关系",
+    "/knowledge": "可审查知识 · 当前群组热度与公共事实",
+  })[route.path] || "此刻 · 当前群组实时消息链路";
 }
 
 function renderConnection(connection) {
@@ -287,6 +290,9 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
     try {
       const view = await bridge.query(projection, scopeParams(), { timeoutMs });
       if (projection === "traces") store.mergeTracePage(view);
+      else if (projection.startsWith("knowledge/")) {
+        store.mergeKnowledge(projection, view);
+      }
       else store.merge(view);
       return { projection, error: null };
     } catch (error) {
@@ -349,7 +355,10 @@ async function submitWorkspaceCommand(spec) {
     expected_version: Number(spec.expected_version || 0),
   });
   try {
-    const result = await bridge.command({ ...spec, command_id: commandId, ...scopeParams() });
+    const body = { ...spec, command_id: commandId, ...scopeParams() };
+    const result = String(spec.type || "").startsWith("knowledge_")
+      ? await bridge.knowledgeAction(body)
+      : await bridge.command(body);
     store.setConnection({ state: "connected", impact: "命令已接受，等待运行状态更新" });
     return result;
   } catch (error) {

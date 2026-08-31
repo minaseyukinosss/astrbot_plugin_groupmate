@@ -150,8 +150,13 @@ main {
 }
 
 @media (max-width: 44rem) {
+  .sidebar { display: grid; grid-template-columns: 1fr; gap: var(--space-2); }
+  .sidebar .brand-block { margin: 0; }
+  .sidebar nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .sidebar nav a { justify-content: center; min-width: 0; padding-inline: var(--space-2); }
+  .sidebar-quick { display: none; }
   .topbar { align-items: stretch; flex-direction: column; }
-  .topbar-context { display: grid; grid-template-columns: 1fr 1fr; }
+  .topbar-context { display: grid; flex: 0 1 auto; grid-template-columns: 1fr 1fr; }
   .persona-context .version-chip { display: none; }
   .runtime-summary { justify-content: space-between; }
   .workspace-heading { display: block; }

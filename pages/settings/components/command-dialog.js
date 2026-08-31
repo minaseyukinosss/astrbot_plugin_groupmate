@@ -14,6 +14,10 @@ const HIGH_IMPACT = new Set([
   "profile_fact_invalidate",
   "profile_identity_merge",
   "profile_identity_split",
+  "knowledge_convention_reject",
+  "knowledge_alias_supersede",
+  "knowledge_claim_dispute",
+  "knowledge_cache_invalidate",
 ]);
 
 export function requiresConfirmation(type) {
@@ -163,5 +167,12 @@ function labelFor(type) {
     profile_fact_invalidate: "使画像事实失效",
     profile_identity_merge: "合并成员身份",
     profile_identity_split: "拆分成员身份",
+    knowledge_convention_confirm: "确认群内约定",
+    knowledge_convention_reject: "驳回群内约定",
+    knowledge_alias_supersede: "纠正群内别名指向",
+    knowledge_claim_dispute: "标记知识事实争议",
+    knowledge_job_retry: "重试知识任务",
+    knowledge_cache_invalidate: "使知识缓存失效",
+    knowledge_ambient_canary_set: "调整 AMBIENT 试运行",
   })[type] || "提交受治理命令";
 }

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import json
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping
 
@@ -16,26 +18,34 @@ from ..social_runtime.control.commands import (
     CommandError,
     CommandService,
     CommandValidationError,
+    ConfirmKnowledgeConvention,
     CorrectProfileFact,
     CorrectSocialState,
     CreateConfigDraft,
     DryRunConfig,
+    DisputeKnowledgeClaim,
     ExpectedVersionConflict,
     ForgetMemory,
+    InvalidateKnowledgeCache,
     InvalidateProfileFact,
     LinkIdentity,
     MergeProfileIdentity,
     PauseRuntime,
     PublishConfig,
+    RejectKnowledgeConvention,
     ResetState,
     RestoreConfig,
+    RetryKnowledgeJob,
     ReviewEvidence,
     ReviewShadowDecision,
     SetMemberStyleDistillation,
+    SetKnowledgeAmbientCanary,
     SetRuntimeMode,
     SplitProfileIdentity,
+    SupersedeKnowledgeAlias,
     ValidateConfig,
 )
+from ..social_runtime.control.knowledge import KnowledgeControlQueries
 from ..social_runtime.control.queries import ProjectionQueries
 from ..social_runtime.control.stream import ProjectionStream
 from ..social_runtime.contracts import SocialEventEnvelope
@@ -59,6 +69,13 @@ class WebResponse:
 
 
 class ControlPlaneWebAPI:
+    KNOWLEDGE_QUERY_ENDPOINTS = (
+        "knowledge/overview",
+        "knowledge/entities",
+        "knowledge/claims",
+        "knowledge/conventions",
+        "knowledge/jobs",
+    )
     QUERY_ENDPOINTS = (
         "bootstrap",
         "runtime",
@@ -81,6 +98,7 @@ class ControlPlaneWebAPI:
         self,
         *,
         queries: ProjectionQueries,
+        knowledge_queries: KnowledgeControlQueries | None = None,
         stream: ProjectionStream,
         command_service_for: Callable[[str], CommandService],
         event_publisher: Callable[
@@ -100,6 +118,7 @@ class ControlPlaneWebAPI:
         | None = None,
     ) -> None:
         self.queries = queries
+        self.knowledge_queries = knowledge_queries
         self.stream = stream
         self._command_service_for = command_service_for
         self._event_publisher = event_publisher
@@ -265,6 +284,10 @@ class ControlPlaneWebAPI:
         username = str(request.username or "").strip()
         if not username or (self.admin_ids and username not in self.admin_ids):
             return self._error(403, "administrator_forbidden")
+        if endpoint in self.KNOWLEDGE_QUERY_ENDPOINTS:
+            return self._knowledge_query(endpoint, request)
+        if endpoint == "knowledge/actions":
+            return await self._knowledge_action(request)
         if endpoint in self.QUERY_ENDPOINTS:
             if str(request.method).upper() != "GET":
                 return self._error(405, "method_not_allowed")
@@ -434,6 +457,96 @@ class ControlPlaneWebAPI:
             )
 
         return self._error(404, "endpoint_not_found")
+
+    def _knowledge_query(
+        self, endpoint: str, request: WebRequest
+    ) -> WebResponse:
+        if str(request.method).upper() != "GET":
+            return self._knowledge_error(405, "method_not_allowed")
+        if self.knowledge_queries is None:
+            return self._knowledge_error(503, "knowledge_query_unavailable")
+        group_id = str(request.query.get("group_id") or "").strip()
+        if not group_id:
+            return self._knowledge_error(400, "group_id_required")
+        try:
+            persona_id, group_id = self._scope_values(
+                request.query.get("persona_id") or self.persona_id,
+                group_id,
+            )
+            name = endpoint.removeprefix("knowledge/")
+            if name == "overview":
+                body = self.knowledge_queries.overview(
+                    group_id, now=int(time.time())
+                )
+            else:
+                cursor = self._optional_text(request.query.get("cursor"))
+                filters = {
+                    key: request.query.get(key)
+                    for key in (
+                        "status",
+                        "entity_type",
+                        "claim_kind",
+                        "entity_id",
+                        "job_kind",
+                    )
+                    if request.query.get(key) is not None
+                }
+                body = getattr(self.knowledge_queries, name)(
+                    group_id, cursor, filters
+                )
+        except LookupError:
+            return self._knowledge_error(404, "scope_not_found")
+        except (TypeError, ValueError):
+            return self._knowledge_error(400, "invalid_query")
+        except Exception:
+            return self._knowledge_error(503, "knowledge_query_unavailable")
+        return WebResponse(
+            200,
+            {
+                **body,
+                "scope": {"persona_id": persona_id, "group_id": group_id},
+            },
+            self._knowledge_headers(),
+        )
+
+    async def _knowledge_action(self, request: WebRequest) -> WebResponse:
+        if str(request.method).upper() != "POST":
+            return self._knowledge_error(405, "method_not_allowed")
+        content_type = str(self._header(request.headers, "content-type") or "")
+        if content_type.split(";", 1)[0].strip().casefold() != "application/json":
+            return self._knowledge_error(415, "json_content_type_required")
+        try:
+            encoded = json.dumps(
+                request.json_body or {},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return self._knowledge_error(400, "invalid_command")
+        if len(encoded) > 16_384:
+            return self._knowledge_error(413, "command_payload_too_large")
+        body = dict(request.json_body or {})
+        if str(body.get("type") or "") not in {
+            "knowledge_convention_confirm",
+            "knowledge_convention_reject",
+            "knowledge_alias_supersede",
+            "knowledge_claim_dispute",
+            "knowledge_job_retry",
+            "knowledge_cache_invalidate",
+            "knowledge_ambient_canary_set",
+        }:
+            return self._knowledge_error(400, "unsupported_knowledge_action")
+        body.setdefault("persona_id", self.persona_id)
+        delegated = WebRequest(
+            method=request.method,
+            path="/commands",
+            query=request.query,
+            headers=request.headers,
+            json_body=body,
+            username=request.username,
+        )
+        response = await self._command(delegated)
+        return WebResponse(response.status, response.body, self._knowledge_headers())
 
     async def _command(self, request: WebRequest) -> WebResponse:
         username = str(request.username or "").strip()
@@ -622,6 +735,35 @@ class ControlPlaneWebAPI:
                 cls._boolean(payload.get("enabled"), "enabled"),
                 command_id=command_id,
             ),
+            "knowledge_convention_confirm": lambda: ConfirmKnowledgeConvention(
+                str(payload.get("convention_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_convention_reject": lambda: RejectKnowledgeConvention(
+                str(payload.get("convention_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_alias_supersede": lambda: SupersedeKnowledgeAlias(
+                str(payload.get("alias_id") or ""),
+                str(payload.get("replacement_entity_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_claim_dispute": lambda: DisputeKnowledgeClaim(
+                str(payload.get("claim_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_job_retry": lambda: RetryKnowledgeJob(
+                str(payload.get("job_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_cache_invalidate": lambda: InvalidateKnowledgeCache(
+                str(payload.get("entity_id") or ""),
+                command_id=command_id,
+            ),
+            "knowledge_ambient_canary_set": lambda: SetKnowledgeAmbientCanary(
+                cls._boolean(payload.get("enabled"), "enabled"),
+                command_id=command_id,
+            ),
         }
         constructor = constructors.get(kind)
         if constructor is None:
@@ -676,12 +818,29 @@ class ControlPlaneWebAPI:
             body["detail"] = detail
         return WebResponse(status, body, {"Content-Type": "application/json"})
 
+    @staticmethod
+    def _knowledge_headers() -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        }
+
+    @classmethod
+    def _knowledge_error(cls, status: int, error: str) -> WebResponse:
+        return WebResponse(status, {"error": error}, cls._knowledge_headers())
+
 
 class AstrBotControlPlaneRoutes:
     """Registers official AstrBot plugin routes without leaking its web framework."""
 
     PLUGIN_NAME = "astrbot_plugin_groupmate"
-    ENDPOINTS = ControlPlaneWebAPI.QUERY_ENDPOINTS + ("avatar", "media", "commands", "events")
+    ENDPOINTS = (
+        ControlPlaneWebAPI.QUERY_ENDPOINTS
+        + ControlPlaneWebAPI.KNOWLEDGE_QUERY_ENDPOINTS
+        + ("knowledge/actions", "avatar", "media", "commands", "events")
+    )
 
     def __init__(self, context: object, *, api_factory: Callable[[], object]) -> None:
         self.context = context
@@ -692,7 +851,11 @@ class AstrBotControlPlaneRoutes:
         if not callable(registrar):
             raise RuntimeError("AstrBot Context does not support plugin Web APIs")
         for endpoint in self.ENDPOINTS:
-            methods = ["POST"] if endpoint == "commands" else ["GET"]
+            methods = (
+                ["POST"]
+                if endpoint in {"commands", "knowledge/actions"}
+                else ["GET"]
+            )
             registrar(
                 f"/{self.PLUGIN_NAME}/{endpoint}",
                 self._handler(endpoint),
@@ -702,12 +865,16 @@ class AstrBotControlPlaneRoutes:
 
     def _handler(self, endpoint: str):
         async def handle():
-            from astrbot.api.web import request, stream_response
+            from astrbot.api.web import json_response, request, stream_response
 
             try:
                 api = self.api_factory()
             except RuntimeError as exc:
-                return {"error": "control_plane_unavailable", "detail": str(exc)}, 503
+                return json_response(
+                    {"error": "control_plane_unavailable", "detail": str(exc)},
+                    status_code=503,
+                    headers=ControlPlaneWebAPI._knowledge_headers(),
+                )
             body = (
                 await request.json(default={})
                 if str(request.method).upper() == "POST"
@@ -720,6 +887,12 @@ class AstrBotControlPlaneRoutes:
                 "avatar_ref": request.query.get("avatar_ref"),
                 "media_ref": request.query.get("media_ref"),
                 "member_ref": request.query.get("member_ref"),
+                "cursor": request.query.get("cursor"),
+                "status": request.query.get("status"),
+                "entity_type": request.query.get("entity_type"),
+                "claim_kind": request.query.get("claim_kind"),
+                "entity_id": request.query.get("entity_id"),
+                "job_kind": request.query.get("job_kind"),
             }
             response = await api.handle(
                 WebRequest(
@@ -748,7 +921,11 @@ class AstrBotControlPlaneRoutes:
                         return
 
                 return stream_response(events())
-            return response.body, response.status
+            return json_response(
+                response.body,
+                status_code=response.status,
+                headers=response.headers,
+            )
 
         return handle
 
