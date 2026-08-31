@@ -124,29 +124,29 @@ Commit: `git commit -m "feat: define bounded knowledge snapshots"`
 - `.search(request) -> DiscoverySearchResult` 通过显式 ToolSet 和 `tool_loop_agent`。
 - readiness code: `knowledge_search_adapter_unavailable`。
 
-- [ ] **Step 1: 写 fake ToolSet 失败契约测试**
+- [x] **Step 1: 写 fake ToolSet 失败契约测试**
 
 断言 adapter 只选择管理员已配置的搜索和页面提取工具；最终 reply provider 没有 tools；专用 Agent 最大 steps=4；查询/result 数受 contract 限制；tool 请求发送消息、文件、代码、内网 URL 时拒绝。
 
-- [ ] **Step 2: 写版本兼容与失败映射测试**
+- [x] **Step 2: 写版本兼容与失败映射测试**
 
 覆盖 AstrBot 4.24 可用签名、能力缺失、function calling 不支持、timeout、rate limit、部分 tool failure、malformed JSON、prompt injection 页面。所有异常映射固定 code，不返回原异常或 key。
 
-- [ ] **Step 3: 运行契约测试并确认 RED**
+- [x] **Step 3: 运行契约测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
 
 Expected: adapter 缺失。
 
-- [ ] **Step 4: 实现延迟绑定的专用 Agent**
+- [x] **Step 4: 实现延迟绑定的专用 Agent**
 
 Bridge 启动时从 host context 解析当前启用工具，白名单仅接受 search/page-extract capability；adapter 构造单轮 system instruction，明确网页指令无效，只输出 JSON source candidates。禁止 HTTP 自调用与插件自存 API key。
 
-- [ ] **Step 5: 规范化并二次验证 tool 输出**
+- [x] **Step 5: 规范化并二次验证 tool 输出**
 
 每个候选经 URL policy、domain/source classification、长度限制、hash 和发布时间 parser；完整页面不越过 adapter。结果不可信时 `invalid_result`，而不是退回模型自由文本。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_astrbot_knowledge_search.py tests/shared/test_astrbot_package_loading.py`
 

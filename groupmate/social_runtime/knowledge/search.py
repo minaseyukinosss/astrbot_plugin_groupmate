@@ -53,13 +53,26 @@ _STATUSES = {
     "invalid_result",
 }
 _DIAGNOSTICS = {
+    "function_calling_unsupported",
     "partial_result",
+    "search_adapter_unavailable",
+    "search_rate_limited",
     "search_timed_out",
+    "search_tool_failed",
     "search_unavailable",
     "search_failed",
     "invalid_search_result",
 }
-_ENTITY_HINT = re.compile(r"^[\w\u3400-\u9fff·・.：:+()（）《》\- ]+$")
+_QUERY_ATOM = re.compile(r"^[\w\u3400-\u9fff·・.：:+()（）《》\- ]+$")
+_QUERY_INJECTION_MARKERS = (
+    "ignore previous",
+    "ignore all previous",
+    "system prompt",
+    "developer message",
+    "忽略之前",
+    "忽略以上",
+    "系统提示词",
+)
 
 
 def _text(value: object, name: str, maximum: int, *, optional: bool = False):
@@ -72,6 +85,21 @@ def _text(value: object, name: str, maximum: int, *, optional: bool = False):
         raise ValueError(f"{name} must not be empty")
     if len(normalized) > maximum:
         raise ValueError(f"{name} is too long")
+    return normalized
+
+
+def _query_atom(
+    value: object, name: str, maximum: int, *, optional: bool = False
+):
+    normalized = _text(value, name, maximum, optional=optional)
+    if normalized is None:
+        return None
+    folded = normalized.casefold()
+    if (
+        not _QUERY_ATOM.fullmatch(normalized)
+        or any(marker in folded for marker in _QUERY_INJECTION_MARKERS)
+    ):
+        raise ValueError(f"{name} contains unsafe characters or instructions")
     return normalized
 
 
@@ -137,28 +165,28 @@ class SearchRequest:
             raise ValueError("query_intents are unsupported")
         if "unknown_entity_learning" in intents and len(intents) != 1:
             raise ValueError("unknown entity learning must be isolated")
-        entity_hint = _text(
+        entity_hint = _query_atom(
             values.get("entity_hint"), "entity_hint", 48, optional=True
         )
         if entity_hint is not None and intents != ("unknown_entity_learning",):
             raise ValueError("entity_hint is only allowed for background learning")
         if intents == ("unknown_entity_learning",) and entity_hint is None:
             raise ValueError("unknown entity learning requires entity_hint")
-        if entity_hint is not None and not _ENTITY_HINT.fullmatch(entity_hint):
-            raise ValueError("entity_hint contains unsafe characters")
         entity_id = _text(
             values.get("entity_id"), "entity_id", 128, optional=True
         )
-        entity_name = _text(
+        entity_name = _query_atom(
             values.get("entity_name"), "entity_name", 80, optional=True
         )
         if "named_fact_verification" in intents and (
             entity_id is None or entity_name is None
         ):
             raise ValueError("named fact verification requires canonical entity")
-        game_name = _text(values.get("game_name"), "game_name", 80)
-        region = _text(values.get("region"), "region", 48, optional=True)
-        platform = _text(
+        game_name = _query_atom(values.get("game_name"), "game_name", 80)
+        region = _query_atom(
+            values.get("region"), "region", 48, optional=True
+        )
+        platform = _query_atom(
             values.get("platform"), "platform", 48, optional=True
         )
         return cls(

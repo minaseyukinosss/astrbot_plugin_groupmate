@@ -60,6 +60,10 @@ from ..social_runtime.actions.member_style import (
 )
 from .astrbot_delivery import AstrBotOneBotSender
 from .astrbot_events import AstrBotEventTranslator
+from .astrbot_knowledge_search import (
+    AstrBotKnowledgeSearch,
+    DEFAULT_KNOWLEDGE_TOOL_NAMES,
+)
 from .astrbot_models import AstrBotModelPort
 from .astrbot_official_sources import (
     AstrBotOfficialSourceProbe,
@@ -138,6 +142,13 @@ class AstrBotSocialRuntimeBridge:
             SafeSourceUrlPolicy(),
             timeout_seconds=5.0,
         )
+        self.knowledge_search_adapter = AstrBotKnowledgeSearch(
+            context,
+            DEFAULT_KNOWLEDGE_TOOL_NAMES,
+            timeout_seconds=5.0,
+            provider_id=settings.generation_provider,
+            clock=self.clock,
+        )
         self._config_repository: ConfigVersionRepository | None = None
         self._manager: SocialRuntimeManager | None = None
         self._cognition_client: object | None = None
@@ -157,8 +168,16 @@ class AstrBotSocialRuntimeBridge:
         self.reply_error: str | None = None
         self.member_style_overlay_error: str | None = None
         self.member_style_worker_error: str | None = None
-        self.knowledge_error: str | None = None
-        self.knowledge_search_adapter_unavailable = False
+        self.knowledge_search_adapter_unavailable = bool(
+            settings.knowledge_enabled
+            and settings.knowledge_web_search_enabled
+            and not self.knowledge_search_adapter.available
+        )
+        self.knowledge_error: str | None = (
+            "knowledge_search_adapter_unavailable"
+            if self.knowledge_search_adapter_unavailable
+            else None
+        )
         self.trace_error: str | None = None
         self._reply_planner = ReplyPlanner()
         self._scene_context_builder = SceneContextBuilder()
@@ -831,7 +850,8 @@ class AstrBotSocialRuntimeBridge:
                         clock=self.clock,
                     )
                     self.knowledge_search_adapter_unavailable = (
-                        not self.official_source_probe.available
+                        self.settings.knowledge_web_search_enabled
+                        and not self.knowledge_search_adapter.available
                     )
                     self.knowledge_error = (
                         "knowledge_search_adapter_unavailable"
