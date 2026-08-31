@@ -892,6 +892,7 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_job_service = KnowledgeJobService(
                         knowledge_repository,
                         probe=self.official_source_probe,
+                        discovery_search=self.knowledge_search_adapter,
                         clock=self.clock,
                     )
                     self.knowledge_search_adapter_unavailable = (

@@ -8,7 +8,9 @@ from datetime import datetime
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from .learning import GameKnowledgeLearningWorker
 from .repository import KnowledgeJobRecord, KnowledgeRepository
+from .search import DiscoverySearchPort
 from .seeds import load_bundled_seeds
 from .sources import (
     OfficialProbeRequest,
@@ -40,10 +42,20 @@ class KnowledgeJobService:
         repository: KnowledgeRepository,
         *,
         probe: OfficialSourceProbePort,
+        discovery_search: DiscoverySearchPort | None = None,
         clock: Callable[[], float],
     ) -> None:
         self._repository = repository
         self._probe = probe
+        self._learning = (
+            None
+            if discovery_search is None
+            else GameKnowledgeLearningWorker(
+                repository,
+                discovery_search=discovery_search,
+                clock=clock,
+            )
+        )
         self._clock = clock
         self._accepting = False
         self._wake_event = asyncio.Event()
@@ -107,6 +119,9 @@ class KnowledgeJobService:
                 pass
 
     async def _run_job(self, job: KnowledgeJobRecord) -> None:
+        if job.job_kind == "unknown_entity_learning":
+            await self._run_learning_job(job)
+            return
         try:
             request = self._request_from_job(job)
             result = await self._probe.probe(request)
@@ -130,6 +145,26 @@ class KnowledgeJobService:
             raise
         except Exception:
             self._retry(job, "official_probe_failed")
+
+    async def _run_learning_job(self, job: KnowledgeJobRecord) -> None:
+        if self._learning is None:
+            self._retry(job, "learning_search_adapter_unavailable")
+            return
+        try:
+            outcome = await self._learning.learn(job)
+        except asyncio.CancelledError:
+            self._retry(job, "knowledge_learning_cancelled")
+            raise
+        except Exception:
+            self._retry(job, "knowledge_learning_failed")
+            return
+        if outcome.status != "complete":
+            self._retry(
+                job,
+                outcome.diagnostic_code or "knowledge_learning_incomplete",
+            )
+            return
+        self._repository.complete_knowledge_job(job.job_id, self._now())
 
     def _retry(self, job: KnowledgeJobRecord, diagnostic_code: str) -> None:
         delay = min(

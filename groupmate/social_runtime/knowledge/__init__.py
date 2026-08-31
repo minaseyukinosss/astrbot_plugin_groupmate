@@ -29,6 +29,12 @@ from .observation import (
     KnowledgeOriginClassifier,
     OriginDecision,
 )
+from .learning import (
+    GameKnowledgeLearningWorker,
+    KnowledgeLearningPolicy,
+    LearningDecision,
+    LearningOutcome,
+)
 from .resolver import KnowledgeEntityResolver
 from .retrieval import (
     KnowledgeHit,
@@ -51,9 +57,13 @@ __all__ = (
     "KnowledgeOriginClassifier",
     "KnowledgeEntityResolver",
     "KnowledgeHit",
+    "GameKnowledgeLearningWorker",
+    "KnowledgeLearningPolicy",
     "KnowledgeRetriever",
     "KnowledgeResolverPort",
     "KnowledgeScope",
+    "LearningDecision",
+    "LearningOutcome",
     "ObservationStatus",
     "OriginClass",
     "NegativeSearchSnapshot",

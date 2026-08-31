@@ -220,6 +220,7 @@ class KnowledgeJobRecord:
     job_id: str
     idempotency_key: str
     job_kind: str
+    group_id: str | None
     entity_id: str | None
     request: Mapping[str, Any]
     status: str
@@ -381,6 +382,31 @@ class KnowledgeRepository:
                 result.append(value)
         return tuple(result)
 
+    def active_global_game_aliases(self) -> tuple[KnowledgeAliasRecord, ...]:
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT a.* FROM knowledge_aliases AS a "
+                "JOIN knowledge_entities AS e ON e.entity_id=a.entity_id "
+                "WHERE a.status='active' AND e.entity_type='game' "
+                "AND e.status='active' AND a.alias_id LIKE 'alias:learned:%' "
+                "ORDER BY LENGTH(a.normalized_alias) DESC,"
+                "a.alias_id"
+            ).fetchall()
+        return tuple(
+            KnowledgeAliasRecord(
+                alias_id=str(row["alias_id"]),
+                scope_kind="global",
+                group_id=None,
+                entity_id=str(row["entity_id"]),
+                normalized_alias=str(row["normalized_alias"]),
+                alias_kind=str(row["alias_kind"]),
+                ambiguity_level=str(row["ambiguity_level"]),
+                confidence=1.0,
+                status=str(row["status"]),
+            )
+            for row in rows
+        )
+
     def active_seed_manifests(self) -> tuple[Mapping[str, Any], ...]:
         with connect_database(self.path) as db:
             rows = db.execute(
@@ -439,6 +465,7 @@ class KnowledgeRepository:
         *,
         idempotency_key: str,
         job_kind: str,
+        group_id: str | None = None,
         entity_id: str | None,
         request: Mapping[str, Any],
         next_attempt_at: int,
@@ -448,9 +475,21 @@ class KnowledgeRepository:
         kind = _required_text(job_kind, "job_kind", maximum=64)
         if kind not in {
             "seed_import", "official_daily_probe", "instant_enrichment",
-            "time_boundary_revalidation",
+            "unknown_entity_learning", "group_topic_warmup",
+            "time_boundary_revalidation", "correction_rebuild",
+            "long_tail_official_refresh",
         }:
             raise ValueError("unsupported knowledge job kind")
+        scope = (
+            None
+            if group_id is None
+            else _required_text(group_id, "group_id")
+        )
+        if (
+            kind in {"unknown_entity_learning", "group_topic_warmup"}
+            and scope is None
+        ):
+            raise ValueError("group-scoped learning job requires group_id")
         identity = None if entity_id is None else _required_text(entity_id, "entity_id")
         timestamp = int(now)
         due_at = int(next_attempt_at)
@@ -467,7 +506,7 @@ class KnowledgeRepository:
                 "job_kind,group_id,entity_id,request_json,status,attempt,"
                 "next_attempt_at,diagnostic_code,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, key, kind, None, identity, payload, "pending", 0,
+                (job_id, key, kind, scope, identity, payload, "pending", 0,
                  due_at, None, timestamp, timestamp),
             )
             row = db.execute(
@@ -1926,7 +1965,12 @@ class KnowledgeRepository:
             job_id=str(row["job_id"]),
             idempotency_key=str(row["idempotency_key"]),
             job_kind=str(row["job_kind"]),
-            entity_id=None if row["entity_id"] is None else str(row["entity_id"]),
+            group_id=(
+                None if row["group_id"] is None else str(row["group_id"])
+            ),
+            entity_id=(
+                None if row["entity_id"] is None else str(row["entity_id"])
+            ),
             request=payload,
             status=str(row["status"]),
             attempt=int(row["attempt"]),
@@ -2190,6 +2234,66 @@ class KnowledgeRepository:
                     ),
                 )
         return int(cursor.rowcount)
+
+    def apply_knowledge_retention(
+        self, *, now: int, batch_size: int = 500
+    ) -> dict[str, int]:
+        """Trim old low-trust text while preserving hashes and audit links."""
+
+        timestamp = int(now)
+        maximum = int(batch_size)
+        if timestamp < 0 or not 1 <= maximum <= 500:
+            raise ValueError("knowledge retention batch is invalid")
+        observation_threshold = timestamp - 180 * 24 * 60 * 60
+        source_threshold = timestamp - 30 * 24 * 60 * 60
+        retained = "[retained metadata only]"
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            observation_rows = db.execute(
+                "SELECT observation_id FROM knowledge_observations AS o "
+                "WHERE o.recorded_at<=? AND o.status IN "
+                "('admitted','rejected','expired') AND o.safe_summary<>? "
+                "AND NOT EXISTS(SELECT 1 FROM knowledge_claim_evidence AS e "
+                "WHERE e.observation_id=o.observation_id) "
+                "ORDER BY o.recorded_at,o.observation_id LIMIT ?",
+                (observation_threshold, retained, maximum),
+            ).fetchall()
+            observation_ids = tuple(
+                str(row["observation_id"]) for row in observation_rows
+            )
+            if observation_ids:
+                db.execute(
+                    "UPDATE knowledge_observations SET safe_summary=? "
+                    "WHERE observation_id IN ({})".format(
+                        ",".join("?" for _ in observation_ids)
+                    ),
+                    (retained, *observation_ids),
+                )
+            remaining = maximum - len(observation_ids)
+            source_ids: tuple[str, ...] = ()
+            if remaining:
+                source_rows = db.execute(
+                    "SELECT source_id FROM knowledge_sources AS s "
+                    "WHERE s.fetched_at<=? AND s.source_class IN "
+                    "('secondary','unofficial') AND s.evidence_excerpt<>? "
+                    "AND NOT EXISTS(SELECT 1 FROM knowledge_claim_evidence AS e "
+                    "WHERE e.source_id=s.source_id) "
+                    "ORDER BY s.fetched_at,s.source_id LIMIT ?",
+                    (source_threshold, retained, remaining),
+                ).fetchall()
+                source_ids = tuple(str(row["source_id"]) for row in source_rows)
+                if source_ids:
+                    db.execute(
+                        "UPDATE knowledge_sources SET evidence_excerpt=? "
+                        "WHERE source_id IN ({})".format(
+                            ",".join("?" for _ in source_ids)
+                        ),
+                        (retained, *source_ids),
+                    )
+        return {
+            "observations_trimmed": len(observation_ids),
+            "sources_trimmed": len(source_ids),
+        }
 
     def knowledge_storage_text(self) -> str:
         """Return knowledge table text for privacy regression auditing."""
@@ -2678,6 +2782,36 @@ class KnowledgeRepository:
                 ),
             )
 
+    def ensure_candidate_game(self, canonical_name: str, *, now: int) -> str:
+        """Create a non-resolvable placeholder without downgrading learned data."""
+
+        name = _required_text(canonical_name, "canonical_name", maximum=48)
+        folded = " ".join(
+            unicodedata.normalize("NFKC", name).casefold().split()
+        )
+        entity_id = "game:learned:" + hashlib.sha256(
+            folded.encode("utf-8")
+        ).hexdigest()[:24]
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("now must not be negative")
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT OR IGNORE INTO knowledge_entities("
+                "entity_id,entity_type,canonical_name,canonical_game_id,status,"
+                "created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    entity_id,
+                    "game",
+                    name,
+                    entity_id,
+                    "candidate",
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return entity_id
+
     def put_alias(
         self,
         *,
@@ -2830,11 +2964,16 @@ class KnowledgeRepository:
             ):
                 raise ValueError("observation is not a qualified human mention")
             entity = db.execute(
-                "SELECT status FROM knowledge_entities WHERE entity_id=?",
+                "SELECT entity_type,status FROM knowledge_entities "
+                "WHERE entity_id=?",
                 (entity_key,),
             ).fetchone()
-            if entity is None or str(entity["status"]) != "active":
-                raise ValueError("mentioned entity is not active")
+            if (
+                entity is None
+                or str(entity["entity_type"]) != "game"
+                or str(entity["status"]) not in {"candidate", "active"}
+            ):
+                raise ValueError("mentioned game entity is not eligible")
             group_id = str(observation["group_id"])
             cursor = db.execute(
                 "INSERT OR IGNORE INTO group_topic_mentions("
@@ -2890,6 +3029,44 @@ class KnowledgeRepository:
             first_seen_at=int(row["first_seen_at"]),
             last_seen_at=int(row["last_seen_at"]),
             updated_at=int(row["updated_at"]),
+        )
+
+    def topic_affinity_window(
+        self,
+        group_id: str,
+        entity_id: str,
+        *,
+        now: int,
+        window_seconds: int,
+    ) -> TopicAffinity | None:
+        scope = _required_text(group_id, "group_id")
+        entity_key = _required_text(entity_id, "entity_id")
+        timestamp = int(now)
+        window = int(window_seconds)
+        if timestamp < 0 or window < 1:
+            raise ValueError("affinity window is invalid")
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT author_ref,scene_ref,occurred_at FROM group_topic_mentions "
+                "WHERE group_id=? AND entity_id=? AND occurred_at>? "
+                "ORDER BY occurred_at,source_event_id",
+                (scope, entity_key, timestamp - window),
+            ).fetchall()
+        if not rows:
+            return None
+        occurred = [int(row["occurred_at"]) for row in rows]
+        return TopicAffinity(
+            group_id=scope,
+            entity_id=entity_key,
+            qualified_mention_count=len(rows),
+            distinct_actor_count=len({str(row["author_ref"]) for row in rows}),
+            distinct_scene_count=len({str(row["scene_ref"]) for row in rows}),
+            salience=sum(
+                self._decayed_weight(timestamp, value) for value in occurred
+            ),
+            first_seen_at=min(occurred),
+            last_seen_at=max(occurred),
+            updated_at=max(occurred),
         )
 
     @staticmethod

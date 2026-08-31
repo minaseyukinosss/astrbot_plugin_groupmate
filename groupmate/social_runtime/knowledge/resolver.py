@@ -353,6 +353,30 @@ class KnowledgeEntityResolver:
                         meaning_summary=str(term["meaning_summary"]),
                     )
                 )
+        learned_aliases = self.repository.active_global_game_aliases()
+        learned_entities = {
+            item.entity_id: item
+            for item in self.repository.entities(
+                alias.entity_id for alias in learned_aliases
+            )
+        }
+        for alias in learned_aliases:
+            entity = learned_entities.get(alias.entity_id)
+            if entity is None or entity.status != "active":
+                continue
+            active_game_ids.add(entity.entity_id)
+            aliases.append(
+                _Alias(
+                    surface=_normalize(alias.normalized_alias),
+                    entity_id=entity.entity_id,
+                    entity_type="game",
+                    canonical_name=entity.canonical_name,
+                    game_id=entity.entity_id,
+                    ambiguity_level=alias.ambiguity_level,
+                    contexts=(),
+                    supporting_id=alias.alias_id,
+                )
+            )
         deduplicated = {
             (
                 item.surface,

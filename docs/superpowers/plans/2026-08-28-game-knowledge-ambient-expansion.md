@@ -110,6 +110,8 @@ Commit: `git commit -m "feat: gate ambient game knowledge search"`
 
 ### Task 2: 实现非预装游戏的群热门触发与后台学习
 
+> 2026-08-31 执行修订：根据产品优先级，本 Task 提前于 AMBIENT 放量执行。本轮完成群热门触发、稳定语义学习和 retention；`long_tail_official_refresh` 等管理员来源注册完成后再开放，期间长尾时效问题继续失败关闭。
+
 **Files:**
 - Create: `groupmate/social_runtime/knowledge/learning.py`
 - Create: `tests/social_runtime/knowledge/test_learning.py`
@@ -122,33 +124,33 @@ Commit: `git commit -m "feat: gate ambient game knowledge search"`
 - New job kinds: `unknown_entity_learning`、`group_topic_warmup`、`long_tail_official_refresh`。
 - 热门自动阈值：滚动 7 天内至少 8 次 qualified mentions、3 个 distinct human actors、4 个 distinct scenes；管理员确认可直接预热但不能直接激活 public fact。
 
-- [ ] **Step 1: 写长尾触发失败测试**
+- [x] **Step 1: 写长尾触发失败测试**
 
-同一成员刷 20 次、不足 4 场景、Bot/forward/command、跨群合并都不触发；满足 8×3×4 时只创建一个稳定 job；再次提及一个已有长尾游戏且 official freshness 过期时创建 refresh。
+同一成员刷 20 次、不足 4 场景、Bot/forward/command、跨群合并都不触发；满足 8×3×4 时只创建一个稳定 job。已有长尾游戏的 official refresh 按上方执行修订延后。
 
-- [ ] **Step 2: 写作用域分流失败测试**
+- [x] **Step 2: 写作用域分流失败测试**
 
 群独有外号只成为 group convention candidate；公开来源确认的游戏 canonical entity/stable genre 才可全局；群聊声称“新角色”不能变 public claim；两个群分别热议同游戏可复用全局 entity，但 affinity 独立。
 
-- [ ] **Step 3: 写学习结果失败与恢复测试**
+- [x] **Step 3: 写学习结果失败与恢复测试**
 
 搜索无可靠来源、冲突、adapter unavailable 保持 pending/retry；成功学习至少要求 canonical game identity 和一条公开稳定语义证据；不得建立当前版本结论；job 重启幂等。
 
-- [ ] **Step 4: 运行并确认 RED**
+- [x] **Step 4: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_learning.py tests/recovery/test_knowledge_job_recovery.py`
 
 Expected: learning policy/job kinds 缺失。
 
-- [ ] **Step 5: 实现 background-only 学习编排**
+- [x] **Step 5: 实现 background-only 学习编排**
 
-消息主链只 append observation + enqueue stable job key；后台 job 使用 discovery Port，`SearchRequest.entity_hint` 只能取单个安全观察中 NFKC 后 1–48 字的未知表达，不能携带整句群聊。结果经过同一 admission policy。新长尾游戏默认 `baseline_active=false`，只有本群热度/再次提及在 14 天 warm window 内才调度官方 refresh。
+消息主链只 append observation + enqueue stable job key；后台 job 使用 discovery Port，`SearchRequest.entity_hint` 只能取单个安全观察中 NFKC 后 1–48 字的未知表达，不能携带整句群聊。结果经过同一 admission policy。新长尾游戏不进入 seed daily baseline；官方 refresh 按上方执行修订延后。
 
-- [ ] **Step 6: 实现保留策略**
+- [x] **Step 6: 实现保留策略**
 
 180 天未激活低信任观察裁剪 safe summary；30 天 rejected search candidate 裁剪 excerpt；90 天未用群约定 stale；公共已验证事实和审计关系不删除。清群只删 group convention/affinity/opaque author refs。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_learning.py tests/social_runtime/knowledge/test_observation.py tests/recovery/test_knowledge_job_recovery.py tests/shared/test_group_scope_privacy.py`
 

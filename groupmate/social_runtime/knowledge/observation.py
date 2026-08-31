@@ -14,6 +14,12 @@ from typing import Callable
 
 from ..contracts import SocialEventEnvelope
 from .contracts import KnowledgeObservation, OriginClass
+from .learning import (
+    LEARNING_WINDOW_SECONDS,
+    KnowledgeLearningPolicy,
+    candidate_game_id,
+    extract_unknown_game_hint,
+)
 from .repository import KnowledgeRepository, StoredKnowledgeObservation
 
 
@@ -184,6 +190,7 @@ class KnowledgeObservationService:
         queue_capacity: int = 256,
         interval_seconds: int = 60,
         classifier: KnowledgeOriginClassifier | None = None,
+        learning_policy: KnowledgeLearningPolicy | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         salt = str(install_salt or "")
@@ -195,6 +202,7 @@ class KnowledgeObservationService:
         self.queue_capacity = max(1, int(queue_capacity))
         self.interval_seconds = max(1, int(interval_seconds))
         self.classifier = classifier or KnowledgeOriginClassifier()
+        self.learning_policy = learning_policy or KnowledgeLearningPolicy()
         self.clock = time.time if clock is None else clock
         self._queue: list[_QueuedObservation] = []
         self._queued_ids: set[str] = set()
@@ -428,10 +436,62 @@ class KnowledgeObservationService:
                 ),
                 admin_confirmed=False,
             )
+        unknown_hint = extract_unknown_game_hint(text)
+        if unknown_hint is not None:
+            return _ConventionCandidate(
+                kind="unknown_game_mention",
+                expression=unknown_hint,
+                entity_id=candidate_game_id(unknown_hint),
+                meaning_summary="群聊提及待核验游戏实体“{}”".format(
+                    unknown_hint
+                ),
+                admin_confirmed=decision.admin_confirmed,
+            )
         return None
 
     def _process_observation(self, work: _QueuedObservation) -> None:
         candidate = work.candidate
+        if candidate.kind == "unknown_game_mention":
+            entity_id = self.repository.ensure_candidate_game(
+                candidate.expression, now=int(self.clock())
+            )
+            if entity_id != candidate.entity_id:
+                raise ValueError("candidate game identity changed")
+            self.repository.record_qualified_mention(
+                work.observation.observation_id,
+                candidate.entity_id,
+                work.observation.scene_ref,
+            )
+            now = int(self.clock())
+            affinity = self.repository.topic_affinity_window(
+                work.observation.group_id,
+                candidate.entity_id,
+                now=now,
+                window_seconds=LEARNING_WINDOW_SECONDS,
+            )
+            decision = self.learning_policy.evaluate(
+                work.observation,
+                affinity,
+                now=now,
+                admin_confirmed=candidate.admin_confirmed,
+            )
+            if decision.should_enqueue:
+                self.repository.enqueue_knowledge_job(
+                    idempotency_key="unknown_entity_learning:{}:{}".format(
+                        work.observation.group_id, candidate.entity_id
+                    ),
+                    job_kind="unknown_entity_learning",
+                    group_id=work.observation.group_id,
+                    entity_id=candidate.entity_id,
+                    request={
+                        "entity_hint": candidate.expression,
+                        "observation_id": work.observation.observation_id,
+                        "window_seconds": LEARNING_WINDOW_SECONDS,
+                    },
+                    next_attempt_at=now,
+                    now=now,
+                )
+            return
         if candidate.kind == "topic_mention":
             self.repository.record_qualified_mention(
                 work.observation.observation_id,
@@ -488,7 +548,11 @@ class KnowledgeObservationService:
             self._wake.clear()
             try:
                 await self.process_pending()
-                self.expire_stale()
+                now = int(self.clock())
+                self.expire_stale(now=now)
+                self.repository.apply_knowledge_retention(
+                    now=now, batch_size=500
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
