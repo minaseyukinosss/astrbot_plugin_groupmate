@@ -268,25 +268,25 @@ Commit: `git commit -m "feat: add game knowledge workspace"`
 - Metrics: local resolution latency、queue depth、provider calls/cache hits、quota rejects、job lag、freshness lag、scene invalidations、grounding rejects、ambient silence reason。
 - Metrics label 不含 group/member/raw query/entity free text；group 级细节只在认证控制查询中按需读取。
 
-- [ ] **Step 1: 写负载失败测试**
+- [x] **Step 1: 写负载失败测试**
 
 模拟 50 群并发普通消息：非知识 search=0，本地 resolver P95<50ms；20 个相同知识请求 provider calls=1；跨查询并发受 semaphore；reply locks 不产生跨群 head-of-line blocking。
 
-- [ ] **Step 2: 写数据库/retention 失败测试**
+- [x] **Step 2: 写数据库/retention 失败测试**
 
 10 万 observations 下 group/entity 索引查询保持既定预算；retention batch 每次最多 500 行且短事务；清理期间正常 append/read 成功；WAL/busy timeout 不变。
 
-- [ ] **Step 3: 写 trace 诊断矩阵**
+- [x] **Step 3: 写 trace 诊断矩阵**
 
 每个故障语义都有固定 code 和用户安全解释：unresolvable、adapter unavailable、timeout、empty、valid negative、disputed、stale、scene advanced、quota、ambient budget。未知 code 显示通用降级，不暴露 exception。
 
-- [ ] **Step 4: 运行并优化**
+- [x] **Step 4: 运行并优化**
 
 Run: `.venv/bin/python -m pytest -q tests/evaluation/test_knowledge_capacity.py tests/evaluation/test_load_budget.py tests/contracts/test_message_traces.py`
 
 Expected: PASS，所有预算断言成立。
 
-- [ ] **Step 5: 更新容量手册并提交**
+- [x] **Step 5: 更新容量手册并提交**
 
 记录默认 20/hour、100/day、全局 search concurrency、2/5s timeout、queue/job/DB 告警阈值和关闭 AMBIENT 的恢复动作。
 

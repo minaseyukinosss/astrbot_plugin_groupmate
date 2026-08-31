@@ -401,6 +401,14 @@
       as_of: now,
       revision: 8,
       counts: { entities: 18, active_claims: 42, disputed_claims: 1, stale_claims: 2, global_jobs: 1 },
+      operations: {
+        window_seconds: 86400,
+        local_resolution: { count: 184, p95_ms: 8 },
+        provider: { calls: 12, cache_hits: 31, quota_rejects: 0 },
+        queue: { depth: 1, running: 0, job_lag_seconds: 0 },
+        freshness: { stale_slots: 1, max_lag_seconds: 120 },
+        safety: { scene_invalidations: 2, grounding_rejects: 0, ambient_silences: 9 },
+      },
       release_states: releaseStates,
     },
     "knowledge/group/overview": {

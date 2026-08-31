@@ -13,6 +13,7 @@ from typing import Mapping
 from ...adapters.participants import ParticipantDirectory
 from ...adapters.message_media import MessageMediaDirectory
 from ..contracts import SocialEventEnvelope
+from ..knowledge.repository import KnowledgeRepository
 from ..persistence.schema import connect_database, initialize_database
 
 
@@ -171,6 +172,82 @@ _KNOWLEDGE_ENRICHMENT_STATUSES = {
     "timed_out",
     "failed",
 }
+_KNOWLEDGE_OPERATOR_EXPLANATIONS = {
+    "unresolvable": "无法可靠识别知识对象，Bot 将先澄清而不是猜测。",
+    "adapter_unavailable": "公开资料查询当前不可用，Bot 不会补写未经核验的信息。",
+    "timeout": "公开资料核验超时，本次回复不会使用未完成结果。",
+    "empty": "本次查询没有得到可用证据，不能据此断言网上不存在相关信息。",
+    "valid_negative": "已完成限定范围核验，当前未发现可靠公开资料。",
+    "disputed": "现有来源互相冲突，相关内容不会作为确定事实使用。",
+    "stale": "已有知识超过有效期，回复前需要重新核验。",
+    "scene_advanced": "核验完成时群聊场景已变化，本次结果不会用于原回复。",
+    "quota": "公开资料查询额度已用完，本次保持降级而不编造。",
+    "ambient_budget": "闲聊主动参与不触发联网查询，仅使用已核验的本地知识。",
+    "grounding_rejected": "生成内容没有通过知识根据检查，本次回复已被阻止。",
+    "unavailable": "知识处理暂时不可用，Bot 将保持保守回复。",
+}
+_KNOWLEDGE_OPERATOR_CODES = {
+    "direct_unresolved": "unresolvable",
+    "search_adapter_unavailable": "adapter_unavailable",
+    "knowledge_search_adapter_unavailable": "adapter_unavailable",
+    "learning_search_adapter_unavailable": "adapter_unavailable",
+    "search_unavailable": "adapter_unavailable",
+    "function_calling_unsupported": "adapter_unavailable",
+    "official_probe_unavailable": "adapter_unavailable",
+    "official_unavailable": "adapter_unavailable",
+    "official_source_registry_unavailable": "adapter_unavailable",
+    "knowledge_diagnostic_unavailable": "adapter_unavailable",
+    "search_timed_out": "timeout",
+    "enrichment_deadline_exceeded": "timeout",
+    "official_probe_timed_out": "timeout",
+    "official_timed_out": "timeout",
+    "invalid_search_result": "empty",
+    "search_empty": "empty",
+    "negative_snapshot_valid": "valid_negative",
+    "official_probe_complete_no_claim": "valid_negative",
+    "official_no_matching_update": "valid_negative",
+    "evidence_disputed": "disputed",
+    "knowledge_stale": "stale",
+    "knowledge_snapshot_expired": "stale",
+    "scene_guard_unavailable": "scene_advanced",
+    "scene_guard_invalid": "scene_advanced",
+    "scene_advanced": "scene_advanced",
+    "intention_expired": "scene_advanced",
+    "continuation_lease_expired": "scene_advanced",
+    "knowledge_need_expired": "scene_advanced",
+    "knowledge_budget_exhausted": "quota",
+    "ambient_search_disabled": "ambient_budget",
+    "unsupported_knowledge_assertion": "grounding_rejected",
+    "unknown_knowledge_id": "grounding_rejected",
+    "required_knowledge_missing": "grounding_rejected",
+    "knowledge_id_required": "grounding_rejected",
+    "knowledge_revision_changed": "grounding_rejected",
+    "rumor_as_official": "grounding_rejected",
+    "official_as_rumor": "grounding_rejected",
+    "negative_evidence_overclaimed": "grounding_rejected",
+    "knowledge_review_rejected": "grounding_rejected",
+    "knowledge_evidence_unavailable": "grounding_rejected",
+    "ambient_knowledge_reply_disabled": "ambient_budget",
+}
+_KNOWLEDGE_OPERATOR_PRIORITY = {
+    code: index
+    for index, code in enumerate(
+        (
+            "grounding_rejected",
+            "scene_advanced",
+            "disputed",
+            "stale",
+            "unresolvable",
+            "quota",
+            "timeout",
+            "adapter_unavailable",
+            "empty",
+            "valid_negative",
+            "ambient_budget",
+            "unavailable",
+        )
+    )
+}
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -199,6 +276,7 @@ class MessageTraceRepository:
             self.path,
             self.path.parent / "message-media",
         )
+        self._knowledge_metrics = KnowledgeRepository(self.path)
         self._ensure_tables()
 
     def record_received(
@@ -581,6 +659,28 @@ class MessageTraceRepository:
             }
         )
         self._mutate(event.event_id, now, mutate, stages=tuple(stages))
+        status = knowledge_summary.get("knowledge_status")
+        code = (
+            str(status.get("code") or "")
+            if isinstance(status, Mapping)
+            else ""
+        )
+        metric_kind = {
+            "scene_advanced": "scene_invalidated",
+            "grounding_rejected": "grounding_rejected",
+            "ambient_budget": "ambient_silence",
+        }.get(code)
+        if metric_kind is not None:
+            try:
+                self._knowledge_metrics.record_runtime_metric(
+                    metric_kind=metric_kind,
+                    latency_ms=0,
+                    diagnostic_code=code,
+                    now=int(now),
+                    occurrence_key=f"{event.event_id}:{metric_kind}",
+                )
+            except Exception:
+                pass
         self._close_ambient_context_traces(evaluation, now)
 
     def _close_ambient_context_traces(
@@ -777,6 +877,13 @@ class MessageTraceRepository:
             }
             if release_diagnostic is not None:
                 summary["knowledge_diagnostic"] = release_diagnostic
+            operator_status = cls._knowledge_operator_status(
+                release_diagnostic,
+                enrichment_diagnostic,
+                getattr(evaluation, "reply_diagnostic", None),
+            )
+            if operator_status is not None:
+                summary["knowledge_status"] = operator_status
             return summary
 
         resolved_entities = tuple(
@@ -873,7 +980,65 @@ class MessageTraceRepository:
         }
         if release_diagnostic is not None:
             summary["knowledge_diagnostic"] = release_diagnostic
+        operator_status = cls._knowledge_operator_status(
+            diagnostic_codes,
+            release_diagnostic,
+            enrichment_diagnostic,
+            getattr(evaluation, "reply_diagnostic", None),
+        )
+        if operator_status is not None:
+            summary["knowledge_status"] = operator_status
         return summary
+
+    @classmethod
+    def _knowledge_operator_status(
+        cls, *values: object
+    ) -> dict[str, str] | None:
+        raw_codes: list[tuple[str, bool]] = []
+
+        def collect(value: object, *, unknown_is_failure: bool = False) -> None:
+            if isinstance(value, Mapping):
+                diagnostic = value.get("diagnostic_code")
+                if diagnostic:
+                    raw_codes.append((str(diagnostic), unknown_is_failure))
+                status = str(value.get("status") or "")
+                reason = str(value.get("probe_reason") or "")
+                if status in _KNOWLEDGE_OPERATOR_CODES:
+                    raw_codes.append((status, False))
+                if reason in _KNOWLEDGE_OPERATOR_CODES:
+                    raw_codes.append((reason, False))
+                nested = value.get("enrichment")
+                if isinstance(nested, Mapping):
+                    collect(nested, unknown_is_failure=True)
+                return
+            if isinstance(value, (tuple, list)):
+                for item in value:
+                    collect(item, unknown_is_failure=False)
+                return
+            text = str(value or "")
+            if text:
+                raw_codes.append((text, unknown_is_failure))
+
+        for index, value in enumerate(values):
+            collect(value, unknown_is_failure=index == 1)
+        codes = []
+        for raw, unknown_is_failure in raw_codes:
+            code = (
+                raw
+                if raw in _KNOWLEDGE_OPERATOR_EXPLANATIONS
+                else _KNOWLEDGE_OPERATOR_CODES.get(raw)
+            )
+            if code is None and unknown_is_failure and _SAFE_DIAGNOSTIC_CODE.fullmatch(raw):
+                code = "unavailable"
+            if code is not None and code not in codes:
+                codes.append(code)
+        if not codes:
+            return None
+        selected = min(codes, key=lambda code: _KNOWLEDGE_OPERATOR_PRIORITY[code])
+        return {
+            "code": selected,
+            "explanation": _KNOWLEDGE_OPERATOR_EXPLANATIONS[selected],
+        }
 
     @classmethod
     def _knowledge_release_diagnostic(
@@ -949,6 +1114,13 @@ class MessageTraceRepository:
             if _SAFE_DOMAIN.fullmatch(domain) and domain not in domains:
                 domains.append(domain)
         diagnostic = str(values.get("diagnostic_code") or "")
+        operator_code = None
+        if diagnostic and _SAFE_DIAGNOSTIC_CODE.fullmatch(diagnostic):
+            operator_code = (
+                diagnostic
+                if diagnostic in _KNOWLEDGE_OPERATOR_EXPLANATIONS
+                else _KNOWLEDGE_OPERATOR_CODES.get(diagnostic, "unavailable")
+            )
         return {
             "status": status,
             "cache_hit": values.get("cache_hit") is True,
@@ -956,9 +1128,7 @@ class MessageTraceRepository:
             "reply_still_valid": values.get("reply_still_valid") is True,
             "source_domains": domains[:8],
             "diagnostic_code": (
-                diagnostic
-                if _SAFE_DIAGNOSTIC_CODE.fullmatch(diagnostic)
-                else None
+                operator_code
             ),
         }
 

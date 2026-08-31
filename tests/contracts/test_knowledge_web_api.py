@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from groupmate.adapters.web_api import ControlPlaneWebAPI, WebRequest
 from groupmate.social_runtime.control.commands import CommandService
@@ -9,6 +10,7 @@ from groupmate.social_runtime.control.knowledge import KnowledgeControlQueries
 from groupmate.social_runtime.control.projections import ProjectionConsumer
 from groupmate.social_runtime.control.queries import ProjectionQueries
 from groupmate.social_runtime.control.stream import ProjectionStream
+from groupmate.social_runtime.knowledge.repository import KnowledgeRepository
 from groupmate.social_runtime.persistence.schema import (
     connect_database,
     initialize_database,
@@ -80,6 +82,12 @@ def _seed(path) -> None:
             "'usage:1','group-1',NULL,'[\"claim:safe\"]','[\"official.example\"]',"
             "'private-intent-hash',25,0,'grounded_reply',NULL,120)"
         )
+    KnowledgeRepository(path).record_runtime_metric(
+        metric_kind="local_resolution",
+        latency_ms=6,
+        diagnostic_code=None,
+        now=int(time.time()),
+    )
 
 
 def _api(path, published):
@@ -144,6 +152,11 @@ def test_knowledge_queries_are_scoped_safe_uncached_and_validate_cursor(tmp_path
 
     assert library.status == group.status == entities.status == 200
     assert library.body["release_states"][0]["official_label"] == "S7"
+    assert library.body["operations"]["local_resolution"] == {
+        "count": 1,
+        "p95_ms": 6,
+    }
+    assert library.body["operations"]["window_seconds"] == 86_400
     assert group.body["recent_usage"][0]["result_kind"] == "grounded_reply"
     assert library.body["scope"] == {"kind": "library"}
     assert group.body["scope"] == {"kind": "group", "group_id": "group-1"}

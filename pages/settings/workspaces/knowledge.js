@@ -450,6 +450,31 @@ function libraryHealthPanel(overview) {
   ]);
 }
 
+function operationsPanel(overview) {
+  const operations = overview?.operations || {};
+  const local = operations.local_resolution || {};
+  const provider = operations.provider || {};
+  const queue = operations.queue || {};
+  const freshness = operations.freshness || {};
+  const safety = operations.safety || {};
+  const metrics = [
+    ["本地解析 P95", `${Number(local.p95_ms || 0)} ms`],
+    ["Provider / 缓存命中", `${Number(provider.calls || 0)} / ${Number(provider.cache_hits || 0)}`],
+    ["额度拒绝", Number(provider.quota_rejects || 0)],
+    ["队列 / 最长滞后", `${Number(queue.depth || 0)} / ${Number(queue.job_lag_seconds || 0)} s`],
+    ["过期版本 / 最长滞后", `${Number(freshness.stale_slots || 0)} / ${Number(freshness.max_lag_seconds || 0)} s`],
+    ["场景失效拦截", Number(safety.scene_invalidations || 0)],
+    ["无根据回复拦截", Number(safety.grounding_rejects || 0)],
+    ["AMBIENT 保守沉默", Number(safety.ambient_silences || 0)],
+  ];
+  return element("section", { className: "knowledge-panel" }, [
+    sectionHeading("运行保障", `最近 ${Math.round(Number(operations.window_seconds || 86400) / 3600)} 小时的全局聚合；不包含群号、成员或查询原文。`),
+    element("dl", { className: "knowledge-metrics" }, metrics.map(([label, value]) =>
+      element("div", {}, [element("dt", { text: label }), element("dd", { text: value })]),
+    )),
+  ]);
+}
+
 function popularPanel(overview, submitCommand, refresh, openDetail) {
   const games = Array.isArray(overview?.popular_games) ? overview.popular_games : [];
   return element("section", { className: "knowledge-panel" }, [
@@ -715,6 +740,7 @@ export function renderKnowledge(selectView, submitCommand, refresh, query) {
   }, [
     element("p", { className: "knowledge-scope-note knowledge-scope-note-library", text: "所有群共享：这里的公共事实、版本和来源不受当前群选择影响。" }),
     libraryHealthPanel(libraryOverview),
+    operationsPanel(libraryOverview),
     freshnessPanel(libraryOverview, detail.open),
     conflictPanel(claims.items, []),
     pagedTable({

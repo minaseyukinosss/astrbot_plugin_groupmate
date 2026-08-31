@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Mapping
@@ -96,6 +97,7 @@ class KnowledgeEntityResolver:
         group_id: str,
         now: int,
     ) -> TopicUnderstandingFrame:
+        started = time.perf_counter()
         decision_now = int(now)
         if decision_now < 0:
             raise ValueError("now must not be negative")
@@ -272,7 +274,7 @@ class KnowledgeEntityResolver:
         frame_id = "knowledge-frame:" + hashlib.sha256(
             event.event_id.encode("utf-8")
         ).hexdigest()[:24]
-        return TopicUnderstandingFrame.create(
+        frame = TopicUnderstandingFrame.create(
             frame_id=frame_id,
             game_ids=resolved_game_ids,
             resolved_entities=tuple(resolved_entities[:8]),
@@ -284,6 +286,17 @@ class KnowledgeEntityResolver:
             confidence=confidence,
             supporting_knowledge_ids=tuple(dict.fromkeys(supporting_ids))[:16],
         )
+        try:
+            self.repository.record_runtime_metric(
+                metric_kind="local_resolution",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                diagnostic_code=None,
+                now=decision_now,
+            )
+        except Exception:
+            # Metrics are optional operational evidence and never break chat.
+            pass
+        return frame
 
     def _seed_aliases(self) -> tuple[tuple[_Alias, ...], set[str]]:
         aliases: list[_Alias] = []

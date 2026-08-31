@@ -8,6 +8,7 @@ from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.control.message_traces import MessageTraceRepository
 from groupmate.social_runtime.governor import GovernorResult
 from groupmate.social_runtime.knowledge.contracts import TopicUnderstandingFrame
+from groupmate.social_runtime.knowledge.repository import KnowledgeRepository
 from groupmate.social_runtime.society.relationship_events import (
     RelationshipEventDecision,
     RelationshipEventProposal,
@@ -583,6 +584,87 @@ def test_trace_projects_grounding_ids_and_bounded_enrichment_summary(tmp_path):
         "diagnostic_code": None,
     }
     assert "不得公开的网页片段" not in json.dumps(summary, ensure_ascii=False)
+
+
+def test_trace_maps_knowledge_failures_to_fixed_safe_operator_diagnostics(tmp_path):
+    """Catches raw provider errors or ambiguous failure semantics leaking to admins."""
+    cases = (
+        ("frame", "direct_unresolved", "unresolvable", "无法可靠识别知识对象，Bot 将先澄清而不是猜测。", None),
+        ("enrichment", "search_adapter_unavailable", "adapter_unavailable", "公开资料查询当前不可用，Bot 不会补写未经核验的信息。", None),
+        ("enrichment", "search_timed_out", "timeout", "公开资料核验超时，本次回复不会使用未完成结果。", None),
+        ("enrichment", "invalid_search_result", "empty", "本次查询没有得到可用证据，不能据此断言网上不存在相关信息。", None),
+        ("release", "negative_snapshot_valid", "valid_negative", "已完成限定范围核验，当前未发现可靠公开资料。", None),
+        ("release", "evidence_disputed", "disputed", "现有来源互相冲突，相关内容不会作为确定事实使用。", None),
+        ("release", "knowledge_stale", "stale", "已有知识超过有效期，回复前需要重新核验。", None),
+        ("reply", "scene_guard_invalid", "scene_advanced", "核验完成时群聊场景已变化，本次结果不会用于原回复。", "scene_invalidations"),
+        ("enrichment", "knowledge_budget_exhausted", "quota", "公开资料查询额度已用完，本次保持降级而不编造。", None),
+        ("reply", "ambient_search_disabled", "ambient_budget", "闲聊主动参与不触发联网查询，仅使用已核验的本地知识。", "ambient_silences"),
+        ("reply", "knowledge_review_rejected", "grounding_rejected", "生成内容没有通过知识根据检查，本次回复已被阻止。", "grounding_rejects"),
+        ("enrichment", "provider_secret_exception", "unavailable", "知识处理暂时不可用，Bot 将保持保守回复。", None),
+    )
+
+    for index, (location, raw_code, code, explanation, metric_name) in enumerate(cases):
+        repo = MessageTraceRepository(tmp_path / f"knowledge-diagnostic-{index}.db")
+        event = _platform_event(f"knowledge-diagnostic-{index}")
+        evaluation = _evaluation(event, outcome="SILENCE")
+        if location == "frame":
+            evaluation.topic_understanding = TopicUnderstandingFrame.create(
+                frame_id=f"knowledge-frame:{index}",
+                game_ids=(),
+                resolved_entities=(),
+                resolved_terms=(),
+                discourse_referents=(),
+                version_reference=None,
+                conversation_intent_hint=None,
+                ambiguity_codes=(raw_code,),
+                confidence=0.0,
+                supporting_knowledge_ids=(),
+            )
+        elif location == "release":
+            probe_reason = {
+                "negative_snapshot_valid": "official_probe_complete_no_claim",
+                "evidence_disputed": "evidence_disputed",
+                "knowledge_stale": "knowledge_stale",
+            }[raw_code]
+            evaluation.knowledge_diagnostic = {
+                "status": raw_code,
+                "probe_status": "complete",
+                "probe_reason": probe_reason,
+                "source_domains": (),
+                "evidence_level": None,
+                "checked_at": 100,
+                "fresh_until": 200,
+                "release_revision": 1,
+                "tracks": {},
+            }
+        elif location == "reply":
+            evaluation.reply_diagnostic = raw_code
+        else:
+            evaluation.knowledge_diagnostic = {
+                "status": "failed",
+                "cache_hit": False,
+                "knowledge_committed": False,
+                "reply_still_valid": False,
+                "source_domains": (),
+                "diagnostic_code": raw_code,
+            }
+
+        repo.record_received(event, runtime_mode="SHADOW", now=10)
+        repo.record_evaluation(evaluation, now=12)
+
+        understanding = repo.query(
+            persona_id="groupmate:default", group_id="g-1"
+        )["items"][0]["summary"]["understanding"]
+        assert understanding["knowledge_status"] == {
+            "code": code,
+            "explanation": explanation,
+        }
+        if raw_code == "provider_secret_exception":
+            assert raw_code not in json.dumps(understanding, ensure_ascii=False)
+        metrics = KnowledgeRepository(repo.path).runtime_metrics(now=12)["safety"]
+        assert sum(metrics.values()) == (1 if metric_name else 0)
+        if metric_name:
+            assert metrics[metric_name] == 1
 
 
 def test_reply_plan_projects_only_safe_expression_summary(tmp_path):

@@ -64,3 +64,13 @@ Manager/Bridge 默认使用当前 epoch clock；测试和离线重放必须显�
 7. Unknown delivery rate 达到或超过 0.001：保持 `UNKNOWN` 并人工核查平台证据，绝不盲重试。
 
 Task 2 的 `EvaluationReport` 只向容量报告原样提供 latency、cost 与 safety issue count facts；Task 4 不读取或合并 lane quality 指标。Task 3 的 pending `shadow_capture_evidence` 继续由 runtime 原子写入并由 bridge 幂等确认，容量与故障工具不得建立第二套捕获链路。
+
+## 游戏知识运行保障
+
+共享知识库的“运行保障”使用最近 24 小时的固定类别聚合，不包含群号、成员、原始查询或实体自由文本。当前固定保护为：本地解析 P95 `< 50 ms`；Provider 全局并发上限 `2`；即时核验额度 `20/小时、100/日`；缓存 `10 分钟`；回复核验软/硬期限 `3/5 秒`；SQLite 保持 WAL 与 `busy_timeout=5000 ms`。
+
+知识任务 `pending + retry > 100`、到期任务最长滞后 `> 600 秒`、本地解析 P95 `>= 50 ms`、任一额度拒绝或任一无根据回复拦截都需要人工复核。版本过期首先显示告警并重新核验；过期超过 `24 小时`仍未恢复时，停止扩大知识回复范围。场景失效拦截本身是正确的失败关闭，真正的发布阻断条件是“场景失效后仍发送”非零。
+
+retention 每次最多处理 `500` 条并使用短事务：低信任 observation 在 `180 天`后裁剪安全摘要，未被事实引用的 secondary/unofficial 来源摘要在 `30 天`后裁剪；哈希、作用域、事实、版本、来源关系与管理员审计继续保留。
+
+出现异常时保持 DIRECT/CONTINUATION 的本地已核验知识能力，先在“本群认知”关闭对应群的 AMBIENT 试运行。若无根据回复拦截、跨群泄漏、过期场景发送或 Provider 额度异常非零，则立即关闭 AMBIENT canary，等待队列与 freshness 恢复后再重新观察一个日界周期。

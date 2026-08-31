@@ -28,6 +28,12 @@ from .contracts import (
 AFFINITY_HALF_LIFE_SECONDS = 7 * 24 * 60 * 60
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 _ENRICHMENT_JOB_DUE_AT = 2**62
+_RUNTIME_METRIC_KINDS = {
+    "local_resolution",
+    "scene_invalidated",
+    "grounding_rejected",
+    "ambient_silence",
+}
 
 
 def _required_text(value: object, name: str, *, maximum: int = 128) -> str:
@@ -1593,6 +1599,14 @@ class KnowledgeRepository:
                 ).fetchone()[0]
             )
             if hour_count >= hour_limit or day_count >= day_limit:
+                db.execute(
+                    "INSERT INTO knowledge_usage(usage_id,group_id,source_event_id,"
+                    "knowledge_ids_json,source_domains_json,query_intent_hash,"
+                    "latency_ms,cache_hit,result_kind,diagnostic_code,recorded_at) "
+                    "VALUES(?,NULL,NULL,'[]','[]',NULL,0,0,'quota_rejected',"
+                    "'knowledge_budget_exhausted',?)",
+                    (reservation_id, timestamp),
+                )
                 return None
             db.execute(
                 "INSERT INTO knowledge_usage(usage_id,group_id,source_event_id,"
@@ -1711,6 +1725,160 @@ class KnowledgeRepository:
                 ),
             )
         return usage_id
+
+    def record_runtime_metric(
+        self,
+        *,
+        metric_kind: str,
+        latency_ms: int,
+        diagnostic_code: str | None,
+        now: int,
+        occurrence_key: str | None = None,
+    ) -> str:
+        """Record one fixed-cardinality runtime event without user labels."""
+
+        kind = _required_text(metric_kind, "metric_kind", maximum=48)
+        if kind not in _RUNTIME_METRIC_KINDS:
+            raise ValueError("runtime metric kind is unsupported")
+        diagnostic = (
+            None
+            if diagnostic_code is None
+            else _required_text(
+                diagnostic_code, "diagnostic_code", maximum=64
+            )
+        )
+        if diagnostic is not None and (
+            not diagnostic.isascii()
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789_"
+                for character in diagnostic
+            )
+        ):
+            raise ValueError("runtime diagnostic code is invalid")
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("runtime metric timestamp is invalid")
+        occurrence = (
+            None
+            if occurrence_key is None
+            else _required_text(
+                occurrence_key, "occurrence_key", maximum=256
+            )
+        )
+        usage_id = (
+            f"usage:runtime:{uuid.uuid4().hex}"
+            if occurrence is None
+            else "usage:runtime:"
+            + hashlib.sha256(
+                f"{kind}\0{occurrence}".encode("utf-8")
+            ).hexdigest()[:32]
+        )
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT OR IGNORE INTO knowledge_usage(usage_id,group_id,source_event_id,"
+                "knowledge_ids_json,source_domains_json,query_intent_hash,"
+                "latency_ms,cache_hit,result_kind,diagnostic_code,recorded_at) "
+                "VALUES(?,NULL,NULL,'[]','[]',NULL,?,0,?,?,?)",
+                (
+                    usage_id,
+                    max(0, int(latency_ms)),
+                    kind,
+                    diagnostic,
+                    timestamp,
+                ),
+            )
+        return usage_id
+
+    def runtime_metrics(
+        self, *, now: int, window_seconds: int = 24 * 60 * 60
+    ) -> dict[str, object]:
+        """Return privacy-safe bounded aggregates for operations and canaries."""
+
+        timestamp = int(now)
+        window = int(window_seconds)
+        if timestamp < 0 or not 60 <= window <= 30 * 24 * 60 * 60:
+            raise ValueError("runtime metrics window is invalid")
+        threshold = max(0, timestamp - window)
+        with connect_database(self.path) as db:
+            usage_rows = db.execute(
+                "SELECT latency_ms,cache_hit,result_kind FROM knowledge_usage "
+                "WHERE recorded_at>=? AND recorded_at<=?",
+                (threshold, timestamp),
+            ).fetchall()
+            job_rows = db.execute(
+                "SELECT status,next_attempt_at FROM knowledge_jobs "
+                "WHERE status IN ('pending','retry','running')"
+            ).fetchall()
+            freshness_rows = db.execute(
+                "SELECT fresh_until FROM game_release_states "
+                "WHERE status IN ('active','disputed') AND fresh_until<?",
+                (timestamp,),
+            ).fetchall()
+
+        local_latencies = sorted(
+            max(0, int(row["latency_ms"]))
+            for row in usage_rows
+            if str(row["result_kind"]) == "local_resolution"
+        )
+        p95 = (
+            0
+            if not local_latencies
+            else local_latencies[
+                max(0, math.ceil(len(local_latencies) * 0.95) - 1)
+            ]
+        )
+        pending = tuple(
+            row for row in job_rows if str(row["status"]) in {"pending", "retry"}
+        )
+        due_lags = tuple(
+            max(0, timestamp - int(row["next_attempt_at"]))
+            for row in pending
+            if int(row["next_attempt_at"]) <= timestamp
+        )
+        freshness_lags = tuple(
+            max(0, timestamp - int(row["fresh_until"]))
+            for row in freshness_rows
+        )
+
+        def count(kind: str) -> int:
+            return sum(str(row["result_kind"]) == kind for row in usage_rows)
+
+        return {
+            "window_seconds": window,
+            "local_resolution": {
+                "count": len(local_latencies),
+                "p95_ms": p95,
+            },
+            "provider": {
+                "calls": sum(
+                    str(row["result_kind"]).startswith("provider_")
+                    and str(row["result_kind"]) != "provider_reserved"
+                    for row in usage_rows
+                ),
+                "cache_hits": sum(
+                    str(row["result_kind"]) == "enrichment_cache_hit"
+                    and int(row["cache_hit"]) == 1
+                    for row in usage_rows
+                ),
+                "quota_rejects": count("quota_rejected"),
+            },
+            "queue": {
+                "depth": len(pending),
+                "running": sum(
+                    str(row["status"]) == "running" for row in job_rows
+                ),
+                "job_lag_seconds": max(due_lags, default=0),
+            },
+            "freshness": {
+                "stale_slots": len(freshness_rows),
+                "max_lag_seconds": max(freshness_lags, default=0),
+            },
+            "safety": {
+                "scene_invalidations": count("scene_invalidated"),
+                "grounding_rejects": count("grounding_rejected"),
+                "ambient_silences": count("ambient_silence"),
+            },
+        }
 
     def successful_enrichment_cache(
         self, intent_hash: str, *, now: int, ttl_seconds: int = 600

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit, urlunsplit
 
+from ..knowledge.repository import KnowledgeRepository
 from ..persistence.schema import connect_database, initialize_database
 
 
@@ -159,6 +160,7 @@ class KnowledgeControlQueries:
     def library_overview(self, now: int) -> dict[str, object]:
         """Describe shared public knowledge without a group ownership key."""
         combined = self.overview("__library__", now)
+        operations = KnowledgeRepository(self.path).runtime_metrics(now=int(now))
         with connect_database(self.path) as db:
             counts = {
                 "entities": int(
@@ -192,6 +194,7 @@ class KnowledgeControlQueries:
             "revision": revision,
             "counts": counts,
             "release_states": combined["release_states"],
+            "operations": operations,
         }
 
     def group_overview(self, group_id: str, now: int) -> dict[str, object]:

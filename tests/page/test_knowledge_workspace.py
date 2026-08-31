@@ -116,6 +116,9 @@ def test_workspace_exposes_accessible_entity_detail_with_safe_public_sources():
     assert "群内别名" in source
     assert "所属游戏" in source
     assert "同游戏相关实体" in source
+    assert "运行保障" in source
+    assert "本地解析 P95" in source
+    assert "场景失效拦截" in source
     assert "原始群聊不会在这里展示" in source
     assert ".knowledge-detail" in styles
     assert "innerHTML" not in source
