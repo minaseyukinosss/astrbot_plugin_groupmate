@@ -253,29 +253,29 @@ Commit: `git commit -m "feat: probe official game sources"`
 - Job kinds: `seed_import`、`official_daily_probe`、`time_boundary_revalidation`。
 - Stable key: `kind × game × region × platform × Asia/Shanghai date-or-boundary`。
 
-- [ ] **Step 1: 写日界与抖动失败测试**
+- [x] **Step 1: 写日界与抖动失败测试**
 
 五款 seed 永远 baseline active；每款距最后成功 ≥24h 时最多一个 daily job；使用 Asia/Shanghai 日界和基于 stable key 的 0–20 分钟确定性抖动；重启不生成重复 job。
 
-- [ ] **Step 2: 写失败与恢复测试**
+- [x] **Step 2: 写失败与恢复测试**
 
 完整成功更新 `official_checked_at` 和 completed；partial/timeout/unavailable 进入 retry，保留旧成功时间；指数退避有上限；启动时 running 任务按 attempt/next_attempt_at 恢复；close 不把执行中失败写成成功。
 
-- [ ] **Step 3: 运行测试并确认 RED**
+- [x] **Step 3: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py`
 
 Expected: job service 缺失。
 
-- [ ] **Step 4: 实现单 worker 持久调度器**
+- [x] **Step 4: 实现单 worker 持久调度器**
 
 每次 claim job 后离开事务再做 I/O，得到 probe result 后用新短事务 admission；单 writer 序列化知识提交。触达已验证 release_at 时创建 boundary job，probe 成功后才改变 official/release 状态。
 
-- [ ] **Step 5: 接入 Bridge lifecycle/readiness**
+- [x] **Step 5: 接入 Bridge lifecycle/readiness**
 
 knowledge enabled 时先 seed import，再启动 job service；search/probe adapter unavailable 只设置 `knowledge_search_adapter_unavailable`，不阻止 seed 和观察。close 顺序为停止接收→等待有界 worker→关闭 adapter。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_jobs.py tests/recovery/test_knowledge_job_recovery.py tests/contracts/test_official_source_probe.py`
 
