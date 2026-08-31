@@ -220,29 +220,29 @@ Commit: `git commit -m "feat: coordinate bounded knowledge enrichment"`
 - Manager: `current_scene_guard(group_id, evaluation) -> SceneGuardCheck`，只读最新 GroupWorld/lease。
 - `_handle_evaluations()` 对每个 ACT evaluation 先 enrichment，后重验，再进入对应 group lock 规划/生成/Outbox。
 
-- [ ] **Step 1: 写网络不持锁失败测试**
+- [x] **Step 1: 写网络不持锁失败测试**
 
 阻塞 g1 search 时，g2 direct reply 能完成；同群 g1 第二轮保持顺序；fake search port 检查调用时对应 reply lock 未锁；全局 search semaphore 仍限制跨群 provider 并发。
 
-- [ ] **Step 2: 写四重重验失败测试**
+- [x] **Step 2: 写四重重验失败测试**
 
 分别推进 scene version、改变 target、终止 continuation lease、越过 intention expiry、使 snapshot TTL 过期；每种都不创建 ReplyPlan/Outbox，trace 标相应 code，知识结果仍可提交。
 
-- [ ] **Step 3: 运行并确认 RED**
+- [x] **Step 3: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py`
 
 Expected: 当前 `_reply_lock` 是全局锁，场景核验接口缺失。
 
-- [ ] **Step 4: 实现按群锁生命周期**
+- [x] **Step 4: 实现按群锁生命周期**
 
 使用 `defaultdict` 替代全局 lock，但锁对象通过受保护 registry 获取；当 lock 未持有且无 waiter 时清理。排序仍优先 FAST，但不同群允许并行；同群 evaluation 按 scene_version/source time 串行。
 
-- [ ] **Step 5: 重排 Bridge 执行边界**
+- [x] **Step 5: 重排 Bridge 执行边界**
 
 OBSERVE 和无需知识 ACT 不搜索；需补全 ACT 在锁外 await coordinator；重验成功后才进入 group lock，并在锁内再次快速重验一次，随后执行现有 scene→stance→move→reply→outbox。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/scenarios/test_parallel_knowledge_enrichment.py tests/scenarios/test_parallel_topic_governance.py tests/recovery/test_stale_cognition.py`
 

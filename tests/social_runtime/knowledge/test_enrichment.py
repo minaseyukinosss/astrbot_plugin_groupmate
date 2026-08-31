@@ -212,11 +212,16 @@ def test_lanes_singleflight_success_cache_and_partial_results(tmp_path):
         )
     probe = _Probe(lambda: now[0])
     search = _Search(lambda: now[0])
+
+    async def current_guard(guard, checked_at):
+        del guard, checked_at
+        return SceneGuardCheck.valid()
+
     coordinator = KnowledgeEnrichmentCoordinator(
         repository,
         official_probe=probe,
         discovery_search=search,
-        scene_guard_validator=lambda guard, checked_at: SceneGuardCheck.valid(),
+        scene_guard_validator=current_guard,
         clock=lambda: now[0],
     )
 

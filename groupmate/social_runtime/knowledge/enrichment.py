@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Iterable
+from typing import Awaitable, Callable, Iterable
 
 from .admission import KnowledgeEvidenceAdmission
 from .contracts import (
@@ -257,7 +258,9 @@ class KnowledgeEnrichmentCoordinator:
         *,
         official_probe: OfficialSourceProbePort,
         discovery_search: DiscoverySearchPort,
-        scene_guard_validator: Callable[[SceneGuard, int], SceneGuardCheck],
+        scene_guard_validator: Callable[
+            [SceneGuard, int], SceneGuardCheck | Awaitable[SceneGuardCheck]
+        ],
         clock: Callable[[], float],
         max_provider_concurrency: int = 2,
         hourly_limit: int = 20,
@@ -365,6 +368,8 @@ class KnowledgeEnrichmentCoordinator:
                 domains=shared.source_domains,
             )
         guard = self._guard_validator(request.scene_guard, now)
+        if inspect.isawaitable(guard):
+            guard = await guard
         if not isinstance(guard, SceneGuardCheck):
             raise TypeError("scene guard validator must return SceneGuardCheck")
         if not guard.is_valid:

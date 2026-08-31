@@ -167,7 +167,7 @@ class KnowledgeJobService:
                     game_id=game_id,
                     date_or_boundary=date,
                     sources=sources,
-                    due_at=midnight + _jitter(key),
+                    due_at=max(0, midnight + _jitter(key)),
                     now=now,
                 )
             for slot in self._repository.load_release_state(

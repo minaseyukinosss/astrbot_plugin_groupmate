@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections import deque
-from contextlib import suppress
-from dataclasses import asdict, replace
+from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict, dataclass, replace
 import inspect
 import secrets
 import time
@@ -25,6 +25,13 @@ from ..social_runtime.control.config_versions import (
 from ..social_runtime.control.message_traces import MessageTraceRepository
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
+from ..social_runtime.knowledge.contracts import KnowledgeNeed
+from ..social_runtime.knowledge.enrichment import (
+    EnrichmentRequest,
+    KnowledgeEnrichmentCoordinator,
+    SceneGuard,
+    SceneGuardCheck,
+)
 from ..social_runtime.knowledge.observation import KnowledgeObservationService
 from ..social_runtime.knowledge.jobs import KnowledgeJobService
 from ..social_runtime.knowledge.repository import (
@@ -32,8 +39,17 @@ from ..social_runtime.knowledge.repository import (
     NegativeSnapshotKey,
 )
 from ..social_runtime.knowledge.resolver import KnowledgeEntityResolver
+from ..social_runtime.knowledge.retrieval import (
+    KnowledgeNeedAssessor,
+    KnowledgeRetriever,
+)
+from ..social_runtime.knowledge.search import SearchRequest
 from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
-from ..social_runtime.knowledge.sources import SafeSourceUrlPolicy
+from ..social_runtime.knowledge.sources import (
+    OfficialProbeRequest,
+    OfficialSourceDefinition,
+    SafeSourceUrlPolicy,
+)
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
@@ -97,6 +113,21 @@ from ..social_runtime.society.affection_leaderboard import (
 )
 
 
+@dataclass(frozen=True)
+class _ReplyLaneReservation:
+    group_id: str
+    lock: asyncio.Lock
+    predecessor: asyncio.Future[None] | None
+    completion: asyncio.Future[None]
+
+
+@asynccontextmanager
+async def _unlocked_reply_scope():
+    """Keep the legacy pipeline indentation without adding another lock."""
+
+    yield
+
+
 class AstrBotSocialRuntimeBridge:
     def __init__(
         self,
@@ -157,6 +188,9 @@ class AstrBotSocialRuntimeBridge:
         self._knowledge_service: KnowledgeObservationService | None = None
         self._knowledge_job_service: KnowledgeJobService | None = None
         self._knowledge_repository: KnowledgeRepository | None = None
+        self._knowledge_retriever: KnowledgeRetriever | None = None
+        self._knowledge_need_assessor: KnowledgeNeedAssessor | None = None
+        self._knowledge_enrichment: KnowledgeEnrichmentCoordinator | None = None
         self._member_style_repository: MemberStyleRepository | None = None
         self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
@@ -187,7 +221,10 @@ class AstrBotSocialRuntimeBridge:
         self._reply_executor: ReplyExecutor | None = None
         self._reply_model: object | None = None
         self._dispatcher: DeliveryDispatcher | None = None
-        self._reply_lock = asyncio.Lock()
+        self._reply_locks: dict[str, asyncio.Lock] = {}
+        self._reply_lane_tails: dict[str, asyncio.Future[None]] = {}
+        self._reply_lane_users: dict[str, int] = {}
+        self._reply_lane_registry_lock = asyncio.Lock()
         self._recent_outputs: dict[str, deque[str]] = {}
         self._attention_changed = asyncio.Event()
         self._attention_task: asyncio.Task[None] | None = None
@@ -827,6 +864,9 @@ class AstrBotSocialRuntimeBridge:
             knowledge_job_service = None
             knowledge_repository = None
             knowledge_resolver = None
+            knowledge_retriever = None
+            knowledge_need_assessor = None
+            knowledge_enrichment = None
             if self.settings.knowledge_enabled:
                 try:
                     knowledge_repository = KnowledgeRepository(
@@ -844,6 +884,10 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_resolver = KnowledgeEntityResolver(
                         knowledge_repository
                     )
+                    knowledge_retriever = KnowledgeRetriever(
+                        knowledge_repository
+                    )
+                    knowledge_need_assessor = KnowledgeNeedAssessor()
                     knowledge_job_service = KnowledgeJobService(
                         knowledge_repository,
                         probe=self.official_source_probe,
@@ -862,6 +906,8 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_service = None
                     knowledge_repository = None
                     knowledge_resolver = None
+                    knowledge_retriever = None
+                    knowledge_need_assessor = None
                     knowledge_job_service = None
                     self.knowledge_search_adapter_unavailable = False
                     self.knowledge_error = "knowledge_seed_unavailable"
@@ -939,6 +985,18 @@ class AstrBotSocialRuntimeBridge:
                 )
             try:
                 await manager.start()
+                if (
+                    knowledge_repository is not None
+                    and knowledge_retriever is not None
+                    and knowledge_need_assessor is not None
+                ):
+                    knowledge_enrichment = KnowledgeEnrichmentCoordinator(
+                        knowledge_repository,
+                        official_probe=self.official_source_probe,
+                        discovery_search=self.knowledge_search_adapter,
+                        scene_guard_validator=manager.validate_scene_guard,
+                        clock=self.clock,
+                    )
                 if profile_service is not None:
                     await profile_service.start()
                 if knowledge_service is not None:
@@ -952,6 +1010,9 @@ class AstrBotSocialRuntimeBridge:
                 self._knowledge_service = knowledge_service
                 self._knowledge_job_service = knowledge_job_service
                 self._knowledge_repository = knowledge_repository
+                self._knowledge_retriever = knowledge_retriever
+                self._knowledge_need_assessor = knowledge_need_assessor
+                self._knowledge_enrichment = knowledge_enrichment
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
@@ -980,6 +1041,9 @@ class AstrBotSocialRuntimeBridge:
                 self._knowledge_service = None
                 self._knowledge_job_service = None
                 self._knowledge_repository = None
+                self._knowledge_retriever = None
+                self._knowledge_need_assessor = None
+                self._knowledge_enrichment = None
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
@@ -1212,9 +1276,445 @@ class AstrBotSocialRuntimeBridge:
                 await self._attention_changed.wait()
 
     async def _handle_evaluations(self, evaluations: tuple[object, ...]) -> None:
+        if self._manager is None or not evaluations:
+            return
+        ordered = sorted(
+            evaluations,
+            key=lambda item: (
+                0
+                if getattr(getattr(item, "frame", None), "trigger_kind", "")
+                == "FAST"
+                else 1,
+                int(getattr(item, "scene_version", 0)),
+                int(
+                    getattr(
+                        getattr(item, "source_event", None), "occurred_at", 0
+                    )
+                    or 0
+                ),
+            ),
+        )
+        grouped: dict[str, list[object]] = {}
+        for index, evaluation in enumerate(ordered):
+            group_id = str(
+                getattr(
+                    getattr(evaluation, "source_event", None), "group_id", ""
+                )
+                or ""
+            )
+            key = group_id or f"__invalid_group__:{index}"
+            grouped.setdefault(key, []).append(evaluation)
+        await asyncio.gather(
+            *(
+                self._handle_group_evaluations(group_id, tuple(items))
+                for group_id, items in grouped.items()
+            )
+        )
+
+    async def _handle_group_evaluations(
+        self, group_id: str, evaluations: tuple[object, ...]
+    ) -> None:
+        reservation = await self._reserve_reply_lane(group_id)
+        try:
+            prepared = []
+            for evaluation in evaluations:
+                item = await self._prepare_knowledge_evaluation(evaluation)
+                item = await self._revalidate_knowledge_evaluation(
+                    item, inside_lock=False
+                )
+                if item is not None:
+                    prepared.append(item)
+            if reservation.predecessor is not None:
+                await asyncio.shield(reservation.predecessor)
+            if not prepared:
+                return
+            async with reservation.lock:
+                current = []
+                for evaluation in prepared:
+                    item = await self._revalidate_knowledge_evaluation(
+                        evaluation, inside_lock=True
+                    )
+                    if item is not None:
+                        current.append(item)
+                if current:
+                    await self._handle_evaluations_locked(tuple(current))
+        finally:
+            await self._finish_reply_lane(reservation)
+
+    async def _reserve_reply_lane(
+        self, group_id: str
+    ) -> _ReplyLaneReservation:
+        loop = asyncio.get_running_loop()
+        async with self._reply_lane_registry_lock:
+            lock = self._reply_locks.setdefault(group_id, asyncio.Lock())
+            predecessor = self._reply_lane_tails.get(group_id)
+            completion: asyncio.Future[None] = loop.create_future()
+            self._reply_lane_tails[group_id] = completion
+            self._reply_lane_users[group_id] = (
+                self._reply_lane_users.get(group_id, 0) + 1
+            )
+            self._prune_idle_reply_lanes_locked(limit=128)
+            return _ReplyLaneReservation(
+                group_id, lock, predecessor, completion
+            )
+
+    async def _finish_reply_lane(
+        self, reservation: _ReplyLaneReservation
+    ) -> None:
+        if not reservation.completion.done():
+            reservation.completion.set_result(None)
+        async with self._reply_lane_registry_lock:
+            users = max(
+                0, self._reply_lane_users.get(reservation.group_id, 1) - 1
+            )
+            if users:
+                self._reply_lane_users[reservation.group_id] = users
+                return
+            self._reply_lane_users.pop(reservation.group_id, None)
+            if (
+                self._reply_lane_tails.get(reservation.group_id)
+                is reservation.completion
+            ):
+                self._reply_lane_tails.pop(reservation.group_id, None)
+            if not reservation.lock.locked():
+                self._reply_locks.pop(reservation.group_id, None)
+
+    def _prune_idle_reply_lanes_locked(self, *, limit: int) -> None:
+        if len(self._reply_locks) <= limit:
+            return
+        for group_id, lock in tuple(self._reply_locks.items()):
+            if self._reply_lane_users.get(group_id, 0) == 0 and not lock.locked():
+                self._reply_locks.pop(group_id, None)
+                self._reply_lane_tails.pop(group_id, None)
+            if len(self._reply_locks) <= limit:
+                break
+
+    async def _prepare_knowledge_evaluation(self, evaluation: object) -> object:
+        result = getattr(evaluation, "governor_result", None)
+        if str(getattr(result, "outcome", "")).upper() != "ACT":
+            return evaluation
+        frame = getattr(evaluation, "topic_understanding", None)
+        manager = self._manager
+        if manager is None or frame is None:
+            return evaluation
+        group_id = str(
+            getattr(
+                getattr(evaluation, "source_event", None), "group_id", ""
+            )
+            or ""
+        )
+        now = int(self.clock())
+        try:
+            guard = await manager.freeze_scene_guard(
+                group_id, evaluation, now=now
+            )
+            guarded = replace(evaluation, knowledge_scene_guard=guard)
+        except Exception:
+            return replace(
+                evaluation,
+                knowledge_reply_valid=False,
+                reply_diagnostic="scene_guard_unavailable",
+            )
+        retriever = self._knowledge_retriever
+        assessor = self._knowledge_need_assessor
+        coordinator = self._knowledge_enrichment
+        if retriever is None or assessor is None or coordinator is None:
+            return guarded
+        try:
+            hits = retriever.retrieve(frame, group_id, now)
+            need = assessor.assess(frame, hits, now=now)
+        except Exception:
+            return replace(
+                guarded,
+                knowledge_reply_valid=False,
+                reply_diagnostic="knowledge_local_retrieval_failed",
+            )
+        if need.outcome.value != "fresh_evidence_required":
+            return guarded
+        mapped_need = self._mapped_enrichment_need(need)
+        try:
+            request = self._build_enrichment_request(
+                guarded, guard, mapped_need, now=now
+            )
+        except Exception:
+            request = None
+        if request is None:
+            return replace(
+                guarded,
+                knowledge_reply_valid=False,
+                reply_diagnostic="official_source_registry_unavailable",
+            )
+        try:
+            enrichment = await coordinator.enrich(request)
+        except Exception:
+            return replace(
+                guarded,
+                knowledge_reply_valid=False,
+                reply_diagnostic="knowledge_enrichment_failed",
+            )
+        diagnostic = enrichment.diagnostic_code
+        knowledge_diagnostics = tuple(
+            dict.fromkeys(
+                (
+                    *tuple(
+                        getattr(guarded, "knowledge_diagnostics", ()) or ()
+                    ),
+                    *((diagnostic,) if diagnostic else ()),
+                )
+            )
+        )
+        return replace(
+            guarded,
+            knowledge_scene_guard=guard,
+            knowledge_snapshot=enrichment.snapshot,
+            knowledge_reply_valid=enrichment.reply_still_valid,
+            knowledge_diagnostics=knowledge_diagnostics,
+            knowledge_diagnostic={
+                "status": enrichment.status,
+                "cache_hit": enrichment.cache_hit,
+                "knowledge_committed": enrichment.knowledge_committed,
+                "reply_still_valid": enrichment.reply_still_valid,
+                "source_domains": list(enrichment.source_domains),
+                "intent_hash": enrichment.intent_hash,
+                "diagnostic_code": diagnostic,
+            },
+            reply_diagnostic=(
+                getattr(guarded, "reply_diagnostic", None)
+                if enrichment.reply_still_valid
+                else diagnostic or "knowledge_enrichment_unavailable"
+            ),
+        )
+
+    @staticmethod
+    def _mapped_enrichment_need(need: KnowledgeNeed) -> KnowledgeNeed:
+        mapping = {
+            "verify_version_state": "official_next_version",
+            "verify_date_or_schedule": "official_recent_update",
+            "verify_current_entity_list": "official_recent_update",
+            "verify_current_numeric_fact": "official_recent_update",
+            "verify_official_status": "official_next_version",
+            "verify_rumor_status": "rumor_next_version",
+            "learn_unknown_game": "unknown_entity_learning",
+        }
+        allowed = {
+            "official_next_version",
+            "official_recent_update",
+            "rumor_next_version",
+            "named_fact_verification",
+            "unknown_entity_learning",
+        }
+        intents = tuple(
+            dict.fromkeys(
+                mapping.get(value, value)
+                for value in need.query_intents
+                if mapping.get(value, value) in allowed
+            )
+        )[:2]
+        if not intents:
+            intents = ("official_next_version",)
+        return KnowledgeNeed.create(
+            outcome=need.outcome.value,
+            gap_codes=need.gap_codes,
+            entity_ids=need.entity_ids,
+            query_intents=intents,
+            expires_at=need.expires_at,
+        )
+
+    def _build_enrichment_request(
+        self,
+        evaluation: object,
+        guard: SceneGuard,
+        need: KnowledgeNeed,
+        *,
+        now: int,
+    ) -> EnrichmentRequest | None:
+        frame = getattr(evaluation, "topic_understanding", None)
+        if frame is None or not frame.game_ids:
+            return None
+        game_id = frame.game_ids[0]
+        seed = next(
+            (
+                item
+                for item in load_bundled_seeds()
+                if item.game.entity_id == game_id
+            ),
+            None,
+        )
+        if seed is None:
+            return None
+        reference = frame.version_reference
+        region = reference.region if reference and reference.region else "global"
+        platform = (
+            reference.platform if reference and reference.platform else "all"
+        )
+        repository = self._knowledge_repository
+        if repository is None:
+            registered_sources = tuple(
+                {
+                    "source_id": item.source_id,
+                    "publisher": item.publisher,
+                    "url": item.url,
+                    "required": item.required,
+                }
+                for item in seed.official_sources
+            )
+        else:
+            registered_sources = repository.current_official_source_registry(
+                seed.manifest["official_sources"]
+            )
+        sources = tuple(
+            OfficialSourceDefinition.create(
+                source_id=item["source_id"],
+                game_entity_id=game_id,
+                publisher=item["publisher"],
+                canonical_url=item["url"],
+                required=item["required"],
+            )
+            for item in registered_sources
+        )
+        requested_at = float(now)
+        hard_deadline = min(
+            requested_at + 5,
+            float(guard.intention_expires_at),
+            float(need.expires_at),
+        )
+        if hard_deadline <= requested_at:
+            return None
+        if hard_deadline < requested_at + 1:
+            return None
+        soft_deadline = min(requested_at + 3, hard_deadline)
+        if soft_deadline <= requested_at:
+            return None
+        request_id = str(getattr(evaluation, "request_id", "enrichment"))
+        official = OfficialProbeRequest.create(
+            request_id=f"official:{request_id}",
+            game_entity_id=game_id,
+            query_intent=need.query_intents[0],
+            sources=sources,
+            region=region,
+            platform=platform,
+            requested_at=now,
+        )
+        resolved = next(iter(frame.resolved_entities), None)
+        query_intents = tuple(
+            "official_recent_update"
+            if value == "named_fact_verification" and resolved is None
+            else value
+            for value in need.query_intents
+        )
+        search = SearchRequest.create(
+            request_id=f"search:{request_id}",
+            game_entity_id=game_id,
+            game_name=seed.game.canonical_name,
+            entity_id=None if resolved is None else resolved.entity_id,
+            entity_name=None if resolved is None else resolved.canonical_name,
+            query_intents=query_intents,
+            region=region,
+            platform=platform,
+            max_results=4,
+            deadline=max(now + 1, int(hard_deadline)),
+            entity_hint=None,
+            now=now,
+        )
+        revision = 0
+        if repository is not None:
+            revision = max(
+                (
+                    item.revision
+                    for item in repository.load_release_state(
+                        game_id, region, platform
+                    )
+                ),
+                default=0,
+            )
+        lane = str(
+            getattr(evaluation, "participation_lane", "AMBIENT") or "AMBIENT"
+        ).upper()
+        enrichment_lane = {
+            "DIRECT_FAST": "DIRECT",
+            "CONTINUATION": "CONTINUATION",
+        }.get(lane, "AMBIENT")
+        return EnrichmentRequest.create(
+            request_id=request_id,
+            lane=enrichment_lane,
+            scene_guard=guard,
+            frame=frame,
+            need=need,
+            official_request=official,
+            search_request=search,
+            requested_at=requested_at,
+            soft_deadline=soft_deadline,
+            hard_deadline=hard_deadline,
+            version_slot_id=None,
+            version_state_revision=revision,
+            region=region,
+            platform=platform,
+        )
+
+    async def _revalidate_knowledge_evaluation(
+        self, evaluation: object | None, *, inside_lock: bool
+    ) -> object | None:
+        del inside_lock
+        if evaluation is None:
+            return None
+        if getattr(evaluation, "knowledge_reply_valid", None) is False:
+            self._record_stale_knowledge_evaluation(
+                evaluation,
+                str(
+                    getattr(evaluation, "reply_diagnostic", "")
+                    or "knowledge_enrichment_unavailable"
+                ),
+            )
+            return None
+        snapshot = getattr(evaluation, "knowledge_snapshot", None)
+        if snapshot is not None and int(getattr(snapshot, "expires_at", -1)) <= int(
+            self.clock()
+        ):
+            self._record_stale_knowledge_evaluation(
+                evaluation, "knowledge_snapshot_expired"
+            )
+            return None
+        guard = getattr(evaluation, "knowledge_scene_guard", None)
+        if guard is None:
+            return evaluation
+        manager = self._manager
+        if manager is None:
+            return None
+        check = await manager.current_scene_guard(guard.group_id, evaluation)
+        if not isinstance(check, SceneGuardCheck) or not check.is_valid:
+            self._record_stale_knowledge_evaluation(
+                evaluation,
+                getattr(check, "diagnostic_code", None)
+                or "scene_guard_invalid",
+            )
+            return None
+        return evaluation
+
+    def _record_stale_knowledge_evaluation(
+        self, evaluation: object, diagnostic_code: str
+    ) -> None:
+        try:
+            stale = replace(evaluation, reply_diagnostic=diagnostic_code)
+        except TypeError:
+            stale = evaluation
+        self._record_trace(
+            self.trace_repository.record_evaluation,
+            stale,
+            int(self.clock()),
+        )
+        manager = self._manager
+        if (
+            manager is not None
+            and getattr(stale, "runtime_mode", None) is RuntimeMode.SHADOW
+        ):
+            manager.update_shadow_review_evidence(stale)
+
+    async def _handle_evaluations_locked(
+        self, evaluations: tuple[object, ...]
+    ) -> None:
         if self._manager is None:
             return
-        async with self._reply_lock:
+        async with _unlocked_reply_scope():
             handled_groups: set[str] = set()
             ordered = sorted(
                 evaluations,
@@ -1546,6 +2046,15 @@ class AstrBotSocialRuntimeBridge:
                     "rumor": None,
                 },
             }
+        enrichment_diagnostic = getattr(
+            evaluation, "knowledge_diagnostic", None
+        )
+        if isinstance(enrichment_diagnostic, Mapping):
+            prior_enrichment = enrichment_diagnostic.get("enrichment")
+            if isinstance(prior_enrichment, Mapping):
+                diagnostic["enrichment"] = dict(prior_enrichment)
+            elif "cache_hit" in enrichment_diagnostic:
+                diagnostic["enrichment"] = dict(enrichment_diagnostic)
         try:
             return replace(evaluation, knowledge_diagnostic=diagnostic)
         except TypeError:
@@ -1920,6 +2429,9 @@ class AstrBotSocialRuntimeBridge:
         self._knowledge_service = None
         self._knowledge_job_service = None
         self._knowledge_repository = None
+        self._knowledge_retriever = None
+        self._knowledge_need_assessor = None
+        self._knowledge_enrichment = None
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None

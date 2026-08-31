@@ -217,6 +217,20 @@ def test_daily_jobs_use_shanghai_keyed_jitter_and_survive_restart(tmp_path):
         ]
     ) == 1
 
+
+def test_daily_jobs_keep_repository_timestamps_non_negative_at_epoch(tmp_path):
+    from groupmate.social_runtime.knowledge.jobs import KnowledgeJobService
+
+    repository = _repository(tmp_path)
+    service = KnowledgeJobService(repository, probe=_Probe(), clock=lambda: 100)
+
+    asyncio.run(service.wake())
+
+    jobs = repository.knowledge_jobs()
+    assert len(jobs) == len(load_bundled_seeds())
+    assert all(job.next_attempt_at >= 0 for job in jobs)
+
+
 @pytest.mark.parametrize(
     ("probe_status", "expected_status", "expected_checked"),
     (

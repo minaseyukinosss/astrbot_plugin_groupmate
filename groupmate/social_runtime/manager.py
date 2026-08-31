@@ -36,9 +36,11 @@ from .governor import (
 )
 from .intentions import CandidateIntention, IntentionEngine
 from .knowledge.contracts import (
+    KnowledgeSnapshot,
     KnowledgeResolverPort,
     TopicUnderstandingFrame,
 )
+from .knowledge.enrichment import SceneGuard, SceneGuardCheck
 from .participation import ParticipationPolicy
 from .persistence.event_store import AppendResult, SQLiteSocialEventStore
 from .persistence.schema import connect_database
@@ -119,6 +121,9 @@ class ShadowEvaluation:
     social_would_reply: bool | None = None
     relationship_decisions: tuple[RelationshipEventDecision, ...] = ()
     relationship_stage: str | None = None
+    knowledge_scene_guard: SceneGuard | None = None
+    knowledge_snapshot: KnowledgeSnapshot | None = None
+    knowledge_reply_valid: bool | None = None
 
     def to_capture_evidence(self) -> dict[str, object]:
         frame_id = (
@@ -639,6 +644,129 @@ class SocialRuntimeManager:
             return await actor.snapshot()
         finally:
             await self._end_drain()
+
+    async def freeze_scene_guard(
+        self, group_id: str, evaluation: object, *, now: int
+    ) -> SceneGuard:
+        """Freeze only the reply authority that must survive enrichment."""
+
+        normalized_group = str(group_id).strip()
+        if normalized_group not in self.enabled_groups:
+            raise ValueError("scene guard requires an enabled group")
+        result = getattr(evaluation, "governor_result", None)
+        if str(getattr(result, "outcome", "")).upper() != "ACT":
+            raise ValueError("scene guard requires an ACT evaluation")
+        selected_ids = tuple(
+            getattr(result, "selected_intention_ids", ()) or ()
+        )
+        candidates = tuple(getattr(evaluation, "candidates", ()) or ())
+        selected = next(
+            (
+                item
+                for item in candidates
+                if getattr(item, "intention_id", None) in selected_ids
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("selected intention is unavailable")
+        source_event = getattr(evaluation, "source_event", None)
+        target_id = str(
+            getattr(selected, "target_id", None)
+            or getattr(source_event, "actor_id", None)
+            or ""
+        ).strip()
+        if not target_id:
+            raise ValueError("scene guard requires a reply target")
+        world = await self.group_snapshot(normalized_group)
+        lane = str(
+            getattr(evaluation, "participation_lane", "AMBIENT") or "AMBIENT"
+        ).upper()
+        lease = world.conversation_lease if lane == "CONTINUATION" else None
+        if lane == "CONTINUATION" and (
+            lease is None
+            or lease.target_id != target_id
+            or lease.expires_at <= int(now)
+            or lease.remaining_turns <= 0
+        ):
+            raise ValueError("continuation scene guard requires a live lease")
+        return SceneGuard.create(
+            group_id=normalized_group,
+            scene_version=int(getattr(evaluation, "scene_version", -1)),
+            target_id=target_id,
+            lease_id=None if lease is None else lease.source_plan_id,
+            lease_expires_at=None if lease is None else lease.expires_at,
+            intention_id=str(getattr(selected, "intention_id", "")),
+            intention_expires_at=int(getattr(selected, "expires_at", now)),
+        )
+
+    async def current_scene_guard(
+        self, group_id: str, evaluation: object
+    ) -> SceneGuardCheck:
+        """Compare a frozen guard with the latest group world and intention."""
+
+        normalized_group = str(group_id).strip()
+        guard = getattr(evaluation, "knowledge_scene_guard", None)
+        if not isinstance(guard, SceneGuard) or guard.group_id != normalized_group:
+            return SceneGuardCheck.invalid("scene_guard_missing")
+        now = int(self._clock())
+        current = await self.validate_scene_guard(guard, now)
+        if not current.is_valid:
+            return current
+        result = getattr(evaluation, "governor_result", None)
+        selected_ids = tuple(
+            getattr(result, "selected_intention_ids", ()) or ()
+        )
+        selected = next(
+            (
+                item
+                for item in tuple(getattr(evaluation, "candidates", ()) or ())
+                if getattr(item, "intention_id", None) in selected_ids
+            ),
+            None,
+        )
+        if selected is None or str(getattr(selected, "intention_id", "")) != (
+            guard.intention_id
+        ):
+            return SceneGuardCheck.invalid("intention_changed")
+        source_event = getattr(evaluation, "source_event", None)
+        current_target = str(
+            getattr(selected, "target_id", None)
+            or getattr(source_event, "actor_id", None)
+            or ""
+        ).strip()
+        if current_target != guard.target_id:
+            return SceneGuardCheck.invalid("reply_target_changed")
+        if int(getattr(selected, "expires_at", -1)) != int(
+            guard.intention_expires_at
+        ):
+            return SceneGuardCheck.invalid("intention_changed")
+        return SceneGuardCheck.valid()
+
+    async def validate_scene_guard(
+        self, guard: SceneGuard, now: int
+    ) -> SceneGuardCheck:
+        """Validate the durable world dimensions available to enrichment."""
+
+        if not isinstance(guard, SceneGuard):
+            return SceneGuardCheck.invalid("scene_guard_missing")
+        timestamp = int(now)
+        if guard.intention_expires_at <= timestamp:
+            return SceneGuardCheck.invalid("intention_expired")
+        world = await self.group_snapshot(guard.group_id)
+        if world.scene_version != guard.scene_version:
+            return SceneGuardCheck.invalid("scene_version_changed")
+        if guard.lease_id is not None:
+            lease = world.conversation_lease
+            if (
+                lease is None
+                or lease.source_plan_id != guard.lease_id
+                or lease.target_id != guard.target_id
+            ):
+                return SceneGuardCheck.invalid("continuation_lease_changed")
+            if lease.expires_at <= timestamp or lease.remaining_turns <= 0:
+                return SceneGuardCheck.invalid("continuation_lease_expired")
+        return SceneGuardCheck.valid()
 
     def persona_profile_mapping(
         self, group_id: str, config_version: int
