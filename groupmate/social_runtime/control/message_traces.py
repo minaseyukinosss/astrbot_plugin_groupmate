@@ -101,6 +101,67 @@ _KNOWLEDGE_DIAGNOSTIC_CODES = {
     "risk:official_status",
     "risk:rumor_status",
 }
+_KNOWLEDGE_RELEASE_STATUSES = {
+    "official_complete",
+    "official_partial",
+    "official_timed_out",
+    "official_unavailable",
+    "official_failed",
+    "official_unverified",
+    "negative_snapshot_valid",
+    "evidence_disputed",
+    "knowledge_stale",
+    "rumor_not_probed",
+    "rumor_observed",
+}
+_KNOWLEDGE_PROBE_STATUSES = {
+    "complete",
+    "partial",
+    "timed_out",
+    "unavailable",
+    "failed",
+    "not_requested",
+    "not_recorded",
+}
+_KNOWLEDGE_PROBE_REASONS = {
+    "official_evidence_fresh",
+    "official_no_matching_update",
+    "official_probe_complete_no_claim",
+    "official_probe_partial",
+    "official_probe_timed_out",
+    "official_probe_unavailable",
+    "official_probe_failed",
+    "official_probe_cancelled",
+    "knowledge_job_recovered",
+    "official_probe_not_recorded",
+    "release_boundary_revalidation_required",
+    "rumor_requires_explicit_search",
+    "evidence_disputed",
+    "knowledge_stale",
+    "knowledge_diagnostic_unavailable",
+}
+_KNOWLEDGE_EVIDENCE_LEVELS = {
+    "bundled",
+    "official",
+    "corroborated",
+    "secondary",
+    "unofficial",
+}
+_RELEASE_TRACK_VALUES = {
+    "release": {"future", "current", "past"},
+    "official": {"none", "teaser", "preview", "notice", "released"},
+    "rumor": {
+        "none_observed",
+        "weak",
+        "corroborated",
+        "conflicted",
+        "stale",
+    },
+}
+_SAFE_DOMAIN = re.compile(
+    r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
+)
 
 
 def _direct_reason(event: SocialEventEnvelope) -> str:
@@ -688,8 +749,9 @@ class MessageTraceRepository:
     @classmethod
     def _knowledge_summary(cls, evaluation: object) -> dict[str, object]:
         frame = getattr(evaluation, "topic_understanding", None)
+        release_diagnostic = cls._knowledge_release_diagnostic(evaluation)
         if frame is None:
-            return {
+            summary = {
                 "games": [],
                 "entities": [],
                 "terms": [],
@@ -697,6 +759,9 @@ class MessageTraceRepository:
                 "need": "none",
                 "diagnostic_codes": [],
             }
+            if release_diagnostic is not None:
+                summary["knowledge_diagnostic"] = release_diagnostic
+            return summary
 
         resolved_entities = tuple(
             getattr(frame, "resolved_entities", ()) or ()
@@ -782,13 +847,72 @@ class MessageTraceRepository:
             need = "local_sufficient"
         else:
             need = "none"
-        return {
+        summary = {
             "games": games,
             "entities": entities,
             "terms": terms,
             "version_reference": version_summary,
             "need": need,
             "diagnostic_codes": diagnostic_codes,
+        }
+        if release_diagnostic is not None:
+            summary["knowledge_diagnostic"] = release_diagnostic
+        return summary
+
+    @classmethod
+    def _knowledge_release_diagnostic(
+        cls, evaluation: object
+    ) -> dict[str, object] | None:
+        raw = getattr(evaluation, "knowledge_diagnostic", None)
+        if not isinstance(raw, Mapping):
+            return None
+        status = str(raw.get("status") or "")
+        probe_status = str(raw.get("probe_status") or "")
+        probe_reason = str(raw.get("probe_reason") or "")
+        if (
+            status not in _KNOWLEDGE_RELEASE_STATUSES
+            or probe_status not in _KNOWLEDGE_PROBE_STATUSES
+            or probe_reason not in _KNOWLEDGE_PROBE_REASONS
+        ):
+            return None
+        domains = []
+        for value in tuple(raw.get("source_domains") or ()):
+            domain = str(value or "").strip().casefold()
+            if _SAFE_DOMAIN.fullmatch(domain) and domain not in domains:
+                domains.append(domain)
+        evidence_level = raw.get("evidence_level")
+        evidence_level = (
+            str(evidence_level)
+            if str(evidence_level or "") in _KNOWLEDGE_EVIDENCE_LEVELS
+            else None
+        )
+
+        def timestamp(field: str) -> int | None:
+            value = raw.get(field)
+            if isinstance(value, bool):
+                return None
+            try:
+                normalized = int(value)
+            except (TypeError, ValueError):
+                return None
+            return normalized if normalized >= 0 else None
+
+        raw_tracks = raw.get("tracks")
+        raw_tracks = raw_tracks if isinstance(raw_tracks, Mapping) else {}
+        tracks = {}
+        for track, allowed in _RELEASE_TRACK_VALUES.items():
+            value = raw_tracks.get(track)
+            tracks[track] = str(value) if str(value or "") in allowed else None
+        return {
+            "status": status,
+            "probe_status": probe_status,
+            "probe_reason": probe_reason,
+            "source_domains": domains[:8],
+            "evidence_level": evidence_level,
+            "checked_at": timestamp("checked_at"),
+            "fresh_until": timestamp("fresh_until"),
+            "release_revision": timestamp("release_revision") or 0,
+            "tracks": tracks,
         }
 
     def _evidence_preview(

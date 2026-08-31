@@ -434,6 +434,80 @@ def test_trace_projects_only_safe_game_understanding_summary(tmp_path):
         assert private_value not in serialized
 
 
+def test_trace_projects_bounded_game_release_diagnostics(tmp_path):
+    cases = (
+        ("official_complete", "complete", "official_evidence_fresh"),
+        ("official_partial", "partial", "official_probe_partial"),
+        (
+            "negative_snapshot_valid",
+            "complete",
+            "official_no_matching_update",
+        ),
+        ("evidence_disputed", "complete", "evidence_disputed"),
+        ("knowledge_stale", "complete", "knowledge_stale"),
+        ("official_failed", "failed", "knowledge_job_recovered"),
+    )
+
+    for index, (status, probe_status, probe_reason) in enumerate(cases):
+        repo = MessageTraceRepository(tmp_path / f"release-{index}.db")
+        event = _platform_event(f"release-diagnostic-{index}")
+        evaluation = _evaluation(event, outcome="SILENCE")
+        evaluation.knowledge_diagnostic = {
+            "status": status,
+            "probe_status": probe_status,
+            "probe_reason": probe_reason,
+            "source_domains": (
+                "news.mihoyo.com",
+                "news.mihoyo.com",
+            ),
+            "evidence_level": "official",
+            "checked_at": 100,
+            "fresh_until": 200,
+            "release_revision": 3,
+            "tracks": {
+                "release": "future",
+                "official": "preview",
+                "rumor": "none_observed",
+            },
+            "url": "https://news.mihoyo.com/?token=secret",
+            "query": "完整搜索查询不应暴露",
+            "evidence_excerpt": "网页短证据不应暴露",
+            "exception": "provider secret exception",
+            "score": 0.991,
+        }
+
+        repo.record_received(event, runtime_mode="SHADOW", now=10)
+        repo.record_evaluation(evaluation, now=12)
+
+        understanding = repo.query(
+            persona_id="groupmate:default", group_id="g-1"
+        )["items"][0]["summary"]["understanding"]
+        assert understanding["knowledge_diagnostic"] == {
+            "status": status,
+            "probe_status": probe_status,
+            "probe_reason": probe_reason,
+            "source_domains": ["news.mihoyo.com"],
+            "evidence_level": "official",
+            "checked_at": 100,
+            "fresh_until": 200,
+            "release_revision": 3,
+            "tracks": {
+                "release": "future",
+                "official": "preview",
+                "rumor": "none_observed",
+            },
+        }
+        serialized = json.dumps(understanding, ensure_ascii=False)
+        for private_value in (
+            "token=secret",
+            "完整搜索查询不应暴露",
+            "网页短证据不应暴露",
+            "provider secret exception",
+            "0.991",
+        ):
+            assert private_value not in serialized
+
+
 def test_reply_plan_projects_only_safe_expression_summary(tmp_path):
     repo = MessageTraceRepository(tmp_path / "runtime.db")
     event = _platform_event("expression")

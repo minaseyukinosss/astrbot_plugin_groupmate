@@ -105,6 +105,7 @@ class ShadowEvaluation:
     status: str
     topic_understanding: TopicUnderstandingFrame | None = None
     knowledge_diagnostics: tuple[str, ...] = ()
+    knowledge_diagnostic: Mapping[str, object] | None = None
     participation_lane: str = "AMBIENT"
     participation_diagnostics: tuple[str, ...] = ()
     chorus_evidence: ChorusEvidence | None = None
@@ -146,6 +147,11 @@ class ShadowEvaluation:
                     else None
                 ),
                 "knowledge_diagnostics": list(self.knowledge_diagnostics),
+                "knowledge_diagnostic": (
+                    dict(self.knowledge_diagnostic)
+                    if self.knowledge_diagnostic is not None
+                    else None
+                ),
                 "participation_lane": self.participation_lane,
                 "participation_diagnostics": list(
                     self.participation_diagnostics
@@ -316,6 +322,11 @@ class ShadowEvaluation:
             topic_understanding=topic_understanding,
             knowledge_diagnostics=tuple(
                 values.get("knowledge_diagnostics", ())
+            ),
+            knowledge_diagnostic=(
+                dict(values["knowledge_diagnostic"])
+                if isinstance(values.get("knowledge_diagnostic"), Mapping)
+                else None
             ),
             participation_lane=str(
                 values.get("participation_lane") or "AMBIENT"

@@ -27,7 +27,10 @@ from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.knowledge.observation import KnowledgeObservationService
 from ..social_runtime.knowledge.jobs import KnowledgeJobService
-from ..social_runtime.knowledge.repository import KnowledgeRepository
+from ..social_runtime.knowledge.repository import (
+    KnowledgeRepository,
+    NegativeSnapshotKey,
+)
 from ..social_runtime.knowledge.resolver import KnowledgeEntityResolver
 from ..social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
 from ..social_runtime.knowledge.sources import SafeSourceUrlPolicy
@@ -142,6 +145,7 @@ class AstrBotSocialRuntimeBridge:
         self._profile_service: ProfileService | None = None
         self._knowledge_service: KnowledgeObservationService | None = None
         self._knowledge_job_service: KnowledgeJobService | None = None
+        self._knowledge_repository: KnowledgeRepository | None = None
         self._member_style_repository: MemberStyleRepository | None = None
         self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
@@ -802,6 +806,7 @@ class AstrBotSocialRuntimeBridge:
                 raise RuntimeError("direct cognition client is unavailable")
             knowledge_service = None
             knowledge_job_service = None
+            knowledge_repository = None
             knowledge_resolver = None
             if self.settings.knowledge_enabled:
                 try:
@@ -835,6 +840,7 @@ class AstrBotSocialRuntimeBridge:
                     )
                 except Exception:
                     knowledge_service = None
+                    knowledge_repository = None
                     knowledge_resolver = None
                     knowledge_job_service = None
                     self.knowledge_search_adapter_unavailable = False
@@ -925,6 +931,7 @@ class AstrBotSocialRuntimeBridge:
                 self._profile_service = profile_service
                 self._knowledge_service = knowledge_service
                 self._knowledge_job_service = knowledge_job_service
+                self._knowledge_repository = knowledge_repository
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
@@ -952,6 +959,7 @@ class AstrBotSocialRuntimeBridge:
                 self._profile_service = None
                 self._knowledge_service = None
                 self._knowledge_job_service = None
+                self._knowledge_repository = None
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
@@ -1198,6 +1206,9 @@ class AstrBotSocialRuntimeBridge:
                 ),
             )
             for evaluation in ordered:
+                evaluation = self._attach_shadow_knowledge_diagnostic(
+                    evaluation, now=int(self.clock())
+                )
                 group_id = str(
                     getattr(getattr(evaluation, "source_event", None), "group_id", "")
                     or ""
@@ -1483,6 +1494,260 @@ class AstrBotSocialRuntimeBridge:
                 except Exception as exc:
                     self.reply_error = f"{type(exc).__name__}: {exc}"
 
+    def _attach_shadow_knowledge_diagnostic(
+        self, evaluation: object, *, now: int
+    ) -> object:
+        """Attach a bounded, SHADOW-only view of locally persisted evidence."""
+
+        if getattr(evaluation, "runtime_mode", None) is not RuntimeMode.SHADOW:
+            return evaluation
+        frame = getattr(evaluation, "topic_understanding", None)
+        reference = getattr(frame, "version_reference", None)
+        repository = self._knowledge_repository
+        if repository is None or reference is None:
+            return evaluation
+        try:
+            diagnostic = self._shadow_knowledge_diagnostic(
+                repository, frame, now=int(now)
+            )
+        except Exception:
+            diagnostic = {
+                "status": "official_unavailable",
+                "probe_status": "unavailable",
+                "probe_reason": "knowledge_diagnostic_unavailable",
+                "source_domains": [],
+                "evidence_level": None,
+                "checked_at": None,
+                "fresh_until": None,
+                "release_revision": 0,
+                "tracks": {
+                    "release": None,
+                    "official": None,
+                    "rumor": None,
+                },
+            }
+        try:
+            return replace(evaluation, knowledge_diagnostic=diagnostic)
+        except TypeError:
+            return evaluation
+
+    @staticmethod
+    def _shadow_knowledge_diagnostic(
+        repository: KnowledgeRepository, frame: object, *, now: int
+    ) -> dict[str, object]:
+        reference = getattr(frame, "version_reference", None)
+        game_id = str(getattr(reference, "game_id", "") or "")
+        region = str(getattr(reference, "region", "") or "global")
+        platform = str(getattr(reference, "platform", "") or "all")
+        slots = repository.load_release_state(game_id, region, platform)
+        desired_release_state = {
+            "current": "current",
+            "new": "current",
+            "recent_update": "current",
+            "next": "future",
+            "previous": "past",
+        }.get(str(getattr(reference, "relative_kind", "") or ""))
+        matching_slots = tuple(
+            item
+            for item in slots
+            if desired_release_state is not None
+            and item.release_state == desired_release_state
+        )
+        slot = (
+            matching_slots[0]
+            if len(matching_slots) == 1
+            else slots[0]
+            if not matching_slots and len(slots) == 1
+            else None
+        )
+        revision = max((item.revision for item in slots), default=0)
+        tracks = {
+            "release": None if slot is None else slot.release_state,
+            "official": None if slot is None else slot.official_state,
+            "rumor": None if slot is None else slot.rumor_state,
+        }
+
+        jobs = tuple(
+            item
+            for item in repository.knowledge_jobs()
+            if item.entity_id == game_id
+            and item.job_kind
+            in {"official_daily_probe", "time_boundary_revalidation"}
+            and item.request.get("region") == region
+            and item.request.get("platform") == platform
+        )
+        latest_job = max(
+            jobs,
+            key=lambda item: (item.updated_at, item.created_at, item.job_id),
+            default=None,
+        )
+        seed = next(
+            (
+                item
+                for item in load_bundled_seeds()
+                if item.game.entity_id == game_id
+            ),
+            None,
+        )
+        registered_domains = (
+            {item.source_id: item.domain for item in seed.official_sources}
+            if seed is not None
+            else {}
+        )
+        source_domains = []
+        if latest_job is not None:
+            for source in tuple(latest_job.request.get("sources") or ()):
+                if not isinstance(source, Mapping):
+                    continue
+                domain = registered_domains.get(str(source.get("source_id") or ""))
+                if domain and domain not in source_domains:
+                    source_domains.append(domain)
+        if not source_domains:
+            if seed is not None:
+                source_domains = list(
+                    dict.fromkeys(item.domain for item in seed.official_sources)
+                )
+
+        disclosure = str(
+            getattr(reference, "disclosure_kind", "") or ""
+        )
+        ambiguity_codes = tuple(getattr(frame, "ambiguity_codes", ()) or ())
+        rumor_query = disclosure == "rumor" or "risk:rumor_status" in ambiguity_codes
+        evidence_level = (
+            "official"
+            if slot is not None and slot.official_state != "none"
+            else "unofficial"
+            if slot is not None and slot.rumor_state != "none_observed"
+            else None
+        )
+        official_checked_at = (
+            None if slot is None else slot.official_checked_at
+        )
+        checked_at = official_checked_at
+        fresh_until = None if slot is None else slot.fresh_until
+
+        disputed = bool(
+            slot is not None
+            and (slot.status == "disputed" or slot.rumor_state == "conflicted")
+        )
+        boundary = bool(
+            slot is not None
+            and slot.release_at is not None
+            and int(now) >= slot.release_at
+            and slot.official_state != "released"
+        )
+        stale = slot is not None and slot.fresh_until <= int(now)
+
+        def safe_probe_failure(value: object) -> tuple[str, str]:
+            reason = str(value or "")
+            statuses = {
+                "official_probe_partial": "partial",
+                "official_probe_timed_out": "timed_out",
+                "official_probe_unavailable": "unavailable",
+                "official_probe_failed": "failed",
+                "official_probe_cancelled": "failed",
+                "knowledge_job_recovered": "failed",
+            }
+            if reason not in statuses:
+                reason = "official_probe_failed"
+            return statuses[reason], reason
+
+        if disputed:
+            status = "evidence_disputed"
+            probe_status = "complete"
+            probe_reason = "evidence_disputed"
+        elif boundary:
+            status = "knowledge_stale"
+            probe_status = "complete"
+            probe_reason = "release_boundary_revalidation_required"
+        elif rumor_query:
+            probe_status = "not_requested"
+            probe_reason = "rumor_requires_explicit_search"
+            if slot is not None and slot.rumor_state not in {
+                "none_observed",
+                "stale",
+            }:
+                status = "rumor_observed"
+                checked_at = slot.rumor_checked_at
+            elif stale or (slot is not None and slot.rumor_state == "stale"):
+                status = "knowledge_stale"
+            else:
+                status = "rumor_not_probed"
+        else:
+            snapshot = repository.valid_negative_snapshot(
+                NegativeSnapshotKey(
+                    game_entity_id=game_id,
+                    query_intent="verify_version_state",
+                    region=region,
+                    platform=platform,
+                ),
+                int(now),
+            )
+            if snapshot is not None:
+                status = "negative_snapshot_valid"
+                probe_status = "complete"
+                probe_reason = snapshot.diagnostic_code
+                checked_at = snapshot.checked_at
+                fresh_until = snapshot.expires_at
+                revision = snapshot.version_state_revision
+            elif stale:
+                status = "knowledge_stale"
+                if latest_job is not None and latest_job.diagnostic_code:
+                    probe_status, probe_reason = safe_probe_failure(
+                        latest_job.diagnostic_code
+                    )
+                else:
+                    probe_status = (
+                        "complete"
+                        if latest_job is not None
+                        and latest_job.status == "completed"
+                        else "not_requested"
+                    )
+                    probe_reason = "knowledge_stale"
+            elif latest_job is not None and latest_job.status == "completed":
+                status = "official_complete"
+                probe_status = "complete"
+                probe_reason = (
+                    "official_evidence_fresh"
+                    if slot is not None
+                    else "official_probe_complete_no_claim"
+                )
+                checked_at = max(
+                    value
+                    for value in (official_checked_at, latest_job.updated_at)
+                    if value is not None
+                )
+            elif latest_job is not None and latest_job.diagnostic_code:
+                probe_status, probe_reason = safe_probe_failure(
+                    latest_job.diagnostic_code
+                )
+                status = {
+                    "partial": "official_partial",
+                    "timed_out": "official_timed_out",
+                    "unavailable": "official_unavailable",
+                    "failed": "official_failed",
+                }[probe_status]
+            elif slot is not None:
+                status = "official_complete"
+                probe_status = "not_recorded"
+                probe_reason = "official_evidence_fresh"
+            else:
+                status = "official_unverified"
+                probe_status = "not_requested"
+                probe_reason = "official_probe_not_recorded"
+
+        return {
+            "status": status,
+            "probe_status": probe_status,
+            "probe_reason": probe_reason,
+            "source_domains": source_domains[:8],
+            "evidence_level": evidence_level,
+            "checked_at": checked_at,
+            "fresh_until": fresh_until,
+            "release_revision": revision,
+            "tracks": tracks,
+        }
+
     def _remember_output(self, group_id: str, text: str) -> None:
         history = self._recent_outputs.setdefault(str(group_id), deque(maxlen=8))
         history.append(str(text).strip())
@@ -1634,6 +1899,7 @@ class AstrBotSocialRuntimeBridge:
         self._profile_service = None
         self._knowledge_service = None
         self._knowledge_job_service = None
+        self._knowledge_repository = None
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None

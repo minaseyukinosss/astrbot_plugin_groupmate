@@ -297,31 +297,33 @@ Commit: `git commit -m "feat: refresh official game versions daily"`
 - evaluation knowledge diagnostic includes probe reason、status、source domains、evidence level、checked/fresh times、release revision。
 - 不投影 URL query、网页短证据、查询全文、异常原文或内部评分。
 
-- [ ] **Step 1: 写端到端 SHADOW 失败场景**
+- [x] **Step 1: 写端到端 SHADOW 失败场景**
 
 用冻结 fixture 覆盖：已有当前版本、下一版本无官方资料、后来出现 preview、用户问 rumor 但日常任务不查 rumor、官方与 rumor 并存、空结果、partial、timeout、release boundary、场景正常但本阶段不生成事实回复。
 
-- [ ] **Step 2: 写 trace 失败测试**
+- [x] **Step 2: 写 trace 失败测试**
 
 Trace 能区分 `official_complete`、`official_partial`、`negative_snapshot_valid`、`evidence_disputed` 和 `knowledge_stale`；只显示 source domain、等级和时间。
 
-- [ ] **Step 3: 运行并按失败完善编排**
+- [x] **Step 3: 运行并按失败完善编排**
 
 Run: `.venv/bin/python -m pytest -q tests/scenarios/test_game_release_shadow.py tests/contracts/test_message_traces.py`
 
 Expected: 首次因 SHADOW orchestration/trace 缺失而失败；实现后 PASS。
 
-- [ ] **Step 4: 运行 Gate 2**
+- [x] **Step 4: 运行 Gate 2**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_official_source_probe.py tests/recovery/test_knowledge_job_recovery.py tests/scenarios/test_game_release_shadow.py`
 
 Expected: PASS；失败/partial 不推进成功时间，false negative claims 为 0，三轨审计链完整。
 
-- [ ] **Step 5: 回归并提交**
+- [x] **Step 5: 回归并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime tests/contracts tests/recovery tests/scenarios`
 
 Expected: PASS。
+
+本次按用户要求不运行全仓大回归；使用 Gate 2 加 trace/capture 兼容用例的聚焦超集完成验证。
 
 Run: `git diff --check`
 
