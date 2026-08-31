@@ -115,6 +115,16 @@ class RiskClass(str, Enum):
     RUMOR_STATUS = "rumor_status"
 
 
+class KnowledgeQualifier(str, Enum):
+    STABLE = "stable"
+    OFFICIAL = "official"
+    OFFICIAL_PREVIEW = "official_preview"
+    OFFICIAL_RELEASED = "official_released"
+    RUMOR = "rumor"
+    NEGATIVE_OFFICIAL = "negative_official"
+    NEGATIVE_SEARCH = "negative_search"
+
+
 EnumType = TypeVar("EnumType", bound=Enum)
 
 
@@ -773,6 +783,230 @@ class SourceEvidence:
 
 
 @dataclass(frozen=True)
+class KnowledgeFact:
+    knowledge_id: str
+    game_entity_id: str
+    entity_id: str
+    safe_summary: str
+    risk_class: RiskClass
+    evidence_level: EvidenceLevel
+    qualifier: KnowledgeQualifier
+    checked_at: int
+    expires_at: int
+    source_ids: tuple[str, ...]
+    version_slot_id: str | None
+    region: str | None
+    platform: str | None
+    status: ClaimStatus
+    version_state_revision: int
+
+    @classmethod
+    def create(cls, **values: object) -> "KnowledgeFact":
+        risk_class = _enum(
+            RiskClass, values.get("risk_class"), "risk_class"
+        )
+        evidence_level = _enum(
+            EvidenceLevel, values.get("evidence_level"), "evidence_level"
+        )
+        qualifier = _enum(
+            KnowledgeQualifier, values.get("qualifier"), "qualifier"
+        )
+        checked_at = _timestamp(values.get("checked_at"), "checked_at")
+        expires_at = _timestamp(values.get("expires_at"), "expires_at")
+        if expires_at <= checked_at:
+            raise ValueError("expires_at must follow checked_at")
+        source_ids = tuple(
+            sorted(
+                _texts(
+                    values.get("source_ids", ()), "source_ids", limit=8
+                )
+            )
+        )
+        if not source_ids:
+            raise ValueError("source_ids must not be empty")
+        if (risk_class is RiskClass.STABLE_SEMANTIC) != (
+            qualifier is KnowledgeQualifier.STABLE
+        ):
+            raise ValueError("stable qualifier must match stable_semantic risk")
+        if qualifier in {
+            KnowledgeQualifier.OFFICIAL,
+            KnowledgeQualifier.OFFICIAL_PREVIEW,
+            KnowledgeQualifier.OFFICIAL_RELEASED,
+            KnowledgeQualifier.NEGATIVE_OFFICIAL,
+        } and evidence_level is not EvidenceLevel.OFFICIAL:
+            raise ValueError("official qualifier requires official evidence")
+        if qualifier is KnowledgeQualifier.RUMOR and evidence_level in {
+            EvidenceLevel.BUNDLED,
+            EvidenceLevel.OFFICIAL,
+        }:
+            raise ValueError("rumor qualifier requires non-official evidence")
+        revision = _timestamp(
+            values.get("version_state_revision", 0),
+            "version_state_revision",
+        )
+        if risk_class is not RiskClass.STABLE_SEMANTIC and revision < 1:
+            raise ValueError("strict facts require a positive version revision")
+        version_slot_id = _text(
+            values.get("version_slot_id"),
+            "version_slot_id",
+            maximum=128,
+            optional=True,
+        )
+        if risk_class is RiskClass.VERSION_STATE and version_slot_id is None:
+            raise ValueError("version state facts require version_slot_id")
+        return cls(
+            knowledge_id=_text(
+                values.get("knowledge_id"), "knowledge_id", maximum=128
+            ),
+            game_entity_id=_text(
+                values.get("game_entity_id"),
+                "game_entity_id",
+                maximum=128,
+            ),
+            entity_id=_text(
+                values.get("entity_id"), "entity_id", maximum=128
+            ),
+            safe_summary=_text(
+                values.get("safe_summary"), "safe_summary", maximum=240
+            ),
+            risk_class=risk_class,
+            evidence_level=evidence_level,
+            qualifier=qualifier,
+            checked_at=checked_at,
+            expires_at=expires_at,
+            source_ids=source_ids,
+            version_slot_id=version_slot_id,
+            region=_text(
+                values.get("region"), "region", maximum=48, optional=True
+            ),
+            platform=_text(
+                values.get("platform"),
+                "platform",
+                maximum=48,
+                optional=True,
+            ),
+            status=_enum(ClaimStatus, values.get("status"), "status"),
+            version_state_revision=revision,
+        )
+
+
+@dataclass(frozen=True)
+class StrictFactFragment:
+    fragment_id: str
+    knowledge_id: str
+    text: str
+    risk_class: RiskClass
+
+    @classmethod
+    def create(cls, **values: object) -> "StrictFactFragment":
+        risk_class = _enum(
+            RiskClass, values.get("risk_class"), "risk_class"
+        )
+        if risk_class is RiskClass.STABLE_SEMANTIC:
+            raise ValueError("stable facts do not use strict fragments")
+        return cls(
+            fragment_id=_text(
+                values.get("fragment_id"), "fragment_id", maximum=128
+            ),
+            knowledge_id=_text(
+                values.get("knowledge_id"), "knowledge_id", maximum=128
+            ),
+            text=_text(values.get("text"), "text", maximum=240),
+            risk_class=risk_class,
+        )
+
+
+@dataclass(frozen=True)
+class KnowledgeSnapshot:
+    snapshot_id: str
+    topic_frame_id: str
+    allowed_knowledge_facts: tuple[KnowledgeFact, ...]
+    strict_fact_fragments: tuple[StrictFactFragment, ...]
+    source_ids: tuple[str, ...]
+    checked_at: int
+    expires_at: int
+    version_state_revision: int
+
+    @classmethod
+    def create(cls, **values: object) -> "KnowledgeSnapshot":
+        facts = _objects(
+            values.get("allowed_knowledge_facts", ()),
+            KnowledgeFact,
+            "allowed_knowledge_facts",
+            limit=8,
+        )
+        fragments = _objects(
+            values.get("strict_fact_fragments", ()),
+            StrictFactFragment,
+            "strict_fact_fragments",
+            limit=8,
+        )
+        if len({item.knowledge_id for item in facts}) != len(facts):
+            raise ValueError("allowed facts must have unique knowledge IDs")
+        fact_by_id = {item.knowledge_id: item for item in facts}
+        fragment_by_id = {item.knowledge_id: item for item in fragments}
+        if len(fragment_by_id) != len(fragments):
+            raise ValueError("strict facts must have one fragment each")
+        strict_ids = {
+            item.knowledge_id
+            for item in facts
+            if item.risk_class is not RiskClass.STABLE_SEMANTIC
+        }
+        if set(fragment_by_id) != strict_ids:
+            raise ValueError("every strict fact must have exactly one fragment")
+        for knowledge_id, fragment in fragment_by_id.items():
+            if fragment.risk_class is not fact_by_id[knowledge_id].risk_class:
+                raise ValueError("fragment risk must match its fact")
+            if fragment.text != fact_by_id[knowledge_id].safe_summary:
+                raise ValueError("fragment text must match its frozen fact")
+        source_ids = _texts(
+            values.get("source_ids", ()), "source_ids", limit=2
+        )
+        fact_source_ids = {
+            source_id for fact in facts for source_id in fact.source_ids
+        }
+        if set(source_ids) != fact_source_ids:
+            raise ValueError("snapshot source IDs must exactly cover facts")
+        checked_at = _timestamp(values.get("checked_at"), "checked_at")
+        expires_at = _timestamp(values.get("expires_at"), "expires_at")
+        if expires_at <= checked_at:
+            raise ValueError("expires_at must follow checked_at")
+        if any(
+            fact.status is not ClaimStatus.ACTIVE
+            or fact.checked_at > checked_at
+            or fact.expires_at < expires_at
+            for fact in facts
+        ):
+            raise ValueError("snapshot facts must be active for its full lifetime")
+        revision = _timestamp(
+            values.get("version_state_revision", 0),
+            "version_state_revision",
+        )
+        if any(
+            fact.risk_class is not RiskClass.STABLE_SEMANTIC
+            and fact.version_state_revision != revision
+            for fact in facts
+        ):
+            raise ValueError("strict fact revision must match snapshot revision")
+        return cls(
+            snapshot_id=_text(
+                values.get("snapshot_id"), "snapshot_id", maximum=128
+            ),
+            topic_frame_id=_text(
+                values.get("topic_frame_id"),
+                "topic_frame_id",
+                maximum=128,
+            ),
+            allowed_knowledge_facts=facts,
+            strict_fact_fragments=fragments,
+            source_ids=source_ids,
+            checked_at=checked_at,
+            expires_at=expires_at,
+            version_state_revision=revision,
+        )
+
+
+@dataclass(frozen=True)
 class KnowledgeClaimCandidate:
     candidate_id: str
     subject_entity_id: str
@@ -1094,9 +1328,12 @@ __all__ = (
     "KnowledgeNeed",
     "KnowledgeNeedOutcome",
     "KnowledgeClaimCandidate",
+    "KnowledgeFact",
     "KnowledgeObservation",
+    "KnowledgeQualifier",
     "KnowledgeResolverPort",
     "KnowledgeScope",
+    "KnowledgeSnapshot",
     "ObservationStatus",
     "OriginClass",
     "NegativeSearchSnapshot",
@@ -1105,6 +1342,7 @@ __all__ = (
     "RiskClass",
     "SourceClass",
     "SourceEvidence",
+    "StrictFactFragment",
     "TopicUnderstandingFrame",
     "VersionReference",
     "VersionSlot",

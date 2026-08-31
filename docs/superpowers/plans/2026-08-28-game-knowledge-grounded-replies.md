@@ -76,11 +76,11 @@
 - `KnowledgeSnapshotBuilder.build(frame, need, hits, now) -> KnowledgeSnapshot`。
 - `KnowledgeFact` 明确 `risk_class`、`evidence_level`、`qualifier`、`checked_at/expires_at` 和 source IDs。
 
-- [ ] **Step 1: 写 search request/result 失败测试**
+- [x] **Step 1: 写 search request/result 失败测试**
 
 拒绝 raw message、任意 query 字符串、私密字段、超过 2 个 intents、超过 4 results、非安全 URL、网页正文、未知 source class、deadline 已过和过长 evidence excerpt。
 
-- [ ] **Step 2: 写 snapshot 冻结失败测试**
+- [x] **Step 2: 写 snapshot 冻结失败测试**
 
 快照 ID 对 canonical 内容稳定；过期 claim、disputed claim、错误版本/区服/平台不进入 allowed facts；strict 风险必须有 fragment；source IDs 必须属于 facts；后台 repository 改变不改变已构建对象。
 
@@ -92,17 +92,17 @@ def test_snapshot_does_not_change_after_repository_update(repository):
     assert snapshot.version_state_revision == 3
 ```
 
-- [ ] **Step 3: 运行测试并确认 RED**
+- [x] **Step 3: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
 
 Expected: search/snapshot 模块不存在。
 
-- [ ] **Step 4: 实现受限 query intent 与快照构建器**
+- [x] **Step 4: 实现受限 query intent 与快照构建器**
 
 查询由本地模板从 canonical game/entity/intent 生成，支持 `official_next_version`、`official_recent_update`、`rumor_next_version`、`named_fact_verification`；只有 `unknown_entity_learning` 后台任务可插入隔离后的 `entity_hint`，其他路径不直接拼接群消息。快照最多 8 facts、8 fragments、2 sources，TTL 取最短 evidence freshness 与 intention expiry。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_search.py tests/social_runtime/knowledge/test_snapshot.py`
 
