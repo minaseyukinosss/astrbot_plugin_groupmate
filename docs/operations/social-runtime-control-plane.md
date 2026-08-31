@@ -40,6 +40,8 @@ Projection/SSE 故障不阻塞 GroupSceneActor、TaskRuntime 或 Outbox。页面
 
 游戏知识默认启用。预装范围为三角洲行动、鸣潮、崩坏：星穹铁道和绝区零；原神不再预装，但可像其他非预装游戏一样进入群热门学习。非预装游戏只有在同群滚动 7 天达到 8 次有效提及、3 名真实成员和 4 个场景后，才创建一次后台 discovery job；同一成员刷屏、Bot、转发、命令和跨群计数均不触发。后台至少需要两个独立公开来源同时支持游戏名称和同一稳定类型，才激活全局基础语义；单来源、搜索失败或冲突只重试，不生成版本事实。AMBIENT 搜索仍关闭。
 
+知识管理查询只返回规范实体、群热度、claim 安全摘要、来源域名/类别、检查时间、群约定状态和 job 诊断码；不得返回原始 URL/query、excerpt、搜索请求、author ref 或原消息。纠正操作统一走 control command：管理员、群作用域、reason、expected version 和 request id 都必须有效；确认群约定只创建群 alias，不写全局 alias。驳回、替换和争议处理保留旧记录并追加 `origin_class=admin` observation 与 `governance_actions` 审计。手动 retry 只把已有 retry job 调整为当前到期，不在控制请求内访问网络。AMBIENT canary 的最新群级状态由 `knowledge.ambient_canary_enabled` 治理动作读取，默认关闭。
+
 升级时只退休旧原神 bundled 投影和定时任务，不删除群内已学习知识。低信任观察 180 天后裁剪摘要，未被 claim 使用的搜索候选 30 天后裁剪 excerpt，审计哈希和关联保留。
 
 上线前使用 `scenarios/game_knowledge_understanding.jsonl` 的 196 条冻结匿名样例运行 Gate 1。必须同时满足理解准确率至少 95%、高置信错误合并率低于 1%、跨群泄漏为 0、Bot/命令知识晋升为 0；版本指代还应全部判定为需要新鲜证据。运行中心抽查时只应看到规范名称、版本指代和限定诊断码，不应看到内部置信分、作者引用、证据 ID、原消息摘要或异常正文。

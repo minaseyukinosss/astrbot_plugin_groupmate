@@ -174,25 +174,25 @@ Commit: `git commit -m "feat: learn long tail game semantics"`
 - Admin commands: reject convention、confirm convention、supersede alias、mark claim disputed、retry job、invalidate cache、enable/disable ambient canary。
 - 所有 mutation 要求 `actor_id in control_admin_ids`、reason、expected revision，并 append `origin_class=admin` observation/audit record。
 
-- [ ] **Step 1: 写只读投影安全失败测试**
+- [x] **Step 1: 写只读投影安全失败测试**
 
 输出 canonical entity、作用域、status、source domain/class、checked/fresh time、group salience、diagnostic；不输出 URL query、excerpt、完整搜索 query、author ref、raw event text、Persona/Profile/关系数据。
 
-- [ ] **Step 2: 写权限/并发失败测试**
+- [x] **Step 2: 写权限/并发失败测试**
 
 非管理员拒绝；跨群 convention target 拒绝；stale expected revision 返回 conflict；重复 request id 幂等；管理员确认群 alias 不产生 global alias；reject/supersede 保留旧记录。
 
-- [ ] **Step 3: 运行并确认 RED**
+- [x] **Step 3: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py`
 
 Expected: control query/commands 缺失。
 
-- [ ] **Step 4: 实现 query DTO 与 mutation handler**
+- [x] **Step 4: 实现 query DTO 与 mutation handler**
 
 使用现有 control 命令 envelope、治理审计和 revision 风格；每次 mutation 一个短事务，先 append admin observation，再状态迁移。`retry job` 只把 eligible failed/retry job 的 `next_attempt_at` 设为 now，不直接做网络调用。AMBIENT canary 写入现有 `governance_actions`，动作类型固定为 `knowledge.ambient_canary_enabled`，按 group 读取最新有效 revision。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/contracts/test_knowledge_admin.py tests/contracts/test_commands.py tests/shared/test_group_scope_privacy.py`
 

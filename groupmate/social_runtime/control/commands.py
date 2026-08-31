@@ -13,6 +13,7 @@ from typing import Mapping
 from ..contracts import SocialEventEnvelope
 from ..persona.profile import GroupmatePersonaProfile, PERSONA_PROFILE_CONFIG_KEY
 from ..persistence.schema import connect_database, initialize_database
+from ..knowledge.repository import KnowledgeRepository
 from .config_versions import ConfigNotFound, ConfigVersionRepository
 
 
@@ -210,6 +211,49 @@ class SetMemberStyleDistillation:
     command_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ConfirmKnowledgeConvention:
+    convention_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RejectKnowledgeConvention:
+    convention_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SupersedeKnowledgeAlias:
+    alias_id: str
+    replacement_entity_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DisputeKnowledgeClaim:
+    claim_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RetryKnowledgeJob:
+    job_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class InvalidateKnowledgeCache:
+    entity_id: str
+    command_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SetKnowledgeAmbientCanary:
+    enabled: bool
+    command_id: str | None = None
+
+
 ControlCommand = (
     PauseRuntime
     | SetRuntimeMode
@@ -232,6 +276,13 @@ ControlCommand = (
     | MergeProfileIdentity
     | SplitProfileIdentity
     | SetMemberStyleDistillation
+    | ConfirmKnowledgeConvention
+    | RejectKnowledgeConvention
+    | SupersedeKnowledgeAlias
+    | DisputeKnowledgeClaim
+    | RetryKnowledgeJob
+    | InvalidateKnowledgeCache
+    | SetKnowledgeAmbientCanary
 )
 
 
@@ -356,7 +407,9 @@ class CommandService:
                     context.expected_version, current_version
                 )
             try:
-                data, event_type = self._execute_on(db, command, context, now)
+                data, event_type = self._execute_on(
+                    db, command, context, now, command_id
+                )
             except ConfigNotFound as exc:
                 raise CommandNotFound("command target is not available") from exc
             control_version = self._control_version_on(db, context) + 1
@@ -453,6 +506,7 @@ class CommandService:
         command: ControlCommand,
         context: CommandContext,
         now: int,
+        command_id: str,
     ) -> tuple[dict[str, object], str]:
         if isinstance(command, PauseRuntime):
             return {"paused": bool(command.paused)}, (
@@ -955,7 +1009,97 @@ class CommandService:
                 "setting_version": version,
                 "status": "ACCUMULATING" if command.enabled else "DISABLED",
             }, "control.member_style_distillation_set"
+        if isinstance(command, ConfirmKnowledgeConvention):
+            return self._knowledge_mutation(
+                KnowledgeRepository.confirm_convention_on,
+                db,
+                context,
+                command_id,
+                now,
+                convention_id=command.convention_id,
+            ), "control.knowledge.convention_confirmed"
+        if isinstance(command, RejectKnowledgeConvention):
+            return self._knowledge_mutation(
+                KnowledgeRepository.reject_convention_on,
+                db,
+                context,
+                command_id,
+                now,
+                convention_id=command.convention_id,
+            ), "control.knowledge.convention_rejected"
+        if isinstance(command, SupersedeKnowledgeAlias):
+            return self._knowledge_mutation(
+                KnowledgeRepository.supersede_group_alias_on,
+                db,
+                context,
+                command_id,
+                now,
+                alias_id=command.alias_id,
+                replacement_entity_id=command.replacement_entity_id,
+            ), "control.knowledge.alias_superseded"
+        if isinstance(command, DisputeKnowledgeClaim):
+            return self._knowledge_mutation(
+                KnowledgeRepository.dispute_claim_on,
+                db,
+                context,
+                command_id,
+                now,
+                claim_id=command.claim_id,
+            ), "control.knowledge.claim_disputed"
+        if isinstance(command, RetryKnowledgeJob):
+            return self._knowledge_mutation(
+                KnowledgeRepository.retry_job_on,
+                db,
+                context,
+                command_id,
+                now,
+                job_id=command.job_id,
+            ), "control.knowledge.job_retry_requested"
+        if isinstance(command, InvalidateKnowledgeCache):
+            return self._knowledge_mutation(
+                KnowledgeRepository.invalidate_cache_on,
+                db,
+                context,
+                command_id,
+                now,
+                entity_id=command.entity_id,
+            ), "control.knowledge.cache_invalidated"
+        if isinstance(command, SetKnowledgeAmbientCanary):
+            if type(command.enabled) is not bool:
+                raise CommandValidationError("knowledge canary state must be boolean")
+            return self._knowledge_mutation(
+                KnowledgeRepository.append_canary_audit_on,
+                db,
+                context,
+                command_id,
+                now,
+                enabled=command.enabled,
+            ), "control.knowledge.ambient_canary_enabled"
         raise CommandValidationError("unsupported control command")
+
+    @staticmethod
+    def _knowledge_mutation(
+        operation,
+        db: sqlite3.Connection,
+        context: CommandContext,
+        command_id: str,
+        now: int,
+        **target: object,
+    ) -> dict[str, object]:
+        try:
+            return operation(
+                db,
+                group_id=str(context.group_id),
+                actor_id=context.admin_id,
+                reason=context.reason.strip(),
+                command_id=command_id,
+                now=now,
+                **target,
+            )
+        except LookupError as exc:
+            raise CommandNotFound("knowledge target is not available") from exc
+        except ValueError as exc:
+            raise CommandValidationError(str(exc)) from exc
 
     def _validate_context(
         self, command: ControlCommand, context: CommandContext
@@ -1368,22 +1512,29 @@ __all__ = (
     "CommandResult",
     "CommandService",
     "CommandValidationError",
+    "ConfirmKnowledgeConvention",
     "CorrectSocialState",
     "CorrectProfileFact",
     "CreateConfigDraft",
     "DryRunConfig",
+    "DisputeKnowledgeClaim",
     "ExpectedVersionConflict",
     "ForgetMemory",
+    "InvalidateKnowledgeCache",
     "InvalidateProfileFact",
     "LinkIdentity",
     "MergeProfileIdentity",
     "PauseRuntime",
     "PublishConfig",
+    "RejectKnowledgeConvention",
     "ResetState",
+    "RetryKnowledgeJob",
     "RestoreConfig",
     "ReviewEvidence",
     "ReviewShadowDecision",
     "SplitProfileIdentity",
     "SetMemberStyleDistillation",
+    "SetKnowledgeAmbientCanary",
+    "SupersedeKnowledgeAlias",
     "ValidateConfig",
 )

@@ -243,6 +243,384 @@ class KnowledgeRepository:
         self.path = Path(path)
         initialize_database(self.path)
 
+    @classmethod
+    def confirm_convention_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        convention_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = cls._scoped_convention_on(db, group_id, convention_id)
+        entity_id = str(row["resolved_entity_id"] or "")
+        entity = db.execute(
+            "SELECT status FROM knowledge_entities WHERE entity_id=?",
+            (entity_id,),
+        ).fetchone()
+        if not entity_id or entity is None or str(entity["status"]) != "active":
+            raise ValueError("convention target entity is not active")
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="confirm_convention",
+            target_id=convention_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        revision = max(int(now), int(row["updated_at"]) + 1)
+        db.execute(
+            "UPDATE group_conventions SET status='active',confidence=1.0,"
+            "updated_at=? WHERE convention_id=?",
+            (revision, convention_id),
+        )
+        alias_id = "alias:group:" + hashlib.sha256(
+            f"{group_id}\0{row['normalized_expression']}\0{entity_id}".encode()
+        ).hexdigest()[:24]
+        db.execute(
+            "INSERT INTO group_knowledge_aliases(alias_id,group_id,entity_id,"
+            "normalized_alias,evidence_observation_ids_json,confidence,last_used_at,"
+            "status) VALUES(?,?,?,?,?,1.0,?,'active') "
+            "ON CONFLICT(group_id,normalized_alias,entity_id) DO UPDATE SET "
+            "evidence_observation_ids_json=excluded.evidence_observation_ids_json,"
+            "confidence=1.0,last_used_at=excluded.last_used_at,status='active'",
+            (
+                alias_id,
+                group_id,
+                entity_id,
+                str(row["normalized_expression"]),
+                str(row["evidence_observation_ids_json"]),
+                int(now),
+            ),
+        )
+        return {
+            "convention_id": convention_id,
+            "entity_id": entity_id,
+            "status": "active",
+            "revision": revision,
+        }
+
+    @classmethod
+    def reject_convention_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        convention_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = cls._scoped_convention_on(db, group_id, convention_id)
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="reject_convention",
+            target_id=convention_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        revision = max(int(now), int(row["updated_at"]) + 1)
+        db.execute(
+            "UPDATE group_conventions SET status='rejected',confidence=0.0,"
+            "updated_at=? WHERE convention_id=?",
+            (revision, convention_id),
+        )
+        db.execute(
+            "UPDATE group_knowledge_aliases SET status='rejected' "
+            "WHERE group_id=? AND normalized_alias=? AND entity_id=?",
+            (
+                group_id,
+                str(row["normalized_expression"]),
+                str(row["resolved_entity_id"]),
+            ),
+        )
+        return {
+            "convention_id": convention_id,
+            "status": "rejected",
+            "revision": revision,
+        }
+
+    @classmethod
+    def supersede_group_alias_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        alias_id: str,
+        replacement_entity_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = db.execute(
+            "SELECT * FROM group_knowledge_aliases WHERE alias_id=? AND group_id=?",
+            (alias_id, group_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("group alias is not available")
+        entity = db.execute(
+            "SELECT status FROM knowledge_entities WHERE entity_id=?",
+            (replacement_entity_id,),
+        ).fetchone()
+        if entity is None or str(entity["status"]) != "active":
+            raise ValueError("replacement entity is not active")
+        if str(row["entity_id"]) == replacement_entity_id:
+            raise ValueError("replacement entity must differ from current target")
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="supersede_alias",
+            target_id=alias_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        db.execute(
+            "UPDATE group_knowledge_aliases SET status='stale' WHERE alias_id=?",
+            (alias_id,),
+        )
+        replacement_alias_id = "alias:group:admin:" + hashlib.sha256(
+            f"{group_id}\0{row['normalized_alias']}\0{replacement_entity_id}".encode()
+        ).hexdigest()[:20]
+        db.execute(
+            "INSERT INTO group_knowledge_aliases(alias_id,group_id,entity_id,"
+            "normalized_alias,evidence_observation_ids_json,confidence,last_used_at,"
+            "status) VALUES(?,?,?,?,?,1.0,?,'active') "
+            "ON CONFLICT(group_id,normalized_alias,entity_id) DO UPDATE SET "
+            "confidence=1.0,last_used_at=excluded.last_used_at,status='active'",
+            (
+                replacement_alias_id,
+                group_id,
+                replacement_entity_id,
+                str(row["normalized_alias"]),
+                str(row["evidence_observation_ids_json"]),
+                int(now),
+            ),
+        )
+        return {
+            "alias_id": replacement_alias_id,
+            "supersedes_alias_id": alias_id,
+            "entity_id": replacement_entity_id,
+            "status": "active",
+        }
+
+    @classmethod
+    def dispute_claim_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        claim_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = db.execute(
+            "SELECT c.*,e.canonical_game_id FROM knowledge_claims AS c "
+            "JOIN knowledge_entities AS e ON e.entity_id=c.subject_entity_id "
+            "WHERE c.claim_id=?",
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError("knowledge claim is not available")
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="dispute_claim",
+            target_id=claim_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        revision = max(int(now), int(row["updated_at"]) + 1)
+        db.execute(
+            "UPDATE knowledge_claims SET status='disputed',updated_at=? "
+            "WHERE claim_id=?",
+            (revision, claim_id),
+        )
+        cls._invalidate_negative_snapshots(
+            db, str(row["canonical_game_id"]), "admin_claim_disputed"
+        )
+        return {
+            "claim_id": claim_id,
+            "status": "disputed",
+            "revision": revision,
+        }
+
+    @classmethod
+    def retry_job_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        job_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = db.execute(
+            "SELECT * FROM knowledge_jobs WHERE job_id=? "
+            "AND (group_id IS NULL OR group_id=?)",
+            (job_id, group_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("knowledge job is not available")
+        if str(row["status"]) != "retry":
+            raise ValueError("knowledge job is not eligible for manual retry")
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="retry_job",
+            target_id=job_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        revision = max(int(now), int(row["updated_at"]) + 1)
+        db.execute(
+            "UPDATE knowledge_jobs SET next_attempt_at=?,updated_at=? WHERE job_id=?",
+            (int(now), revision, job_id),
+        )
+        return {
+            "job_id": job_id,
+            "status": "retry",
+            "next_attempt_at": int(now),
+            "revision": revision,
+        }
+
+    @classmethod
+    def invalidate_cache_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        entity_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> dict[str, object]:
+        row = db.execute(
+            "SELECT canonical_game_id FROM knowledge_entities WHERE entity_id=?",
+            (entity_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError("knowledge entity is not available")
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="invalidate_cache",
+            target_id=entity_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        invalidated = cls._invalidate_negative_snapshots(
+            db, str(row["canonical_game_id"]), "admin_cache_invalidated"
+        )
+        return {
+            "entity_id": entity_id,
+            "status": "invalidated",
+            "invalidated_snapshot_count": invalidated,
+        }
+
+    @classmethod
+    def append_canary_audit_on(
+        cls,
+        db,
+        *,
+        group_id: str,
+        actor_id: str,
+        reason: str,
+        command_id: str,
+        enabled: bool,
+        now: int,
+    ) -> dict[str, object]:
+        cls._append_admin_observation_on(
+            db,
+            group_id=group_id,
+            actor_id=actor_id,
+            action="ambient_canary_enabled",
+            target_id=group_id,
+            reason=reason,
+            command_id=command_id,
+            now=now,
+        )
+        return {"enabled": bool(enabled), "status": "enabled" if enabled else "disabled"}
+
+    @staticmethod
+    def _scoped_convention_on(db, group_id: str, convention_id: str):
+        row = db.execute(
+            "SELECT * FROM group_conventions WHERE convention_id=? AND group_id=?",
+            (convention_id, group_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("group convention is not available")
+        return row
+
+    @staticmethod
+    def _append_admin_observation_on(
+        db,
+        *,
+        group_id: str,
+        actor_id: str,
+        action: str,
+        target_id: str,
+        reason: str,
+        command_id: str,
+        now: int,
+    ) -> None:
+        observation_id = "observation:admin:" + hashlib.sha256(
+            f"{group_id}\0{command_id}".encode()
+        ).hexdigest()[:24]
+        summary = json.dumps(
+            {
+                "action": action,
+                "actor_id": actor_id,
+                "reason": reason,
+                "target_id": target_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        content_hash = hashlib.sha256(
+            f"{command_id}\0{summary}".encode()
+        ).hexdigest()
+        db.execute(
+            "INSERT INTO knowledge_observations(observation_id,origin_class,"
+            "scope_kind,group_id,author_ref,source_event_id,source_id,entity_hint,"
+            "safe_summary,content_hash,occurred_at,recorded_at,status) "
+            "VALUES(?,'admin','group',?,NULL,?,?,?,?,?,?,?,'admitted')",
+            (
+                observation_id,
+                group_id,
+                command_id,
+                f"control:knowledge:{action}",
+                target_id[:48],
+                summary,
+                content_hash,
+                int(now),
+                int(now),
+            ),
+        )
+
     def append_observation(self, value: KnowledgeObservation) -> bool:
         with connect_database(self.path) as db:
             cursor = db.execute(
