@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-from .contracts import EvidenceLevel, KnowledgeClaimCandidate
+from .contracts import EvidenceLevel, KnowledgeClaimCandidate, SourceEvidence
+
+if TYPE_CHECKING:
+    from .repository import KnowledgeRepository
 
 
 @dataclass(frozen=True)
@@ -16,6 +19,44 @@ class AdmissionDecision:
     outcome: str
     reason_code: str
     superseded_claim_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceAdmissionResult:
+    source_ids: tuple[str, ...]
+    source_domains: tuple[str, ...]
+    official_evidence_changed: bool
+
+
+class KnowledgeEvidenceAdmission:
+    """Deduplicate provider evidence, then commit it in one short transaction."""
+
+    def commit(
+        self,
+        repository: "KnowledgeRepository",
+        *,
+        game_entity_id: str,
+        evidence: Iterable[SourceEvidence],
+    ) -> EvidenceAdmissionResult:
+        unique: dict[tuple[str, str], SourceEvidence] = {}
+        for item in tuple(evidence):
+            if not isinstance(item, SourceEvidence):
+                raise TypeError("evidence must contain SourceEvidence")
+            key = (item.canonical_url, item.content_hash)
+            previous = unique.get(key)
+            if previous is None or item.fetched_at > previous.fetched_at:
+                unique[key] = item
+        source_ids, domains, official_changed = (
+            repository.commit_enrichment_evidence(
+                game_entity_id=game_entity_id,
+                evidence=tuple(unique.values()),
+            )
+        )
+        return EvidenceAdmissionResult(
+            source_ids=source_ids,
+            source_domains=domains,
+            official_evidence_changed=official_changed,
+        )
 
 
 class KnowledgeAdmissionPolicy:
@@ -206,4 +247,9 @@ class KnowledgeAdmissionPolicy:
         )
 
 
-__all__ = ("AdmissionDecision", "KnowledgeAdmissionPolicy")
+__all__ = (
+    "AdmissionDecision",
+    "EvidenceAdmissionResult",
+    "KnowledgeAdmissionPolicy",
+    "KnowledgeEvidenceAdmission",
+)

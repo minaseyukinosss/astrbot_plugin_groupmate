@@ -6,9 +6,12 @@ import hashlib
 import json
 import math
 import unicodedata
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 from ..persistence.schema import connect_database, initialize_database
 from .contracts import (
@@ -23,6 +26,8 @@ from .contracts import (
 
 
 AFFINITY_HALF_LIFE_SECONDS = 7 * 24 * 60 * 60
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_ENRICHMENT_JOB_DUE_AT = 2**62
 
 
 def _required_text(value: object, name: str, *, maximum: int = 128) -> str:
@@ -223,6 +228,13 @@ class KnowledgeJobRecord:
     diagnostic_code: str | None
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True)
+class EnrichmentCacheRecord:
+    intent_hash: str
+    source_domains: tuple[str, ...]
+    recorded_at: int
 
 
 class KnowledgeRepository:
@@ -435,7 +447,8 @@ class KnowledgeRepository:
         key = _required_text(idempotency_key, "idempotency_key", maximum=512)
         kind = _required_text(job_kind, "job_kind", maximum=64)
         if kind not in {
-            "seed_import", "official_daily_probe", "time_boundary_revalidation",
+            "seed_import", "official_daily_probe", "instant_enrichment",
+            "time_boundary_revalidation",
         }:
             raise ValueError("unsupported knowledge job kind")
         identity = None if entity_id is None else _required_text(entity_id, "entity_id")
@@ -462,6 +475,188 @@ class KnowledgeRepository:
             ).fetchone()
         assert row is not None
         return self._knowledge_job(row)
+
+    def acquire_enrichment_job(
+        self,
+        *,
+        request_hash: str,
+        entity_id: str,
+        query_intents: Iterable[str],
+        now: int,
+    ) -> KnowledgeJobRecord:
+        """Claim one stable knowledge-only job for an instant request.
+
+        Scene, target, lease, intention and reply data are deliberately absent
+        from the durable payload.  A recovered job can therefore only recover
+        evidence; the current caller must supply and revalidate its own guard.
+        """
+
+        digest = _required_text(request_hash, "request_hash", maximum=64)
+        if len(digest) != 64 or any(item not in "0123456789abcdef" for item in digest):
+            raise ValueError("request_hash must be a lowercase SHA-256 digest")
+        identity = _required_text(entity_id, "entity_id")
+        intents = tuple(
+            dict.fromkeys(
+                _required_text(value, "query_intent", maximum=64)
+                for value in query_intents
+            )
+        )
+        if not intents or len(intents) > 2:
+            raise ValueError("query_intents must contain 1-2 values")
+        timestamp = int(now)
+        if timestamp < 0:
+            raise ValueError("now must not be negative")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_kind='instant_enrichment' "
+                "AND status IN ('pending','running','retry') "
+                "ORDER BY created_at DESC,job_id DESC"
+            ).fetchall()
+            for row in rows:
+                try:
+                    payload = json.loads(str(row["request_json"]))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(payload, dict) or payload.get("request_hash") != digest:
+                    continue
+                if str(row["status"]) in {"pending", "retry"}:
+                    db.execute(
+                        "UPDATE knowledge_jobs SET status='running',"
+                        "attempt=attempt+1,diagnostic_code=NULL,updated_at=? "
+                        "WHERE job_id=? AND status IN ('pending','retry')",
+                        (timestamp, row["job_id"]),
+                    )
+                claimed = db.execute(
+                    "SELECT * FROM knowledge_jobs WHERE job_id=?", (row["job_id"],)
+                ).fetchone()
+                assert claimed is not None
+                return self._knowledge_job(claimed)
+
+            payload = json.dumps(
+                {
+                    "request_hash": digest,
+                    "query_intents": list(intents),
+                    "official_complete": False,
+                    "discovery_complete": False,
+                    "staged_evidence": [],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            prefix = f"instant_enrichment:{digest}:"
+            generation = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM knowledge_jobs WHERE "
+                    "idempotency_key LIKE ?",
+                    (prefix + "%",),
+                ).fetchone()[0]
+            )
+            key = f"{prefix}{timestamp}:{generation}"
+            job_id = "job:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+            db.execute(
+                "INSERT INTO knowledge_jobs(job_id,idempotency_key,job_kind,"
+                "group_id,entity_id,request_json,status,attempt,next_attempt_at,"
+                "diagnostic_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    job_id,
+                    key,
+                    "instant_enrichment",
+                    None,
+                    identity,
+                    payload,
+                    "running",
+                    1,
+                    _ENRICHMENT_JOB_DUE_AT,
+                    None,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        assert row is not None
+        return self._knowledge_job(row)
+
+    def stage_enrichment_job(
+        self,
+        job_id: str,
+        *,
+        evidence: Iterable[SourceEvidence],
+        official_complete: bool,
+        discovery_complete: bool,
+        diagnostic_code: str | None,
+        now: int,
+    ) -> KnowledgeJobRecord:
+        identity = _required_text(job_id, "job_id")
+        if type(official_complete) is not bool or type(discovery_complete) is not bool:
+            raise ValueError("completion flags must be booleans")
+        items = tuple(evidence)
+        if len(items) > 40 or any(not isinstance(item, SourceEvidence) for item in items):
+            raise ValueError("staged evidence is invalid")
+        diagnostic = (
+            None
+            if diagnostic_code is None
+            else _required_text(diagnostic_code, "diagnostic_code", maximum=64)
+        )
+        timestamp = int(now)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_id=? "
+                "AND job_kind='instant_enrichment' AND status='running'",
+                (identity,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("enrichment job is not running")
+            payload = dict(self._knowledge_job(row).request)
+            payload.update(
+                {
+                    "official_complete": official_complete,
+                    "discovery_complete": discovery_complete,
+                    "staged_evidence": [self._source_payload(item) for item in items],
+                }
+            )
+            db.execute(
+                "UPDATE knowledge_jobs SET request_json=?,diagnostic_code=?,"
+                "updated_at=? WHERE job_id=? AND status='running'",
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    diagnostic,
+                    timestamp,
+                    identity,
+                ),
+            )
+            staged = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_id=?", (identity,)
+            ).fetchone()
+        assert staged is not None
+        return self._knowledge_job(staged)
+
+    def recover_enrichment_jobs(self, now: int, *, stale_before: int) -> int:
+        timestamp = int(now)
+        boundary = int(stale_before)
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE knowledge_jobs SET status='retry',"
+                "diagnostic_code='knowledge_job_recovered',updated_at=? "
+                "WHERE job_kind='instant_enrichment' AND status='running' "
+                "AND updated_at<?",
+                (timestamp, boundary),
+            )
+            return int(cursor.rowcount)
+
+    def complete_enrichment_job(self, job_id: str, *, now: int) -> None:
+        self.complete_knowledge_job(job_id, now)
 
     def knowledge_jobs(self) -> tuple[KnowledgeJobRecord, ...]:
         with connect_database(self.path) as db:
@@ -820,6 +1015,51 @@ class KnowledgeRepository:
             db.execute("BEGIN IMMEDIATE")
             return self._upsert_source_in_transaction(db, evidence)
 
+    def commit_enrichment_evidence(
+        self,
+        *,
+        game_entity_id: str,
+        evidence: Iterable[SourceEvidence],
+    ) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+        """Idempotently admit bounded source evidence in one short transaction."""
+
+        game_id = _required_text(game_entity_id, "game_entity_id")
+        items = tuple(evidence)
+        if len(items) > 40 or any(not isinstance(item, SourceEvidence) for item in items):
+            raise ValueError("enrichment evidence is invalid")
+        source_ids: list[str] = []
+        source_domains: list[str] = []
+        official_changed = False
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            for item in items:
+                prior = db.execute(
+                    "SELECT content_hash,source_class FROM knowledge_sources "
+                    "WHERE canonical_url=?",
+                    (item.canonical_url,),
+                ).fetchone()
+                if item.source_class.value == "official" and (
+                    prior is None
+                    or str(prior["content_hash"]) != item.content_hash
+                    or str(prior["source_class"]) != "official"
+                ):
+                    duplicate = db.execute(
+                        "SELECT 1 FROM knowledge_sources WHERE domain=? AND publisher=? "
+                        "AND source_class='official' AND content_hash=? LIMIT 1",
+                        (item.domain, item.publisher, item.content_hash),
+                    ).fetchone()
+                    official_changed = official_changed or duplicate is None
+                source_id = self._upsert_source_in_transaction(db, item)
+                if source_id not in source_ids:
+                    source_ids.append(source_id)
+                if item.domain not in source_domains:
+                    source_domains.append(item.domain)
+            if official_changed:
+                self._invalidate_negative_snapshots(
+                    db, game_id, "new_official_evidence"
+                )
+        return tuple(source_ids), tuple(source_domains), official_changed
+
     @staticmethod
     def _upsert_source_in_transaction(db, evidence: SourceEvidence) -> str:
         row = db.execute(
@@ -878,6 +1118,206 @@ class KnowledgeRepository:
                 ),
             )
         return source_id
+
+    @staticmethod
+    def _source_payload(evidence: SourceEvidence) -> dict[str, object]:
+        return {
+            "evidence_id": evidence.evidence_id,
+            "source_id": evidence.source_id,
+            "canonical_url": evidence.canonical_url,
+            "domain": evidence.domain,
+            "publisher": evidence.publisher,
+            "source_class": evidence.source_class.value,
+            "title": evidence.title,
+            "published_at": evidence.published_at,
+            "fetched_at": evidence.fetched_at,
+            "evidence_excerpt": evidence.evidence_excerpt,
+            "content_hash": evidence.content_hash,
+        }
+
+    def reserve_provider_quota(
+        self,
+        *,
+        intent_hash: str,
+        now: int,
+        hourly_limit: int = 20,
+        daily_limit: int = 100,
+    ) -> str | None:
+        digest = _required_text(intent_hash, "intent_hash", maximum=64)
+        if len(digest) != 64 or any(item not in "0123456789abcdef" for item in digest):
+            raise ValueError("intent_hash must be a lowercase SHA-256 digest")
+        timestamp = int(now)
+        hour_limit = int(hourly_limit)
+        day_limit = int(daily_limit)
+        if timestamp < 0 or hour_limit < 1 or day_limit < 1:
+            raise ValueError("provider quota settings are invalid")
+        local = datetime.fromtimestamp(timestamp, tz=_SHANGHAI)
+        hour_start = int(
+            local.replace(minute=0, second=0, microsecond=0).timestamp()
+        )
+        day_start = int(
+            local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        )
+        reservation_id = f"usage:quota:{uuid.uuid4().hex}"
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            hour_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM knowledge_usage WHERE recorded_at>=? "
+                    "AND recorded_at<? AND result_kind LIKE 'provider_%'",
+                    (hour_start, hour_start + 3600),
+                ).fetchone()[0]
+            )
+            day_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM knowledge_usage WHERE recorded_at>=? "
+                    "AND recorded_at<? AND result_kind LIKE 'provider_%'",
+                    (day_start, day_start + 86400),
+                ).fetchone()[0]
+            )
+            if hour_count >= hour_limit or day_count >= day_limit:
+                return None
+            db.execute(
+                "INSERT INTO knowledge_usage(usage_id,group_id,source_event_id,"
+                "knowledge_ids_json,source_domains_json,query_intent_hash,"
+                "latency_ms,cache_hit,result_kind,diagnostic_code,recorded_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    reservation_id,
+                    None,
+                    None,
+                    "[]",
+                    "[]",
+                    digest,
+                    0,
+                    0,
+                    "provider_reserved",
+                    "provider_reserved",
+                    timestamp,
+                ),
+            )
+        return reservation_id
+
+    def release_provider_quota(self, reservation_id: str) -> bool:
+        identity = _required_text(reservation_id, "reservation_id")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "DELETE FROM knowledge_usage WHERE usage_id=? "
+                "AND result_kind='provider_reserved'",
+                (identity,),
+            )
+            return cursor.rowcount == 1
+
+    def finish_provider_quota(
+        self,
+        reservation_id: str,
+        *,
+        source_domains: Iterable[str],
+        latency_ms: int,
+        result_kind: str,
+        diagnostic_code: str | None,
+    ) -> None:
+        identity = _required_text(reservation_id, "reservation_id")
+        kind = _required_text(result_kind, "result_kind", maximum=64)
+        if not kind.startswith("provider_") or kind == "provider_reserved":
+            raise ValueError("provider result kind is invalid")
+        domains = tuple(
+            dict.fromkeys(
+                _required_text(value, "source_domain", maximum=253).casefold()
+                for value in source_domains
+            )
+        )
+        latency = max(0, int(latency_ms))
+        diagnostic = (
+            None
+            if diagnostic_code is None
+            else _required_text(diagnostic_code, "diagnostic_code", maximum=64)
+        )
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE knowledge_usage SET source_domains_json=?,latency_ms=?,"
+                "result_kind=?,diagnostic_code=? WHERE usage_id=? "
+                "AND result_kind='provider_reserved'",
+                (_json(domains), latency, kind, diagnostic, identity),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("provider quota reservation is not active")
+
+    def record_enrichment_usage(
+        self,
+        *,
+        intent_hash: str,
+        source_domains: Iterable[str],
+        latency_ms: int,
+        cache_hit: bool,
+        result_kind: str,
+        diagnostic_code: str | None,
+        now: int,
+    ) -> str:
+        digest = _required_text(intent_hash, "intent_hash", maximum=64)
+        domains = tuple(
+            dict.fromkeys(
+                _required_text(value, "source_domain", maximum=253).casefold()
+                for value in source_domains
+            )
+        )
+        if type(cache_hit) is not bool:
+            raise ValueError("cache_hit must be a boolean")
+        kind = _required_text(result_kind, "result_kind", maximum=64)
+        diagnostic = (
+            None
+            if diagnostic_code is None
+            else _required_text(diagnostic_code, "diagnostic_code", maximum=64)
+        )
+        timestamp = int(now)
+        usage_id = f"usage:enrichment:{uuid.uuid4().hex}"
+        with connect_database(self.path) as db:
+            db.execute(
+                "INSERT INTO knowledge_usage(usage_id,group_id,source_event_id,"
+                "knowledge_ids_json,source_domains_json,query_intent_hash,"
+                "latency_ms,cache_hit,result_kind,diagnostic_code,recorded_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    usage_id,
+                    None,
+                    None,
+                    "[]",
+                    _json(domains),
+                    digest,
+                    max(0, int(latency_ms)),
+                    int(cache_hit),
+                    kind,
+                    diagnostic,
+                    timestamp,
+                ),
+            )
+        return usage_id
+
+    def successful_enrichment_cache(
+        self, intent_hash: str, *, now: int, ttl_seconds: int = 600
+    ) -> EnrichmentCacheRecord | None:
+        digest = _required_text(intent_hash, "intent_hash", maximum=64)
+        timestamp = int(now)
+        ttl = int(ttl_seconds)
+        if ttl < 1:
+            raise ValueError("cache TTL must be positive")
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT source_domains_json,recorded_at FROM knowledge_usage "
+                "WHERE query_intent_hash=? AND result_kind='enrichment_success' "
+                "AND recorded_at>? ORDER BY recorded_at DESC,usage_id DESC LIMIT 1",
+                (digest, timestamp - ttl),
+            ).fetchone()
+        if row is None:
+            return None
+        values = json.loads(str(row["source_domains_json"]))
+        return EnrichmentCacheRecord(
+            intent_hash=digest,
+            source_domains=tuple(str(value) for value in values),
+            recorded_at=int(row["recorded_at"]),
+        )
 
     def admit_claim(
         self,

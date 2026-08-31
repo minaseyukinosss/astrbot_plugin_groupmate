@@ -171,33 +171,33 @@ Commit: `git commit -m "feat: adapt astrbot knowledge search"`
 - `SceneGuard` 包含 group_id、scene_version、target_id、lease_id/expiry、intention_id/expiry。
 - `EnrichmentResult` 分开 `knowledge_committed` 与 `reply_still_valid`。
 
-- [ ] **Step 1: 写 lane 和缓存失败测试**
+- [x] **Step 1: 写 lane 和缓存失败测试**
 
 DIRECT/CONTINUATION 最多 5s，AMBIENT 在本阶段返回 `ambient_search_disabled`；相同 normalized request 并发只调用 provider 一次；10 分钟成功缓存可复用；失败/partial 不缓存为成功；官方新证据使 negative cache 失效。
 
-- [ ] **Step 2: 写额度与队列失败测试**
+- [x] **Step 2: 写额度与队列失败测试**
 
 小时 20、日 100，跨小时/Asia-Shanghai 日期正确重置；额度预留原子；provider 未实际调用时释放 reservation；排队等待也计入 hard deadline；日志只写 intent hash、domain、latency、cache hit 和 diagnostic。
 
-- [ ] **Step 3: 写场景过期恢复失败测试**
+- [x] **Step 3: 写场景过期恢复失败测试**
 
 搜索成功后 scene 前进：知识照常 admission，但 `reply_still_valid=False`；进程在 search 成功/commit 前崩溃，稳定 job key 恢复且 source hash 幂等；不得恢复历史 reply。
 
-- [ ] **Step 4: 运行测试并确认 RED**
+- [x] **Step 4: 运行测试并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
 
 Expected: coordinator 缺失。
 
-- [ ] **Step 5: 实现实例级 semaphore 与 single-flight**
+- [x] **Step 5: 实现实例级 semaphore 与 single-flight**
 
 semaphore 只包 provider I/O；single-flight map 在 `finally` 清理；等待者各自重验 deadline。流程固定为 official probe→若用户 intent 是 rumor 才 discovery search→admission short transaction→scene guard callback→snapshot build。
 
-- [ ] **Step 6: 实现持久 usage/job 语义**
+- [x] **Step 6: 实现持久 usage/job 语义**
 
 每次 provider call 原子消耗额度并记录 safe usage；缓存命中不消耗 provider quota；running job 只代表可恢复的知识补全，不代表待发送回复。过期 reply guard 不回滚已经验证的知识。
 
-- [ ] **Step 7: 运行测试并提交**
+- [x] **Step 7: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/recovery/test_knowledge_enrichment_recovery.py`
 
