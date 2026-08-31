@@ -113,6 +113,58 @@ def test_move_plan_deduplicates_bounded_reference_tuples():
     assert plan.mention_event_ids == ("m1", "m2")
 
 
+def test_move_knowledge_authority_is_bounded_and_separate_from_decision_facts():
+    plan = SocialMovePlan.create(
+        primary_move="DIRECT_ANSWER",
+        knowledge_policy="grounded",
+        may_use_knowledge_ids=("knowledge:stable", "knowledge:stable"),
+        prohibited_assertion_classes=("numeric",),
+    )
+
+    assert plan.knowledge_policy.value == "grounded"
+    assert plan.may_use_knowledge_ids == ("knowledge:stable",)
+    assert tuple(item.value for item in plan.prohibited_assertion_classes) == (
+        "numeric",
+    )
+
+    knowledge_as_decision = DecisionFact(
+        fact_id="knowledge:stable",
+        category="knowledge",
+        text="不应伪装成决策事实",
+        source_event_ids=("m1",),
+    )
+    with pytest.raises(ValueError, match="separate"):
+        SocialMovePlan.create(
+            primary_move="DIRECT_ANSWER",
+            knowledge_policy="grounded",
+            must_say=(knowledge_as_decision,),
+            must_use_knowledge_ids=("knowledge:stable",),
+        )
+    with pytest.raises(ValueError, match="unsupported"):
+        SocialMovePlan.create(
+            primary_move="DIRECT_ANSWER",
+            prohibited_assertion_classes=("invented-risk",),
+        )
+
+
+@pytest.mark.parametrize("move", ("SILENCE", "JOIN_CHORUS"))
+def test_non_generated_moves_cannot_carry_knowledge_authority(move):
+    values = {
+        "primary_move": move,
+        "knowledge_policy": "grounded",
+        "may_use_knowledge_ids": ("knowledge:stable",),
+    }
+    if move == "JOIN_CHORUS":
+        values.update(
+            realization_mode="EXACT_CHORUS",
+            verbatim_payload="复读内容",
+            chorus_chain_id="chorus:1",
+        )
+
+    with pytest.raises(ValueError, match="knowledge none"):
+        SocialMovePlan.create(**values)
+
+
 def _scene(scene_kind, *, information_gaps=(), repetition_count=0):
     return SocialScene.create(
         scene_kind=scene_kind,

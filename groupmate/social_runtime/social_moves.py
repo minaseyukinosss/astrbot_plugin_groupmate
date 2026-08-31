@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping
 
+from .knowledge.contracts import RiskClass
 from .social_scenes import ChorusTarget, ChorusTone, SocialScene, TargetScope
 from .stances import Boundary, StanceDecision, Willingness
 
@@ -51,6 +52,12 @@ class MediaIntent(str, Enum):
 class RealizationMode(str, Enum):
     GENERATED = "GENERATED"
     EXACT_CHORUS = "EXACT_CHORUS"
+
+
+class KnowledgePolicy(str, Enum):
+    NONE = "none"
+    GROUNDED = "grounded"
+    STRICT = "strict"
 
 
 def _normalized_text(value: object, name: str) -> str:
@@ -143,6 +150,10 @@ class SocialMovePlan:
     ask_for: tuple[str, ...]
     ending: Ending
     media_intent: MediaIntent
+    knowledge_policy: KnowledgePolicy = KnowledgePolicy.NONE
+    must_use_knowledge_ids: tuple[str, ...] = ()
+    may_use_knowledge_ids: tuple[str, ...] = ()
+    prohibited_assertion_classes: tuple[RiskClass, ...] = ()
     realization_mode: RealizationMode = RealizationMode.GENERATED
     verbatim_payload: str | None = None
     chorus_chain_id: str | None = None
@@ -167,12 +178,66 @@ class SocialMovePlan:
         object.__setattr__(self, "ask_for", _unique_texts(self.ask_for, "ask_for"))
         object.__setattr__(self, "ending", Ending(self.ending))
         object.__setattr__(self, "media_intent", MediaIntent(self.media_intent))
+        object.__setattr__(
+            self, "knowledge_policy", KnowledgePolicy(self.knowledge_policy)
+        )
+        object.__setattr__(
+            self,
+            "must_use_knowledge_ids",
+            _unique_texts(
+                self.must_use_knowledge_ids, "must_use_knowledge_ids"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "may_use_knowledge_ids",
+            _unique_texts(self.may_use_knowledge_ids, "may_use_knowledge_ids"),
+        )
+        try:
+            prohibited = tuple(
+                dict.fromkeys(
+                    RiskClass(value)
+                    for value in self.prohibited_assertion_classes
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "prohibited assertion class is unsupported"
+            ) from exc
+        object.__setattr__(self, "prohibited_assertion_classes", prohibited)
         object.__setattr__(self, "realization_mode", RealizationMode(self.realization_mode))
         payload = None if self.verbatim_payload is None else str(self.verbatim_payload).strip()
         chain_id = None if self.chorus_chain_id is None else str(self.chorus_chain_id).strip()
         object.__setattr__(self, "verbatim_payload", payload or None)
         object.__setattr__(self, "chorus_chain_id", chain_id or None)
+        self._validate_knowledge_authority()
         self._validate_realization()
+
+    def _validate_knowledge_authority(self) -> None:
+        knowledge_ids = {
+            *self.must_use_knowledge_ids,
+            *self.may_use_knowledge_ids,
+        }
+        decision_ids = {
+            item.fact_id for item in (*self.must_say, *self.may_say)
+        }
+        if knowledge_ids & decision_ids:
+            raise ValueError(
+                "decision fact IDs and knowledge IDs must stay separate"
+            )
+        if self.knowledge_policy is KnowledgePolicy.NONE and knowledge_ids:
+            raise ValueError("knowledge none cannot authorize knowledge IDs")
+        if (
+            self.knowledge_policy is KnowledgePolicy.STRICT
+            and not self.must_use_knowledge_ids
+        ):
+            raise ValueError("strict knowledge requires required knowledge IDs")
+        if self.primary_move in {SocialMove.SILENCE, SocialMove.JOIN_CHORUS} and (
+            self.knowledge_policy is not KnowledgePolicy.NONE
+        ):
+            raise ValueError(
+                "SILENCE and JOIN_CHORUS require knowledge none"
+            )
 
     def _validate_realization(self) -> None:
         if self.ending is Ending.QUESTION and not (
@@ -214,6 +279,10 @@ class SocialMovePlan:
             "ask_for": (),
             "ending": Ending.STOP,
             "media_intent": MediaIntent.NONE,
+            "knowledge_policy": KnowledgePolicy.NONE,
+            "must_use_knowledge_ids": (),
+            "may_use_knowledge_ids": (),
+            "prohibited_assertion_classes": (),
             **values,
         }
         for field in ("must_say", "may_say"):
@@ -464,6 +533,7 @@ class SocialMovePlanner:
 __all__ = (
     "DecisionFact",
     "Ending",
+    "KnowledgePolicy",
     "MediaIntent",
     "RealizationMode",
     "SocialMove",

@@ -266,25 +266,25 @@ Commit: `git commit -m "refactor: isolate group reply lanes"`
 - `ReplyPlan` 增加 `knowledge_snapshot`；repository encode/decode 保留旧 plan 兼容。
 - `covered_fact_ids` 与 `used_knowledge_ids` 完全分离。
 
-- [ ] **Step 1: 写 move 不变量失败测试**
+- [x] **Step 1: 写 move 不变量失败测试**
 
 SILENCE/JOIN_CHORUS 必须 knowledge none；strict 必须有 snapshot 和 required IDs；required/may 必须是 snapshot 子集；risk fact 不能用 grounded；knowledge IDs 不能出现在 must_say DecisionFact；未知 assertion class 拒绝。
 
-- [ ] **Step 2: 写 ReplyPlan 持久兼容失败测试**
+- [x] **Step 2: 写 ReplyPlan 持久兼容失败测试**
 
 新 plan round-trip 保留 snapshot revision/TTL；旧 JSON 缺字段默认 knowledge none；过期 snapshot 无法 authorize bundle；plan identity hash 包含 snapshot ID/revision，防止换证据复用旧 plan。
 
-- [ ] **Step 3: 运行并确认 RED**
+- [x] **Step 3: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py`
 
 Expected: 新字段/enum 缺失。
 
-- [ ] **Step 4: 实现加法契约与 Planner 选择规则**
+- [x] **Step 4: 实现加法契约与 Planner 选择规则**
 
 local stable semantic 可 grounded；版本/日期/清单/数字/status 自动 strict；need unresolvable 的 direct move 变为只问一个歧义问题且 knowledge none；证据不足时禁止 assertion class，并由 executor 走固定失败关闭语义。
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/test_social_moves.py tests/social_runtime/actions/test_replying.py tests/recovery/test_delivery_recovery.py`
 

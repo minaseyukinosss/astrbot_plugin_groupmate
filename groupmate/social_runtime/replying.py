@@ -30,10 +30,11 @@ from .actions.style import (
 from .contracts import SocialEventEnvelope
 from .delivery.outbox import OutboxService
 from .expression import ExpressionPlan, ExpressionPlanner
+from .knowledge.contracts import KnowledgeSnapshot, RiskClass
 from .persona.modes import PersonaModeState
 from .persistence.schema import connect_database, initialize_database
 from .persona.canon import PersonaCanon
-from .social_moves import SocialMove, SocialMovePlan
+from .social_moves import KnowledgePolicy, SocialMove, SocialMovePlan
 from .social_review import RealizedReply, SocialOutputReviewer
 from .social_scenes import SocialScene, TargetScope
 from .society.relationships import (
@@ -83,6 +84,45 @@ class ReplyPlan:
     member_context: str = ""
     # 临时模仿只是表达附层，不会替换 Persona 或社交决策。
     member_style_overlay: MemberStyleOverlay | None = None
+    knowledge_snapshot: KnowledgeSnapshot | None = None
+
+    def __post_init__(self) -> None:
+        snapshot = self.knowledge_snapshot
+        if snapshot is not None and not isinstance(snapshot, KnowledgeSnapshot):
+            raise ValueError("knowledge snapshot is invalid")
+        policy = self.move.knowledge_policy
+        authorized_ids = {
+            *self.move.must_use_knowledge_ids,
+            *self.move.may_use_knowledge_ids,
+        }
+        if policy is KnowledgePolicy.NONE:
+            if snapshot is not None:
+                raise ValueError("knowledge none cannot carry a snapshot")
+            return
+        if snapshot is None:
+            raise ValueError("knowledge policy requires a snapshot")
+        snapshot_ids = {
+            item.knowledge_id for item in snapshot.allowed_knowledge_facts
+        }
+        if not authorized_ids.issubset(snapshot_ids):
+            raise ValueError("knowledge IDs must be a snapshot subset")
+        if (
+            snapshot.checked_at > self.created_at
+            or snapshot.expires_at <= self.created_at
+        ):
+            raise ValueError("knowledge snapshot is not current for the plan")
+        if self.expires_at > snapshot.expires_at:
+            raise ValueError("reply plan cannot outlive its knowledge snapshot")
+        if policy is KnowledgePolicy.GROUNDED:
+            facts = {
+                item.knowledge_id: item
+                for item in snapshot.allowed_knowledge_facts
+            }
+            if any(
+                facts[knowledge_id].risk_class is not RiskClass.STABLE_SEMANTIC
+                for knowledge_id in authorized_ids
+            ):
+                raise ValueError("grounded knowledge must use stable facts only")
 
 
 @dataclass(frozen=True)
@@ -203,12 +243,18 @@ class ReplyPlanRepository:
             plan = self.by_correlation(bundle.correlation_id)
         except LookupError:
             return False
+        snapshot = plan.knowledge_snapshot
+        knowledge_current = snapshot is None or (
+            bundle.created_at < snapshot.expires_at
+            and bundle.expires_at <= snapshot.expires_at
+        )
         return bool(
             plan.persona_id == bundle.persona_id
             and plan.group_id == bundle.group_id
             and plan.topic_id == bundle.topic_id
             and plan.created_at <= bundle.created_at
             and bundle.expires_at <= plan.expires_at
+            and knowledge_current
             and plan.status in {"planned", "generated", "enqueued"}
         )
 
@@ -224,6 +270,12 @@ class ReplyPlanRepository:
         values["evidence_event_ids"] = tuple(values["evidence_event_ids"])
         values["style"] = StyleDirective(**values["style"])
         values.setdefault("participation_lane", "AMBIENT")
+        snapshot = values.get("knowledge_snapshot")
+        values["knowledge_snapshot"] = (
+            KnowledgeSnapshot.create(**dict(snapshot))
+            if isinstance(snapshot, Mapping)
+            else None
+        )
         overlay = values.get("member_style_overlay")
         values["member_style_overlay"] = (
             MemberStyleOverlay(**overlay) if isinstance(overlay, Mapping) else None
@@ -350,6 +402,9 @@ class ReplyPlanner:
             scene, stance, move = self._legacy_decisions(
                 evaluation, selected=selected, target_id=(selected.target_id or self._first(frame.candidate_audiences))
             )
+        move, knowledge_snapshot = self._knowledge_authority(
+            evaluation, move, now=int(now)
+        )
         style = self._style_director.direct(
             StyleContext(
                 persona=self._persona_style(persona_profile, evaluation.persona_id),
@@ -373,6 +428,7 @@ class ReplyPlanner:
             scene=scene,
             stance=stance,
             move=move,
+            knowledge_snapshot=knowledge_snapshot,
             relationship_projection_version=(
                 relationship_projection.version if relationship_projection is not None else 0
             ),
@@ -393,6 +449,7 @@ class ReplyPlanner:
         scene: SocialScene,
         stance: StanceDecision,
         move: SocialMovePlan,
+        knowledge_snapshot: KnowledgeSnapshot | None,
         relationship_projection_version: int,
         member_context: str,
         member_style_overlay: MemberStyleOverlay | None,
@@ -404,7 +461,15 @@ class ReplyPlanner:
         topic_id = selected.topic_id or self._first(frame.focus_topic_ids)
         required = frame.trigger_kind == "FAST"
         identity = f"{frame.frame_id}:{intention_id}:{source.correlation_id}"
+        if knowledge_snapshot is not None:
+            identity += ":{}:{}".format(
+                knowledge_snapshot.snapshot_id,
+                knowledge_snapshot.version_state_revision,
+            )
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        expires_at = min(int(selected.expires_at), now + 30)
+        if knowledge_snapshot is not None:
+            expires_at = min(expires_at, knowledge_snapshot.expires_at)
         return ReplyPlan(
             plan_id=f"reply:{digest}",
             correlation_id=source.correlation_id,
@@ -424,7 +489,7 @@ class ReplyPlanner:
             required=required,
             style=style,
             created_at=now,
-            expires_at=min(int(selected.expires_at), now + 30),
+            expires_at=expires_at,
             expression=expression,
             scene=scene,
             stance=stance,
@@ -436,6 +501,124 @@ class ReplyPlanner:
             ),
             member_context=str(member_context)[:1200],
             member_style_overlay=member_style_overlay,
+            knowledge_snapshot=knowledge_snapshot,
+        )
+
+    @staticmethod
+    def _knowledge_authority(
+        evaluation: object,
+        move: SocialMovePlan,
+        *,
+        now: int,
+    ) -> tuple[SocialMovePlan, KnowledgeSnapshot | None]:
+        frame = getattr(evaluation, "topic_understanding", None)
+        codes = tuple(getattr(frame, "ambiguity_codes", ()) or ())
+        lane = str(
+            getattr(evaluation, "participation_lane", "AMBIENT") or "AMBIENT"
+        ).upper()
+        risk_by_code = {
+            "risk:version_state": RiskClass.VERSION_STATE,
+            "risk:date_time": RiskClass.DATE_TIME,
+            "risk:entity_list": RiskClass.ENTITY_LIST,
+            "risk:numeric": RiskClass.NUMERIC,
+            "risk:official_status": RiskClass.OFFICIAL_STATUS,
+            "risk:rumor_status": RiskClass.RUMOR_STATUS,
+        }
+        prohibited = tuple(
+            dict.fromkeys(
+                risk_by_code[code] for code in codes if code in risk_by_code
+            )
+        )
+        if move.primary_move in {SocialMove.SILENCE, SocialMove.JOIN_CHORUS}:
+            return (
+                replace(
+                    move,
+                    knowledge_policy=KnowledgePolicy.NONE,
+                    must_use_knowledge_ids=(),
+                    may_use_knowledge_ids=(),
+                    prohibited_assertion_classes=prohibited,
+                ),
+                None,
+            )
+        if "direct_unresolved" in codes and lane == "DIRECT_FAST":
+            return (
+                SocialMovePlan.create(
+                    primary_move=SocialMove.REQUEST_NEEDED_EVIDENCE,
+                    must_not_say=move.must_not_say,
+                    mention_event_ids=move.mention_event_ids,
+                    ask_for=("具体是哪款游戏",),
+                    ending="QUESTION",
+                    prohibited_assertion_classes=prohibited,
+                ),
+                None,
+            )
+
+        snapshot = getattr(evaluation, "knowledge_snapshot", None)
+        if not isinstance(snapshot, KnowledgeSnapshot) or (
+            snapshot.expires_at <= int(now)
+            or frame is None
+            or snapshot.topic_frame_id != str(getattr(frame, "frame_id", ""))
+        ):
+            return (
+                replace(
+                    move,
+                    knowledge_policy=KnowledgePolicy.NONE,
+                    must_use_knowledge_ids=(),
+                    may_use_knowledge_ids=(),
+                    prohibited_assertion_classes=prohibited,
+                ),
+                None,
+            )
+
+        strict_ids = tuple(
+            item.knowledge_id
+            for item in snapshot.allowed_knowledge_facts
+            if item.risk_class is not RiskClass.STABLE_SEMANTIC
+        )
+        stable_ids = tuple(
+            item.knowledge_id
+            for item in snapshot.allowed_knowledge_facts
+            if item.risk_class is RiskClass.STABLE_SEMANTIC
+        )
+        available_risks = {
+            item.risk_class
+            for item in snapshot.allowed_knowledge_facts
+            if item.risk_class is not RiskClass.STABLE_SEMANTIC
+        }
+        missing_risks = tuple(
+            risk for risk in prohibited if risk not in available_risks
+        )
+        if strict_ids:
+            return (
+                replace(
+                    move,
+                    knowledge_policy=KnowledgePolicy.STRICT,
+                    must_use_knowledge_ids=strict_ids,
+                    may_use_knowledge_ids=stable_ids,
+                    prohibited_assertion_classes=missing_risks,
+                ),
+                snapshot,
+            )
+        if stable_ids:
+            return (
+                replace(
+                    move,
+                    knowledge_policy=KnowledgePolicy.GROUNDED,
+                    must_use_knowledge_ids=(),
+                    may_use_knowledge_ids=stable_ids,
+                    prohibited_assertion_classes=prohibited,
+                ),
+                snapshot,
+            )
+        return (
+            replace(
+                move,
+                knowledge_policy=KnowledgePolicy.NONE,
+                must_use_knowledge_ids=(),
+                may_use_knowledge_ids=(),
+                prohibited_assertion_classes=prohibited,
+            ),
+            None,
         )
 
     @staticmethod
@@ -551,6 +734,10 @@ class ReplyExecutor:
         persona_profile: Mapping[str, object],
         recent_outputs: tuple[str, ...],
     ) -> ReplyPreview:
+        if self._knowledge_evidence_unavailable(plan):
+            return ReplyPreview(
+                None, "REJECTED", "knowledge_evidence_unavailable"
+            )
         if plan.move.primary_move is SocialMove.JOIN_CHORUS:
             realized = self._exact_chorus_reply(plan)
             if not self.social_reviewer.review(realized, plan).accepted:
@@ -627,6 +814,19 @@ class ReplyExecutor:
         recent_outputs: tuple[str, ...],
     ) -> ReplyExecutionResult:
         self.repository.save(plan)
+        if self._knowledge_evidence_unavailable(plan):
+            request = GenerationRequest(
+                directive=plan.style,
+                required=plan.required,
+                recent_outputs=tuple(recent_outputs),
+                allowed_media_references=(),
+                verified_capability_results=(),
+            )
+            return ReplyExecutionResult(
+                self._failed(plan, request),
+                "REJECTED",
+                "knowledge_evidence_unavailable",
+            )
         if plan.move.primary_move is SocialMove.JOIN_CHORUS:
             realized = self._exact_chorus_reply(plan)
             if not self.social_reviewer.review(realized, plan).accepted:
@@ -720,6 +920,13 @@ class ReplyExecutor:
             )
         )
         return realized, violations
+
+    @staticmethod
+    def _knowledge_evidence_unavailable(plan: ReplyPlan) -> bool:
+        return bool(
+            plan.move.prohibited_assertion_classes
+            and plan.move.primary_move is not SocialMove.REQUEST_NEEDED_EVIDENCE
+        )
 
     async def _retry_without_member_style(
         self,
