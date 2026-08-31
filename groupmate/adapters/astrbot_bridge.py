@@ -956,25 +956,16 @@ class AstrBotSocialRuntimeBridge:
                 self._imitation_controller = None
                 self._scene_interpreter = None
                 self._reply_model = None
-                if profile_service is not None:
-                    with suppress(Exception):
-                        await profile_service.close()
-                if knowledge_service is not None:
-                    with suppress(Exception):
-                        await knowledge_service.close()
-                if knowledge_job_service is not None:
-                    with suppress(Exception):
-                        await knowledge_job_service.close()
-                with suppress(Exception):
-                    await manager.close()
-                close = getattr(cognition_client, "close", None)
-                if callable(close):
-                    with suppress(Exception):
-                        await close()
-                profile_close = getattr(profile_client, "close", None)
-                if callable(profile_close):
-                    with suppress(Exception):
-                        await profile_close()
+                await self._close_resources(
+                    knowledge_job_service,
+                    self.official_source_probe,
+                    knowledge_service,
+                    profile_service,
+                    manager,
+                    cognition_client,
+                    profile_client,
+                    suppress_errors=True,
+                )
                 raise
         self._started = True
         self._reconcile_shadow_reviews()
@@ -1630,7 +1621,7 @@ class AstrBotSocialRuntimeBridge:
         self._attention_task = None
         if task is not None:
             task.cancel()
-            with suppress(asyncio.CancelledError):
+            with suppress(BaseException):
                 await task
         manager = self._manager
         cognition_client = self._cognition_client
@@ -1647,31 +1638,41 @@ class AstrBotSocialRuntimeBridge:
         self._imitation_controller = None
         self._profile_client = None
         try:
-            if knowledge_job_service is not None:
-                await knowledge_job_service.close()
-            probe_close = getattr(self.official_source_probe, "close", None)
-            if callable(probe_close):
-                result = probe_close()
-                if inspect.isawaitable(result):
-                    await result
-            if knowledge_service is not None:
-                await knowledge_service.close()
-            if profile_service is not None:
-                await profile_service.close()
-            if manager is not None:
-                await manager.close()
+            await self._close_resources(
+                knowledge_job_service,
+                self.official_source_probe,
+                knowledge_service,
+                profile_service,
+                manager,
+                cognition_client,
+                profile_client,
+                suppress_errors=False,
+            )
         finally:
-            close = getattr(cognition_client, "close", None)
-            if callable(close):
-                await close()
-            profile_close = getattr(profile_client, "close", None)
-            if callable(profile_close):
-                await profile_close()
             self._reply_executor = None
             self._reply_model = None
             self._scene_interpreter = None
             self._dispatcher = None
             self._started = False
+
+    @staticmethod
+    async def _close_resources(
+        *resources: object | None, suppress_errors: bool
+    ) -> None:
+        first_error: BaseException | None = None
+        for resource in resources:
+            close = getattr(resource, "close", None)
+            if not callable(close):
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+        if first_error is not None and not suppress_errors:
+            raise first_error
 
     @staticmethod
     def _new_cognition_client(

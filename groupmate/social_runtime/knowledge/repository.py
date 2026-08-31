@@ -377,6 +377,51 @@ class KnowledgeRepository:
             ).fetchall()
         return tuple(json.loads(str(row[0])) for row in rows)
 
+    def current_official_source_registry(
+        self, declarations: Iterable[Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Resolve seed-declared source identities to their current registry rows."""
+
+        declared = tuple(dict(item) for item in declarations)
+        source_ids = tuple(
+            _required_text(item.get("source_id"), "source_id")
+            for item in declared
+        )
+        if not source_ids:
+            return ()
+        placeholders = ",".join("?" for _ in source_ids)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT source_id,canonical_url,domain,publisher FROM knowledge_sources "
+                "WHERE source_id IN ({}) AND source_class='official'".format(
+                    placeholders
+                ),
+                source_ids,
+            ).fetchall()
+        current = {str(row["source_id"]): row for row in rows}
+        return tuple(
+            {
+                "source_id": source_id,
+                "publisher": (
+                    str(current[source_id]["publisher"])
+                    if source_id in current
+                    else str(item["publisher"])
+                ),
+                "domain": (
+                    str(current[source_id]["domain"])
+                    if source_id in current
+                    else str(item["domain"])
+                ),
+                "url": (
+                    str(current[source_id]["canonical_url"])
+                    if source_id in current
+                    else str(item["url"])
+                ),
+                "required": bool(item["required"]),
+            }
+            for source_id, item in zip(source_ids, declared)
+        )
+
     def enqueue_knowledge_job(
         self,
         *,
@@ -516,6 +561,168 @@ class KnowledgeRepository:
                 return int(row["updated_at"])
         return None
 
+    def has_outstanding_daily_refresh(
+        self, *, entity_id: str, region: str, platform: str
+    ) -> bool:
+        identity = _required_text(entity_id, "entity_id")
+        normalized_region = _required_text(region, "region", maximum=48)
+        normalized_platform = _required_text(platform, "platform", maximum=48)
+        with connect_database(self.path) as db:
+            rows = db.execute(
+                "SELECT request_json FROM knowledge_jobs WHERE "
+                "job_kind='official_daily_probe' AND entity_id=? AND "
+                "status IN ('pending','running','retry')",
+                (identity,),
+            ).fetchall()
+        for row in rows:
+            try:
+                request = json.loads(str(row["request_json"]))
+            except json.JSONDecodeError:
+                continue
+            if (
+                request.get("region") == normalized_region
+                and request.get("platform") == normalized_platform
+            ):
+                return True
+        return False
+
+    def complete_official_probe_job(
+        self,
+        job_id: str,
+        *,
+        evidence: Iterable[SourceEvidence],
+        observed_at: int,
+    ) -> None:
+        """Commit a successful official probe as one SQLite transaction.
+
+        The release service derives every slot transition from one aggregate
+        snapshot.  This method only persists those service-authorized results.
+        """
+
+        from .release_state import GameReleaseStateService, ReleaseEvidence
+
+        identity = _required_text(job_id, "job_id")
+        checked_at = int(observed_at)
+        bounded_evidence = tuple(evidence)
+        if checked_at < 0 or not all(
+            isinstance(item, SourceEvidence) for item in bounded_evidence
+        ):
+            raise ValueError("official probe completion is invalid")
+        with connect_database(self.path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM knowledge_jobs WHERE job_id=? AND status='running'",
+                (identity,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("knowledge job is not running")
+            job = self._knowledge_job(row)
+            request = job.request
+            game_id = _required_text(request.get("game_entity_id"), "game_entity_id")
+            region = _required_text(request.get("region"), "region", maximum=48)
+            platform = _required_text(
+                request.get("platform"), "platform", maximum=48
+            )
+            for item in bounded_evidence:
+                self._upsert_source_in_transaction(db, item)
+            slots = self._load_release_slots_in_transaction(
+                db, game_id, region, platform
+            )
+            service = GameReleaseStateService(slots)
+            transitions = []
+            for slot in slots:
+                if slot.official_state == "none":
+                    continue
+                transition = service.apply_evidence(
+                    slot,
+                    ReleaseEvidence.create(
+                        evidence_id="job:{}".format(job.job_id),
+                        track="official",
+                        target_state=slot.official_state,
+                        observed_at=checked_at,
+                        official_label=slot.official_label,
+                    ),
+                )
+                if transition.accepted and transition.state != slot:
+                    transitions.append(transition)
+            if transitions:
+                aggregate_revision = self._release_revision(
+                    db, game_id, region, platform
+                )
+                if any(
+                    transition.old_revision != aggregate_revision
+                    for transition in transitions
+                ):
+                    raise ReleaseStateConflict("release aggregate is inconsistent")
+                db.execute(
+                    "UPDATE game_release_states SET revision=? WHERE "
+                    "game_entity_id=? AND region=? AND platform=?",
+                    (aggregate_revision + 1, game_id, region, platform),
+                )
+                for transition in transitions:
+                    self._write_release_state_in_transaction(db, transition.state)
+                self._invalidate_negative_snapshots(
+                    db, game_id, "release_state_changed"
+                )
+            db.execute(
+                "UPDATE knowledge_jobs SET status='completed',diagnostic_code=NULL,"
+                "updated_at=? WHERE job_id=? AND status='running'",
+                (checked_at, identity),
+            )
+
+    def _load_release_slots_in_transaction(
+        self, db, game_id: str, region: str, platform: str
+    ) -> tuple[VersionSlot, ...]:
+        rows = db.execute(
+            "SELECT * FROM game_release_states WHERE game_entity_id=? "
+            "AND region=? AND platform=? ORDER BY CASE release_state "
+            "WHEN 'current' THEN 0 WHEN 'future' THEN 1 ELSE 2 END,"
+            "version_slot_id",
+            (game_id, region, platform),
+        ).fetchall()
+        return tuple(self._version_slot(row) for row in rows)
+
+    @staticmethod
+    def _write_release_state_in_transaction(db, state: VersionSlot) -> None:
+        db.execute(
+            "INSERT INTO game_release_states(version_slot_id,game_entity_id,"
+            "official_label,region,platform,release_state,official_state,"
+            "rumor_state,announced_at,release_at,effective_until,"
+            "release_checked_at,official_checked_at,rumor_checked_at,"
+            "fresh_until,status,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(version_slot_id) DO UPDATE SET "
+            "game_entity_id=excluded.game_entity_id,"
+            "official_label=excluded.official_label,region=excluded.region,"
+            "platform=excluded.platform,release_state=excluded.release_state,"
+            "official_state=excluded.official_state,rumor_state=excluded.rumor_state,"
+            "announced_at=excluded.announced_at,release_at=excluded.release_at,"
+            "effective_until=excluded.effective_until,"
+            "release_checked_at=excluded.release_checked_at,"
+            "official_checked_at=excluded.official_checked_at,"
+            "rumor_checked_at=excluded.rumor_checked_at,"
+            "fresh_until=excluded.fresh_until,status=excluded.status,"
+            "revision=excluded.revision",
+            (
+                state.version_slot_id,
+                state.game_entity_id,
+                state.official_label,
+                state.region,
+                state.platform,
+                state.release_state,
+                state.official_state,
+                state.rumor_state,
+                state.announced_at,
+                state.release_at,
+                state.effective_until,
+                state.release_checked_at,
+                state.official_checked_at,
+                state.rumor_checked_at,
+                state.fresh_until,
+                state.status,
+                state.revision,
+            ),
+        )
+
     def active_group_aliases(
         self, group_id: str
     ) -> tuple[KnowledgeAliasRecord, ...]:
@@ -611,64 +818,66 @@ class KnowledgeRepository:
             raise TypeError("evidence must be SourceEvidence")
         with connect_database(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT * FROM knowledge_sources WHERE canonical_url=?",
-                (evidence.canonical_url,),
-            ).fetchone()
-            if row is None:
-                row = db.execute(
-                    "SELECT * FROM knowledge_sources WHERE domain=? "
-                    "AND publisher=? AND content_hash=? "
-                    "ORDER BY fetched_at DESC,source_id LIMIT 1",
-                    (
-                        evidence.domain,
-                        evidence.publisher,
-                        evidence.content_hash,
-                    ),
-                ).fetchone()
-            if row is None:
-                identity_row = db.execute(
-                    "SELECT canonical_url FROM knowledge_sources "
-                    "WHERE source_id=?",
-                    (evidence.source_id,),
-                ).fetchone()
-                if identity_row is not None:
-                    raise ValueError(
-                        "source_id already belongs to another canonical URL"
-                    )
-                db.execute(
-                    "INSERT INTO knowledge_sources(source_id,canonical_url,"
-                    "domain,publisher,source_class,published_at,fetched_at,"
-                    "content_hash,evidence_excerpt) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        evidence.source_id,
-                        evidence.canonical_url,
-                        evidence.domain,
-                        evidence.publisher,
-                        evidence.source_class.value,
-                        evidence.published_at,
-                        evidence.fetched_at,
-                        evidence.content_hash,
-                        evidence.evidence_excerpt,
-                    ),
-                )
-                return evidence.source_id
+            return self._upsert_source_in_transaction(db, evidence)
 
-            source_id = str(row["source_id"])
-            if evidence.fetched_at >= int(row["fetched_at"]):
-                db.execute(
-                    "UPDATE knowledge_sources SET "
-                    "published_at=COALESCE(?,published_at),fetched_at=?,"
-                    "content_hash=?,evidence_excerpt=? WHERE source_id=?",
-                    (
-                        evidence.published_at,
-                        evidence.fetched_at,
-                        evidence.content_hash,
-                        evidence.evidence_excerpt,
-                        source_id,
-                    ),
+    @staticmethod
+    def _upsert_source_in_transaction(db, evidence: SourceEvidence) -> str:
+        row = db.execute(
+            "SELECT * FROM knowledge_sources WHERE canonical_url=?",
+            (evidence.canonical_url,),
+        ).fetchone()
+        if row is None:
+            row = db.execute(
+                "SELECT * FROM knowledge_sources WHERE domain=? "
+                "AND publisher=? AND content_hash=? "
+                "ORDER BY fetched_at DESC,source_id LIMIT 1",
+                (
+                    evidence.domain,
+                    evidence.publisher,
+                    evidence.content_hash,
+                ),
+            ).fetchone()
+        if row is None:
+            identity_row = db.execute(
+                "SELECT canonical_url FROM knowledge_sources WHERE source_id=?",
+                (evidence.source_id,),
+            ).fetchone()
+            if identity_row is not None:
+                raise ValueError(
+                    "source_id already belongs to another canonical URL"
                 )
-            return source_id
+            db.execute(
+                "INSERT INTO knowledge_sources(source_id,canonical_url,"
+                "domain,publisher,source_class,published_at,fetched_at,"
+                "content_hash,evidence_excerpt) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    evidence.source_id,
+                    evidence.canonical_url,
+                    evidence.domain,
+                    evidence.publisher,
+                    evidence.source_class.value,
+                    evidence.published_at,
+                    evidence.fetched_at,
+                    evidence.content_hash,
+                    evidence.evidence_excerpt,
+                ),
+            )
+            return evidence.source_id
+        source_id = str(row["source_id"])
+        if evidence.fetched_at >= int(row["fetched_at"]):
+            db.execute(
+                "UPDATE knowledge_sources SET "
+                "published_at=COALESCE(?,published_at),fetched_at=?,"
+                "content_hash=?,evidence_excerpt=? WHERE source_id=?",
+                (
+                    evidence.published_at,
+                    evidence.fetched_at,
+                    evidence.content_hash,
+                    evidence.evidence_excerpt,
+                    source_id,
+                ),
+            )
+        return source_id
 
     def admit_claim(
         self,

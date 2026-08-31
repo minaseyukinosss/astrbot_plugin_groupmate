@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from .release_state import GameReleaseStateService, ReleaseEvidence
 from .repository import KnowledgeJobRecord, KnowledgeRepository
+from .seeds import load_bundled_seeds
 from .sources import (
     OfficialProbeRequest,
     OfficialSourceDefinition,
@@ -120,10 +120,11 @@ class KnowledgeJobService:
             self._retry(job, result.diagnostic_code or "official_probe_failed")
             return
         try:
-            for evidence in result.evidence:
-                self._repository.upsert_source(evidence)
-            self._revalidate_existing_official_state(job, request)
-            self._repository.complete_knowledge_job(job.job_id, self._now())
+            self._repository.complete_official_probe_job(
+                job.job_id,
+                evidence=result.evidence,
+                observed_at=request.requested_at,
+            )
         except asyncio.CancelledError:
             self._retry(job, "official_probe_cancelled")
             raise
@@ -148,24 +149,31 @@ class KnowledgeJobService:
         midnight = int(
             datetime.fromisoformat(date).replace(tzinfo=_SHANGHAI).timestamp()
         )
-        for manifest in self._repository.active_seed_manifests():
-            game = manifest["game"]
-            game_id = str(game["entity_id"])
-            if self._daily_refresh_due(game_id, now):
+        for seed in load_bundled_seeds():
+            game_id = seed.game.entity_id
+            sources = self._repository.current_official_source_registry(
+                seed.manifest["official_sources"]
+            )
+            if (
+                self._daily_refresh_due(game_id, now)
+                and not self._repository.has_outstanding_daily_refresh(
+                    entity_id=game_id, region=_REGION, platform=_PLATFORM
+                )
+            ):
                 key = self._job_key("official_daily_probe", game_id, date)
                 self._enqueue(
                     key=key,
                     kind="official_daily_probe",
                     game_id=game_id,
                     date_or_boundary=date,
-                    sources=manifest["official_sources"],
+                    sources=sources,
                     due_at=midnight + _jitter(key),
                     now=now,
                 )
             for slot in self._repository.load_release_state(
                 game_id, _REGION, _PLATFORM
             ):
-                if slot.release_at is None:
+                if slot.release_at is None or now < slot.release_at:
                     continue
                 boundary = str(slot.release_at)
                 key = self._job_key(
@@ -176,7 +184,7 @@ class KnowledgeJobService:
                     kind="time_boundary_revalidation",
                     game_id=game_id,
                     date_or_boundary=boundary,
-                    sources=manifest["official_sources"],
+                    sources=sources,
                     due_at=slot.release_at,
                     now=now,
                 )
@@ -243,30 +251,6 @@ class KnowledgeJobService:
             platform=request["platform"],
             requested_at=self._now(),
         )
-
-    def _revalidate_existing_official_state(
-        self, job: KnowledgeJobRecord, request: OfficialProbeRequest
-    ) -> None:
-        service = GameReleaseStateService(self._repository)
-        for slot in self._repository.load_release_state(
-            request.game_entity_id, _REGION, _PLATFORM
-        ):
-            if slot.official_state == "none":
-                continue
-            transition = service.apply_evidence(
-                slot,
-                ReleaseEvidence.create(
-                    evidence_id="job:{}".format(job.job_id),
-                    track="official",
-                    target_state=slot.official_state,
-                    observed_at=request.requested_at,
-                    official_label=slot.official_label,
-                ),
-            )
-            if transition.accepted and transition.state != slot:
-                self._repository.save_release_state(
-                    transition.state, expected_revision=transition.old_revision
-                )
 
     def _now(self) -> int:
         return int(self._clock())
