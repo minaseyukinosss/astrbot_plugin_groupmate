@@ -13,6 +13,7 @@ from .world import GroupWorldState
 
 
 AMBIENT_DECISION_BUDGET_SECONDS = 8
+AMBIENT_WINDOW_MAX_SECONDS = AMBIENT_DECISION_BUDGET_SECONDS
 AMBIENT_MAX_FOCUS_EVENTS = 12
 AMBIENT_MAX_FOCUS_TOPICS = 4
 AMBIENT_MAX_CANDIDATE_AUDIENCES = 8
@@ -41,6 +42,7 @@ class PendingAttentionWindow:
     focus_topic_ids: tuple[str, ...]
     focus_event_ids: tuple[str, ...]
     candidate_audiences: tuple[str, ...]
+    window_started_at: int
     deadline: int
     persona_state_version: int
     config_version: int
@@ -142,6 +144,7 @@ class AttentionScheduler:
                 focus_topic_ids=(topic_id,) if topic_id else (),
                 focus_event_ids=(event.event_id,),
                 candidate_audiences=(event.actor_id,) if event.actor_id else (),
+                window_started_at=now,
                 deadline=now + delay,
                 persona_state_version=persona.state_version,
                 config_version=persona.config_version,
@@ -165,7 +168,10 @@ class AttentionScheduler:
                     event.actor_id,
                     AMBIENT_MAX_CANDIDATE_AUDIENCES,
                 ),
-                deadline=now + delay,
+                deadline=min(
+                    now + delay,
+                    current.window_started_at + AMBIENT_WINDOW_MAX_SECONDS,
+                ),
                 persona_state_version=persona.state_version,
                 config_version=persona.config_version,
             )
@@ -191,7 +197,12 @@ class AttentionScheduler:
         return self._ambient.get(group_id)
 
     def restore_window(self, window: PendingAttentionWindow) -> None:
-        if not window.group_id.strip() or window.scene_version < 1:
+        if (
+            not window.group_id.strip()
+            or window.scene_version < 1
+            or window.window_started_at < 0
+            or window.window_started_at > window.deadline
+        ):
             raise ValueError("pending attention window is invalid")
         self._ambient[window.group_id] = window
 
@@ -474,6 +485,7 @@ __all__ = (
     "AMBIENT_MAX_CANDIDATE_AUDIENCES",
     "AMBIENT_MAX_FOCUS_EVENTS",
     "AMBIENT_MAX_FOCUS_TOPICS",
+    "AMBIENT_WINDOW_MAX_SECONDS",
     "AttentionFrame",
     "AttentionScheduler",
     "PendingAttentionWindow",

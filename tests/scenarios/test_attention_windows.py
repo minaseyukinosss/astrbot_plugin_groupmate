@@ -82,6 +82,25 @@ def test_high_velocity_group_uses_longer_bounded_window():
     assert frames[0].deadline == last_at + 5
 
 
+def test_continuous_messages_flush_ambient_window_by_absolute_deadline():
+    scheduler = AttentionScheduler()
+    projector = GroupWorldProjector()
+    world = projector.empty("885617919")
+
+    for index, now in enumerate(range(100, 109), start=1):
+        event = _message(index, now, f"u{index}")
+        world = projector.apply(world, event)
+        assert scheduler.on_event(event, world, _persona(), now=now) == ()
+        if now < 108:
+            assert scheduler.flush_due(now=now) == ()
+
+    frames = scheduler.flush_due(now=108)
+
+    assert len(frames) == 1
+    assert frames[0].deadline == 108
+    assert frames[0].focus_event_ids[-1] == "qq:m9"
+
+
 def test_undispatched_ambient_frame_refreshes_when_fast_event_advances_scene():
     scheduler = AttentionScheduler()
     projector = GroupWorldProjector()
@@ -170,6 +189,7 @@ def test_restored_ambient_window_is_rebounded_before_dispatch():
             focus_topic_ids=tuple(f"t{index}" for index in range(1, 10)),
             focus_event_ids=tuple(f"e{index}" for index in range(1, 21)),
             candidate_audiences=tuple(f"u{index}" for index in range(1, 15)),
+            window_started_at=92,
             deadline=100,
             persona_state_version=1,
             config_version=2,

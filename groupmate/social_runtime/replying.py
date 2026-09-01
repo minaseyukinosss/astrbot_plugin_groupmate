@@ -51,6 +51,10 @@ from .society.relationships import (
 from .stances import Boundary, PermissionSnapshot, StanceDecision
 
 
+DELIVERY_GRACE_SECONDS = 20
+MAX_REPLY_AGE_SECONDS = 60
+
+
 class ReplyPlanIdentityConflict(RuntimeError):
     """Raised when a durable reply identity is reused for different content."""
 
@@ -388,7 +392,7 @@ class ReplyPlanner:
             ),
             None,
         )
-        if selected is None or selected.expires_at <= int(now):
+        if selected is None:
             return None
         resolved_public_affection = relationship or (
             PublicAffection.from_projection(relationship_projection)
@@ -473,7 +477,12 @@ class ReplyPlanner:
                 knowledge_snapshot.version_state_revision,
             )
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-        expires_at = min(int(selected.expires_at), now + 30)
+        delivery_deadline = now + DELIVERY_GRACE_SECONDS
+        hard_deadline = int(source.occurred_at) + MAX_REPLY_AGE_SECONDS
+        expires_at = min(
+            max(int(selected.expires_at), delivery_deadline),
+            hard_deadline,
+        )
         if knowledge_snapshot is not None:
             expires_at = min(expires_at, knowledge_snapshot.expires_at)
         return ReplyPlan(
@@ -1711,7 +1720,9 @@ class ReplyExecutor:
 
 
 __all__ = (
+    "DELIVERY_GRACE_SECONDS",
     "ExpressionPlan",
+    "MAX_REPLY_AGE_SECONDS",
     "ReplyExecutor",
     "ReplyExecutionResult",
     "ReplyPlan",
