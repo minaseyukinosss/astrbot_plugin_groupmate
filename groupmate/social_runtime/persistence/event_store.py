@@ -212,6 +212,9 @@ class SQLiteSocialEventStore:
         claimed: ClaimedEvent,
         effects: tuple[dict[str, object], ...],
         work_requests: tuple[dict[str, object], ...] = (),
+        *,
+        supersede_before_scene_version: int | None = None,
+        supersede_reason_code: str = "newer_scene_committed",
     ) -> ActorCursor:
         db = connect_database(self.path)
         try:
@@ -278,6 +281,16 @@ class SQLiteSocialEventStore:
                 request_payload = request.get("request")
                 if not request_id or not trigger_event_id or scene_version < 1:
                     raise ValueError("work request identity is incomplete")
+                supersede_before = (
+                    scene_version
+                    if supersede_before_scene_version is None
+                    else int(supersede_before_scene_version)
+                )
+                if not 0 <= supersede_before <= scene_version:
+                    raise ValueError("scene work supersede boundary is invalid")
+                reason_code = str(supersede_reason_code or "").strip()
+                if not reason_code:
+                    raise ValueError("scene work supersede reason is required")
                 request_json = json.dumps(
                     request_payload, ensure_ascii=False, sort_keys=True
                 )
@@ -301,7 +314,7 @@ class SQLiteSocialEventStore:
                 supersede_resolution = json.dumps(
                     {
                         "kind": "scene_superseded",
-                        "reason_code": "newer_scene_committed",
+                        "reason_code": reason_code,
                         "superseding_request_id": request_id,
                     },
                     ensure_ascii=False,
@@ -311,7 +324,7 @@ class SQLiteSocialEventStore:
                     "UPDATE scene_work_requests SET status='stale', "
                     "resolution_json=?, updated_at=? "
                     "WHERE actor_key=? AND status='pending' AND scene_version<?",
-                    (supersede_resolution, now, actor_key, scene_version),
+                    (supersede_resolution, now, actor_key, supersede_before),
                 )
                 db.execute(
                     "INSERT INTO scene_work_requests("
@@ -428,6 +441,37 @@ class SQLiteSocialEventStore:
                 (actor_key, scene_version),
             ).fetchall()
         return tuple(json.loads(row[0]) for row in rows)
+
+    def supersede_pending_scene_work_before(
+        self,
+        actor_key: str,
+        scene_version: int,
+        *,
+        reason_code: str,
+    ) -> int:
+        """关闭重启后已无存活 worker 的旧版本请求。"""
+
+        boundary = int(scene_version)
+        reason = str(reason_code or "").strip()
+        if boundary < 0 or not reason:
+            raise ValueError("scene work supersede boundary and reason are required")
+        resolution = json.dumps(
+            {
+                "kind": "scene_superseded",
+                "reason_code": reason,
+                "superseding_scene_version": boundary,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with connect_database(self.path) as db:
+            cursor = db.execute(
+                "UPDATE scene_work_requests SET status='stale', "
+                "resolution_json=?, updated_at=? "
+                "WHERE actor_key=? AND status='pending' AND scene_version<?",
+                (resolution, int(time.time()), actor_key, boundary),
+            )
+            return int(cursor.rowcount)
 
     def scene_work_request(
         self, actor_key: str, request_id: str

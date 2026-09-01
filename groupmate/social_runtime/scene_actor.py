@@ -127,6 +127,8 @@ _Command = Union[
 _SnapshotProvider = Callable[[], Awaitable[PersonaSnapshot]]
 _GovernanceProvider = Callable[[], RuntimeGovernanceState]
 
+MAX_SCENE_VERSION_DRIFT = 12
+
 _SAFE_PROPOSITION_KEYS = frozenset(
     {
         "attribute",
@@ -208,6 +210,11 @@ class GroupSceneActor:
             if self._actor_task is not None and not self._actor_task.done():
                 return
             self._state = self._recover()
+            self._store.supersede_pending_scene_work_before(
+                self.actor_key,
+                self._state.scene_version,
+                reason_code="actor_restart_superseded",
+            )
             self._recovered_requests = [
                 self._request_from_dict(payload)
                 for payload in self._store.pending_scene_work(
@@ -423,16 +430,20 @@ class GroupSceneActor:
                             )
                             command.future.set_result(persisted)
                             continue
-                    accepted = bool(
-                        request is not None
-                        and command.result.group_id == self.group_id
-                        and command.result.scene_version == state.scene_version
-                        and self._compatible_result(
-                            command.result,
-                            request,
-                            command.current_persona,
-                        )
-                    )
+                        if stored is not None and stored.status == "pending":
+                            request = self._request_from_dict(stored.payload)
+                    accepted = False
+                    reason_code = "request_not_pending"
+                    if request is not None:
+                        if command.result.group_id != self.group_id:
+                            reason_code = "group_scope_mismatch"
+                        else:
+                            accepted, reason_code = self._result_still_actionable(
+                                command.result,
+                                request,
+                                state,
+                                command.current_persona,
+                            )
                     evaluation = (
                         self._evaluation_payload(command.result, request)
                         if accepted and request is not None
@@ -449,12 +460,21 @@ class GroupSceneActor:
                         if accepted and request is not None
                         else None
                     )
-                    keep_pending = bool(
+                    keep_durable_pending = bool(
                         updated_request is not None
                         and (
-                            updated_request.attention_window is not None
-                            or self._has_unevaluated_frames(updated_request)
+                            self._has_unevaluated_frames(updated_request)
+                            or (
+                                updated_request.scene_version
+                                == state.scene_version
+                                and updated_request.attention_window is not None
+                            )
                         )
+                    )
+                    keep_cached = bool(
+                        keep_durable_pending
+                        and updated_request is not None
+                        and updated_request.scene_version == state.scene_version
                     )
                     persisted = self._store.resolve_scene_evaluation(
                         self.actor_key,
@@ -463,7 +483,8 @@ class GroupSceneActor:
                         evaluation=evaluation,
                         keep_pending_request=(
                             self._request_to_dict(updated_request)
-                            if keep_pending and updated_request is not None
+                            if keep_durable_pending
+                            and updated_request is not None
                             else None
                         ),
                         resolution=(
@@ -471,14 +492,14 @@ class GroupSceneActor:
                             if accepted
                             else {
                                 "kind": "stale_result",
-                                "reason_code": "version_or_scope_mismatch",
+                                "reason_code": reason_code,
                             }
                         ),
                         capture_evidence=(
                             command.result.capture_evidence if accepted else None
                         ),
                     )
-                    if persisted and keep_pending and updated_request is not None:
+                    if persisted and keep_cached and updated_request is not None:
                         self._pending_requests[command.result.request_id] = (
                             updated_request
                         )
@@ -556,10 +577,15 @@ class GroupSceneActor:
                     "request": self._request_to_dict(request),
                 },
             ),
+            supersede_before_scene_version=max(
+                0,
+                state.scene_version - MAX_SCENE_VERSION_DRIFT,
+            ),
+            supersede_reason_code="scene_version_drift_exceeded",
         )
         self._state = state
-        # The transaction has already marked older scene requests stale.
-        # Mirror that authoritative state so the actor's cache stays bounded.
+        # 事务只淘汰超出语义新鲜度窗口的旧请求；actor 缓存仍只追踪
+        # 最新请求，较新的在途结果需要时按 request_id 从持久层恢复。
         self._pending_requests = {request_id: request}
         if state.scene_version % self.SNAPSHOT_INTERVAL == 0:
             try:
@@ -576,7 +602,10 @@ class GroupSceneActor:
         frames = self._attention.flush_due(now)
         if not frames or not self._pending_requests:
             return ()
-        request = next(reversed(self._pending_requests.values()))
+        request = max(
+            self._pending_requests.values(),
+            key=lambda item: item.scene_version,
+        )
         durable_request = replace(
             request,
             world_snapshot=self._require_state(),
@@ -599,20 +628,51 @@ class GroupSceneActor:
         return (dispatch_request,)
 
     @staticmethod
-    def _compatible_result(
+    def _result_still_actionable(
         result: SceneWorkResult,
         request: SceneWorkRequest,
+        state: GroupWorldState,
         current_persona: PersonaSnapshot,
-    ) -> bool:
-        frame_ids = {frame.frame_id for frame in request.attention_frames}
-        return bool(
-            result.frame_id in frame_ids
-            and result.config_version == request.persona_snapshot.config_version
-            and result.config_version == current_persona.config_version
-            and result.persona_state_version
-            == request.persona_snapshot.state_version
-            and result.persona_state_version == current_persona.state_version
+    ) -> tuple[bool, str]:
+        """判断冻结帧上的决策是否仍可安全应用。
+
+        认知在 actor 邮箱外执行，活跃群里 scene_version 必然推进。
+        这里拦截使决策失效的变化，而不是任何无关的新消息。
+        """
+
+        drift = int(state.scene_version) - int(result.scene_version)
+        if drift < 0:
+            return False, "scene_version_regressed"
+        if drift > MAX_SCENE_VERSION_DRIFT:
+            return False, "scene_version_drift_exceeded"
+        if result.scene_version != request.scene_version:
+            return False, "request_scene_version_mismatch"
+        if result.config_version != request.persona_snapshot.config_version:
+            return False, "frozen_config_version_mismatch"
+        if result.config_version != current_persona.config_version:
+            return False, "config_version_changed"
+        if (
+            result.persona_state_version
+            != request.persona_snapshot.state_version
+        ):
+            return False, "frozen_persona_state_version_mismatch"
+        if result.persona_state_version != current_persona.state_version:
+            return False, "persona_state_version_changed"
+        frame = next(
+            (
+                item
+                for item in request.attention_frames
+                if item.frame_id == result.frame_id
+            ),
+            None,
         )
+        if frame is None:
+            return False, "frame_not_requested"
+        recent_ids = set(state.recent_presence.recent_event_ids)
+        focus_ids = set(frame.focus_event_ids)
+        if focus_ids and not (focus_ids & recent_ids):
+            return False, "focus_events_evicted"
+        return True, ""
 
     @staticmethod
     def _evaluation_payload(
@@ -760,6 +820,9 @@ class GroupSceneActor:
             "candidate_audiences",
         ):
             values[key] = tuple(values.get(key, ()))
+        values.setdefault(
+            "window_started_at", int(values.get("deadline") or 0)
+        )
         return PendingAttentionWindow(**values)
 
     @staticmethod
@@ -850,6 +913,7 @@ class GroupSceneActor:
 
 
 __all__ = (
+    "MAX_SCENE_VERSION_DRIFT",
     "GroupSceneActor",
     "SceneActorNotRunning",
     "SceneWorkRequest",

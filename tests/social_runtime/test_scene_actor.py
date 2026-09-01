@@ -4,12 +4,15 @@ import asyncio
 
 import pytest
 
+from groupmate.social_runtime.cognition.contracts import CognitiveObservation
 from groupmate.social_runtime.contracts import PersonaSnapshot, SocialEventEnvelope
 from groupmate.social_runtime.governor import GovernorResult
+from groupmate.social_runtime.intentions import create_candidate_intention
 from groupmate.social_runtime.persistence.event_store import (
     JournalEffectIdentityConflict,
     SQLiteSocialEventStore,
 )
+from groupmate.social_runtime.persistence.schema import connect_database
 from groupmate.social_runtime.scene_actor import (
     GroupSceneActor,
     SceneWorkResult,
@@ -37,6 +40,51 @@ async def _persona_snapshot():
         energy=90,
         mode="social",
         modifiers=("warm",),
+    )
+
+
+def _accepted_result(request):
+    frame = request.attention_frames[0]
+    observation = CognitiveObservation.create(
+        worker="test.worker",
+        kind="help_request",
+        proposition={
+            "subject_id": frame.candidate_audiences[0],
+            "topic_id": frame.focus_topic_ids[0],
+        },
+        confidence=0.9,
+        evidence_event_ids=frame.focus_event_ids,
+        scene_version=frame.scene_version,
+        expires_at=130,
+        uncertainty=(),
+    )
+    candidate = create_candidate_intention(
+        kind="HELP",
+        target_id=frame.candidate_audiences[0],
+        topic_id=frame.focus_topic_ids[0],
+        evidence=frame.focus_event_ids,
+        proposed_act="answer_help_request",
+        expires_at=130,
+        features={"obligation": 1.0, "relevance": 1.0},
+    )
+    return SceneWorkResult(
+        request_id=request.request_id,
+        group_id=request.group_id,
+        scene_version=request.scene_version,
+        config_version=frame.config_version,
+        persona_state_version=frame.persona_state_version,
+        frame_id=frame.frame_id,
+        governor_result=GovernorResult(
+            "ACT",
+            (candidate.intention_id,),
+            (),
+            ("selected",),
+            None,
+            ("hard_gate_v1",),
+        ),
+        participation_lane="DIRECT_FAST",
+        cognitive_observations=(observation,),
+        candidates=(candidate,),
     )
 
 
@@ -305,11 +353,10 @@ def test_explicit_discard_persists_auditable_reason(tmp_path):
     }
 
 
-def test_new_scene_supersede_persists_auditable_reason(tmp_path):
+def test_result_survives_small_scene_drift_and_persists_decision_evidence(tmp_path):
     async def scenario():
-        store = SQLiteSocialEventStore(
-            tmp_path / "groupmate-social-runtime-v2.db"
-        )
+        path = tmp_path / "groupmate-social-runtime-v2.db"
+        store = SQLiteSocialEventStore(path)
         actor = GroupSceneActor(
             "aemeath",
             "885617919",
@@ -317,17 +364,147 @@ def test_new_scene_supersede_persists_auditable_reason(tmp_path):
             _persona_snapshot,
         )
         await actor.start()
-        old_request = await actor.submit(_event("old"))
-        new_request = await actor.submit(_event("new"))
-        stored = store.scene_work_request(actor.actor_key, old_request.request_id)
+        await actor.submit(_event("ambient-before-direct"))
+        direct = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:drift",
+                source_message_id="drift",
+                correlation_id="corr:drift",
+                payload={"text": "在吗", "direct_address": True},
+            )
+        )
+        request = await actor.submit(direct)
+        direct_result = _accepted_result(request)
+        initial_flush = await actor.flush_attention(10_000)
+        assert len(initial_flush) == 1
+        ambient_result = _accepted_result(initial_flush[0])
+        for index in range(5):
+            await actor.submit(_event(f"unrelated-{index}"))
+        direct_accepted = await actor.accept_result(direct_result)
+        stored_after_direct = store.scene_work_request(
+            actor.actor_key, request.request_id
+        )
+        ambient_accepted = await actor.accept_result(ambient_result)
+        pending_count = actor.pending_request_count
+        state = await actor.snapshot()
+        flushed = await actor.flush_attention(10_000)
+        stored = store.scene_work_request(actor.actor_key, request.request_id)
+        with connect_database(path) as db:
+            counts = {
+                table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "attention_frames",
+                    "cognitive_observations",
+                    "candidate_intentions",
+                    "governor_results",
+                )
+            }
         await actor.close()
-        return new_request, stored
+        restarted = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            store,
+            _persona_snapshot,
+        )
+        await restarted.start()
+        with connect_database(path) as db:
+            work_statuses = {
+                status: count
+                for status, count in db.execute(
+                    "SELECT status, COUNT(*) FROM scene_work_requests "
+                    "GROUP BY status"
+                )
+            }
+        await restarted.close()
+        return (
+            direct_accepted,
+            ambient_accepted,
+            stored,
+            stored_after_direct,
+            counts,
+            pending_count,
+            state.scene_version,
+            flushed,
+            work_statuses,
+        )
 
-    new_request, stored = asyncio.run(scenario())
+    (
+        direct_accepted,
+        ambient_accepted,
+        stored,
+        stored_after_direct,
+        counts,
+        pending_count,
+        scene_version,
+        flushed,
+        work_statuses,
+    ) = asyncio.run(scenario())
 
+    assert direct_accepted is True
+    assert ambient_accepted is True
+    assert stored_after_direct.status == "pending"
+    assert stored.status == "accepted"
+    assert pending_count == 1
+    assert len(flushed) == 1
+    assert flushed[0].scene_version == scene_version
+    assert {frame.scene_version for frame in flushed[0].attention_frames} == {
+        scene_version
+    }
+    assert counts == {
+        "attention_frames": 2,
+        "cognitive_observations": 2,
+        "candidate_intentions": 2,
+        "governor_results": 2,
+    }
+    assert work_statuses == {"accepted": 1, "pending": 1, "stale": 5}
+
+
+def test_result_is_invalidated_when_config_version_changes(tmp_path):
+    async def scenario():
+        config_version = 7
+
+        async def persona_snapshot():
+            return PersonaSnapshot(
+                persona_id="aemeath",
+                state_version=3,
+                config_version=config_version,
+                presence="awake",
+                energy=90,
+                mode="social",
+                modifiers=("warm",),
+            )
+
+        store = SQLiteSocialEventStore(
+            tmp_path / "groupmate-social-runtime-v2.db"
+        )
+        actor = GroupSceneActor(
+            "aemeath",
+            "885617919",
+            store,
+            persona_snapshot,
+        )
+        await actor.start()
+        direct = SocialEventEnvelope.create(
+            **social_event_values(
+                event_id="qq:config",
+                source_message_id="config",
+                correlation_id="corr:config",
+                payload={"text": "在吗", "direct_address": True},
+            )
+        )
+        request = await actor.submit(direct)
+        result = _accepted_result(request)
+        config_version = 8
+        accepted = await actor.accept_result(result)
+        stored = store.scene_work_request(actor.actor_key, request.request_id)
+        await actor.close()
+        return accepted, stored
+
+    accepted, stored = asyncio.run(scenario())
+
+    assert accepted is False
     assert stored.status == "stale"
     assert stored.resolution == {
-        "kind": "scene_superseded",
-        "reason_code": "newer_scene_committed",
-        "superseding_request_id": new_request.request_id,
+        "kind": "stale_result",
+        "reason_code": "config_version_changed",
     }
