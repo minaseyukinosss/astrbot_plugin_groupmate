@@ -489,6 +489,8 @@ def test_model_context_contains_only_relevant_world_and_mode_neutral_constraints
         "last_bot_event_at",
         "conversation_lease",
         "persona_profile",
+        "member_context",
+        "relationship_memories",
     }
     assert context.world_summary["topics"][0]["topic_id"] == "bounded"
     assert context.world_summary["audiences"][0]["actor_id"] == "u1"

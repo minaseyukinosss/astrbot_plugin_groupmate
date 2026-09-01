@@ -132,6 +132,8 @@ async def _unlocked_reply_scope():
 
 
 class AstrBotSocialRuntimeBridge:
+    DELIVERY_POLL_SECONDS = 1.0
+
     def __init__(
         self,
         context: object,
@@ -1273,24 +1275,43 @@ class AstrBotSocialRuntimeBridge:
             self._attention_changed.clear()
             try:
                 deadline = await manager.next_attention_deadline()
-                if deadline is None:
-                    await self._attention_changed.wait()
-                    continue
-                delay = max(0.0, float(deadline) - float(self.clock()))
+                poll_delay = max(0.01, float(self.DELIVERY_POLL_SECONDS))
+                delay = (
+                    poll_delay
+                    if deadline is None
+                    else min(
+                        poll_delay,
+                        max(0.0, float(deadline) - float(self.clock())),
+                    )
+                )
+                timed_out = False
                 try:
                     await asyncio.wait_for(
                         self._attention_changed.wait(), timeout=delay
                     )
                 except TimeoutError:
+                    timed_out = True
+                if (
+                    timed_out
+                    and deadline is not None
+                    and float(deadline) <= float(self.clock())
+                ):
                     evaluations = await manager.drain(now=deadline)
                     await self._handle_evaluations(evaluations)
-                    self._reconcile_shadow_reviews()
+                await self._dispatch_ready()
+                self._reconcile_shadow_reviews()
                 self.attention_wakeup_error = None
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self.attention_wakeup_error = f"{type(exc).__name__}: {exc}"
-                await self._attention_changed.wait()
+                try:
+                    await asyncio.wait_for(
+                        self._attention_changed.wait(),
+                        timeout=max(0.01, float(self.DELIVERY_POLL_SECONDS)),
+                    )
+                except TimeoutError:
+                    pass
 
     async def _handle_evaluations(self, evaluations: tuple[object, ...]) -> None:
         if self._manager is None or not evaluations:
@@ -1774,6 +1795,90 @@ class AstrBotSocialRuntimeBridge:
         ):
             manager.update_shadow_review_evidence(stale)
 
+    @staticmethod
+    def _reply_plan_failure_code(evaluation: object) -> str:
+        frame = getattr(evaluation, "frame", None)
+        governor = getattr(evaluation, "governor_result", None)
+        if not getattr(evaluation, "accepted", False):
+            return "reply_evaluation_not_accepted"
+        if frame is None:
+            return "reply_frame_missing"
+        if governor is None:
+            return "reply_governor_missing"
+        if str(getattr(governor, "outcome", "")).upper() != "ACT":
+            return "reply_governor_not_act"
+        selected_ids = tuple(
+            getattr(governor, "selected_intention_ids", ()) or ()
+        )
+        if len(selected_ids) != 1:
+            return "reply_selected_intention_count_invalid"
+        selected = next(
+            (
+                item
+                for item in tuple(getattr(evaluation, "candidates", ()) or ())
+                if getattr(item, "intention_id", None) == selected_ids[0]
+            ),
+            None,
+        )
+        if selected is None:
+            return "reply_selected_intention_missing"
+        return "reply_plan_unavailable"
+
+    def _record_reply_failure(
+        self,
+        evaluation: object,
+        *,
+        diagnostic_code: str,
+        stage_kind: str,
+        exception: BaseException | None = None,
+    ) -> None:
+        try:
+            failed = replace(evaluation, reply_diagnostic=diagnostic_code)
+        except TypeError:
+            failed = evaluation
+        now = int(self.clock())
+        self._record_trace(
+            self.trace_repository.record_evaluation,
+            failed,
+            now,
+        )
+        source_event = getattr(failed, "source_event", None)
+        event_id = str(getattr(source_event, "event_id", "") or "")
+        if event_id:
+            self._record_trace(
+                self.trace_repository.record_reply_failure,
+                event_id,
+                diagnostic_code=diagnostic_code,
+                stage_kind=stage_kind,
+                exception_type=(
+                    type(exception).__name__ if exception is not None else None
+                ),
+                now=now,
+            )
+        manager = self._manager
+        if (
+            manager is not None
+            and getattr(failed, "runtime_mode", None) is RuntimeMode.SHADOW
+        ):
+            with suppress(Exception):
+                manager.update_shadow_review_evidence(failed)
+
+    def _reply_exception_stage(self, plan: object, fallback: str) -> str:
+        if fallback != "GENERATED" or self._manager is None:
+            return fallback
+        try:
+            persisted = self._manager.reply_plans.load(
+                str(getattr(plan, "plan_id", ""))
+            )
+        except Exception:
+            return fallback
+        if str(getattr(persisted, "status", "")) in {
+            "generated",
+            "enqueued",
+        }:
+            return "ENQUEUED"
+        return fallback
+
     async def _handle_evaluations_locked(
         self, evaluations: tuple[object, ...]
     ) -> None:
@@ -1798,12 +1903,27 @@ class AstrBotSocialRuntimeBridge:
                     getattr(getattr(evaluation, "source_event", None), "group_id", "")
                     or ""
                 )
-                if not group_id or group_id in handled_groups:
+                if not group_id:
                     self._record_trace(
                         self.trace_repository.record_evaluation,
                         evaluation,
                         int(self.clock()),
                     )
+                    continue
+                if group_id in handled_groups:
+                    governor = getattr(evaluation, "governor_result", None)
+                    if str(getattr(governor, "outcome", "")).upper() == "ACT":
+                        self._record_reply_failure(
+                            evaluation,
+                            diagnostic_code="reply_group_already_handled",
+                            stage_kind="PLANNED",
+                        )
+                    else:
+                        self._record_trace(
+                            self.trace_repository.record_evaluation,
+                            evaluation,
+                            int(self.clock()),
+                        )
                     continue
                 source_event = getattr(evaluation, "source_event", None)
                 if (
@@ -1811,6 +1931,17 @@ class AstrBotSocialRuntimeBridge:
                     or source_event.payload.get("social_eligible") is False
                 ):
                     # 外部命令已完成所有权判定，只记交接结果，不进入场景或回复模型。
+                    self._record_trace(
+                        self.trace_repository.record_evaluation,
+                        evaluation,
+                        int(self.clock()),
+                    )
+                    continue
+                governor_result = getattr(evaluation, "governor_result", None)
+                outcome = str(getattr(governor_result, "outcome", "")).upper()
+                if outcome not in {"ACT", "DEFER"}:
+                    # 已决定不发言：场景解析、立场与社交动作都不影响投递，
+                    # 不再为沉默路径支付一次模型往返。
                     self._record_trace(
                         self.trace_repository.record_evaluation,
                         evaluation,
@@ -1829,10 +1960,10 @@ class AstrBotSocialRuntimeBridge:
                     )
                 )
                 if self._scene_interpreter is None:
-                    self._record_trace(
-                        self.trace_repository.record_evaluation,
+                    self._record_reply_failure(
                         evaluation,
-                        int(self.clock()),
+                        diagnostic_code="reply_scene_interpreter_unavailable",
+                        stage_kind="SCENE_PARSED",
                     )
                     continue
                 relationship_projection = self._manager.relationship_projection(
@@ -1873,54 +2004,65 @@ class AstrBotSocialRuntimeBridge:
                 )
                 identity = persona_profile.get("identity")
                 identity = identity if isinstance(identity, Mapping) else {}
-                scene_context = self._scene_context_builder.build(
-                    source_event=source_event,
-                    context_events=tuple(
-                        getattr(evaluation, "context_events", ()) or ()
-                    ),
-                    focus_event_ids=tuple(
-                        getattr(frame, "focus_event_ids", ()) or ()
-                    ),
-                    target_id=subject_id or None,
-                    topic_id=topic_id,
-                    persona_actor_id=self._manager.persona_id,
-                    persona_aliases=(
-                        str(identity.get("name") or "爱弥斯"),
-                        *tuple(identity.get("aliases", ()) or ()),
-                    ),
-                    member_refs=self._manager.group_member_refs(group_id),
-                    profile=profile_retrieval,
-                    relationship_memories=relationship_memories,
-                    topic_understanding=getattr(
-                        evaluation, "topic_understanding", None
-                    ),
-                ).with_chorus(getattr(evaluation, "chorus_evidence", None))
-                if (
-                    source_event.event_type == "temporal.opportunity_due"
-                    and not str(
-                        source_event.payload.get("literal_subject") or ""
-                    ).strip()
-                ):
-                    interpretation = SceneInterpretationResult(
-                        SocialScene.create(
-                            scene_kind="proactive_no_entry",
-                            target_scope=TargetScope.INDIVIDUAL,
-                            target_id=subject_id,
-                            literal_subject="没有具体切入点的主动机会",
-                            user_move="autonomous_opportunity_without_subject",
-                            continuity_event_ids=tuple(
-                                getattr(frame, "focus_event_ids", ()) or (
-                                    source_event.event_id,
-                                )
-                            ),
-                            confidence=1.0,
+                try:
+                    scene_context = self._scene_context_builder.build(
+                        source_event=source_event,
+                        context_events=tuple(
+                            getattr(evaluation, "context_events", ()) or ()
                         ),
-                        "proactive_subject_missing",
+                        focus_event_ids=tuple(
+                            getattr(frame, "focus_event_ids", ()) or ()
+                        ),
+                        target_id=subject_id or None,
+                        topic_id=topic_id,
+                        persona_actor_id=self._manager.persona_id,
+                        persona_aliases=(
+                            str(identity.get("name") or "爱弥斯"),
+                            *tuple(identity.get("aliases", ()) or ()),
+                        ),
+                        member_refs=self._manager.group_member_refs(group_id),
+                        profile=profile_retrieval,
+                        relationship_memories=relationship_memories,
+                        topic_understanding=getattr(
+                            evaluation, "topic_understanding", None
+                        ),
+                    ).with_chorus(
+                        getattr(evaluation, "chorus_evidence", None)
                     )
-                else:
-                    interpretation = await self._scene_interpreter.interpret(
-                        scene_context
+                    if (
+                        source_event.event_type == "temporal.opportunity_due"
+                        and not str(
+                            source_event.payload.get("literal_subject") or ""
+                        ).strip()
+                    ):
+                        interpretation = SceneInterpretationResult(
+                            SocialScene.create(
+                                scene_kind="proactive_no_entry",
+                                target_scope=TargetScope.INDIVIDUAL,
+                                target_id=subject_id,
+                                literal_subject="没有具体切入点的主动机会",
+                                user_move="autonomous_opportunity_without_subject",
+                                continuity_event_ids=tuple(
+                                    getattr(frame, "focus_event_ids", ()) or (
+                                        source_event.event_id,
+                                    )
+                                ),
+                                confidence=1.0,
+                            ),
+                            "proactive_subject_missing",
+                        )
+                    else:
+                        interpretation = await self._scene_interpreter.interpret(
+                            scene_context
+                        )
+                except Exception as exc:
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code="reply_scene_parse_exception",
+                        stage_kind="SCENE_PARSED",
+                        exception=exc,
                     )
+                    raise
                 subject_relationship = None
                 if (
                     interpretation.scene.chorus_target
@@ -1930,37 +2072,57 @@ class AstrBotSocialRuntimeBridge:
                     subject_relationship = self._manager.relationship_projection(
                         group_id, interpretation.scene.chorus_target_id
                     )
-                persona_snapshot = await self._manager.persona_snapshot(
-                    group_id, int(getattr(evaluation, "config_version", 0))
-                )
-                culture_patterns = (
-                    ("light_member_banter",)
-                    if getattr(evaluation, "chorus_evidence", None) is not None
-                    else ()
-                )
-                stance = self._stance_policy.decide(
-                    interpretation.scene,
-                    actor_relationship=relationship_projection,
-                    subject_relationship=subject_relationship,
-                    culture_patterns=culture_patterns,
-                    permission=PermissionSnapshot(True, "social_reply_governed"),
-                    mode_modifiers=persona_snapshot.modifiers,
-                    memory_event_ids=tuple(
-                        memory.relationship_event_id
-                        for memory in relationship_memories
-                    ),
-                )
-                move = self._move_planner.plan(
-                    interpretation.scene,
-                    stance,
-                    profile=profile_retrieval,
-                    memories=relationship_memories,
-                )
-                scene_summary, stance_summary, move_summary = (
-                    self._safe_social_decision_summaries(
-                        interpretation.scene, stance, move
+                try:
+                    persona_snapshot = await self._manager.persona_snapshot(
+                        group_id, int(getattr(evaluation, "config_version", 0))
                     )
-                )
+                    culture_patterns = (
+                        ("light_member_banter",)
+                        if getattr(evaluation, "chorus_evidence", None) is not None
+                        else ()
+                    )
+                    stance = self._stance_policy.decide(
+                        interpretation.scene,
+                        actor_relationship=relationship_projection,
+                        subject_relationship=subject_relationship,
+                        culture_patterns=culture_patterns,
+                        permission=PermissionSnapshot(
+                            True, "social_reply_governed"
+                        ),
+                        mode_modifiers=persona_snapshot.modifiers,
+                        memory_event_ids=tuple(
+                            memory.relationship_event_id
+                            for memory in relationship_memories
+                        ),
+                    )
+                except Exception as exc:
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code="reply_stance_exception",
+                        stage_kind="STANCE_DECIDED",
+                        exception=exc,
+                    )
+                    raise
+                try:
+                    move = self._move_planner.plan(
+                        interpretation.scene,
+                        stance,
+                        profile=profile_retrieval,
+                        memories=relationship_memories,
+                    )
+                    scene_summary, stance_summary, move_summary = (
+                        self._safe_social_decision_summaries(
+                            interpretation.scene, stance, move
+                        )
+                    )
+                except Exception as exc:
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code="reply_social_move_exception",
+                        stage_kind="MOVE_PLANNED",
+                        exception=exc,
+                    )
+                    raise
                 evaluation = replace(
                     evaluation,
                     social_scene_summary=scene_summary,
@@ -1992,32 +2154,42 @@ class AstrBotSocialRuntimeBridge:
                     if self._manager.group_mode(group_id) is RuntimeMode.SHADOW:
                         self._manager.update_shadow_review_evidence(evaluation)
                     continue
-                plan = self._reply_planner.plan(
-                    evaluation,
-                    now=int(self.clock()),
-                    persona_profile=persona_profile,
-                    relationship=relationship,
-                    relationship_projection=relationship_projection,
-                    recent_outputs=recent_outputs,
-                    relationship_memory_cues=relationship_memory_cues,
-                    member_context=profile_retrieval.prompt_text,
-                    scene=interpretation.scene,
-                    stance=stance,
-                    move=move,
-                    culture_patterns=culture_patterns,
-                    member_style_overlay=(
-                        self._member_style_overlay(
-                            group_id, now=int(self.clock())
-                        )
-                        if move.realization_mode is RealizationMode.GENERATED
-                        else None
-                    ),
-                )
-                if plan is None:
-                    self._record_trace(
-                        self.trace_repository.record_evaluation,
+                plan_now = int(self.clock())
+                try:
+                    plan = self._reply_planner.plan(
                         evaluation,
-                        int(self.clock()),
+                        now=plan_now,
+                        persona_profile=persona_profile,
+                        relationship=relationship,
+                        relationship_projection=relationship_projection,
+                        recent_outputs=recent_outputs,
+                        relationship_memory_cues=relationship_memory_cues,
+                        member_context=profile_retrieval.prompt_text,
+                        scene=interpretation.scene,
+                        stance=stance,
+                        move=move,
+                        culture_patterns=culture_patterns,
+                        member_style_overlay=(
+                            self._member_style_overlay(
+                                group_id, now=plan_now
+                            )
+                            if move.realization_mode is RealizationMode.GENERATED
+                            else None
+                        )
+                    )
+                except Exception as exc:
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code="reply_plan_exception",
+                        stage_kind="PLANNED",
+                        exception=exc,
+                    )
+                    raise
+                if plan is None:
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code=self._reply_plan_failure_code(evaluation),
+                        stage_kind="PLANNED",
                     )
                     continue
                 mode = self._manager.group_mode(group_id)
@@ -2037,18 +2209,28 @@ class AstrBotSocialRuntimeBridge:
                         evaluation,
                         reply_diagnostic="ambient_knowledge_reply_disabled",
                     )
+                preview = None
                 if (
                     rollout_action == "PREVIEW"
                     and self._reply_executor is not None
                 ):
-                    preview = await self._reply_executor.preview(
-                        plan,
-                        context_events=tuple(
-                            getattr(evaluation, "context_events", ())
-                        ),
-                        persona_profile=persona_profile,
-                        recent_outputs=(),
-                    )
+                    try:
+                        preview = await self._reply_executor.preview(
+                            plan,
+                            context_events=tuple(
+                                getattr(evaluation, "context_events", ())
+                            ),
+                            persona_profile=persona_profile,
+                            recent_outputs=(),
+                        )
+                    except Exception as exc:
+                        self._record_reply_failure(
+                            evaluation,
+                            diagnostic_code="reply_preview_exception",
+                            stage_kind="GENERATED",
+                            exception=exc,
+                        )
+                        raise
                     evaluation = replace(
                         evaluation,
                         candidate_response=preview.text,
@@ -2070,6 +2252,7 @@ class AstrBotSocialRuntimeBridge:
                         int(self.clock()),
                     )
                 handled_groups.add(group_id)
+                reply_stage = "PLANNED"
                 try:
                     if rollout_action == "BLOCK":
                         self._manager.reply_plans.save(plan)
@@ -2077,7 +2260,23 @@ class AstrBotSocialRuntimeBridge:
                         continue
                     if rollout_action == "PREVIEW":
                         self._manager.reply_plans.save(plan)
+                        if self._reply_executor is None:
+                            self._record_reply_failure(
+                                evaluation,
+                                diagnostic_code="reply_executor_unavailable",
+                                stage_kind="GENERATED",
+                            )
+                        elif preview is not None and preview.status != "READY":
+                            self._record_reply_failure(
+                                evaluation,
+                                diagnostic_code=(
+                                    preview.diagnostic_code
+                                    or "reply_preview_failed"
+                                ),
+                                stage_kind="GENERATED",
+                            )
                         continue
+                    reply_stage = "GENERATED"
                     if self._reply_executor is None:
                         raise RuntimeError("reply executor is unavailable")
                     execution = await self._reply_executor.execute_with_result(
@@ -2089,6 +2288,7 @@ class AstrBotSocialRuntimeBridge:
                         recent_outputs=(),
                     )
                     if execution.usable_for_lease:
+                        reply_stage = "ENQUEUED"
                         text = str(
                             execution.part.part.payload.get("text") or ""
                         ).strip()
@@ -2097,9 +2297,33 @@ class AstrBotSocialRuntimeBridge:
                         await self._manager.record_usable_reply(
                             plan, now=int(self.clock())
                         )
+                    else:
+                        self._record_reply_failure(
+                            evaluation,
+                            diagnostic_code=(
+                                execution.diagnostic_code
+                                or "reply_generation_failed"
+                            ),
+                            stage_kind="GENERATED",
+                        )
+                    reply_stage = "DELIVERED"
                     await self._dispatch_ready()
                     self.reply_error = None
                 except Exception as exc:
+                    failure_stage = self._reply_exception_stage(
+                        plan, reply_stage
+                    )
+                    diagnostic_code = {
+                        "PLANNED": "reply_plan_persistence_exception",
+                        "ENQUEUED": "reply_enqueue_exception",
+                        "DELIVERED": "reply_delivery_exception",
+                    }.get(failure_stage, "reply_generation_exception")
+                    self._record_reply_failure(
+                        evaluation,
+                        diagnostic_code=diagnostic_code,
+                        stage_kind=failure_stage,
+                        exception=exc,
+                    )
                     self.reply_error = f"{type(exc).__name__}: {exc}"
 
     @staticmethod

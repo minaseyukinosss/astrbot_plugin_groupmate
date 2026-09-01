@@ -380,6 +380,71 @@ def test_direct_reply_interprets_scene_before_generating_text(tmp_path):
     assert trace["social_move"]["primary_move"] == "DIRECT_ANSWER"
 
 
+def test_scene_interpreter_runs_only_for_actionable_governor_outcomes(tmp_path):
+    async def observe_scenario():
+        context = _Context()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+                "persona_name": "爱弥斯",
+                "persona_aliases": ["小爱"],
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path / "observe",
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: _MatrixCognition(),
+        )
+        await bridge.start()
+        await bridge.handle_event(_event("observe", "我觉得小爱这个名字不错"))
+        evaluations = await bridge.manager.drain(now=102)
+        assert len(evaluations) == 1
+        assert evaluations[0].governor_result.outcome == "OBSERVE"
+
+        record_calls = 0
+        record_evaluation = bridge.trace_repository.record_evaluation
+
+        def count_record(evaluation, now):
+            nonlocal record_calls
+            record_calls += 1
+            record_evaluation(evaluation, now)
+
+        bridge.trace_repository.record_evaluation = count_record
+        await bridge._handle_evaluations(evaluations)
+        trace = bridge.trace_repository.query(
+            persona_id=settings.persona_id,
+            group_id="885617919",
+        )["items"][0]["summary"]
+        await bridge.close()
+        return context, trace, record_calls
+
+    observe_context, observe_trace, record_calls = asyncio.run(observe_scenario())
+    act_context, act_trace = asyncio.run(
+        _run_alias_case(tmp_path / "act", "小爱，这个报错怎么看")
+    )
+
+    observe_scene_calls = [
+        call
+        for call in observe_context.model_calls
+        if "只负责识别当前群聊的具体社会场景" in call["system_prompt"]
+    ]
+    act_scene_calls = [
+        call
+        for call in act_context.model_calls
+        if "只负责识别当前群聊的具体社会场景" in call["system_prompt"]
+    ]
+    assert observe_scene_calls == []
+    assert record_calls == 1
+    assert observe_trace["decision"]["outcome"] == "OBSERVE"
+    assert len(act_scene_calls) == 1
+    assert act_trace["decision"]["outcome"] == "ACT"
+
+
 def test_confirmed_multi_actor_chorus_reaches_target_aware_scene(tmp_path):
     async def scenario():
         context = _Context()
@@ -708,6 +773,68 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     assert any(value.startswith("delivery-feedback:") for value in event_ids)
     assert state.recent_presence.last_bot_event_at == 100
     assert reply_error is None
+
+
+def test_expired_intention_keeps_delivery_grace_and_background_dispatches(tmp_path):
+    async def scenario():
+        class Clock:
+            value = 100
+
+            def __call__(self):
+                return self.value
+
+        clock = Clock()
+
+        class SlowSceneContext(_Context):
+            async def llm_generate(self, **kwargs):
+                response = await super().llm_generate(**kwargs)
+                if "只负责识别当前群聊的具体社会场景" in kwargs[
+                    "system_prompt"
+                ]:
+                    clock.value = 140
+                return response
+
+        context = SlowSceneContext()
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SOCIAL_RUNTIME",
+                "generation_provider": "provider:text",
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context, settings, tmp_path, clock=clock
+        )
+        await bridge.start()
+        dispatcher = bridge._dispatcher
+        bridge._dispatcher = None
+        bridge.DELIVERY_POLL_SECONDS = 0.01
+        try:
+            await bridge.handle_event(
+                _event("slow-delivery", "这个报错怎么看", mention_bot=True)
+            )
+            bridge._dispatcher = dispatcher
+            bridge._attention_changed.set()
+            for _ in range(100):
+                if context.client.calls:
+                    break
+                await asyncio.sleep(0.01)
+            parts = bridge.manager.outbox.receipted_parts()
+            plan = bridge.manager.reply_plans.by_correlation(
+                "qq:slow-delivery"
+            )
+            return context.client.calls, parts, plan
+        finally:
+            await bridge.close()
+
+    calls, parts, plan = asyncio.run(scenario())
+
+    assert len(calls) == 1
+    assert len(parts) == 1
+    assert parts[0].status is OutboxStatus.SENT
+    assert parts[0].receipt is not None
+    assert plan.created_at == 140
+    assert plan.expires_at > plan.created_at
 
 
 def test_shadow_preview_never_opens_a_dialogue_lease(tmp_path):

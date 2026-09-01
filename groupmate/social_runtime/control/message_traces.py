@@ -49,7 +49,12 @@ _STAGE_ORDER = {
     "ATTENDED": 30,
     "UNDERSTOOD": 40,
     "DECIDED": 50,
+    "SCENE_PARSED": 52,
+    "STANCE_DECIDED": 54,
+    "MOVE_PLANNED": 56,
     "PLANNED": 60,
+    "GENERATED": 62,
+    "ENQUEUED": 64,
     "DELIVERED": 70,
 }
 _ADDRESS_KINDS = {
@@ -1307,6 +1312,45 @@ class MessageTraceRepository:
                 "label": "社交动作决定不回复",
                 "at": int(now),
                 "status": "DONE",
+            },
+        )
+
+    def record_reply_failure(
+        self,
+        event_id: str,
+        *,
+        diagnostic_code: str,
+        stage_kind: str,
+        exception_type: str | None,
+        now: int,
+    ) -> None:
+        """Persist one bounded reply-pipeline failure without changing control flow."""
+
+        stage = str(stage_kind or "PLANNED").upper()
+        if stage not in _STAGE_ORDER:
+            stage = "PLANNED"
+        diagnostic = self._safe_text(diagnostic_code, 80) or "reply_failed"
+        exception = self._safe_text(exception_type, 80) or None
+
+        def mutate(summary: dict[str, object]) -> None:
+            decision = dict(summary.get("decision") or {})
+            decision["reply_diagnostic"] = diagnostic
+            decision["reply_failure_stage"] = stage
+            decision["reply_exception_type"] = exception
+            summary["decision"] = decision
+            delivery = dict(summary.get("delivery") or {})
+            delivery.update(status="FAILED", label="回复流程失败")
+            summary["delivery"] = delivery
+
+        self._mutate(
+            event_id,
+            now,
+            mutate,
+            stage={
+                "kind": stage,
+                "label": "回复流程失败",
+                "at": int(now),
+                "status": "FAILED",
             },
         )
 
