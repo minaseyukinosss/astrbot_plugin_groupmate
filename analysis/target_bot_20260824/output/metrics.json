@@ -1,0 +1,1052 @@
+{
+  "group": "小饼干回收部",
+  "timezone": "Asia/Shanghai",
+  "bot": {
+    "uin": "323537051",
+    "uid": "u_wa9kVWFd1RzFlh_blskvQQ",
+    "name": "小维",
+    "nickname": "小真寻备用机"
+  },
+  "population": {
+    "all_messages": 16914,
+    "active_messages": 16622,
+    "human_messages": 14289,
+    "bot_messages": 2333,
+    "bot_message_share": 0.140356,
+    "sessions_5m": 49,
+    "sessions_with_bot": 31,
+    "session_participation_rate": 0.632653,
+    "bot_initiated_sessions": 2,
+    "bot_initiated_session_rate": 0.064516,
+    "bot_turns": 1647,
+    "turns_per_100_human_messages": 11.53
+  },
+  "turn_shape": {
+    "mean_messages_per_turn": 1.42,
+    "median_messages_per_turn": 1.0,
+    "p90_messages_per_turn": 2.0,
+    "multi_message_turn_rate": 0.32119,
+    "median_turn_chars": 14.0,
+    "p90_turn_chars": 53.40000000000009,
+    "median_response_latency_seconds": 4.0,
+    "p90_response_latency_seconds": 15.0,
+    "media_turn_rate": 0.721311,
+    "text_only_turn_rate": 0.278081,
+    "media_only_turn_rate": 0.319976,
+    "mixed_text_media_turn_rate": 0.401336,
+    "reply_turn_rate": 0.303582,
+    "utility_like_turn_rate": 0.04918,
+    "any_followup_2m_rate": 0.976321,
+    "explicit_followup_2m_rate": 0.242866,
+    "multi_turn_dialogue_chains": 344,
+    "median_chain_turns": 3.0,
+    "p90_chain_turns": 5.699999999999989
+  },
+  "style": {
+    "text_messages": 1349,
+    "median_message_chars": 22.0,
+    "p90_message_chars": 53.0,
+    "short_message_rate_le_20_chars": 0.4596,
+    "question_rate": 0.055597,
+    "laughter_rate": 0.002224,
+    "soft_particle_rate": 0.539659,
+    "repeat_phrase_coverage_rate": 0.224611,
+    "exact_repeat_excess_rate": 0.164566,
+    "unique_text_ratio": 0.835434,
+    "top_repeated_texts": [
+      {
+        "text": "@気ぎよし死に花",
+        "count": 23
+      },
+      {
+        "text": "未找到表情！",
+        "count": 15
+      },
+      {
+        "text": "小维已经睡了 要叫醒小维吗？",
+        "count": 13
+      },
+      {
+        "text": "正在读取视频，请稍候...",
+        "count": 12
+      },
+      {
+        "text": "@甜咖啡☕️",
+        "count": 8
+      },
+      {
+        "text": "成功帮🦌了",
+        "count": 8
+      },
+      {
+        "text": "@ht-9420",
+        "count": 8
+      },
+      {
+        "text": "回复内容尚未全部发送，请等待回复结束！",
+        "count": 7
+      },
+      {
+        "text": "成功帮扣了",
+        "count": 6
+      },
+      {
+        "text": "你是？",
+        "count": 5
+      },
+      {
+        "text": "[回复按量或按次计费，避免无效交互浪费小维零花钱哦]",
+        "count": 5
+      },
+      {
+        "text": "表情已被禁用",
+        "count": 5
+      },
+      {
+        "text": "[小维从睡梦中被叫醒]",
+        "count": 5
+      },
+      {
+        "text": "[鸣潮] 数据已刷新",
+        "count": 5
+      },
+      {
+        "text": "[转发消息: 10条] 小维: 攻略作者：丸子 小维: 小维: 攻略作者：moealkyne",
+        "count": 5
+      }
+    ]
+  },
+  "quality": {
+    "chunk_files": 1,
+    "source_lines": 16914,
+    "parsed_messages": 16914,
+    "parse_errors": 0,
+    "file_order_timestamp_inversions": 5,
+    "manifest_total_messages": 16914,
+    "manifest_count_matches": true,
+    "analyzed_messages_after_dedup": 16909,
+    "duplicate_message_ids": 5,
+    "missing_message_ids": 0,
+    "system_messages": 287,
+    "missing_sender_identity": 0,
+    "observed_start_local": "2026-07-23T10:39:36+08:00",
+    "observed_end_local": "2026-08-24T10:38:40+08:00",
+    "manifest_start": "2026-07-23T02:39:36.000Z",
+    "manifest_end": "2026-08-24T02:38:40.000Z",
+    "reply_messages": 2127,
+    "reply_messages_without_resolvable_message_id": 2071,
+    "reply_linkage_loss_rate": 0.973672,
+    "observed_calendar_days": 33,
+    "days_with_messages": 6,
+    "days_without_messages_inside_range": 27,
+    "maximum_gap_without_messages_days": 17,
+    "top_three_dates_message_share": 0.977259
+  },
+  "trigger_summary": [
+    {
+      "trigger": "被点名/被回复",
+      "turns": 447,
+      "share": 0.271403,
+      "median_latency_seconds": 5.0,
+      "p90_latency_seconds": 17.0,
+      "any_followup_2m_rate": 0.975391,
+      "explicit_followup_2m_rate": 0.389262,
+      "median_text_chars": 23.0
+    },
+    {
+      "trigger": "自主定向回复",
+      "turns": 204,
+      "share": 0.123862,
+      "median_latency_seconds": 5.5,
+      "p90_latency_seconds": 18.7,
+      "any_followup_2m_rate": 0.985294,
+      "explicit_followup_2m_rate": 0.279412,
+      "median_text_chars": 29.0
+    },
+    {
+      "trigger": "连续对话",
+      "turns": 797,
+      "share": 0.48391,
+      "median_latency_seconds": 3.0,
+      "p90_latency_seconds": 10.0,
+      "any_followup_2m_rate": 0.97867,
+      "explicit_followup_2m_rate": 0.183187,
+      "median_text_chars": 4.0
+    },
+    {
+      "trigger": "环境话题加入",
+      "turns": 189,
+      "share": 0.114754,
+      "median_latency_seconds": 4.0,
+      "p90_latency_seconds": 14.0,
+      "any_followup_2m_rate": 0.962963,
+      "explicit_followup_2m_rate": 0.111111,
+      "median_text_chars": 0
+    },
+    {
+      "trigger": "主动开场",
+      "turns": 2,
+      "share": 0.001214,
+      "median_latency_seconds": null,
+      "p90_latency_seconds": null,
+      "any_followup_2m_rate": 1.0,
+      "explicit_followup_2m_rate": 0.0,
+      "median_text_chars": 28.5
+    },
+    {
+      "trigger": "延迟上下文",
+      "turns": 8,
+      "share": 0.004857,
+      "median_latency_seconds": 151.5,
+      "p90_latency_seconds": 256.4,
+      "any_followup_2m_rate": 0.875,
+      "explicit_followup_2m_rate": 0.25,
+      "median_text_chars": 0
+    }
+  ],
+  "daily": [
+    {
+      "date": "2026-07-23",
+      "all_messages": 3997,
+      "bot_messages": 617,
+      "human_messages": 3380,
+      "bot_turns": 441,
+      "bot_message_share": 0.154366
+    },
+    {
+      "date": "2026-07-24",
+      "all_messages": 5848,
+      "bot_messages": 901,
+      "human_messages": 4947,
+      "bot_turns": 643,
+      "bot_message_share": 0.15407
+    },
+    {
+      "date": "2026-07-25",
+      "all_messages": 6399,
+      "human_messages": 5700,
+      "bot_messages": 699,
+      "bot_turns": 486,
+      "bot_message_share": 0.109236
+    },
+    {
+      "date": "2026-07-27",
+      "all_messages": 138,
+      "human_messages": 102,
+      "bot_messages": 36,
+      "bot_turns": 30,
+      "bot_message_share": 0.26087
+    },
+    {
+      "date": "2026-08-06",
+      "all_messages": 33,
+      "human_messages": 33,
+      "bot_message_share": 0.0
+    },
+    {
+      "date": "2026-08-24",
+      "all_messages": 207,
+      "human_messages": 127,
+      "bot_messages": 80,
+      "bot_turns": 47,
+      "bot_message_share": 0.386473
+    }
+  ],
+  "recipients": [
+    {
+      "recipient_id": "u_32xaVUrIZByD20lrxupPSw",
+      "recipient_name": "気ぎよし死に花",
+      "reply_turns": 51,
+      "share": 0.094444
+    },
+    {
+      "recipient_id": "u_KWuU1J0-TRNAF6p9G-XzlQ",
+      "recipient_name": "欧尼酱（失眠中",
+      "reply_turns": 48,
+      "share": 0.088889
+    },
+    {
+      "recipient_id": "u_m-B2ej5o3w0AAXx2NBcsMA",
+      "recipient_name": "小学生",
+      "reply_turns": 35,
+      "share": 0.064815
+    },
+    {
+      "recipient_id": "u_qIY88-WQ7cFept0ZtwWjGQ",
+      "recipient_name": "甜咖啡☕️",
+      "reply_turns": 30,
+      "share": 0.055556
+    },
+    {
+      "recipient_id": "u_8qjk0574fFAfMpLdpI74-w",
+      "recipient_name": "阿梓喵（已签署有💩共享协议）",
+      "reply_turns": 29,
+      "share": 0.053704
+    },
+    {
+      "recipient_id": "u_MPBPsGm9Wk4uEbC4ipCE5g",
+      "recipient_name": "黄豆酱相思",
+      "reply_turns": 26,
+      "share": 0.048148
+    },
+    {
+      "recipient_id": "u_gp9BVtIzQ5Ln6k_kOfwDkg",
+      "recipient_name": "绯雪的老公┌|∵|┘ ┌|∵|┘ ┌|∵|┘",
+      "reply_turns": 25,
+      "share": 0.046296
+    },
+    {
+      "recipient_id": "u_-3idml8QhmKronlndJDSMQ",
+      "recipient_name": "老公出轨小三竟是前前男友",
+      "reply_turns": 18,
+      "share": 0.033333
+    },
+    {
+      "recipient_id": "u_9Aaao1d8MAq0M7_UCI1BRg",
+      "recipient_name": "WIR_MIKU1598",
+      "reply_turns": 17,
+      "share": 0.031481
+    },
+    {
+      "recipient_id": "u_SdUtdbtPKBnmnPsjyMF1Ng",
+      "recipient_name": "五行石",
+      "reply_turns": 14,
+      "share": 0.025926
+    },
+    {
+      "recipient_id": "u_x6_7ZeXuXkoFOvgaBedCPw",
+      "recipient_name": "夏祭",
+      "reply_turns": 11,
+      "share": 0.02037
+    },
+    {
+      "recipient_id": "u_IO5xR9qmZOagbzzvvt9XTQ",
+      "recipient_name": "AAA售卖外置登录url login.072420.xyz/theme",
+      "reply_turns": 11,
+      "share": 0.02037
+    },
+    {
+      "recipient_id": "u_TxmmcN4_J6lk6Z2PXATsEg",
+      "recipient_name": "绿豆冰相思",
+      "reply_turns": 10,
+      "share": 0.018519
+    },
+    {
+      "recipient_id": "u_lo6mYijXeYO4WyWXaUJiCQ",
+      "recipient_name": "小赛151",
+      "reply_turns": 10,
+      "share": 0.018519
+    },
+    {
+      "recipient_id": "u_6TclROyRHHE0nbcoFDy1lA",
+      "recipient_name": "若叶奶龙",
+      "reply_turns": 9,
+      "share": 0.016667
+    },
+    {
+      "recipient_id": "u_GXPSQq4zYo5PB1Y6pWnLXQ",
+      "recipient_name": "[IGN]《鸣潮》共鸣者「心月狐」演示",
+      "reply_turns": 9,
+      "share": 0.016667
+    },
+    {
+      "recipient_id": "u_sizj59QSzCTSajJ-fA2Ldg",
+      "recipient_name": "⚽️🏀🏈⚾️🎾🏐🏉🎱⚽️🏀🏈⚾️",
+      "reply_turns": 8,
+      "share": 0.014815
+    },
+    {
+      "recipient_id": "u_3UJFLrV3B9-XA7bLaZ7sVA",
+      "recipient_name": "玲151🍅（已离线）",
+      "reply_turns": 8,
+      "share": 0.014815
+    },
+    {
+      "recipient_id": "u_Kp979IBnETWy_WS8kV8JdQ",
+      "recipient_name": "白玉楼の达妮娅⁧~喵呜⁦ ⁦⁦",
+      "reply_turns": 7,
+      "share": 0.012963
+    },
+    {
+      "recipient_id": "u_tOZRgiMhayhXehxNODD2sQ",
+      "recipient_name": "宝宝我和他们不一样，我是男的",
+      "reply_turns": 7,
+      "share": 0.012963
+    },
+    {
+      "recipient_id": "u_uLWwiCk4hD_-HVDzW5p_xg",
+      "recipient_name": "光るなら",
+      "reply_turns": 7,
+      "share": 0.012963
+    },
+    {
+      "recipient_id": "u_7DRqQFjZT-kGu9uFDGvzXg",
+      "recipient_name": "下雨天",
+      "reply_turns": 7,
+      "share": 0.012963
+    },
+    {
+      "recipient_id": "u_NYfvQm-dqDWt2EfwVGGUPQ",
+      "recipient_name": "不正经的晓炎",
+      "reply_turns": 6,
+      "share": 0.011111
+    },
+    {
+      "recipient_id": "u_SyMMFyJ48psgXOmkVz1-4A",
+      "recipient_name": "Shadow",
+      "reply_turns": 6,
+      "share": 0.011111
+    },
+    {
+      "recipient_id": "u_5PLS-Yp6fvUYMG5IEOxzVQ",
+      "recipient_name": "A¿🍀",
+      "reply_turns": 6,
+      "share": 0.011111
+    },
+    {
+      "recipient_id": "u_TWl96H8v95dv8XCXodZmng",
+      "recipient_name": "Sadim",
+      "reply_turns": 5,
+      "share": 0.009259
+    },
+    {
+      "recipient_id": "u_BJuGNDFpyODtF9sSpkt_OQ",
+      "recipient_name": "想太多",
+      "reply_turns": 5,
+      "share": 0.009259
+    },
+    {
+      "recipient_id": "u_x3a5OWjsTZuGYah0ICMrcg",
+      "recipient_name": "真的是小白啦",
+      "reply_turns": 5,
+      "share": 0.009259
+    },
+    {
+      "recipient_id": "u_GKrCUbkyCQ5EUbm4Gj3TaQ",
+      "recipient_name": "☁️好想玩原神☁️",
+      "reply_turns": 4,
+      "share": 0.007407
+    },
+    {
+      "recipient_id": "u_wDFEYSStBGmQrP94d_2msA",
+      "recipient_name": "γ3n",
+      "reply_turns": 4,
+      "share": 0.007407
+    },
+    {
+      "recipient_id": "u_yKJUsbg-sF47zCirioDWyw",
+      "recipient_name": "你已与群主结成情侣关系，情侣标识已点燃",
+      "reply_turns": 4,
+      "share": 0.007407
+    },
+    {
+      "recipient_id": "u_FFXQes9CVQqft1JI0DMeVw",
+      "recipient_name": "神奇小维",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_HE2eXogx5YMVqHH2UfUgbA",
+      "recipient_name": "Mere Flower",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_kpOQSEJtIXKt7T-iv2Pu-w",
+      "recipient_name": "不可以",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_crTBjvVK-9ZdbNRQf6Wb0Q",
+      "recipient_name": "如烟大帝",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_v5t2kXEX0iLfEQWzhcFjcQ",
+      "recipient_name": "ABCwewe",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_5O2fDdCgB0XvCYxogZoDSw",
+      "recipient_name": "去世已久",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_s7UTJC0ZbAGuaowJFH4_eQ",
+      "recipient_name": "红豆浆想食",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_wr8VKEGnuW9SqU_2_JzQBQ",
+      "recipient_name": "你已被移出群聊",
+      "reply_turns": 3,
+      "share": 0.005556
+    },
+    {
+      "recipient_id": "u_vJ1qkAJfGlijq7wKoOLqfA",
+      "recipient_name": "星乙烯醇🍥",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_tLdBlOmGS-vxygAMRTmIMQ",
+      "recipient_name": "手艺",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_KhlVTzi_Mu6MLDDpl73VrA",
+      "recipient_name": "イレイナ",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_-T7ez7J9joF0-h175btNMQ",
+      "recipient_name": "林瞳阳",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_nc_KkgRxccRCzEJUJjO1Ug",
+      "recipient_name": "白毛魅魔的",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_VpgRWKnFYCXnzyHIEnP1aQ",
+      "recipient_name": "天冬",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_Vm0ePT9iPEDwyinjcy-4Uw",
+      "recipient_name": "半生か沉浮",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_UiGSv_qRpk8fHLnafRuLKg",
+      "recipient_name": "「潮声茶馆掌柜」霞月 欢迎客官来茶馆一叙",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_5qwk2SmKzk94Hn1pKK67Pg",
+      "recipient_name": "听风昕雨",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_lS_H5KFqY7N16WIo7dawsg",
+      "recipient_name": "克拉拉",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_HexW_pJVoAKxPNgFLRioAw",
+      "recipient_name": "轮回の殘月",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_6nVjRDSnnoqPAeNEXoad4A",
+      "recipient_name": "萧亦念",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_-CkZ1ekSFjzxPrSw_XdJCw",
+      "recipient_name": "落",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_oeZubCEpLcmwfIRjVAUjkw",
+      "recipient_name": "皮皮绿绿official",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_QM7ioaLaA9tWxPfe0Ow9lg",
+      "recipient_name": "每天来抱抱小维",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_EpHG8cB_tlhkSWBjRJx50w",
+      "recipient_name": "☆",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_VZSzZQscBDJL1wl9-FUMrQ",
+      "recipient_name": "雪之下雪乃",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_gYjQAjkn4gPX2gjwXtINtg",
+      "recipient_name": "给小维抱走",
+      "reply_turns": 2,
+      "share": 0.003704
+    },
+    {
+      "recipient_id": "u_50DLLpOGOGjgLTo4_cBxYw",
+      "recipient_name": "ღ星晴",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_ZYeIY0dSEOl1fjaL42eHzA",
+      "recipient_name": "Coloryr",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_ALZIeCDguDlYEGuxW-PxbA",
+      "recipient_name": "某位不知名啸",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_8XtZs_d4BRlCSOq3kZG0pw",
+      "recipient_name": "出售便宜不掺水ai中转api",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_EtNeWnxAdtiv4UqPP_wRSQ",
+      "recipient_name": "云晓晨",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_AAN3z_54fRhQLKhslHRbIA",
+      "recipient_name": "dawn",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_dSJOaI8AfrQYzz3EU6KysQ",
+      "recipient_name": "karl",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_5fO5g5S4y1UYpJnn0W96_g",
+      "recipient_name": "温酒",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_5ud5OTzH4BAfhzjF_3wcSg",
+      "recipient_name": "Haru",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_kNNRCYX5Id9Rt5TXgG8uhQ",
+      "recipient_name": "绫波レイ",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_e9XA3PdnUdkW-5ioxfu82w",
+      "recipient_name": "雪色波纹",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_X5Ufjh74b3T97sGm_jnHZg",
+      "recipient_name": "¿",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_ZQsMZ2nOlidxGP8Ug9D0FA",
+      "recipient_name": "我真是超级萝莉控",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_Cr41Gs3Pw_KvjGGhun9NaA",
+      "recipient_name": "[IGN]《鸣潮》共鸣者「心月狐」演示",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_g9kdRSm1fELQbvZmjGSo-Q",
+      "recipient_name": "感谢富哥让我可以玩鸣潮",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_Qjh7m_xT3_znrskPMogNGg",
+      "recipient_name": "旧詩集",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_dEZ1pKT_heLjD8SFBtVKLw",
+      "recipient_name": "零下泠度z",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_dnsyDWAqAEZiTKzVzrCYTg",
+      "recipient_name": "星辰宿念",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_3COWGstyCaEWJ4d9qSSTbQ",
+      "recipient_name": "小维菲莉丝",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_kEQS7U_iWIe8cbATwFZBBg",
+      "recipient_name": "DDjian",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_tLkudw65BGnuva2o8-Eulg",
+      "recipient_name": "Kitorin",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_gCToc-vBFwPD3VX0VWwd1w",
+      "recipient_name": "浙江的网友",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_wPmiKPDvajZb9DNhd0_qOQ",
+      "recipient_name": "蜗牛",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_63XZS7sZhlBMR4Oc3XEifg",
+      "recipient_name": "冰清玉洁长歌儿",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_VKCzLOOPnTF1iPoNhVRPGg",
+      "recipient_name": "不思烤（已非㊗️）",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_cFXhxryCPboRDadf3mdWrw",
+      "recipient_name": "HT-9420",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_ewR1uuAubtcknJdwsg5Dww",
+      "recipient_name": "浊心若叶睦",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_lWiWWLIe_svB9EaCvIFg5Q",
+      "recipient_name": "长蓝花影",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_287Ke2dYy3NjTtwt2OB73g",
+      "recipient_name": "IKUN",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_VCUY_jkSeKIvGUFzCkK2MQ",
+      "recipient_name": "库巴亚西",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_g3q1xpA4IT3hxt7UthOpPQ",
+      "recipient_name": "汐見蛍",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_BDI0d-2vSYPf6nJbyhHRvg",
+      "recipient_name": "宁雨久停峰",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_BDQTL_4_K-LSeuoQECeUPg",
+      "recipient_name": "你已被移出群聊",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_vnB2XonJnI2ornTpKEiG7g",
+      "recipient_name": "桜小路露娜",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_d3O41hEXJxAgjfJdmycayQ",
+      "recipient_name": "雨",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_SsSK_4SMoB6L6sfFoQC_cQ",
+      "recipient_name": "怜锦瑟ฅ*",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_UFW_QSfiSlI8k1ko4wh42g",
+      "recipient_name": "小维258",
+      "reply_turns": 1,
+      "share": 0.001852
+    },
+    {
+      "recipient_id": "u_ey5DVPuzf5tBqdShurEJpQ",
+      "recipient_name": "🈶man贵将",
+      "reply_turns": 1,
+      "share": 0.001852
+    }
+  ],
+  "recipient_concentration": {
+    "reply_turns_with_resolved_target": 540,
+    "unique_reply_recipients": 95,
+    "top_1_share": 0.094444,
+    "top_5_share": 0.357407,
+    "top_10_share": 0.542593
+  },
+  "modalities": [
+    {
+      "modality": "image",
+      "elements": 1329,
+      "message_share": 0.567938
+    },
+    {
+      "modality": "text",
+      "elements": 1242,
+      "message_share": 0.516074
+    },
+    {
+      "modality": "reply",
+      "elements": 540,
+      "message_share": 0.231462
+    },
+    {
+      "modality": "at",
+      "elements": 208,
+      "message_share": 0.088727
+    },
+    {
+      "modality": "video",
+      "elements": 173,
+      "message_share": 0.074153
+    },
+    {
+      "modality": "forward",
+      "elements": 41,
+      "message_share": 0.017574
+    },
+    {
+      "modality": "file",
+      "elements": 3,
+      "message_share": 0.001286
+    },
+    {
+      "modality": "audio",
+      "elements": 3,
+      "message_share": 0.001286
+    }
+  ],
+  "hourly": [
+    {
+      "hour": 0,
+      "human_messages": 669,
+      "bot_messages": 74,
+      "bot_turns": 52,
+      "turns_per_100_human_messages": 7.77
+    },
+    {
+      "hour": 1,
+      "human_messages": 1125,
+      "bot_messages": 92,
+      "bot_turns": 67,
+      "turns_per_100_human_messages": 5.96
+    },
+    {
+      "hour": 2,
+      "human_messages": 770,
+      "bot_messages": 51,
+      "bot_turns": 45,
+      "turns_per_100_human_messages": 5.84
+    },
+    {
+      "hour": 3,
+      "human_messages": 398,
+      "bot_messages": 25,
+      "bot_turns": 19,
+      "turns_per_100_human_messages": 4.77
+    },
+    {
+      "hour": 4,
+      "human_messages": 306,
+      "bot_messages": 23,
+      "bot_turns": 14,
+      "turns_per_100_human_messages": 4.58
+    },
+    {
+      "hour": 5,
+      "human_messages": 70,
+      "bot_messages": 2,
+      "bot_turns": 1,
+      "turns_per_100_human_messages": 1.43
+    },
+    {
+      "hour": 6,
+      "human_messages": 13,
+      "bot_messages": 1,
+      "bot_turns": 1,
+      "turns_per_100_human_messages": 7.69
+    },
+    {
+      "hour": 7,
+      "human_messages": 23,
+      "bot_messages": 4,
+      "bot_turns": 3,
+      "turns_per_100_human_messages": 13.04
+    },
+    {
+      "hour": 8,
+      "human_messages": 117,
+      "bot_messages": 51,
+      "bot_turns": 32,
+      "turns_per_100_human_messages": 27.35
+    },
+    {
+      "hour": 9,
+      "human_messages": 371,
+      "bot_messages": 97,
+      "bot_turns": 67,
+      "turns_per_100_human_messages": 18.06
+    },
+    {
+      "hour": 10,
+      "human_messages": 549,
+      "bot_messages": 171,
+      "bot_turns": 112,
+      "turns_per_100_human_messages": 20.4
+    },
+    {
+      "hour": 11,
+      "human_messages": 868,
+      "bot_messages": 106,
+      "bot_turns": 82,
+      "turns_per_100_human_messages": 9.45
+    },
+    {
+      "hour": 12,
+      "human_messages": 796,
+      "bot_messages": 174,
+      "bot_turns": 123,
+      "turns_per_100_human_messages": 15.45
+    },
+    {
+      "hour": 13,
+      "human_messages": 922,
+      "bot_messages": 113,
+      "bot_turns": 80,
+      "turns_per_100_human_messages": 8.68
+    },
+    {
+      "hour": 14,
+      "human_messages": 863,
+      "bot_messages": 153,
+      "bot_turns": 100,
+      "turns_per_100_human_messages": 11.59
+    },
+    {
+      "hour": 15,
+      "human_messages": 1039,
+      "bot_messages": 165,
+      "bot_turns": 127,
+      "turns_per_100_human_messages": 12.22
+    },
+    {
+      "hour": 16,
+      "human_messages": 832,
+      "bot_messages": 158,
+      "bot_turns": 118,
+      "turns_per_100_human_messages": 14.18
+    },
+    {
+      "hour": 17,
+      "human_messages": 896,
+      "bot_messages": 194,
+      "bot_turns": 128,
+      "turns_per_100_human_messages": 14.29
+    },
+    {
+      "hour": 18,
+      "human_messages": 619,
+      "bot_messages": 139,
+      "bot_turns": 91,
+      "turns_per_100_human_messages": 14.7
+    },
+    {
+      "hour": 19,
+      "human_messages": 687,
+      "bot_messages": 97,
+      "bot_turns": 72,
+      "turns_per_100_human_messages": 10.48
+    },
+    {
+      "hour": 20,
+      "human_messages": 587,
+      "bot_messages": 185,
+      "bot_turns": 122,
+      "turns_per_100_human_messages": 20.78
+    },
+    {
+      "hour": 21,
+      "human_messages": 486,
+      "bot_messages": 109,
+      "bot_turns": 80,
+      "turns_per_100_human_messages": 16.46
+    },
+    {
+      "hour": 22,
+      "human_messages": 701,
+      "bot_messages": 74,
+      "bot_turns": 57,
+      "turns_per_100_human_messages": 8.13
+    },
+    {
+      "hour": 23,
+      "human_messages": 582,
+      "bot_messages": 75,
+      "bot_turns": 54,
+      "turns_per_100_human_messages": 9.28
+    }
+  ],
+  "definitions": {
+    "session": "相邻活跃消息间隔超过 5 分钟即开启新会话",
+    "bot_turn": "Bot 连续消息且间隔不超过 90 秒合并为一个发言轮次",
+    "ambient": "无明确召唤、距上一条群成员消息不超过 120 秒",
+    "followup": "Bot 轮次结束后 120 秒内、下一次 Bot 发言前的群成员消息"
+  }
+}

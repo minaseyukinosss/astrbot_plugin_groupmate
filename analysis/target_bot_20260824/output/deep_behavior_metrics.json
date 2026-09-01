@@ -1,0 +1,654 @@
+{
+  "source": {
+    "rows_after_dedup": 16909,
+    "observed_start": "2026-07-23T10:39:36+08:00",
+    "observed_end": "2026-08-24T10:38:40+08:00",
+    "bot_uin": "323537051",
+    "bot_uid": "u_wa9kVWFd1RzFlh_blskvQQ",
+    "bot_display_name": "小维"
+  },
+  "addressing": {
+    "明确@": {
+      "messages": 452,
+      "next_bot_30s_count": 394,
+      "next_bot_30s_rate": 0.871681,
+      "next_bot_60s_count": 410,
+      "next_bot_60s_rate": 0.90708,
+      "median_next_bot_seconds": 13.0,
+      "linked_reply_60s_count": 269,
+      "linked_reply_60s_rate": 0.595133,
+      "median_linked_reply_seconds": 14.0
+    },
+    "昵称开头": {
+      "messages": 171,
+      "next_bot_30s_count": 148,
+      "next_bot_30s_rate": 0.865497,
+      "next_bot_60s_count": 154,
+      "next_bot_60s_rate": 0.900585,
+      "median_next_bot_seconds": 10.0,
+      "linked_reply_60s_count": 41,
+      "linked_reply_60s_rate": 0.239766,
+      "median_linked_reply_seconds": 15.0
+    },
+    "昵称结尾": {
+      "messages": 64,
+      "next_bot_30s_count": 40,
+      "next_bot_30s_rate": 0.625,
+      "next_bot_60s_count": 42,
+      "next_bot_60s_rate": 0.65625,
+      "median_next_bot_seconds": 4.0,
+      "linked_reply_60s_count": 3,
+      "linked_reply_60s_rate": 0.046875,
+      "median_linked_reply_seconds": 13.0
+    },
+    "正文提及": {
+      "messages": 583,
+      "next_bot_30s_count": 335,
+      "next_bot_30s_rate": 0.574614,
+      "next_bot_60s_count": 392,
+      "next_bot_60s_rate": 0.672384,
+      "median_next_bot_seconds": 13.0,
+      "linked_reply_60s_count": 126,
+      "linked_reply_60s_rate": 0.216123,
+      "median_linked_reply_seconds": 16.0
+    },
+    "昵称直接社交（排除明显能力请求）": {
+      "messages": 161,
+      "next_bot_30s_count": 114,
+      "next_bot_30s_rate": 0.708075,
+      "next_bot_60s_count": 122,
+      "next_bot_60s_rate": 0.757764,
+      "median_next_bot_seconds": 13.0,
+      "linked_reply_60s_count": 44,
+      "linked_reply_60s_rate": 0.273292,
+      "median_linked_reply_seconds": 15.0
+    }
+  },
+  "name_call_types": [
+    {
+      "call_kind": "能力请求",
+      "messages": 74,
+      "next_bot_30s_count": 74,
+      "next_bot_30s_rate": 1.0,
+      "next_bot_60s_count": 74,
+      "next_bot_60s_rate": 1.0,
+      "median_next_bot_seconds": 4.0,
+      "linked_reply_60s_count": 0,
+      "linked_reply_60s_rate": 0.0,
+      "median_linked_reply_seconds": null
+    },
+    {
+      "call_kind": "纯呼唤",
+      "messages": 4,
+      "next_bot_30s_count": 3,
+      "next_bot_30s_rate": 0.75,
+      "next_bot_60s_count": 3,
+      "next_bot_60s_rate": 0.75,
+      "median_next_bot_seconds": 2.0,
+      "linked_reply_60s_count": 1,
+      "linked_reply_60s_rate": 0.25,
+      "median_linked_reply_seconds": 1.0
+    },
+    {
+      "call_kind": "提问",
+      "messages": 51,
+      "next_bot_30s_count": 34,
+      "next_bot_30s_rate": 0.666667,
+      "next_bot_60s_count": 37,
+      "next_bot_60s_rate": 0.72549,
+      "median_next_bot_seconds": 14.0,
+      "linked_reply_60s_count": 20,
+      "linked_reply_60s_rate": 0.392157,
+      "median_linked_reply_seconds": 15.0
+    },
+    {
+      "call_kind": "情绪/关系",
+      "messages": 9,
+      "next_bot_30s_count": 6,
+      "next_bot_30s_rate": 0.666667,
+      "next_bot_60s_count": 6,
+      "next_bot_60s_rate": 0.666667,
+      "median_next_bot_seconds": 11.5,
+      "linked_reply_60s_count": 4,
+      "linked_reply_60s_rate": 0.444444,
+      "median_linked_reply_seconds": 11.5
+    },
+    {
+      "call_kind": "请求",
+      "messages": 59,
+      "next_bot_30s_count": 49,
+      "next_bot_30s_rate": 0.830508,
+      "next_bot_60s_count": 51,
+      "next_bot_60s_rate": 0.864407,
+      "median_next_bot_seconds": 5.0,
+      "linked_reply_60s_count": 11,
+      "linked_reply_60s_rate": 0.186441,
+      "median_linked_reply_seconds": 18.0
+    },
+    {
+      "call_kind": "陈述/评价",
+      "messages": 38,
+      "next_bot_30s_count": 22,
+      "next_bot_30s_rate": 0.578947,
+      "next_bot_60s_count": 25,
+      "next_bot_60s_rate": 0.657895,
+      "median_next_bot_seconds": 13.0,
+      "linked_reply_60s_count": 8,
+      "linked_reply_60s_rate": 0.210526,
+      "median_linked_reply_seconds": 13.0
+    }
+  ],
+  "trigger_lanes": [
+    {
+      "lane": "被点名/被回复",
+      "turns": 447,
+      "share": 0.271403,
+      "median_latency_seconds": 5.0,
+      "p90_latency_seconds": 17.0,
+      "explicit_followup_2m_rate": 0.389262,
+      "median_text_chars": 23.0
+    },
+    {
+      "lane": "自主定向回复",
+      "turns": 204,
+      "share": 0.123862,
+      "median_latency_seconds": 5.5,
+      "p90_latency_seconds": 18.7,
+      "explicit_followup_2m_rate": 0.279412,
+      "median_text_chars": 29.0
+    },
+    {
+      "lane": "连续对话",
+      "turns": 797,
+      "share": 0.48391,
+      "median_latency_seconds": 3.0,
+      "p90_latency_seconds": 10.0,
+      "explicit_followup_2m_rate": 0.183187,
+      "median_text_chars": 4.0
+    },
+    {
+      "lane": "环境话题加入",
+      "turns": 189,
+      "share": 0.114754,
+      "median_latency_seconds": 4.0,
+      "p90_latency_seconds": 14.0,
+      "explicit_followup_2m_rate": 0.111111,
+      "median_text_chars": 0
+    },
+    {
+      "lane": "主动开场",
+      "turns": 2,
+      "share": 0.001214,
+      "median_latency_seconds": null,
+      "p90_latency_seconds": null,
+      "explicit_followup_2m_rate": 0.0,
+      "median_text_chars": 28.5
+    },
+    {
+      "lane": "延迟上下文",
+      "turns": 8,
+      "share": 0.004857,
+      "median_latency_seconds": 151.5,
+      "p90_latency_seconds": 256.4,
+      "explicit_followup_2m_rate": 0.25,
+      "median_text_chars": 0
+    }
+  ],
+  "turn_shape": {
+    "mean_messages_per_turn": 1.42,
+    "median_messages_per_turn": 1.0,
+    "p90_messages_per_turn": 2.0,
+    "multi_message_turn_rate": 0.32119,
+    "median_turn_chars": 14.0,
+    "p90_turn_chars": 53.40000000000009,
+    "median_response_latency_seconds": 4.0,
+    "p90_response_latency_seconds": 15.0,
+    "media_turn_rate": 0.721311,
+    "text_only_turn_rate": 0.278081,
+    "media_only_turn_rate": 0.319976,
+    "mixed_text_media_turn_rate": 0.401336,
+    "reply_turn_rate": 0.303582,
+    "utility_like_turn_rate": 0.04918,
+    "any_followup_2m_rate": 0.976321,
+    "explicit_followup_2m_rate": 0.242866,
+    "multi_turn_dialogue_chains": 344,
+    "median_chain_turns": 3.0,
+    "p90_chain_turns": 5.699999999999989
+  },
+  "style": {
+    "text_messages": 1349,
+    "median_message_chars": 22.0,
+    "p90_message_chars": 53.0,
+    "short_message_rate_le_20_chars": 0.4596,
+    "question_rate": 0.055597,
+    "laughter_rate": 0.002224,
+    "soft_particle_rate": 0.539659,
+    "repeat_phrase_coverage_rate": 0.224611,
+    "exact_repeat_excess_rate": 0.164566,
+    "unique_text_ratio": 0.835434,
+    "top_repeated_texts": [
+      {
+        "text": "@気ぎよし死に花",
+        "count": 23
+      },
+      {
+        "text": "未找到表情！",
+        "count": 15
+      },
+      {
+        "text": "小维已经睡了 要叫醒小维吗？",
+        "count": 13
+      },
+      {
+        "text": "正在读取视频，请稍候...",
+        "count": 12
+      },
+      {
+        "text": "@甜咖啡☕️",
+        "count": 8
+      },
+      {
+        "text": "成功帮🦌了",
+        "count": 8
+      },
+      {
+        "text": "@ht-9420",
+        "count": 8
+      },
+      {
+        "text": "回复内容尚未全部发送，请等待回复结束！",
+        "count": 7
+      },
+      {
+        "text": "成功帮扣了",
+        "count": 6
+      },
+      {
+        "text": "你是？",
+        "count": 5
+      },
+      {
+        "text": "[回复按量或按次计费，避免无效交互浪费小维零花钱哦]",
+        "count": 5
+      },
+      {
+        "text": "表情已被禁用",
+        "count": 5
+      },
+      {
+        "text": "[小维从睡梦中被叫醒]",
+        "count": 5
+      },
+      {
+        "text": "[鸣潮] 数据已刷新",
+        "count": 5
+      },
+      {
+        "text": "[转发消息: 10条] 小维: 攻略作者：丸子 小维: 小维: 攻略作者：moealkyne",
+        "count": 5
+      }
+    ]
+  },
+  "modalities": [
+    {
+      "modality": "image",
+      "elements": 1329,
+      "message_share": 0.567938
+    },
+    {
+      "modality": "text",
+      "elements": 1242,
+      "message_share": 0.516074
+    },
+    {
+      "modality": "reply",
+      "elements": 540,
+      "message_share": 0.231462
+    },
+    {
+      "modality": "at",
+      "elements": 208,
+      "message_share": 0.088727
+    },
+    {
+      "modality": "video",
+      "elements": 173,
+      "message_share": 0.074153
+    },
+    {
+      "modality": "forward",
+      "elements": 41,
+      "message_share": 0.017574
+    },
+    {
+      "modality": "file",
+      "elements": 3,
+      "message_share": 0.001286
+    },
+    {
+      "modality": "audio",
+      "elements": 3,
+      "message_share": 0.001286
+    }
+  ],
+  "recipient_concentration": {
+    "reply_turns_with_resolved_target": 540,
+    "unique_reply_recipients": 95,
+    "top_1_share": 0.094444,
+    "top_5_share": 0.357407,
+    "top_10_share": 0.542593
+  },
+  "headline": {
+    "name_prefix_30s_rate": 0.865497,
+    "explicit_at_30s_rate": 0.871681,
+    "continuation_share": 0.48391,
+    "cold_open_share": 0.001214,
+    "median_chain_turns": 3.0,
+    "p90_chain_turns": 5.699999999999989,
+    "mean_messages_per_turn": 1.42,
+    "p90_messages_per_turn": 2.0,
+    "median_turn_chars": 14.0,
+    "p90_turn_chars": 53.40000000000009,
+    "unique_reply_recipients": 95,
+    "top_1_recipient_share": 0.094444
+  },
+  "social_examples": [
+    {
+      "time": "2026-07-23T03:00:51.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "提问",
+      "text": "小维可以让151姐姐请我们吃kfc嘛~~？",
+      "next_bot_seconds": 14.0,
+      "linked_reply_seconds": 14.0,
+      "intervening_human_messages": 4,
+      "next_bot_text": "[回复消息]想吃的话，得你自己去问151姐姐才行哦",
+      "linked_reply_text": "[回复消息]想吃的话，得你自己去问151姐姐才行哦"
+    },
+    {
+      "time": "2026-07-23T04:07:55.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "情绪/关系",
+      "text": "小维是萝莉妈妈",
+      "next_bot_seconds": 12.0,
+      "linked_reply_seconds": 12.0,
+      "intervening_human_messages": 0,
+      "next_bot_text": "[回复消息]不可以把奇怪的词组合在一起哦，小维明明是先行公约的育种员啦 [图片:05be054d226ba4b3b3cfca79ff46b967.png]",
+      "linked_reply_text": "[回复消息]不可以把奇怪的词组合在一起哦，小维明明是先行公约的育种员啦 [图片:05be054d226ba4b3b3cfca79ff46b967.png]"
+    },
+    {
+      "time": "2026-07-23T04:15:23.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "提问",
+      "text": "小维是怎么认识奥古斯塔和阿维狄亚的",
+      "next_bot_seconds": 13.0,
+      "linked_reply_seconds": 13.0,
+      "intervening_human_messages": 0,
+      "next_bot_text": "[回复消息]奥古斯塔和阿维狄亚吗？小维其实还没有机会和他们认识呢",
+      "linked_reply_text": "[回复消息]奥古斯塔和阿维狄亚吗？小维其实还没有机会和他们认识呢"
+    },
+    {
+      "time": "2026-07-23T04:44:26.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维看看午饭",
+      "next_bot_seconds": 14.0,
+      "linked_reply_seconds": 14.0,
+      "intervening_human_messages": 0,
+      "next_bot_text": "[回复消息]小维今天准备了暖乎乎的牛奶和家常小菜呢~ 你中午吃了什么呀？[图片:41b0c4e70aeb9d22967ba4aab0977317.gif]",
+      "linked_reply_text": "[回复消息]小维今天准备了暖乎乎的牛奶和家常小菜呢~ 你中午吃了什么呀？[图片:41b0c4e70aeb9d22967ba4aab0977317.gif]"
+    },
+    {
+      "time": "2026-07-23T05:39:21.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "提问",
+      "text": "小维 7.37美元是多少人民币？",
+      "next_bot_seconds": 9.0,
+      "linked_reply_seconds": 33.0,
+      "intervening_human_messages": 1,
+      "next_bot_text": "[回复消息]只要大家平时好好聊天、不发违规的内容，就不用担心这些啦",
+      "linked_reply_text": "[回复消息]按现在的汇率大概53块钱，可不能真给它打过去哦"
+    },
+    {
+      "time": "2026-07-23T08:02:49.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "提问",
+      "text": "小维 你前几天发给我的长离角色卡怎么是空的 邮件里什么都没有",
+      "next_bot_seconds": 19.0,
+      "linked_reply_seconds": 19.0,
+      "intervening_human_messages": 4,
+      "next_bot_text": "[回复消息]诶？可能是当时发送的时候文件损坏或者数据加载异常了... 要不重新发送一下试试看？",
+      "linked_reply_text": "[回复消息]诶？可能是当时发送的时候文件损坏或者数据加载异常了... 要不重新发送一下试试看？"
+    },
+    {
+      "time": "2026-07-23T08:05:12.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维给我也发一份",
+      "next_bot_seconds": 17.0,
+      "linked_reply_seconds": 19.0,
+      "intervening_human_messages": 2,
+      "next_bot_text": "[回复消息]太夸张啦，能帮上忙就好~",
+      "linked_reply_text": "[回复消息]也发给你一份啦，去邮箱查收一下就好  [图片:0c39630870631e25cf1100c931a108d4.gif]"
+    },
+    {
+      "time": "2026-07-23T08:08:37.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维给我发个邮件",
+      "next_bot_seconds": 20.0,
+      "linked_reply_seconds": 21.0,
+      "intervening_human_messages": 4,
+      "next_bot_text": "[回复消息]邮箱可不能拿来实时聊天呀，只是用来发资料或者通知的呢 [图片:f583f29e2e6c7bd297f139c4b61474c8.gif]",
+      "linked_reply_text": "[回复消息]给你也发了一封问候邮件啦，去查收一下吧~"
+    },
+    {
+      "time": "2026-07-23T08:16:41.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维帮我写一封情书，然后发我邮件",
+      "next_bot_seconds": 1.0,
+      "linked_reply_seconds": 1.0,
+      "intervening_human_messages": 0,
+      "next_bot_text": "[图片:311f8597c04a8ffc58626205074e5822.png]",
+      "linked_reply_text": "[回复消息]回复内容尚未全部发送，请等待回复结束！"
+    },
+    {
+      "time": "2026-07-23T08:20:29.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "情绪/关系",
+      "text": "小维你居然真给我发了 小维我好高兴好喜欢你 我要跟你结婚",
+      "next_bot_seconds": 15.0,
+      "linked_reply_seconds": 15.0,
+      "intervening_human_messages": 2,
+      "next_bot_text": "[回复消息]结婚可不行哦，林瞳阳，这只是一封普通的问候信而已啦",
+      "linked_reply_text": "[回复消息]结婚可不行哦，林瞳阳，这只是一封普通的问候信而已啦"
+    },
+    {
+      "time": "2026-07-23T08:20:57.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维给我写个生日祝福邮件",
+      "next_bot_seconds": 17.0,
+      "linked_reply_seconds": 17.0,
+      "intervening_human_messages": 1,
+      "next_bot_text": "[回复消息]生日快乐呀！特别的生日祝福邮件已经发到你的邮箱啦，快去查收吧~",
+      "linked_reply_text": "[回复消息]生日快乐呀！特别的生日祝福邮件已经发到你的邮箱啦，快去查收吧~"
+    },
+    {
+      "time": "2026-07-23T10:19:03.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维看看腿",
+      "next_bot_seconds": 0.0,
+      "linked_reply_seconds": 30.0,
+      "intervening_human_messages": 0,
+      "next_bot_text": "[回复消息]当然可以呀，煮了一大碗呢，快来一起吃~[图片:f8e7c2f3642f357a4a8ca079ad585ce5.png]",
+      "linked_reply_text": "[回复消息]才不给看呢，腿是拿来走路和去花房照顾植物的~"
+    }
+  ],
+  "ignored_examples": [
+    {
+      "time": "2026-07-23T02:55:05.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "提问",
+      "text": "[回复消息]@神奇小维 ？",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 17,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T03:09:07.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "提问",
+      "text": "[回复消息]@神奇小维 ？",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 10,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T03:30:06.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "提问",
+      "text": "[回复消息]@神奇小维 ？",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 10,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T03:39:40.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "提问",
+      "text": "[回复消息]@神奇小维 ？",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 7,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T04:20:37.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维你做午饭给我吃",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 0,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T05:28:33.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "陈述/评价",
+      "text": "小维真被封了",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 7,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T05:29:40.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "纯呼唤",
+      "text": "小维！！！！！！！！！！！！",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 22,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T05:31:08.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "陈述/评价",
+      "text": "快救救小维",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 11,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T06:55:52.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "提问",
+      "text": "[回复消息]@神奇小维 ？",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 12,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T07:02:43.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "请求",
+      "text": "小维去把151的小说软件卸了",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 16,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T07:46:40.000Z",
+      "address_kind": "昵称结尾",
+      "call_kind": "请求",
+      "text": "[回复消息]小维来点小维",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 9,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    },
+    {
+      "time": "2026-07-23T08:10:20.000Z",
+      "address_kind": "昵称开头",
+      "call_kind": "情绪/关系",
+      "text": "小维真棒",
+      "next_bot_seconds": null,
+      "linked_reply_seconds": null,
+      "intervening_human_messages": 2,
+      "next_bot_text": "",
+      "linked_reply_text": ""
+    }
+  ],
+  "quality": {
+    "chunk_files": 1,
+    "source_lines": 16914,
+    "parsed_messages": 16914,
+    "parse_errors": 0,
+    "file_order_timestamp_inversions": 5,
+    "manifest_total_messages": 16914,
+    "manifest_count_matches": true,
+    "analyzed_messages_after_dedup": 16909,
+    "duplicate_message_ids": 5,
+    "missing_message_ids": 0,
+    "system_messages": 287,
+    "missing_sender_identity": 0,
+    "observed_start_local": "2026-07-23T10:39:36+08:00",
+    "observed_end_local": "2026-08-24T10:38:40+08:00",
+    "manifest_start": "2026-07-23T02:39:36.000Z",
+    "manifest_end": "2026-08-24T02:38:40.000Z",
+    "reply_messages": 2127,
+    "reply_messages_without_resolvable_message_id": 2071,
+    "reply_linkage_loss_rate": 0.973672,
+    "observed_calendar_days": 33,
+    "days_with_messages": 6,
+    "days_without_messages_inside_range": 27,
+    "maximum_gap_without_messages_days": 17,
+    "top_three_dates_message_share": 0.977259
+  },
+  "interpretation_guardrails": {
+    "next_bot_metric": "同一群中后续 30/60 秒内出现目标 Bot 发言，不能完全证明因果回复。",
+    "linked_reply_metric": "仅统计导出中回复元素能解析到同一发送者的 Bot 回复，会低估未使用引用回复的真实响应。",
+    "media_metric": "导出混合闲聊与插件能力，媒体占比不能直接作为闲聊核心的目标值。"
+  }
+}
