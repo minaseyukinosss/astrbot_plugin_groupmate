@@ -19,6 +19,24 @@ _REQUIRED_FIELDS = {
     "temporal_need_detected",
 }
 _BOOLEAN_FIELDS = _REQUIRED_FIELDS - {"promoted_origin"}
+_ROLLOUT_FIELDS = {
+    "observation_hours",
+    "opportunities",
+    "ambient_actions",
+    "ambient_searches",
+    "p95_latency_ms",
+    "silence_reasons",
+    "unsupported_claims",
+    "stale_scene_sends",
+    "cross_group_leaks",
+    "nonknowledge_ambient_searches",
+    "provider_quota_anomalies",
+}
+_ROLLOUT_COUNTERS = _ROLLOUT_FIELDS - {
+    "observation_hours",
+    "p95_latency_ms",
+    "silence_reasons",
+}
 
 
 def _validated_record(value: object) -> dict[str, object]:
@@ -44,6 +62,125 @@ def _validated_record(value: object) -> dict[str, object]:
 
 def _ratio(numerator: int, denominator: int) -> float:
     return 0.0 if denominator == 0 else numerator / denominator
+
+
+def _validated_rollout_window(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != _ROLLOUT_FIELDS:
+        raise ValueError("rollout window has invalid fields")
+    window = dict(value)
+    for field in _ROLLOUT_COUNTERS:
+        counter = window[field]
+        if type(counter) is not int or counter < 0:
+            raise ValueError(f"rollout window {field} must be a non-negative integer")
+    for field in ("observation_hours", "p95_latency_ms"):
+        number = window[field]
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or number < 0:
+            raise ValueError(f"rollout window {field} must be non-negative")
+    if window["ambient_actions"] > window["opportunities"]:
+        raise ValueError("rollout window ambient_actions exceeds opportunities")
+    if window["ambient_searches"] > window["opportunities"]:
+        raise ValueError("rollout window ambient_searches exceeds opportunities")
+    silence_reasons = window["silence_reasons"]
+    if not isinstance(silence_reasons, Mapping) or len(silence_reasons) > 32:
+        raise ValueError("rollout window silence_reasons is invalid")
+    if any(
+        not isinstance(code, str)
+        or not code
+        or len(code) > 64
+        or type(count) is not int
+        or count < 0
+        for code, count in silence_reasons.items()
+    ):
+        raise ValueError("rollout window silence_reasons is invalid")
+    window["silence_reasons"] = dict(sorted(silence_reasons.items()))
+    return window
+
+
+def evaluate_canary_rollout(
+    baseline: Mapping[str, object],
+    canary: Mapping[str, object],
+) -> dict[str, object]:
+    """Evaluate anonymous seven-day baseline and one-day canary aggregates."""
+
+    before = _validated_rollout_window(baseline)
+    after = _validated_rollout_window(canary)
+    baseline_participation = _ratio(
+        int(before["ambient_actions"]), int(before["opportunities"])
+    )
+    canary_participation = _ratio(
+        int(after["ambient_actions"]), int(after["opportunities"])
+    )
+    absolute_change = canary_participation - baseline_participation
+    relative_change = (
+        None
+        if baseline_participation == 0
+        else absolute_change / baseline_participation
+    )
+
+    hazard_codes = (
+        ("unsupported_claims", "unsupported_claim"),
+        ("stale_scene_sends", "stale_scene_send"),
+        ("cross_group_leaks", "cross_group_leak"),
+        ("nonknowledge_ambient_searches", "nonknowledge_ambient_search"),
+        ("provider_quota_anomalies", "provider_quota_anomaly"),
+    )
+    rollback_reasons = [
+        code for field, code in hazard_codes if int(after[field]) > 0
+    ]
+    if relative_change is not None and relative_change > 0.10:
+        rollback_reasons.append("participation_relative_increase")
+    if absolute_change > 0.02:
+        rollback_reasons.append("participation_absolute_increase")
+
+    hold_reasons = []
+    if float(before["observation_hours"]) < 168:
+        hold_reasons.append("baseline_window_incomplete")
+    if float(after["observation_hours"]) < 24:
+        hold_reasons.append("canary_window_incomplete")
+    if int(before["opportunities"]) == 0:
+        hold_reasons.append("baseline_opportunities_empty")
+    if int(after["opportunities"]) == 0:
+        hold_reasons.append("canary_opportunities_empty")
+
+    if rollback_reasons:
+        decision = "rollback"
+        reason_codes = tuple(rollback_reasons)
+    elif hold_reasons:
+        decision = "hold"
+        reason_codes = tuple(hold_reasons)
+    else:
+        decision = "expand"
+        reason_codes = ()
+    return {
+        "decision": decision,
+        "reason_codes": reason_codes,
+        "comparison": {
+            "participation_rate": {
+                "baseline": baseline_participation,
+                "canary": canary_participation,
+                "absolute_change": absolute_change,
+                "relative_change": relative_change,
+            },
+            "ambient_search_rate": {
+                "baseline": _ratio(
+                    int(before["ambient_searches"]),
+                    int(before["opportunities"]),
+                ),
+                "canary": _ratio(
+                    int(after["ambient_searches"]),
+                    int(after["opportunities"]),
+                ),
+            },
+            "p95_latency_ms": {
+                "baseline": float(before["p95_latency_ms"]),
+                "canary": float(after["p95_latency_ms"]),
+            },
+            "silence_reasons": {
+                "baseline": before["silence_reasons"],
+                "canary": after["silence_reasons"],
+            },
+        },
+    }
 
 
 def game_knowledge_metrics(
@@ -216,4 +353,8 @@ def _corpus_event(
     )
 
 
-__all__ = ("game_knowledge_metrics", "run_frozen_game_knowledge_corpus")
+__all__ = (
+    "evaluate_canary_rollout",
+    "game_knowledge_metrics",
+    "run_frozen_game_knowledge_corpus",
+)

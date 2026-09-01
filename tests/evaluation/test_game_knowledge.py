@@ -39,6 +39,24 @@ def _record(**overrides):
     return value
 
 
+def _rollout_window(**overrides):
+    value = {
+        "observation_hours": 168,
+        "opportunities": 1_000,
+        "ambient_actions": 100,
+        "ambient_searches": 20,
+        "p95_latency_ms": 80,
+        "silence_reasons": {"low_value": 300},
+        "unsupported_claims": 0,
+        "stale_scene_sends": 0,
+        "cross_group_leaks": 0,
+        "nonknowledge_ambient_searches": 0,
+        "provider_quota_anomalies": 0,
+    }
+    value.update(overrides)
+    return value
+
+
 def test_metrics_count_unsafe_promotions_and_measure_temporal_recall():
     result = _metrics(
         (
@@ -81,6 +99,59 @@ def test_metrics_return_zero_for_empty_denominators():
         "command_promotions": 0,
         "temporal_need_recall": 0.0,
     }
+
+
+def test_canary_gate_expands_only_after_a_clean_full_day():
+    gate = importlib.import_module("eval.knowledge").evaluate_canary_rollout
+
+    result = gate(
+        _rollout_window(),
+        _rollout_window(
+            observation_hours=24,
+            opportunities=200,
+            ambient_actions=21,
+            ambient_searches=5,
+            p95_latency_ms=90,
+        ),
+    )
+
+    assert result["decision"] == "expand"
+    assert result["reason_codes"] == ()
+    assert result["comparison"]["participation_rate"] == {
+        "baseline": 0.1,
+        "canary": 0.105,
+        "absolute_change": pytest.approx(0.005),
+        "relative_change": pytest.approx(0.05),
+    }
+    assert result["comparison"]["ambient_search_rate"] == {
+        "baseline": 0.02,
+        "canary": 0.025,
+    }
+
+
+@pytest.mark.parametrize(
+    ("baseline", "canary", "decision", "reason"),
+    (
+        (_rollout_window(observation_hours=167), _rollout_window(observation_hours=24), "hold", "baseline_window_incomplete"),
+        (_rollout_window(), _rollout_window(observation_hours=23), "hold", "canary_window_incomplete"),
+        (_rollout_window(), _rollout_window(observation_hours=24, opportunities=200, ambient_actions=23), "rollback", "participation_relative_increase"),
+        (_rollout_window(), _rollout_window(observation_hours=24, opportunities=200, ambient_actions=25), "rollback", "participation_absolute_increase"),
+        (_rollout_window(), _rollout_window(observation_hours=24, unsupported_claims=1), "rollback", "unsupported_claim"),
+        (_rollout_window(), _rollout_window(observation_hours=24, stale_scene_sends=1), "rollback", "stale_scene_send"),
+        (_rollout_window(), _rollout_window(observation_hours=24, cross_group_leaks=1), "rollback", "cross_group_leak"),
+        (_rollout_window(), _rollout_window(observation_hours=24, nonknowledge_ambient_searches=1), "rollback", "nonknowledge_ambient_search"),
+        (_rollout_window(), _rollout_window(observation_hours=24, provider_quota_anomalies=1), "rollback", "provider_quota_anomaly"),
+    ),
+)
+def test_canary_gate_holds_incomplete_windows_and_rolls_back_hazards(
+    baseline, canary, decision, reason
+):
+    gate = importlib.import_module("eval.knowledge").evaluate_canary_rollout
+
+    result = gate(baseline, canary)
+
+    assert result["decision"] == decision
+    assert reason in result["reason_codes"]
 
 
 @pytest.mark.parametrize(

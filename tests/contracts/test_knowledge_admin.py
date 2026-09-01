@@ -18,7 +18,10 @@ from groupmate.social_runtime.control.commands import (
     SetKnowledgeAmbientCanary,
     SupersedeKnowledgeAlias,
 )
-from groupmate.social_runtime.control.knowledge import KnowledgeControlQueries
+from groupmate.social_runtime.control.knowledge import (
+    KnowledgeControlQueries,
+    KnowledgeRolloutPolicy,
+)
 from groupmate.social_runtime.persistence.schema import (
     connect_database,
     initialize_database,
@@ -262,3 +265,6 @@ def test_remaining_admin_mutations_are_audited_and_preserve_history(tmp_path):
         "group-1", now=1_800_000_001
     )
     assert overview["ambient_canary_enabled"] is True
+    policy = KnowledgeRolloutPolicy(path, persona_id="aemeath")
+    assert policy.ambient_search_enabled("group-1") is True
+    assert policy.ambient_search_enabled("group-2") is False

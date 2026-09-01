@@ -23,10 +23,12 @@ from ..social_runtime.control.config_versions import (
     ConfigVersionRepository,
 )
 from ..social_runtime.control.message_traces import MessageTraceRepository
+from ..social_runtime.control.knowledge import KnowledgeRolloutPolicy
 from ..social_runtime.cognition.ambient_worker import DirectAmbientWorker
 from ..social_runtime.manager import SocialRuntimeManager
 from ..social_runtime.knowledge.contracts import KnowledgeNeed
 from ..social_runtime.knowledge.enrichment import (
+    AmbientBudget,
     EnrichmentRequest,
     KnowledgeEnrichmentCoordinator,
     SceneGuard,
@@ -192,6 +194,7 @@ class AstrBotSocialRuntimeBridge:
         self._knowledge_retriever: KnowledgeRetriever | None = None
         self._knowledge_need_assessor: KnowledgeNeedAssessor | None = None
         self._knowledge_enrichment: KnowledgeEnrichmentCoordinator | None = None
+        self._knowledge_rollout_policy: KnowledgeRolloutPolicy | None = None
         self._member_style_repository: MemberStyleRepository | None = None
         self._member_style_service: MemberStyleService | None = None
         self._imitation_controller: ImitationSessionController | None = None
@@ -868,6 +871,7 @@ class AstrBotSocialRuntimeBridge:
             knowledge_retriever = None
             knowledge_need_assessor = None
             knowledge_enrichment = None
+            knowledge_rollout_policy = None
             if self.settings.knowledge_enabled:
                 try:
                     knowledge_repository = KnowledgeRepository(
@@ -889,6 +893,10 @@ class AstrBotSocialRuntimeBridge:
                         knowledge_repository
                     )
                     knowledge_need_assessor = KnowledgeNeedAssessor()
+                    knowledge_rollout_policy = KnowledgeRolloutPolicy(
+                        knowledge_repository.path,
+                        persona_id=self.settings.persona_id,
+                    )
                     knowledge_job_service = KnowledgeJobService(
                         knowledge_repository,
                         probe=self.official_source_probe,
@@ -911,6 +919,7 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_retriever = None
                     knowledge_need_assessor = None
                     knowledge_job_service = None
+                    knowledge_rollout_policy = None
                     self.knowledge_search_adapter_unavailable = False
                     self.knowledge_error = "knowledge_seed_unavailable"
             else:
@@ -1015,6 +1024,7 @@ class AstrBotSocialRuntimeBridge:
                 self._knowledge_retriever = knowledge_retriever
                 self._knowledge_need_assessor = knowledge_need_assessor
                 self._knowledge_enrichment = knowledge_enrichment
+                self._knowledge_rollout_policy = knowledge_rollout_policy
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
@@ -1050,6 +1060,7 @@ class AstrBotSocialRuntimeBridge:
                 self._knowledge_retriever = None
                 self._knowledge_need_assessor = None
                 self._knowledge_enrichment = None
+                self._knowledge_rollout_policy = None
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
@@ -1437,10 +1448,33 @@ class AstrBotSocialRuntimeBridge:
             )
         if need.outcome.value != "fresh_evidence_required":
             return guarded
+        ambient_budget = None
+        lane = str(
+            getattr(evaluation, "participation_lane", "AMBIENT") or "AMBIENT"
+        ).upper()
+        if lane == "AMBIENT":
+            rollout = self._knowledge_rollout_policy
+            if rollout is None or not rollout.ambient_search_enabled(group_id):
+                return replace(
+                    guarded,
+                    knowledge_reply_valid=False,
+                    reply_diagnostic="ambient_search_disabled",
+                )
+            ambient_budget = AmbientBudget.from_evaluation(evaluation, now)
+            if not ambient_budget.can_search:
+                return replace(
+                    guarded,
+                    knowledge_reply_valid=False,
+                    reply_diagnostic="ambient_budget_insufficient",
+                )
         mapped_need = self._mapped_enrichment_need(need)
         try:
             request = self._build_enrichment_request(
-                guarded, guard, mapped_need, now=now
+                guarded,
+                guard,
+                mapped_need,
+                now=now,
+                ambient_budget=ambient_budget,
             )
         except Exception:
             request = None
@@ -1533,6 +1567,7 @@ class AstrBotSocialRuntimeBridge:
         need: KnowledgeNeed,
         *,
         now: int,
+        ambient_budget: AmbientBudget | None = None,
     ) -> EnrichmentRequest | None:
         frame = getattr(evaluation, "topic_understanding", None)
         if frame is None or not frame.game_ids:
@@ -1584,6 +1619,8 @@ class AstrBotSocialRuntimeBridge:
             float(guard.intention_expires_at),
             float(need.expires_at),
         )
+        if ambient_budget is not None:
+            hard_deadline = min(hard_deadline, ambient_budget.expires_at)
         if hard_deadline <= requested_at:
             return None
         if hard_deadline < requested_at + 1:
@@ -1988,6 +2025,12 @@ class AstrBotSocialRuntimeBridge:
                     mode,
                     plan.participation_lane,
                     plan.move.knowledge_policy,
+                    (
+                        self._knowledge_rollout_policy is not None
+                        and self._knowledge_rollout_policy.ambient_search_enabled(
+                            group_id
+                        )
+                    ),
                 )
                 if rollout_action == "BLOCK":
                     evaluation = replace(
@@ -2064,6 +2107,7 @@ class AstrBotSocialRuntimeBridge:
         mode: RuntimeMode | str,
         participation_lane: str,
         knowledge_policy: KnowledgePolicy | str,
+        ambient_canary_enabled: bool = False,
     ) -> str:
         runtime_mode = RuntimeMode(mode)
         policy = KnowledgePolicy(knowledge_policy)
@@ -2076,7 +2120,7 @@ class AstrBotSocialRuntimeBridge:
         if policy is not KnowledgePolicy.NONE and lane not in {
             "DIRECT_FAST",
             "CONTINUATION",
-        }:
+        } and not (lane == "AMBIENT" and ambient_canary_enabled):
             return "BLOCK"
         return (
             "PREVIEW"
@@ -2502,6 +2546,7 @@ class AstrBotSocialRuntimeBridge:
         self._knowledge_retriever = None
         self._knowledge_need_assessor = None
         self._knowledge_enrichment = None
+        self._knowledge_rollout_policy = None
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None

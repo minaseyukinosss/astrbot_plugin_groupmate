@@ -892,7 +892,6 @@ class KnowledgeControlQueries:
             return False
         stored = json.loads(str(row[0]))
         return bool(stored.get("result", {}).get("data", {}).get("enabled", False))
-
     @classmethod
     def _page(
         cls, items: list[dict[str, object]], offset: int, revision: int
@@ -965,4 +964,16 @@ class KnowledgeControlQueries:
         return normalized
 
 
-__all__ = ("KnowledgeControlQueries",)
+class KnowledgeRolloutPolicy:
+    """Read the latest audited per-group AMBIENT canary decision."""
+
+    def __init__(self, path: Path, *, persona_id: str) -> None:
+        self._queries = KnowledgeControlQueries(path, persona_id=persona_id)
+
+    def ambient_search_enabled(self, group_id: str) -> bool:
+        scope = self._queries._required_text(group_id, "group_id")
+        with connect_database(self._queries.path) as db:
+            return self._queries._ambient_canary_on(db, scope)
+
+
+__all__ = ("KnowledgeControlQueries", "KnowledgeRolloutPolicy")

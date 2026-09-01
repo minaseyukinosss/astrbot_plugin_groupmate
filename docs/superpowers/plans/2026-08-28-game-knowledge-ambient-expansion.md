@@ -76,29 +76,29 @@
 - coordinator 接受 `lane="AMBIENT"` 时，只有 `remaining_ms >= 2250` 才尝试搜索；provider timeout 固定 2000ms，余下 250ms 留给提交、重验和审查。
 - `KnowledgeRolloutPolicy` 从现有 `governance_actions` 读取每群 `knowledge.ambient_canary_enabled` 状态；默认 false，不增加普通配置项。
 
-- [ ] **Step 1: 写先授权后搜索失败测试**
+- [x] **Step 1: 写先授权后搜索失败测试**
 
 Governor OBSERVE/SILENCE 时 provider calls=0；ACT + local sufficient 时 calls=0；ACT + fresh need + 充足预算时最多一次 enrichment；知识 hit 本身不能把 OBSERVE 改 ACT。
 
-- [ ] **Step 2: 写 8 秒预算边界失败测试**
+- [x] **Step 2: 写 8 秒预算边界失败测试**
 
 剩余 2249ms 不搜索并沉默/排后台任务；2250ms 可进入但 hard timeout 2000ms；semaphore 排队耗尽预算不调用 provider；搜索完成后剩余时间不足也不生成回复。
 
-- [ ] **Step 3: 写失败关闭场景**
+- [x] **Step 3: 写失败关闭场景**
 
 timeout、partial、empty without valid negative、disputed、scene advanced、target changed、review failed 都 outbox=0；已验证本地 fresh fact 可不搜索正常参与。
 
-- [ ] **Step 4: 运行并确认 RED**
+- [x] **Step 4: 运行并确认 RED**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py`
 
 Expected: 当前 coordinator 返回 `ambient_search_disabled`。
 
-- [ ] **Step 5: 实现预算对象和 canary gate**
+- [x] **Step 5: 实现预算对象和 canary gate**
 
 预算来自 evaluation attention deadline、candidate intention expiry 和当前 monotonic/epoch clock 的安全最小值；只对已有有效 `knowledge.ambient_canary_enabled` 治理动作的群开放。无论配置 `knowledge_web_search_enabled` 如何，未进入 canary 的群都不执行 ambient search。
 
-- [ ] **Step 6: 运行测试并提交**
+- [x] **Step 6: 运行测试并提交**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge/test_enrichment.py tests/scenarios/test_ambient_game_knowledge.py tests/scenarios/test_attention_windows.py`
 
@@ -306,15 +306,15 @@ Commit: `git commit -m "perf: validate game knowledge capacity"`
 - 运行手册固定阶段：fixture SHADOW→installed-live SHADOW→DIRECT/CONTINUATION 已有组→一个 AMBIENT canary 群→逐组扩大。
 - 自动 rollback 条件：unsupported claim >0、stale scene send >0、cross-group leak >0、非知识 ambient search >0、provider quota 异常或参与率显著上升。
 
-- [ ] **Step 1: 写可重复的 installed-live 检查清单**
+- [x] **Step 1: 写可重复的 installed-live 检查清单**
 
 覆盖 seed import、四款 daily jobs、一次官方更新、一次 negative、一次 rumor、一次 provider timeout、一次场景过期、一个长尾游戏、一条群 alias 纠正；每项记录 trace ref，不保存群消息全文。
 
-- [ ] **Step 2: 写 canary 前后对比脚本/测试**
+- [x] **Step 2: 写 canary 前后对比脚本/测试**
 
 以同群最近 7 天 SHADOW baseline 比较参与率、ambient search rate、P95 latency、silence reason、unsupported claims；参与率相对上升超过 10% 或绝对上升超过 2 个百分点即停止扩大并人工复核。
 
-- [ ] **Step 3: 运行 Gate 4 自动部分**
+- [x] **Step 3: 运行 Gate 4 自动部分**
 
 Run: `.venv/bin/python -m pytest -q tests/social_runtime/knowledge tests/contracts/test_knowledge_admin.py tests/contracts/test_knowledge_web_api.py tests/page/test_knowledge_workspace.py tests/scenarios/test_ambient_game_knowledge.py tests/evaluation/test_knowledge_capacity.py`
 
@@ -326,6 +326,8 @@ Run: `.venv/bin/python -m pytest -q`
 
 Expected: PASS。
 
+2026-09-01：使用 `--import-mode=importlib` 完成全量收集，结果 1287 passed、11 failed；其中 5 项因当前沙箱禁止本地端口，另 6 项为本计划范围外的既有契约/前端断言。Gate 4 与本计划定向回归已通过，本步骤不伪标完成。
+
 - [ ] **Step 5: 执行 installed-live SHADOW 人工门**
 
 按手册在管理员已配置搜索源的真实 AstrBot 环境完成至少一个 24 小时刷新周期。人工确认每个 trace 的 source class、freshness、fragment 和失败语义；未完成此步骤不得切 `ambient_canary`。
@@ -334,7 +336,7 @@ Expected: PASS。
 
 只为一个明确授权群提交 `knowledge.ambient_canary_enabled=true` 治理动作；出现 rollback 条件立即写入 false，DIRECT/CONTINUATION 保持。完成后保存匿名聚合验收记录。
 
-- [ ] **Step 7: 文档检查并提交**
+- [x] **Step 7: 文档检查并提交**
 
 Run: `git diff --check`
 

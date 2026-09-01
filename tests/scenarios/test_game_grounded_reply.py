@@ -120,4 +120,6 @@ def test_knowledge_rollout_is_shadow_preview_or_direct_send_only():
     assert action(RuntimeMode.SOCIAL_RUNTIME, "CONTINUATION", "grounded") == "SEND"
     assert action(RuntimeMode.SHADOW, "AMBIENT", "strict") == "BLOCK"
     assert action(RuntimeMode.SOCIAL_RUNTIME, "AMBIENT", "grounded") == "BLOCK"
+    assert action(RuntimeMode.SHADOW, "AMBIENT", "strict", True) == "PREVIEW"
+    assert action(RuntimeMode.SOCIAL_RUNTIME, "AMBIENT", "grounded", True) == "SEND"
     assert action(RuntimeMode.SOCIAL_RUNTIME, "AMBIENT", "none") == "SEND"

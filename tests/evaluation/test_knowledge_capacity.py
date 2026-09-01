@@ -1,10 +1,38 @@
 from __future__ import annotations
 
+import importlib
+
+import pytest
+
 from groupmate.social_runtime.contracts import SocialEventEnvelope
 from groupmate.social_runtime.knowledge.repository import KnowledgeRepository
 from groupmate.social_runtime.knowledge.resolver import KnowledgeEntityResolver
 from groupmate.social_runtime.knowledge.seeds import SeedImporter, load_bundled_seeds
 from groupmate.social_runtime.persistence.schema import connect_database
+
+
+def test_rollout_gate_accepts_only_bounded_anonymous_aggregates():
+    """Catches accidental raw group or message labels in release evidence."""
+    window = {
+        "observation_hours": 168,
+        "opportunities": 100,
+        "ambient_actions": 10,
+        "ambient_searches": 2,
+        "p95_latency_ms": 80,
+        "silence_reasons": {"low_value": 30},
+        "unsupported_claims": 0,
+        "stale_scene_sends": 0,
+        "cross_group_leaks": 0,
+        "nonknowledge_ambient_searches": 0,
+        "provider_quota_anomalies": 0,
+        "group_id": "must-not-be-recorded",
+    }
+
+    with pytest.raises(ValueError, match="fields"):
+        importlib.import_module("eval.knowledge").evaluate_canary_rollout(
+            window,
+            {**window, "observation_hours": 24},
+        )
 
 
 def test_runtime_metrics_are_bounded_aggregates_without_private_labels(tmp_path):

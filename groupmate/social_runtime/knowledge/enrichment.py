@@ -35,6 +35,55 @@ class EnrichmentLane(str, Enum):
     AMBIENT = "AMBIENT"
 
 
+@dataclass(frozen=True)
+class AmbientBudget:
+    """The remaining ambient decision window, with reply time reserved."""
+
+    remaining_ms: int
+    provider_timeout_ms: int
+    reply_reserve_ms: int
+    expires_at: float
+    can_search: bool
+
+    @classmethod
+    def from_evaluation(cls, evaluation: object, now: float) -> "AmbientBudget":
+        timestamp = float(now)
+        deadlines: list[float] = []
+        frame = getattr(evaluation, "frame", None)
+        frame_deadline = getattr(frame, "deadline", None)
+        if isinstance(frame_deadline, (int, float)) and not isinstance(
+            frame_deadline, bool
+        ):
+            deadlines.append(float(frame_deadline))
+        result = getattr(evaluation, "governor_result", None)
+        selected_ids = set(
+            getattr(result, "selected_intention_ids", ()) or ()
+        )
+        deadlines.extend(
+            float(getattr(candidate, "expires_at"))
+            for candidate in tuple(getattr(evaluation, "candidates", ()) or ())
+            if getattr(candidate, "intention_id", None) in selected_ids
+            and isinstance(getattr(candidate, "expires_at", None), (int, float))
+            and not isinstance(getattr(candidate, "expires_at", None), bool)
+        )
+        expires_at = min(deadlines, default=timestamp)
+        remaining_ms = max(
+            0, int(((expires_at - timestamp) * 1000) + 0.000001)
+        )
+        reserve_ms = 250
+        provider_timeout_ms = min(2000, max(0, remaining_ms - reserve_ms))
+        return cls(
+            remaining_ms=remaining_ms,
+            provider_timeout_ms=provider_timeout_ms,
+            reply_reserve_ms=reserve_ms,
+            expires_at=expires_at,
+            can_search=(
+                str(getattr(result, "outcome", "")).upper() == "ACT"
+                and remaining_ms >= 2250
+            ),
+        )
+
+
 def _text(value: object, name: str, maximum: int, *, optional: bool = False):
     normalized = " ".join(str(value or "").split())
     if not normalized:
@@ -297,11 +346,15 @@ class KnowledgeEnrichmentCoordinator:
         if not isinstance(request, EnrichmentRequest):
             raise TypeError("request must be EnrichmentRequest")
         intent_hash = normalized_enrichment_key(request)
-        if request.lane is EnrichmentLane.AMBIENT:
+        initial_float = self._now_float()
+        if (
+            request.lane is EnrichmentLane.AMBIENT
+            and request.hard_deadline - initial_float < 2.25 - 0.000001
+        ):
             return self._result(
                 intent_hash,
-                status="disabled",
-                diagnostic="ambient_search_disabled",
+                status="deferred",
+                diagnostic="ambient_budget_insufficient",
             )
         initial_now = self._now()
         initial_expiry = self._guard_expiry(request.scene_guard, initial_now)
@@ -320,8 +373,16 @@ class KnowledgeEnrichmentCoordinator:
 
         task = self._flights.get(intent_hash)
         if task is None:
+            provider_deadline = request.hard_deadline
+            if request.lane is EnrichmentLane.AMBIENT:
+                provider_deadline = min(
+                    request.hard_deadline - 0.25,
+                    initial_float + 2.0,
+                )
             task = asyncio.create_task(
-                self._run_shared_and_cleanup(intent_hash, request),
+                self._run_shared_and_cleanup(
+                    intent_hash, request, provider_deadline
+                ),
                 name=f"knowledge-enrichment:{intent_hash[:12]}",
             )
             self._flights[intent_hash] = task
@@ -403,17 +464,25 @@ class KnowledgeEnrichmentCoordinator:
         )
 
     async def _run_shared_and_cleanup(
-        self, intent_hash: str, request: EnrichmentRequest
+        self,
+        intent_hash: str,
+        request: EnrichmentRequest,
+        provider_deadline: float,
     ) -> _SharedOutcome:
         try:
-            return await self._run_shared(intent_hash, request)
+            return await self._run_shared(
+                intent_hash, request, provider_deadline
+            )
         finally:
             current = asyncio.current_task()
             if self._flights.get(intent_hash) is current:
                 self._flights.pop(intent_hash, None)
 
     async def _run_shared(
-        self, intent_hash: str, request: EnrichmentRequest
+        self,
+        intent_hash: str,
+        request: EnrichmentRequest,
+        provider_deadline: float,
     ) -> _SharedOutcome:
         started = time.monotonic()
         now = self._now()
@@ -451,7 +520,7 @@ class KnowledgeEnrichmentCoordinator:
 
         if not official_complete:
             official = await self._call_official(
-                request.official_request, intent_hash, request.hard_deadline
+                request.official_request, intent_hash, provider_deadline
             )
             evidence.extend(official.evidence)
             domains.extend(
@@ -473,7 +542,7 @@ class KnowledgeEnrichmentCoordinator:
                 diagnostic = "search_unavailable"
             else:
                 discovery = await self._call_discovery(
-                    request.search_request, intent_hash, request.hard_deadline
+                    request.search_request, intent_hash, provider_deadline
                 )
                 evidence.extend(discovery.evidence)
                 domains.extend(
@@ -701,6 +770,7 @@ class KnowledgeEnrichmentCoordinator:
 
 
 __all__ = (
+    "AmbientBudget",
     "EnrichmentLane",
     "EnrichmentRequest",
     "EnrichmentResult",

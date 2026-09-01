@@ -232,18 +232,13 @@ def test_lanes_singleflight_success_cache_and_partial_results(tmp_path):
         )
         now[0] += 599
         cached = await coordinator.enrich(_request(now[0], request_id="three"))
-        ambient = await coordinator.enrich(
-            _request(now[0], lane="AMBIENT", request_id="ambient")
-        )
-        return first, second, cached, ambient
+        return first, second, cached
 
-    first, second, cached, ambient = asyncio.run(exercise())
+    first, second, cached = asyncio.run(exercise())
     assert probe.calls == search.calls == 1
     assert all(item.knowledge_committed for item in (first, second, cached))
     assert all(item.reply_still_valid for item in (first, second, cached))
     assert not first.cache_hit and not second.cache_hit and cached.cache_hit
-    assert ambient.diagnostic_code == "ambient_search_disabled"
-    assert not ambient.knowledge_committed and not ambient.reply_still_valid
     with connect_database(repository.path) as db:
         negative = db.execute(
             "SELECT status,diagnostic_code FROM negative_search_snapshots "
@@ -270,6 +265,55 @@ def test_lanes_singleflight_success_cache_and_partial_results(tmp_path):
 
     asyncio.run(partial_twice())
     assert partial_probe.calls == 2
+
+
+def test_ambient_enrichment_requires_2250ms_before_provider_call(tmp_path):
+    now = 1_800_000_000
+    repository = KnowledgeRepository(tmp_path / "ambient-budget.db")
+    repository.upsert_entity(
+        entity_id="game:genshin-impact",
+        entity_type="game",
+        canonical_name="原神",
+        canonical_game_id="game:genshin-impact",
+        status="active",
+        now=now - 1,
+    )
+    probe = _Probe(lambda: now)
+    coordinator = KnowledgeEnrichmentCoordinator(
+        repository,
+        official_probe=probe,
+        discovery_search=_Search(lambda: now),
+        scene_guard_validator=lambda guard, checked_at: SceneGuardCheck.valid(),
+        clock=lambda: now,
+    )
+
+    async def exercise():
+        denied = await coordinator.enrich(
+            _request(
+                now,
+                lane="AMBIENT",
+                rumor=False,
+                request_id="denied",
+                hard_after=2.249,
+            )
+        )
+        allowed = await coordinator.enrich(
+            _request(
+                now,
+                lane="AMBIENT",
+                rumor=False,
+                request_id="allowed",
+                hard_after=2.25,
+            )
+        )
+        return denied, allowed
+
+    denied, allowed = asyncio.run(exercise())
+
+    assert denied.diagnostic_code == "ambient_budget_insufficient"
+    assert not denied.reply_still_valid
+    assert probe.calls == 1
+    assert allowed.knowledge_committed and allowed.reply_still_valid
 
 
 def test_atomic_shanghai_quota_queue_deadline_and_safe_usage(tmp_path):
