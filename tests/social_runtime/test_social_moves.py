@@ -285,6 +285,31 @@ def test_safe_member_chorus_joins_with_exact_frozen_payload_once():
     assert plan.chorus_chain_id == "chorus:abc"
 
 
+def test_safe_other_chorus_joins_exact_payload_with_three_participants():
+    scene = SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="好无聊啊",
+        user_move="chorus_other",
+        continuity_event_ids=("m1", "m2", "m3"),
+        repetition_count=3,
+        chorus_target="OTHER",
+        chorus_chain_id="chorus:bored",
+        chorus_payload="好无聊啊",
+        chorus_event_ids=("m1", "m2", "m3"),
+        chorus_participant_ids=("u1", "u2", "u3"),
+        chorus_tone="SAFE_BANTER",
+        confidence=0.95,
+    )
+    plan = SocialMovePlanner().plan(
+        scene, _stance("WILLING", attitude="AMUSED"), profile=None, memories=()
+    )
+    assert plan.primary_move is SocialMove.JOIN_CHORUS
+    assert plan.verbatim_payload == "好无聊啊"
+    assert plan.chorus_chain_id == "chorus:bored"
+
+
 @pytest.mark.parametrize("tone", ("ATTACK", "DANGEROUS", "UNKNOWN"))
 def test_unsafe_or_already_joined_member_chorus_is_silent(tone):
     scene = _chorus_scene(

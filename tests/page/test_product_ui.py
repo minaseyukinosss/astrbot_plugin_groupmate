@@ -464,6 +464,16 @@ def test_continuation_result_has_a_distinct_human_headline():
     assert result == "继续当前对话"
 
 
+def test_act_then_social_silence_uses_delivery_label_as_headline():
+    result = _run_presenter(
+        "const item={decision:{outcome:'ACT',would_reply:true},"
+        "delivery:{status:'SILENT',label:'社交动作决定不回复'}};"
+        "console.log(JSON.stringify(presenter.traceResultHeadline(item)));"
+    )
+
+    assert result == "社交动作决定不回复"
+
+
 def test_trace_presenter_only_treats_completed_silence_as_observed():
     result = _run_presenter(
         "console.log(JSON.stringify(["

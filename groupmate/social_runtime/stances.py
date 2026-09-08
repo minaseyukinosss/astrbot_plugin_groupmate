@@ -168,20 +168,6 @@ class StancePolicy:
                 reasons,
                 permission,
             )
-        if (
-            actor_relationship is not None
-            and actor_relationship.boundary_pressure >= self.BOUNDARY_PRESSURE_FIRM
-        ) or scene.repetition_count >= 3:
-            return self._decision(
-                Attitude.IRRITATED,
-                Willingness.UNWILLING,
-                Boundary.FIRM,
-                Concession.NONE,
-                Effort.MINIMAL,
-                Initiative.AVOID,
-                reasons,
-                permission,
-            )
         if scene.chorus_target is ChorusTarget.SELF:
             attitude = (
                 Attitude.AMUSED
@@ -201,6 +187,55 @@ class StancePolicy:
                 Concession.NONE,
                 Effort.MINIMAL,
                 Initiative.ALLOW if willingness is Willingness.WILLING else Initiative.AVOID,
+                reasons,
+                permission,
+            )
+        if scene.chorus_target is ChorusTarget.OTHER:
+            # Untargeted exact repeats are joinable when safe; length of the
+            # chain is evidence of chorus, not spam against the bot.
+            if scene.chorus_tone is ChorusTone.SAFE_BANTER:
+                return self._decision(
+                    Attitude.AMUSED,
+                    Willingness.WILLING,
+                    Boundary.NONE,
+                    Concession.NONE,
+                    Effort.MINIMAL,
+                    Initiative.ALLOW,
+                    reasons,
+                    permission,
+                )
+            return self._decision(
+                Attitude.GUARDED,
+                Willingness.UNWILLING,
+                Boundary.SOFT,
+                Concession.NONE,
+                Effort.MINIMAL,
+                Initiative.AVOID,
+                reasons,
+                permission,
+            )
+        if scene.chorus_target is ChorusTarget.UNKNOWN:
+            return self._decision(
+                Attitude.GUARDED,
+                Willingness.UNWILLING,
+                Boundary.SOFT,
+                Concession.NONE,
+                Effort.MINIMAL,
+                Initiative.AVOID,
+                reasons,
+                permission,
+            )
+        if (
+            actor_relationship is not None
+            and actor_relationship.boundary_pressure >= self.BOUNDARY_PRESSURE_FIRM
+        ) or scene.repetition_count >= 3:
+            return self._decision(
+                Attitude.IRRITATED,
+                Willingness.UNWILLING,
+                Boundary.FIRM,
+                Concession.NONE,
+                Effort.MINIMAL,
+                Initiative.AVOID,
                 reasons,
                 permission,
             )

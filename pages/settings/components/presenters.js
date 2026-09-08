@@ -359,6 +359,10 @@ export function traceResultHeadline(summary = {}) {
     return "判断未完成";
   }
   if (outcome === "ACT") {
+    const deliveryStatus = String(summary.delivery?.status || "").toUpperCase();
+    if (deliveryStatus === "SILENT") {
+      return summary.delivery?.label || "本轮决定不回复";
+    }
     const lane = String(decision.participation_lane || "").toUpperCase();
     if (lane === "CONTINUATION") return "继续当前对话";
     if (lane === "DIRECT_FAST") return "会回应这次呼唤";

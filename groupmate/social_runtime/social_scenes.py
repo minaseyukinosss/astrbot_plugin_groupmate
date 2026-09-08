@@ -278,6 +278,46 @@ class SocialSceneInterpreter:
                 "chorus_already_joined": evidence.already_joined,
             }
         )
+        continuity = [
+            str(item)
+            for item in tuple(frozen.get("continuity_event_ids") or ())
+            if str(item or "").strip()
+        ]
+        for event_id in evidence.event_ids:
+            if event_id not in continuity:
+                continuity.append(event_id)
+        frozen["continuity_event_ids"] = continuity
+        target = str(frozen.get("chorus_target") or "NONE").strip().upper() or "NONE"
+        tone = str(frozen.get("chorus_tone") or "NONE").strip().upper() or "NONE"
+        payload = str(evidence.payload or "")
+        if target == "NONE":
+            if any(
+                alias and alias in payload for alias in context.persona_aliases
+            ):
+                frozen["chorus_target"] = "SELF"
+                target = "SELF"
+            else:
+                matched = next(
+                    (
+                        member_id
+                        for member_id, names in context.member_refs.items()
+                        if any(name and name in payload for name in names)
+                    ),
+                    None,
+                )
+                if matched is not None:
+                    frozen["chorus_target"] = "MEMBER"
+                    frozen["chorus_target_id"] = matched
+                    target = "MEMBER"
+                else:
+                    frozen["chorus_target"] = "OTHER"
+                    target = "OTHER"
+        if tone == "NONE":
+            frozen["chorus_tone"] = (
+                "SAFE_BANTER" if target in {"OTHER", "SELF", "MEMBER"} else "UNKNOWN"
+            )
+        if target != "MEMBER":
+            frozen["chorus_target_id"] = None
         return frozen
 
     @staticmethod

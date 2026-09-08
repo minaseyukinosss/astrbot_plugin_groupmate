@@ -51,6 +51,9 @@ class SceneJsonModel:
             "不得生成复读链 ID、参与者列表或改写复读原文。不要输出解释或 Markdown。"
             "没有chorus_evidence时省略所有chorus字段；有证据时continuity_event_ids必须"
             "包含完整的chorus_evidence.event_ids，非MEMBER的chorus_target_id必须为null。"
+            "无成员、无Bot靶心的短句同文复读（如一起喊无聊、一起跟一句梗）判为OTHER，"
+            "语气安全时用SAFE_BANTER；点名某位群友才用MEMBER并填chorus_target_id；"
+            "复读原文指向Bot自己才用SELF。不要因为只是跟风就把OTHER写成UNKNOWN。"
         )
 
     async def classify_scene(

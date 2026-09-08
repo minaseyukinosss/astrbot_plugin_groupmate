@@ -181,3 +181,51 @@ def test_member_chorus_does_not_borrow_current_sender_relationship():
         memory_event_ids=(),
     )
     assert decision.willingness is Willingness.UNWILLING
+
+
+def _other_chorus(*, repetition_count=2, tone="SAFE_BANTER"):
+    return SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="好无聊啊",
+        user_move="chorus_other",
+        continuity_event_ids=("m1", "m2", "m3")[: max(2, repetition_count)],
+        repetition_count=repetition_count,
+        chorus_target="OTHER",
+        chorus_target_id=None,
+        chorus_chain_id="chorus:bored",
+        chorus_payload="好无聊啊",
+        chorus_event_ids=("m1", "m2", "m3")[: max(2, repetition_count)],
+        chorus_participant_ids=("u1", "u2", "u3")[: max(2, repetition_count)],
+        chorus_tone=tone,
+        confidence=0.95,
+    )
+
+
+def test_other_chorus_stays_willing_even_when_chain_has_three_participants():
+    decision = StancePolicy().decide(
+        _other_chorus(repetition_count=3),
+        actor_relationship=_relationship("u3"),
+        subject_relationship=None,
+        culture_patterns=(),
+        permission=PermissionSnapshot(True, "social_reply"),
+        mode_modifiers=(),
+        memory_event_ids=("m1", "m2", "m3"),
+    )
+    assert decision.willingness is Willingness.WILLING
+    assert decision.attitude is Attitude.AMUSED
+
+
+def test_non_chorus_repetition_still_uses_spam_gate():
+    decision = StancePolicy().decide(
+        _scene("repeated_ask", repetition_count=3),
+        actor_relationship=_relationship(),
+        subject_relationship=None,
+        culture_patterns=(),
+        permission=PermissionSnapshot(True, "social_reply"),
+        mode_modifiers=(),
+        memory_event_ids=("m1",),
+    )
+    assert decision.willingness is Willingness.UNWILLING
+    assert decision.boundary is Boundary.FIRM

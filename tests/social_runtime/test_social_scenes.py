@@ -257,6 +257,49 @@ def test_interpreter_freezes_self_chorus_evidence_instead_of_model_payload():
     assert result.scene.chorus_chain_id == "chorus:abc"
 
 
+def test_interpreter_defaults_omitted_chorus_target_to_other_safe_banter():
+    model = FixedSceneModel(
+        {
+            "scene_kind": "group_chorus",
+            "target_scope": "GROUP",
+            "target_id": None,
+            "literal_subject": "好无聊啊",
+            "user_move": "ambient_chorus",
+            "continuity_event_ids": ["m2"],
+            "confidence": 0.9,
+        }
+    )
+    context = SceneContextBuilder(max_chars=800).build(
+        source_event=_event("m2", "好无聊啊", actor_id="u2", occurred_at=110),
+        context_events=(_event("m1", "好无聊啊", actor_id="u1", occurred_at=100),),
+        focus_event_ids=("m1", "m2"),
+        target_id="u2",
+        topic_id="m1",
+        persona_actor_id="aemeath",
+        persona_aliases=("爱弥斯",),
+        member_refs={"u9": ("小林",)},
+        profile=None,
+        relationship_memories=(),
+    ).with_chorus(
+        ChorusEvidence(
+            chain_id="chorus:bored",
+            payload="好无聊啊",
+            normalized_key="好无聊啊",
+            event_ids=("m1", "m2"),
+            participant_ids=("u1", "u2"),
+            already_joined=False,
+        )
+    )
+
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(context))
+
+    assert result.diagnostic_code is None
+    assert result.scene.chorus_target is ChorusTarget.OTHER
+    assert result.scene.chorus_tone is ChorusTone.SAFE_BANTER
+    assert result.scene.chorus_payload == "好无聊啊"
+    assert result.scene.continuity_event_ids == ("m2", "m1")
+
+
 def test_member_chorus_target_must_resolve_to_current_group_member():
     model = FixedSceneModel(
         {
