@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 from typing import Iterable, Mapping, Protocol
 
@@ -10,6 +10,14 @@ from .social_context import SceneContext
 
 
 MAX_SCENE_REFERENCES = 32
+
+
+class ResponseAct(str, Enum):
+    ANSWER = "answer"
+    ACKNOWLEDGE = "acknowledge"
+    REACT = "react"
+    FOLLOW_UP = "follow_up"
+    CLOSE = "close"
 
 
 class TargetScope(str, Enum):
@@ -85,6 +93,7 @@ class SocialScene:
     information_gaps: tuple[str, ...] = ()
     capability_request: str = "NONE"
     confidence: float = 0.0
+    response_act: ResponseAct | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scene_kind", _required_text(self.scene_kind, "scene_kind"))
@@ -94,6 +103,7 @@ class SocialScene:
             self, "literal_subject", _required_text(self.literal_subject, "literal_subject")
         )
         object.__setattr__(self, "user_move", _required_text(self.user_move, "user_move"))
+        object.__setattr__(self, "response_act", None if self.response_act is None else ResponseAct(self.response_act))
         object.__setattr__(
             self,
             "continuity_event_ids",
@@ -184,6 +194,7 @@ class SocialScene:
 class SceneInterpretationResult:
     scene: SocialScene
     diagnostic_code: str | None = None
+    diagnostic: Mapping[str, object] | None = None
 
 
 class SocialSceneInterpreter:
@@ -195,8 +206,8 @@ class SocialSceneInterpreter:
     async def interpret(self, context: SceneContext) -> SceneInterpretationResult:
         try:
             raw = dict(await self._model.classify_scene(context.to_model_facts()))
-        except Exception:
-            return self._fallback(context, "scene_model_failed")
+        except Exception as exc:
+            return self._fallback(context, "scene_model_failed", exception=exc)
 
         claims_chorus = any(
             raw.get(field) not in (None, "", (), [], "NONE")
@@ -212,10 +223,18 @@ class SocialSceneInterpreter:
         if claims_chorus and context.chorus is None:
             return self._fallback(context, "chorus_evidence_missing")
         raw = self._freeze_chorus_evidence(raw, context)
+        # No historical link is not the same as no evidence: the current input
+        # is known locally. Never fill in or discard a claimed historical ID.
+        if (
+            context.chorus is None
+            and raw.get("continuity_event_ids") in ([], ())
+            and context.source_event_id in {item.event_id for item in context.events}
+        ):
+            raw["continuity_event_ids"] = [context.source_event_id]
         try:
             scene = SocialScene.create(**raw)
-        except (TypeError, ValueError):
-            return self._fallback(context, "scene_model_invalid")
+        except (TypeError, ValueError) as exc:
+            return self._fallback(context, "scene_model_invalid", raw=raw, exception=exc)
 
         allowed_event_ids = {item.event_id for item in context.events}
         if not set(scene.continuity_event_ids).issubset(allowed_event_ids):
@@ -263,7 +282,9 @@ class SocialSceneInterpreter:
 
     @staticmethod
     def _fallback(
-        context: SceneContext, diagnostic_code: str
+        context: SceneContext, diagnostic_code: str, *,
+        raw: Mapping[str, object] | None = None,
+        exception: Exception | None = None,
     ) -> SceneInterpretationResult:
         target_id = context.target_id
         scope = TargetScope.INDIVIDUAL if target_id else TargetScope.AMBIENT
@@ -276,7 +297,40 @@ class SocialSceneInterpreter:
             continuity_event_ids=(context.source_event_id,),
             confidence=0.0,
         )
-        return SceneInterpretationResult(scene, diagnostic_code)
+        diagnostic: dict[str, object] = {"code": diagnostic_code}
+        if exception is not None:
+            diagnostic["exception_type"] = type(exception).__name__[:80]
+            cause = str(getattr(exception, "code", ""))
+            if cause in {
+                "text_timeout", "text_network_failed", "text_auth_failed",
+                "text_rate_limited", "text_upstream_failed",
+                "text_response_shape_invalid", "text_response_too_large",
+                "scene_response_json_invalid", "scene_response_shape_invalid",
+                "scene_response_size_invalid",
+            }:
+                diagnostic["cause_code"] = cause
+        if raw is not None:
+            # Only schema names/types: no exception message, arbitrary key or model prose.
+            names = {field.name for field in fields(SocialScene)}
+            diagnostic["field_types"] = {
+                name: type(raw[name]).__name__ for name in sorted(names & raw.keys())
+            }
+            diagnostic["unknown_field_count"] = len(raw.keys() - names)
+            for name, enum in (("target_scope", TargetScope),
+                               ("response_act", ResponseAct),
+                               ("chorus_target", ChorusTarget), ("chorus_tone", ChorusTone)):
+                if name in raw and not (name == "response_act" and raw[name] is None):
+                    try:
+                        enum(raw[name])
+                    except (ValueError, TypeError):
+                        diagnostic["field"] = name
+                        break
+            if "field" not in diagnostic and exception is not None:
+                # Extract only a known field name, never the untrusted exception text.
+                diagnostic["field"] = next(
+                    (name for name in sorted(names) if name in str(exception)), "schema"
+                )
+        return SceneInterpretationResult(scene, diagnostic_code, diagnostic)
 
     @staticmethod
     def _chorus_unknown(
@@ -309,6 +363,7 @@ class SocialSceneInterpreter:
 __all__ = (
     "ChorusTarget",
     "ChorusTone",
+    "ResponseAct",
     "SceneInterpretationResult",
     "SocialScene",
     "SocialSceneInterpreter",

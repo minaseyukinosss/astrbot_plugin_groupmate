@@ -12,11 +12,16 @@ class _MessageObject:
     self_id = "bot-1"
 
     def __init__(
-        self, message_id: str, text: str, *, segments: list[dict] | None = None
+        self,
+        message_id: str,
+        text: str,
+        *,
+        group_id: str = "g-1",
+        segments: list[dict] | None = None,
     ) -> None:
         self.raw_message = {
             "message_id": message_id,
-            "group_id": "g-1",
+            "group_id": group_id,
             "user_id": "42",
             "time": 10,
             "sender": {"nickname": "小夏", "card": "夏夏"},
@@ -26,18 +31,25 @@ class _MessageObject:
 
 class _FakeAstrEvent:
     def __init__(
-        self, message_id: str, text: str, *, segments: list[dict] | None = None
+        self,
+        message_id: str,
+        text: str,
+        *,
+        group_id: str = "g-1",
+        segments: list[dict] | None = None,
     ) -> None:
-        self.message_obj = _MessageObject(message_id, text, segments=segments)
+        self.group_id = group_id
+        self.message_obj = _MessageObject(
+            message_id, text, group_id=group_id, segments=segments
+        )
         self.message_str = text
         self.stop_calls = 0
 
     def stop_event(self):
         self.stop_calls += 1
 
-    @staticmethod
-    def get_group_id():
-        return "g-1"
+    def get_group_id(self):
+        return self.group_id
 
     @staticmethod
     def get_sender_id():
@@ -178,6 +190,21 @@ def test_low_priority_handler_marks_the_existing_trace_entered(tmp_path):
     assert len(view["items"]) == 1
     assert view["items"][0]["summary"]["route"]["owner"] == "GROUPMATE"
     assert len(bridge.manager.ingested) == 1
+
+
+def test_disabled_group_never_creates_trace_or_enters_runtime(tmp_path):
+    bridge = _bridge_for(tmp_path)
+    event = _FakeAstrEvent("disabled", "路过", group_id="g-disabled")
+
+    asyncio.run(bridge.observe_event(event))
+    result = asyncio.run(bridge.handle_event(event))
+
+    view = bridge.trace_repository.query(
+        persona_id="groupmate:default", group_id="g-disabled"
+    )
+    assert result is None
+    assert view["items"] == []
+    assert bridge.manager.ingested == []
 
 
 def test_trace_uses_astrbot_resolved_name_for_previously_unseen_at_member(tmp_path):

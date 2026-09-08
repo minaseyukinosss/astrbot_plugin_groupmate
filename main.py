@@ -74,7 +74,7 @@ class GroupmatePlugin(Star):
                 runtime_mode=self.settings.runtime_mode,
                 runtime_ready=(
                     self.settings.runtime_mode != "OFF"
-                    and bool(self.settings.generation_provider)
+                    and bool(self.settings.generation_model)
                     and bool(self.settings.cognition_api_key)
                     and bool(self.settings.cognition_api_base)
                     and bool(self.settings.cognition_model)
@@ -84,8 +84,8 @@ class GroupmatePlugin(Star):
                     for blocked, reason in (
                         (self.settings.runtime_mode == "OFF", "运行模式为 OFF"),
                         (
-                            not self.settings.generation_provider,
-                            "未选择最终回复模型",
+                            not self.settings.generation_model,
+                            "未配置回复模型名称",
                         ),
                         (
                             not self.settings.cognition_api_key,

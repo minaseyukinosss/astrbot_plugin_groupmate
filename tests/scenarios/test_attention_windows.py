@@ -231,6 +231,32 @@ def test_short_followup_keeps_dialogue_after_topic_projection_changes():
     assert frame.requested_workers == ()
 
 
+def test_same_member_natural_followup_keeps_dialogue_after_topic_changes():
+    projector = GroupWorldProjector()
+    scheduler = AttentionScheduler()
+    first = _message(1, 100, "u1")
+    world = projector.apply(projector.empty("885617919"), first)
+    lease = ConversationLease("u1", "m1", "reply:1", 100, 300, 5)
+    world = replace(world, conversation_lease=lease)
+    followup = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="qq:m2",
+            source_message_id="m2",
+            actor_id="u1",
+            occurred_at=150,
+            received_at=150,
+            correlation_id="corr:m2",
+            payload={"text": "你在三角洲吗"},
+        )
+    )
+    world = projector.apply(world, followup)
+
+    assert world.topic_for_message("m2").topic_id != lease.topic_id
+    frame = scheduler.on_event(followup, world, _persona(), now=150)[0]
+    assert frame.trigger_kind == "CONTINUATION"
+    assert frame.requested_workers == ()
+
+
 def test_new_direct_call_preempts_existing_dialogue_lease():
     projector = GroupWorldProjector()
     scheduler = AttentionScheduler()
@@ -245,7 +271,7 @@ def test_new_direct_call_preempts_existing_dialogue_lease():
         **social_event_values(
             event_id="qq:m2",
             source_message_id="m2",
-            actor_id="u2",
+            actor_id="u1",
             occurred_at=101,
             received_at=101,
             correlation_id="corr:m2",
@@ -256,7 +282,7 @@ def test_new_direct_call_preempts_existing_dialogue_lease():
 
     frame = scheduler.on_event(direct, world, _persona(), now=101)[0]
     assert frame.trigger_kind == "FAST"
-    assert frame.candidate_audiences == ("u2",)
+    assert frame.candidate_audiences == ("u1",)
 
 
 def test_external_capability_never_advances_social_lease():

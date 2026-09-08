@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -42,6 +43,15 @@ class _Context:
     def __init__(self):
         self.client = _OneBotClient()
         self.model_calls = []
+
+    async def complete_text(self, *, system_prompt: str, prompt: str) -> str:
+        response = await self.llm_generate(
+            chat_provider_id="direct",
+            system_prompt=system_prompt,
+            prompt=prompt,
+            temperature=0.1,
+        )
+        return str(getattr(response, "completion_text", "") or "")
 
     async def llm_generate(self, **kwargs):
         self.model_calls.append(kwargs)
@@ -200,8 +210,8 @@ class _MatrixCognition:
         return DirectCognitionResponse(
             verdict={
                 "decision": "silence",
-                "signal": "none",
-                "target_id": None,
+                "opportunity_kind": "none",
+                "anchor_event_id": None,
                 "evidence_event_ids": [evidence],
                 "confidence": 0.9,
                 "disruption": 0.8,
@@ -216,6 +226,33 @@ class _MatrixCognition:
 
     async def close(self):
         return None
+
+
+class _OpportunityCognition(_MatrixCognition):
+    def __init__(self, opportunity_kind="open_question"):
+        super().__init__()
+        self.opportunity_kind = opportunity_kind
+
+    async def classify(self, facts):
+        self.calls += 1
+        self.last_facts = facts
+        anchor_id = facts["current_event_id"]
+        return DirectCognitionResponse(
+            verdict={
+                "decision": "speak",
+                "opportunity_kind": self.opportunity_kind,
+                "anchor_event_id": anchor_id,
+                "evidence_event_ids": [anchor_id],
+                "confidence": 0.91,
+                "disruption": 0.08,
+                "novelty": 0.84,
+                "reason": "这句话给群聊留下了明确接话空间",
+            },
+            latency_ms=1,
+            request_bytes=1,
+            backend="test",
+            model=self.model,
+        )
 
 
 def _event(message_id, text, *, mention_bot=False, actor_id="u1"):
@@ -355,12 +392,170 @@ def test_persona_trigger_matrix(
     assert actual_ambient_calls == ambient_calls
 
 
+@pytest.mark.parametrize("mode", ("SHADOW", "SOCIAL_RUNTIME"))
+def test_selected_earlier_member_stays_reply_anchor_through_scene_and_generation(tmp_path, mode):
+    class SelectFirst(_OpportunityCognition):
+        async def classify(self, facts):
+            response = await super().classify(facts)
+            anchor = facts["events"][0]["id"]
+            return replace(response, verdict={**response.verdict,
+                           "anchor_event_id": anchor, "evidence_event_ids": [anchor]})
+
+    async def scenario():
+        context = _Context()
+        settings = SocialRuntimeSettings.from_mapping({
+            "enabled_groups": ["885617919"], "runtime_mode": mode,
+            "generation_provider": "provider:text", "cognition_api_key": "sk-test",
+        })
+        bridge = AstrBotSocialRuntimeBridge(
+            context, settings, tmp_path, clock=lambda: 100,
+            cognition_client_factory=lambda _: SelectFirst(),
+        )
+        await bridge.start()
+        try:
+            original_resolver = bridge.manager.knowledge_resolver
+            resolved = []
+
+            class TrackingResolver:
+                def resolve(self, event, *args):
+                    resolved.append(event.event_id)
+                    return original_resolver.resolve(event, *args) if original_resolver else None
+
+            bridge.manager.knowledge_resolver = TrackingResolver()
+            await bridge.handle_event(_event("asked-first", "这个报错怎么看", actor_id="u1"))
+            await bridge.handle_event(_event("background-last", "我先下了", actor_id="u2"))
+            evaluations = await bridge.manager.drain(now=105)
+            await bridge._handle_evaluations(evaluations)
+            evaluation = evaluations[0]
+            plan = bridge.manager.reply_plans.by_correlation(evaluation.source_event.correlation_id)
+            assert plan.target_id == "u1"
+            assert resolved[-1].endswith("asked-first")
+            if mode == "SOCIAL_RUNTIME":
+                traces = bridge.trace_repository.query(
+                    persona_id=settings.persona_id, group_id="885617919",
+                )["items"]
+                terminal = next(item["summary"] for item in traces
+                                if item["summary"]["message"]["summary"] == "我先下了")
+                assert terminal["delivery"]["status"] == "SENT"
+            return context.model_calls, evaluation
+        finally:
+            await bridge.close()
+
+    calls, evaluation = asyncio.run(scenario())
+    scene_input = next(json.loads(call["prompt"]) for call in calls
+                       if "只负责识别当前群聊的具体社会场景" in call["system_prompt"])
+    assert scene_input["current_text"] == "这个报错怎么看"
+    assert scene_input["target_id"] == "u1"
+    assert scene_input["source_event_id"].endswith("asked-first")
+    generation = [json.loads(call["prompt"]) for call in calls
+                  if "只负责识别当前群聊的具体社会场景" not in call["system_prompt"]][-1]
+    assert generation["target_id"] == "u1"
+    assert generation["anchor_event_id"] == scene_input["source_event_id"]
+    # New anchors survive persisted captures; old payloads without them still load.
+    from groupmate.social_runtime.manager import ShadowEvaluation
+    capture = evaluation.to_capture_evidence()
+    assert ShadowEvaluation.from_capture_evidence(capture).resolve_reply_source().actor_id == "u1"
+
+    # A raw trigger must not overwrite canonical reply links / bounded text.
+    source = evaluation.resolve_reply_source()
+    frozen = replace(source, payload={**source.payload, "text": "已裁剪正文",
+                                      "reply_to_event_id": "feedback:sent"})
+    normalized = replace(evaluation, source_event=source, context_events=(frozen,))
+    assert normalized.resolve_reply_source() == frozen
+    for candidate in capture["evaluation"]["candidates"]:
+        candidate.pop("anchor_event_id", None)
+    assert ShadowEvaluation.from_capture_evidence(capture).resolve_reply_source().actor_id == "u1"
+
+
+def test_semantic_bot_context_uses_local_anchor_and_reaches_ambient_act(tmp_path):
+    async def scenario():
+        context = _Context()
+        cognition = _OpportunityCognition("bot_context")
+        settings = SocialRuntimeSettings.from_mapping(
+            {
+                "enabled_groups": ["885617919"],
+                "runtime_mode": "SHADOW",
+                "generation_provider": "provider:text",
+                "cognition_api_key": "sk-test",
+                "persona_name": "爱弥斯",
+                "persona_aliases": ["小爱"],
+            }
+        )
+        bridge = AstrBotSocialRuntimeBridge(
+            context,
+            settings,
+            tmp_path,
+            clock=lambda: 100,
+            cognition_client_factory=lambda _: cognition,
+        )
+        await bridge.start()
+        await bridge.handle_event(_event("semantic-address", "爱弥斯为什么不带我"))
+        evaluations = await bridge.manager.drain(now=102)
+        await bridge._handle_evaluations(evaluations)
+        trace = bridge.trace_repository.query(
+            persona_id=settings.persona_id,
+            group_id="885617919",
+        )["items"][0]["summary"]
+        await bridge.close()
+        return cognition, evaluations, trace
+
+    cognition, evaluations, trace = asyncio.run(scenario())
+
+    assert cognition.last_facts["bot_names"] == ["爱弥斯", "小爱"]
+    assert len(evaluations) == 1
+    evaluation = evaluations[0]
+    assert evaluation.participation_lane == "AMBIENT"
+    assert evaluation.governor_result.outcome == "ACT"
+    selected_id = evaluation.governor_result.selected_intention_ids[0]
+    selected = next(
+        item for item in evaluation.candidates if item.intention_id == selected_id
+    )
+    assert selected.kind == "RESPOND_CONTEXT"
+    assert selected.target_id == "u1"
+    assert selected.topic_id == "semantic-address"
+    assert trace["judgement"]["opportunity_kind"] == "bot_context"
+    assert trace["understanding"]["summary"] == "识别到语义上的对话延续"
+    assert trace["judgement"]["anchor"]["message"]["summary"] == "爱弥斯为什么不带我"
+
+
 def test_alias_prefixed_external_command_stays_owned_by_astrbot(tmp_path):
     context, trace = asyncio.run(_run_alias_case(tmp_path, "小爱 bq 开心"))
 
     assert context.model_calls == []
     assert trace["route"]["owner"] == "EXTERNAL_PLUGIN"
     assert trace["route"]["reason"] == "匹配已配置的外部触发规则"
+
+
+def test_scene_fallback_diagnostic_survives_successful_delivery(tmp_path):
+    class InvalidSceneContext(_Context):
+        async def llm_generate(self, **kwargs):
+            response = await super().llm_generate(**kwargs)
+            if "只负责识别当前群聊的具体社会场景" in kwargs["system_prompt"]:
+                payload = json.loads(response.completion_text)
+                payload["target_scope"] = "invalid"
+                return _Response(json.dumps(payload))
+            return response
+
+    async def scenario():
+        context = InvalidSceneContext()
+        settings = SocialRuntimeSettings.from_mapping({
+            "enabled_groups": ["885617919"], "runtime_mode": "SOCIAL_RUNTIME",
+            "generation_provider": "provider:text",
+        })
+        bridge = AstrBotSocialRuntimeBridge(context, settings, tmp_path, clock=lambda: 100)
+        await bridge.start()
+        try:
+            await bridge.handle_event(_event("fallback-scene", "这个报错怎么看", mention_bot=True))
+            return bridge.trace_repository.query(
+                persona_id=settings.persona_id, group_id="885617919",
+            )["items"][0]["summary"]
+        finally:
+            await bridge.close()
+
+    trace = asyncio.run(scenario())
+    assert trace["delivery"]["status"] == "SENT"
+    assert trace["decision"]["scene_diagnostic"]["code"] == "scene_model_invalid"
+    assert trace["decision"]["scene_diagnostic"]["field"] == "target_scope"
 
 
 def test_direct_reply_interprets_scene_before_generating_text(tmp_path):
@@ -748,6 +943,13 @@ def test_live_chat_replies_and_continues_without_structured_cognition(tmp_path):
     assert len(context.client.calls) == 2
     assert len(parts) == 2
     assert all(part.status is OutboxStatus.SENT for part in parts)
+    generation_inputs = [json.loads(call["prompt"]) for call in context.model_calls
+                         if "根据已批准的社交动作生成回复" in call["system_prompt"]]
+    last_messages = generation_inputs[-1]["messages"]
+    own_turns = [item for item in last_messages if item["is_self"]]
+    assert len(own_turns) == 1
+    assert own_turns[0]["text"] == parts[0].part.payload["text"]
+    assert last_messages[-1]["text"] == "然后呢"
     assert state.conversation_lease is not None
     assert state.conversation_lease.target_id == "u1"
     assert state.conversation_lease.topic_id == "m1"

@@ -487,6 +487,7 @@ def test_model_context_contains_only_relevant_world_and_mode_neutral_constraints
         "audiences",
         "group_activity",
         "last_bot_event_at",
+        "bot_actor_id",
         "conversation_lease",
         "persona_profile",
         "member_context",

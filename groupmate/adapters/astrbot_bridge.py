@@ -83,7 +83,6 @@ from .astrbot_knowledge_search import (
     AstrBotKnowledgeSearch,
     DEFAULT_KNOWLEDGE_TOOL_NAMES,
 )
-from .astrbot_models import AstrBotModelPort
 from .astrbot_official_sources import (
     AstrBotOfficialSourceProbe,
     OfficialSourceHostCapability,
@@ -98,6 +97,7 @@ from .profile_query import (
 from .deepseek_cognition import DeepSeekCognitionClient
 from .deepseek_profile import DeepSeekProfileClient
 from .deepseek_member_style import DeepSeekMemberStyleClient
+from .deepseek_text import DeepSeekTextClient
 from .imitation_commands import (
     ImitationCommandInterpreter,
     ImitationCommandResult,
@@ -148,6 +148,8 @@ class AstrBotSocialRuntimeBridge:
         | None = None,
         member_style_client_factory: Callable[[SocialRuntimeSettings], object]
         | None = None,
+        text_client_factory: Callable[[SocialRuntimeSettings, str], object]
+        | None = None,
         official_source_capability: OfficialSourceHostCapability | None = None,
     ) -> None:
         self.context = context
@@ -162,6 +164,9 @@ class AstrBotSocialRuntimeBridge:
         )
         self._member_style_client_factory = (
             member_style_client_factory or self._new_member_style_client
+        )
+        self._text_client_factory = (
+            text_client_factory or self._new_text_client
         )
         self._external_trigger_policy = ExternalTriggerPolicy.from_entries(
             command_prefixes=settings.external_command_prefixes,
@@ -226,6 +231,8 @@ class AstrBotSocialRuntimeBridge:
         self._move_planner = SocialMovePlanner()
         self._reply_executor: ReplyExecutor | None = None
         self._reply_model: object | None = None
+        self._scene_model: object | None = None
+        self._imitation_model: object | None = None
         self._dispatcher: DeliveryDispatcher | None = None
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._reply_lane_tails: dict[str, asyncio.Future[None]] = {}
@@ -378,7 +385,7 @@ class AstrBotSocialRuntimeBridge:
             f"好，我学{session.target_display_name}说话到{expiry_text}。"
             f"只是说话方式变了，我还是{persona_name}。"
         )
-        if style is None or self._reply_model is None:
+        if style is None or self._imitation_model is None:
             return replace(result, response_text=fallback)
         overlay = MemberStyleOverlayBuilder().build(
             style,
@@ -386,7 +393,7 @@ class AstrBotSocialRuntimeBridge:
             expires_at=session.expires_at,
         )
         try:
-            text = await self._reply_model.complete_text(
+            text = await self._imitation_model.complete_text(
                 system_prompt=(
                     f"你是{persona_name}，正在给出一条群聊模仿确认。"
                     "确认本身就是第一次试演，只输出一条自然正文。"
@@ -859,10 +866,12 @@ class AstrBotSocialRuntimeBridge:
                 self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
             )
             self._config_repository = config_repository
-            reply_model = AstrBotModelPort(
-                self.context, self.settings.generation_provider
+            scene_model = self._text_client_factory(self.settings, "scene")
+            reply_model = self._text_client_factory(self.settings, "reply")
+            imitation_model = self._text_client_factory(
+                self.settings, "imitation"
             )
-            scene_interpreter = SocialSceneInterpreter(SceneJsonModel(reply_model))
+            scene_interpreter = SocialSceneInterpreter(SceneJsonModel(scene_model))
             cognition_client = self._cognition_client_factory(self.settings)
             if cognition_client is None:
                 raise RuntimeError("direct cognition client is unavailable")
@@ -1040,6 +1049,8 @@ class AstrBotSocialRuntimeBridge:
                     ),
                 )
                 self._reply_model = reply_model
+                self._scene_model = scene_model
+                self._imitation_model = imitation_model
                 self._dispatcher = DeliveryDispatcher(
                     manager.outbox,
                     OneBotDeliveryAdapter(
@@ -1067,6 +1078,8 @@ class AstrBotSocialRuntimeBridge:
                 self._imitation_controller = None
                 self._scene_interpreter = None
                 self._reply_model = None
+                self._scene_model = None
+                self._imitation_model = None
                 await self._close_resources(
                     knowledge_job_service,
                     self.official_source_probe,
@@ -1075,6 +1088,9 @@ class AstrBotSocialRuntimeBridge:
                     manager,
                     cognition_client,
                     profile_client,
+                    scene_model,
+                    reply_model,
+                    imitation_model,
                     suppress_errors=True,
                 )
                 raise
@@ -1087,6 +1103,8 @@ class AstrBotSocialRuntimeBridge:
         if self._manager is None:
             return None
         translated = self._resolve_interaction(self.translator.translate(event))
+        if not self._group_is_enabled(translated):
+            return None
         if self._owns_host_response(translated):
             stop_event = getattr(event, "stop_event", None)
             if callable(stop_event):
@@ -1132,6 +1150,8 @@ class AstrBotSocialRuntimeBridge:
             return
 
         translated = self._resolve_interaction(self.translator.translate(event))
+        if not self._group_is_enabled(translated):
+            return
         self._record_trace(
             self.trace_repository.record_received,
             translated,
@@ -1139,6 +1159,9 @@ class AstrBotSocialRuntimeBridge:
             int(self.clock()),
         )
         await self._observe_profile(translated)
+
+    def _group_is_enabled(self, event: SocialEventEnvelope) -> bool:
+        return str(event.group_id or "") in self.settings.enabled_groups
 
     async def _observe_profile(self, event: SocialEventEnvelope) -> None:
         service = self._profile_service
@@ -1948,12 +1971,18 @@ class AstrBotSocialRuntimeBridge:
                         int(self.clock()),
                     )
                     continue
+                reply_source = evaluation.resolve_reply_source()
+                if reply_source is None:
+                    self._record_reply_failure(
+                        evaluation, diagnostic_code="reply_anchor_invalid", stage_kind="SCENE_PARSED",
+                    )
+                    continue
                 persona_profile = self._manager.persona_profile_mapping(
                     group_id,
                     int(getattr(evaluation, "config_version", 0)),
                 )
                 frame = getattr(evaluation, "frame", None)
-                subject_id = str(getattr(source_event, "actor_id", "") or "") or str(
+                subject_id = str(getattr(reply_source, "actor_id", "") or "") or str(
                     next(
                         iter(getattr(frame, "candidate_audiences", ()) or ()),
                         "",
@@ -1980,7 +2009,7 @@ class AstrBotSocialRuntimeBridge:
                         self._manager.relationship_memory_cues(
                             group_id,
                             subject_id,
-                            text=str(source_event.payload.get("text") or "")
+                            text=str(reply_source.payload.get("text") or "")
                             if source_event is not None
                             else "",
                             now=int(self.clock()),
@@ -1997,16 +2026,17 @@ class AstrBotSocialRuntimeBridge:
                     self._recent_outputs.get(group_id, ())
                 )
                 profile_retrieval = self._manager.member_profile_retrieval(
-                    source_event, max_chars=1200
+                    reply_source, max_chars=1200
                 )
-                topic_id = next(
-                    iter(getattr(frame, "focus_topic_ids", ()) or ()), None
-                )
+                selected = next((candidate for candidate in evaluation.candidates
+                                 if candidate.intention_id in governor_result.selected_intention_ids), None)
+                topic_id = selected.topic_id if selected else None
                 identity = persona_profile.get("identity")
                 identity = identity if isinstance(identity, Mapping) else {}
                 try:
                     scene_context = self._scene_context_builder.build(
-                        source_event=source_event,
+                        frozen_dialogue=True,
+                        source_event=reply_source,
                         context_events=tuple(
                             getattr(evaluation, "context_events", ()) or ()
                         ),
@@ -2015,7 +2045,7 @@ class AstrBotSocialRuntimeBridge:
                         ),
                         target_id=subject_id or None,
                         topic_id=topic_id,
-                        persona_actor_id=self._manager.persona_id,
+                        persona_actor_id=str(reply_source.payload.get("bot_id") or self._manager.persona_id),
                         persona_aliases=(
                             str(identity.get("name") or "爱弥斯"),
                             *tuple(identity.get("aliases", ()) or ()),
@@ -2126,6 +2156,11 @@ class AstrBotSocialRuntimeBridge:
                 evaluation = replace(
                     evaluation,
                     social_scene_summary=scene_summary,
+                    scene_diagnostic=(
+                        getattr(interpretation, "diagnostic", None)
+                        or ({"code": interpretation.diagnostic_code}
+                            if interpretation.diagnostic_code else None)
+                    ),
                     social_stance_summary=stance_summary,
                     social_move_summary=move_summary,
                     social_would_reply=move.primary_move is not SocialMove.SILENCE,
@@ -2761,6 +2796,9 @@ class AstrBotSocialRuntimeBridge:
         knowledge_service = self._knowledge_service
         knowledge_job_service = self._knowledge_job_service
         profile_client = self._profile_client
+        scene_model = self._scene_model
+        reply_model = self._reply_model
+        imitation_model = self._imitation_model
         self._manager = None
         self._cognition_client = None
         self._profile_service = None
@@ -2783,11 +2821,16 @@ class AstrBotSocialRuntimeBridge:
                 manager,
                 cognition_client,
                 profile_client,
+                scene_model,
+                reply_model,
+                imitation_model,
                 suppress_errors=False,
             )
         finally:
             self._reply_executor = None
             self._reply_model = None
+            self._scene_model = None
+            self._imitation_model = None
             self._scene_interpreter = None
             self._dispatcher = None
             self._started = False
@@ -2819,6 +2862,50 @@ class AstrBotSocialRuntimeBridge:
             api_key=settings.cognition_api_key,
             api_base=settings.cognition_api_base,
             model=settings.cognition_model,
+        )
+
+    def _new_text_client(
+        self, settings: SocialRuntimeSettings, purpose: str
+    ) -> object:
+        """Build one direct text client per purpose.
+
+        Scene parsing is an understanding task and shares the fast cognition
+        model.  Reply text and the imitation confirmation are expression tasks
+        and use the generation model; only the confirmation returns prose
+        instead of JSON.  Tests may supply a host with complete_text; the
+        production AstrBot context does not, so this always takes the
+        DeepSeek path in real deployments.
+        """
+
+        host = getattr(self.context, "complete_text", None)
+        if callable(host):
+            return self.context
+        if purpose == "scene":
+            return DeepSeekTextClient(
+                api_key=settings.cognition_api_key,
+                api_base=settings.cognition_api_base,
+                model=settings.cognition_model,
+                timeout_seconds=settings.cognition_timeout_seconds,
+                max_tokens=512,
+                temperature=0.1,
+            )
+        if purpose == "imitation":
+            return DeepSeekTextClient(
+                api_key=settings.cognition_api_key,
+                api_base=settings.cognition_api_base,
+                model=settings.generation_model,
+                timeout_seconds=settings.generation_timeout_seconds,
+                max_tokens=400,
+                temperature=0.7,
+                json_object=False,
+            )
+        return DeepSeekTextClient(
+            api_key=settings.cognition_api_key,
+            api_base=settings.cognition_api_base,
+            model=settings.generation_model,
+            timeout_seconds=settings.generation_timeout_seconds,
+            max_tokens=1200,
+            temperature=0.7,
         )
 
     @staticmethod

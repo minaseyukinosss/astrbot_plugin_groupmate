@@ -827,6 +827,8 @@ def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):
                 "disruption_cost": 0.62,
                 "novelty": 0.18,
                 "reason": "成员正在自然交流，现在插话会打断对话。",
+                "opportunity_kind": "none",
+                "anchor_event_id": evidence_event.event_id,
             },
             confidence=0.74,
             evidence_event_ids=(evidence_event.event_id,),
@@ -856,9 +858,14 @@ def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):
         "would_reply": False,
         "label": "继续观察",
         "reason": "成员正在自然交流，现在插话会打断对话。",
+        "opportunity_kind": "none",
         "evidence": {
             "actor": summary["judgement"]["evidence"]["actor"],
             "message": summary["judgement"]["evidence"]["message"],
+        },
+        "anchor": {
+            "actor": summary["judgement"]["anchor"]["actor"],
+            "message": summary["judgement"]["anchor"]["message"],
         },
     }
     assert summary["judgement"]["evidence"]["actor"]["display_name"] == "夏夏"
@@ -867,6 +874,51 @@ def test_ambient_model_judgement_projects_reason_and_public_evidence(tmp_path):
         == "今晚一起打游戏吗？"
     )
     assert "qq:evidence" not in str(summary["judgement"])
+
+
+def test_ambient_hard_block_reason_is_visible_without_exposing_anchor_id(tmp_path):
+    repo = MessageTraceRepository(tmp_path / "runtime.db")
+    event = _platform_event("addressed-elsewhere", card="小林")
+    repo.record_received(event, runtime_mode="SHADOW", now=10)
+    evaluation = _evaluation(event, outcome="OBSERVE")
+    evaluation.participation_lane = "AMBIENT"
+    evaluation.context_events = (event,)
+    evaluation.cognitive_observations = (
+        CognitiveObservation.create(
+            worker="ambient_social_assessor",
+            kind="participation_assessment",
+            proposition={
+                "should_participate": False,
+                "decision": "silence",
+                "reason": "消息明确指向其他成员",
+                "opportunity_kind": "none",
+                "anchor_event_id": event.event_id,
+                "hard_block_reason": "addressed_elsewhere",
+            },
+            confidence=1.0,
+            evidence_event_ids=(event.event_id,),
+            scene_version=1,
+            expires_at=30,
+            uncertainty=(),
+        ),
+    )
+    evaluation.cognition_diagnostics = (
+        SimpleNamespace(
+            worker="ambient_social_assessor",
+            status="SUCCEEDED",
+            latency_ms=0,
+            diagnostic_code=None,
+        ),
+    )
+
+    repo.record_evaluation(evaluation, now=13)
+
+    judgement = repo.query(
+        persona_id="groupmate:default", group_id="g-1"
+    )["items"][0]["summary"]["judgement"]
+    assert judgement["hard_block_reason"] == "addressed_elsewhere"
+    assert judgement["opportunity_kind"] == "none"
+    assert "qq:addressed-elsewhere" not in str(judgement)
 
 
 def test_unavailable_model_judgement_does_not_invent_reason_or_evidence(tmp_path):

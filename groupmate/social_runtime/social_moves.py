@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Iterable, Mapping
 
 from .knowledge.contracts import RiskClass
-from .social_scenes import ChorusTarget, ChorusTone, SocialScene, TargetScope
+from .social_scenes import ChorusTarget, ChorusTone, ResponseAct, SocialScene, TargetScope
 from .stances import Boundary, StanceDecision, Willingness
 
 
@@ -157,9 +157,11 @@ class SocialMovePlan:
     realization_mode: RealizationMode = RealizationMode.GENERATED
     verbatim_payload: str | None = None
     chorus_chain_id: str | None = None
+    response_act: ResponseAct | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "primary_move", SocialMove(self.primary_move))
+        object.__setattr__(self, "response_act", None if self.response_act is None else ResponseAct(self.response_act))
         object.__setattr__(
             self,
             "secondary_move",
@@ -242,6 +244,7 @@ class SocialMovePlan:
     def _validate_realization(self) -> None:
         if self.ending is Ending.QUESTION and not (
             self.ask_for or self.primary_move is SocialMove.COUNTER
+            or self.response_act is ResponseAct.FOLLOW_UP
         ):
             raise ValueError("question ending requires a real information gap or counter")
 
@@ -434,6 +437,13 @@ class SocialMovePlanner:
         profile: object | None,
         memories: Iterable[object],
     ) -> SocialMovePlan:
+        if scene.response_act is not None:
+            return self._generated(
+                scene, SocialMove.DIRECT_ANSWER,
+                response_act=scene.response_act,
+                ending=Ending.QUESTION if scene.response_act is ResponseAct.FOLLOW_UP else Ending.STOP,
+                profile=profile, memories=memories,
+            )
         move = {
             "intimacy_request": SocialMove.PLAYFUL_RESISTANCE,
             "playful_negotiation": SocialMove.ACCEPT,
@@ -460,6 +470,7 @@ class SocialMovePlanner:
         must_not_say: tuple[str, ...] = (),
         ask_for: tuple[str, ...] = (),
         ending: Ending = Ending.STOP,
+        response_act: ResponseAct | None = None,
         profile: object | None = None,
         memories: Iterable[object] = (),
     ) -> SocialMovePlan:
@@ -472,6 +483,7 @@ class SocialMovePlanner:
             mention_event_ids=scene.continuity_event_ids,
             ask_for=ask_for,
             ending=ending,
+            response_act=response_act,
             media_intent=MediaIntent.NONE,
         )
 

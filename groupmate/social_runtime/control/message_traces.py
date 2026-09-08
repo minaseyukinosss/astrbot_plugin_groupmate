@@ -26,6 +26,16 @@ _TRIGGER_LABELS = {
     "TEMPORAL": "定时事项到期",
     "AUTONOMOUS": "主动参与机会",
 }
+_OPPORTUNITY_LABELS = {
+    "bot_context": "识别到语义上的对话延续",
+    "open_question": "识别到面向群聊的开放问题",
+    "help_request": "识别到可直接帮助的公开请求",
+    "social_bid": "识别到自然接话邀请",
+    "emotional_bid": "识别到适合简短回应的具体处境",
+    "play_bid": "识别到安全的玩笑接入点",
+    "topic_opening": "识别到可以补充新内容的话题空位",
+    "boundary": "识别到需要回应的身份或关系边界",
+}
 _OUTCOME_LABELS = {
     "ACT": "准备回复",
     "DEFER": "稍后再判断",
@@ -576,6 +586,9 @@ class MessageTraceRepository:
             else None
         )
         knowledge_summary = self._knowledge_summary(evaluation)
+        opportunity_summary = _OPPORTUNITY_LABELS.get(
+            str(judgement.get("opportunity_kind") or "")
+        )
 
         def mutate(summary: dict[str, object]) -> None:
             summary["understanding"] = {
@@ -584,7 +597,8 @@ class MessageTraceRepository:
                     if any(item["status"] != "SUCCEEDED" for item in diagnostics)
                     else "READY"
                 ),
-                "summary": _TRIGGER_LABELS.get(trigger, "已结合当前群聊上下文完成理解"),
+                "summary": opportunity_summary
+                or _TRIGGER_LABELS.get(trigger, "已结合当前群聊上下文完成理解"),
                 "diagnostics": diagnostics,
                 "candidate_count": len(candidates),
                 "candidate_source": candidate_source,
@@ -602,6 +616,10 @@ class MessageTraceRepository:
                 "reasons": reasons,
                 "candidate_response": candidate_response or None,
                 "reply_diagnostic": reply_diagnostic or None,
+                "scene_diagnostic": (
+                    dict(evaluation.scene_diagnostic)
+                    if getattr(evaluation, "scene_diagnostic", None) else None
+                ),
             }
             if lane:
                 decision["participation_lane"] = lane
@@ -852,12 +870,29 @@ class MessageTraceRepository:
         reason = self._safe_text(proposition.get("reason"), 80)
         if reason:
             judgement["reason"] = reason
+        opportunity_kind = self._safe_text(
+            proposition.get("opportunity_kind"), 40
+        )
+        if opportunity_kind:
+            judgement["opportunity_kind"] = opportunity_kind
+        hard_block_reason = self._safe_text(
+            proposition.get("hard_block_reason"), 80
+        )
+        if hard_block_reason:
+            judgement["hard_block_reason"] = hard_block_reason
         evidence = self._evidence_preview(
             evaluation,
             tuple(getattr(assessment, "evidence_event_ids", ()) or ()),
         )
         if evidence:
             judgement["evidence"] = evidence
+        anchor_id = self._safe_text(
+            proposition.get("anchor_event_id"), 160
+        )
+        if anchor_id:
+            anchor = self._evidence_preview(evaluation, (anchor_id,))
+            if anchor:
+                judgement["anchor"] = anchor
         return judgement
 
     @classmethod

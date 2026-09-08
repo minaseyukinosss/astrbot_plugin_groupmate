@@ -11,6 +11,7 @@ SOCIAL_RUNTIME_DATABASE_NAME = "groupmate-social-runtime-v2.db"
 DEFAULT_GROUPMATE_PERSONA_ID = "groupmate:default"
 DEFAULT_COGNITION_API_BASE = "https://api.deepseek.com"
 DEFAULT_COGNITION_MODEL = "deepseek-v4-flash"
+DEFAULT_GENERATION_MODEL = "deepseek-v4-flash"
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ class SocialRuntimeSettings:
     cognition_api_key: str = field(default="", repr=False)
     cognition_api_base: str = DEFAULT_COGNITION_API_BASE
     cognition_model: str = DEFAULT_COGNITION_MODEL
+    generation_model: str = DEFAULT_GENERATION_MODEL
+    generation_timeout_seconds: int = 15
     worker_concurrency_limit: int = 12
     cognition_timeout_seconds: int = 8
     control_admin_ids: tuple[str, ...] = ()
@@ -50,8 +53,12 @@ class SocialRuntimeSettings:
         generation_provider = str(
             source.get("generation_provider", "") or ""
         ).strip()
+        cognition_api_key = str(
+            source.get("cognition_api_key", "") or ""
+        ).strip()
         persona_id = DEFAULT_GROUPMATE_PERSONA_ID
-        configured = bool(enabled_groups and generation_provider)
+        # 场景与回复模型都已直连，能否运行取决于直连密钥而非宿主 provider。
+        configured = bool(enabled_groups and cognition_api_key)
         runtime_mode = str(
             source.get("runtime_mode", "SHADOW" if configured else "OFF") or "OFF"
         ).upper()
@@ -71,6 +78,11 @@ class SocialRuntimeSettings:
         ).strip()
         if not cognition_model:
             raise ValueError("cognition_model must not be empty")
+        generation_model = str(
+            source.get("generation_model", DEFAULT_GENERATION_MODEL) or ""
+        ).strip()
+        if not generation_model:
+            raise ValueError("generation_model must not be empty")
         persona_name = str(source.get("persona_name", "爱弥斯") or "").strip()
         if not persona_name:
             raise ValueError("persona_name must not be empty")
@@ -100,11 +112,16 @@ class SocialRuntimeSettings:
                 ),
             ),
             persona_preset=persona_preset,
-            cognition_api_key=str(
-                source.get("cognition_api_key", "") or ""
-            ).strip(),
+            cognition_api_key=cognition_api_key,
             cognition_api_base=cognition_api_base,
             cognition_model=cognition_model,
+            generation_model=generation_model,
+            generation_timeout_seconds=cls._bounded_int(
+                source.get("generation_timeout_seconds", 15),
+                "generation_timeout_seconds",
+                minimum=5,
+                maximum=60,
+            ),
             worker_concurrency_limit=cls._positive_int(
                 source.get("worker_concurrency_limit", 12),
                 "worker_concurrency_limit",

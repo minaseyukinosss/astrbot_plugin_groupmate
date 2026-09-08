@@ -11,6 +11,7 @@ import {
   expressionSummary,
   leaseStatusLabel,
   messageSummary,
+  participationOpportunityLabel,
   participationDiagnosticLabel,
   participationLaneLabel,
   traceResultHeadline,
@@ -201,7 +202,9 @@ export function renderInspector(item) {
       definitionRows([
         ["理解状态", cognitionStateLabel(understanding.status)],
         ["理解摘要", understanding.summary],
-        ["策略通道", participationLaneLabel(decision.participation_lane)],
+      ["策略通道", participationLaneLabel(decision.participation_lane)],
+      ["识别机会", participationOpportunityLabel(judgement.opportunity_kind)],
+      ["方向硬门", judgement.hard_block_reason],
         ["策略依据", (understanding.participation_diagnostics || []).map(participationDiagnosticLabel).join("；")],
         ["原始参与判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
         ["运行模式", valueLabel("runtime_mode", delivery.mode)],

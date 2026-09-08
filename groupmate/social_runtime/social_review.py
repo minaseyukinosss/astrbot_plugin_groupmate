@@ -54,12 +54,29 @@ class SocialReview:
     violations: tuple[str, ...]
 
 
+def allowed_reply_source_event_ids(plan: object) -> tuple[str, ...]:
+    """Keep validated history plus only the approved current reply anchor.
+
+    Old plans without an anchor retain their historical citation scope. Other
+    focus evidence and arbitrary context do not become authorized citations.
+    """
+    sources = tuple(plan.scene.continuity_event_ids)
+    anchor = getattr(plan, "anchor_event_id", None)
+    evidence = getattr(plan, "evidence_event_ids", ())
+    if (
+        anchor
+        and anchor in evidence
+        and plan.move.primary_move is not SocialMove.JOIN_CHORUS
+    ):
+        return tuple(dict.fromkeys((*sources, anchor)))
+    return sources
+
+
 class SocialOutputReviewer:
     """Check evidence and surface behavior before the platform firewall."""
 
     def review(self, reply: RealizedReply, plan: object) -> SocialReview:
         move = plan.move
-        scene = plan.scene
         violations: list[str] = []
         allowed_facts = {
             fact.fact_id for fact in (*move.must_say, *move.may_say)
@@ -76,7 +93,7 @@ class SocialOutputReviewer:
             violations.append("unknown_memory_id")
         if not set(reply.used_capability_ids).issubset(allowed_capabilities):
             violations.append("unknown_capability_id")
-        if not set(reply.source_event_ids).issubset(scene.continuity_event_ids):
+        if not set(reply.source_event_ids).issubset(allowed_reply_source_event_ids(plan)):
             violations.append("unknown_source_event_id")
 
         text = reply.text
@@ -123,4 +140,5 @@ __all__ = (
     "RealizedReply",
     "SocialOutputReviewer",
     "SocialReview",
+    "allowed_reply_source_event_ids",
 )

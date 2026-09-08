@@ -131,7 +131,12 @@ const DIRECT_OUTPUT_EXPLANATIONS = Object.freeze({
   direct_invalid_decision: "认知模型给出了无效的参与决定，本次未采用。",
   direct_invalid_signal: "认知模型给出了无效的群聊信号，本次未采用。",
   direct_speak_without_signal: "认知模型建议参与，但没有给出有效信号，本次未采用。",
+  direct_invalid_opportunity: "认知模型给出了无效的参与机会类型，本次未采用。",
+  direct_speak_without_opportunity: "认知模型建议参与，但没有给出有效机会，本次未采用。",
+  direct_unknown_anchor: "认知模型引用了当前窗口之外的锚点消息，本次未采用。",
+  direct_anchor_missing_from_evidence: "认知模型的锚点不在证据中，本次未采用。",
   direct_unknown_target: "认知模型引用了当前候选成员之外的对象，本次未采用。",
+  direct_unknown_topic: "无法从锚点消息确定当前话题，本次未采用。",
   direct_empty_speak_evidence: "认知模型建议参与，但没有提供消息证据，本次未采用。",
   direct_unknown_evidence: "认知模型引用了当前上下文之外的消息，本次未采用。",
   direct_invalid_score: "认知模型返回的评分不在有效范围内，本次未采用。",
@@ -309,6 +314,20 @@ export function replyExpectation(decision = {}, delivery = {}) {
   }
   if (!outcome) return "尚未完成判断";
   return "已完成判断";
+}
+
+export function participationOpportunityLabel(value) {
+  return ({
+    bot_context: "语义上的对话延续",
+    open_question: "面向群聊的开放问题",
+    help_request: "可直接帮助的公开请求",
+    social_bid: "自然接话邀请",
+    emotional_bid: "适合简短回应的具体处境",
+    play_bid: "安全的玩笑接入点",
+    topic_opening: "可补充新内容的话题空位",
+    boundary: "需要回应的身份或关系边界",
+    none: "没有识别到参与机会",
+  })[String(value || "").trim()] || "";
 }
 
 export function traceResultHeadline(summary = {}) {

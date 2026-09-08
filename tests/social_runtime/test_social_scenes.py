@@ -199,6 +199,39 @@ def test_interpreter_rejects_invented_evidence_ids():
     assert result.scene.scene_kind == "conservative_direct"
 
 
+def test_response_act_keeps_current_scene_without_inventing_history():
+    payload = {
+        "scene_kind": "成员感谢后的自然回应", "target_scope": "INDIVIDUAL",
+        "target_id": "u2", "literal_subject": "谢谢啦", "user_move": "感谢",
+        "continuity_event_ids": [], "response_act": "acknowledge", "confidence": 0.9,
+    }
+    result = asyncio.run(SocialSceneInterpreter(FixedSceneModel(payload)).interpret(_context()))
+    assert result.diagnostic_code is None
+    assert result.scene.scene_kind == "成员感谢后的自然回应"
+    assert result.scene.response_act == "acknowledge"
+    assert result.scene.continuity_event_ids == ("m2",)
+    for changed, diagnostic in (
+        ({"continuity_event_ids": ["invented"]}, "scene_evidence_invalid"),
+        ({"response_act": "invented"}, "scene_model_invalid"),
+    ):
+        invalid = asyncio.run(SocialSceneInterpreter(FixedSceneModel({**payload, **changed})).interpret(_context()))
+        assert invalid.diagnostic_code == diagnostic
+
+
+def test_scene_fallback_reports_invalid_field_without_leaking_model_text():
+    model = FixedSceneModel({
+        "scene_kind": "chat", "target_scope": "private-secret-invalid",
+        "target_id": "u2", "literal_subject": "private text",
+        "user_move": "asks", "continuity_event_ids": ["m2"],
+        "confidence": 0.9,
+    })
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(_context()))
+    assert result.diagnostic_code == "scene_model_invalid"
+    assert result.diagnostic["field"] == "target_scope"
+    assert result.diagnostic["code"] == "scene_model_invalid"
+    assert "private" not in str(result.diagnostic)
+
+
 def test_interpreter_freezes_self_chorus_evidence_instead_of_model_payload():
     model = FixedSceneModel(
         {

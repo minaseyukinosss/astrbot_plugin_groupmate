@@ -1,4 +1,5 @@
 import pytest
+from dataclasses import replace
 
 from groupmate.social_runtime.social_moves import (
     DecisionFact,
@@ -190,6 +191,23 @@ def _stance(willingness, *, attitude="NEUTRAL", boundary="NONE"):
         reason_event_ids=("m1",),
         permission=PermissionSnapshot(True, "social_reply"),
     )
+
+
+def test_response_act_drives_expression_without_overriding_hard_moves():
+    planner = SocialMovePlanner()
+    for act in ("answer", "acknowledge", "react", "follow_up", "close"):
+        scene = replace(_scene("成员自然接话，非固定英文分类"), response_act=act)
+        move = planner.plan(scene, _stance("WILLING"), profile=None, memories=())
+        assert move.response_act == act
+        assert move.primary_move is SocialMove.DIRECT_ANSWER
+        assert move.ending is (Ending.QUESTION if act == "follow_up" else Ending.STOP)
+        assert move.ask_for == ()  # Natural follow-up is not an evidence request.
+        refused = planner.plan(scene, _stance("UNWILLING", boundary="FIRM"), profile=None, memories=())
+        assert refused.primary_move is SocialMove.FIRM_BOUNDARY
+        assert refused.response_act is None
+    legacy = planner.plan(_scene("contextual_teasing"), _stance("WILLING"), profile=None, memories=())
+    assert legacy.primary_move is SocialMove.TEASE_FROM_CONTEXT
+    assert legacy.response_act is None
 
 
 def _chorus_scene(

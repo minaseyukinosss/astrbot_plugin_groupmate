@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from groupmate.adapters.astrbot_bridge import AstrBotSocialRuntimeBridge
-from groupmate.adapters.astrbot_models import AstrBotModelPort
+from groupmate.adapters.deepseek_text import DeepSeekTextClient
 from groupmate.settings import (
     DEFAULT_GROUPMATE_PERSONA_ID,
     SOCIAL_RUNTIME_DATABASE_NAME,
@@ -88,6 +88,8 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "enabled_groups",
         "runtime_mode",
         "generation_provider",
+        "generation_model",
+        "generation_timeout_seconds",
         "cognition_api_key",
         "cognition_api_base",
         "cognition_model",
@@ -111,6 +113,8 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     ]
     assert schema["generation_provider"]["_special"] == "select_provider"
     assert schema["vision_provider"]["_special"] == "select_provider"
+    assert schema["generation_model"]["default"] == "deepseek-v4-flash"
+    assert schema["generation_timeout_seconds"]["default"] == 15
     assert schema["cognition_api_key"]["type"] == "string"
     assert schema["cognition_api_key"]["obvious_hint"] is True
     assert schema["cognition_api_base"]["default"] == "https://api.deepseek.com"
@@ -208,7 +212,7 @@ def test_composition_root_reports_each_model_configuration_blocker():
     root = Path(__file__).parents[2]
     composition = (root / "main.py").read_text(encoding="utf-8")
 
-    assert "未选择最终回复模型" in composition
+    assert "未配置回复模型名称" in composition
     assert "未配置认知模型 API Key" in composition
     assert "认知模型 API 地址无效" in composition
     assert "未配置认知模型名称" in composition
@@ -244,7 +248,7 @@ def test_bridge_threads_cognition_timeout_into_runtime_budget(tmp_path: Path):
     settings = SocialRuntimeSettings.from_mapping(
         {
             "enabled_groups": ["group-1"],
-            "generation_provider": "provider:text",
+            "cognition_api_key": "sk-test",
             "cognition_timeout_seconds": 12,
         }
     )
@@ -263,7 +267,7 @@ def test_bridge_registers_one_combined_ambient_model_worker(tmp_path: Path):
     settings = SocialRuntimeSettings.from_mapping(
         {
             "enabled_groups": ["group-1"],
-            "generation_provider": "provider:text",
+            "cognition_api_key": "sk-test",
         }
     )
     bridge = AstrBotSocialRuntimeBridge(object(), settings, tmp_path)
@@ -282,7 +286,7 @@ def test_bridge_registers_one_combined_ambient_model_worker(tmp_path: Path):
     assert "direct_interaction" not in workers
 
 
-def test_bridge_owns_direct_client_but_keeps_astrbot_for_final_reply(tmp_path):
+def test_bridge_owns_direct_clients_for_cognition_and_replies(tmp_path):
     class FakeDirectClient:
         model = "deepseek-v4-flash"
 
@@ -299,7 +303,6 @@ def test_bridge_owns_direct_client_but_keeps_astrbot_for_final_reply(tmp_path):
     settings = SocialRuntimeSettings.from_mapping(
         {
             "enabled_groups": ["group-1"],
-            "generation_provider": "provider:reply",
             "cognition_api_key": "sk-test",
         }
     )
@@ -315,16 +318,25 @@ def test_bridge_owns_direct_client_but_keeps_astrbot_for_final_reply(tmp_path):
     async def scenario():
         await bridge.start()
         worker = bridge.manager.cognition.workers["ambient_social_assessor"]
+        scene_model = bridge._scene_model
         reply_model = bridge._reply_executor.model
+        imitation_model = bridge._imitation_model
         await bridge.close()
         await bridge.close()
-        return worker, reply_model
+        return worker, scene_model, reply_model, imitation_model
 
-    worker, reply_model = asyncio.run(scenario())
+    worker, scene_model, reply_model, imitation_model = asyncio.run(scenario())
 
     assert isinstance(worker, DirectAmbientWorker)
-    assert isinstance(reply_model, AstrBotModelPort)
-    assert reply_model.provider_id == "provider:reply"
+    assert isinstance(scene_model, DeepSeekTextClient)
+    assert scene_model.model == "deepseek-v4-flash"
+    assert scene_model.json_object is True
+    assert scene_model.timeout_seconds == 8
+    assert isinstance(reply_model, DeepSeekTextClient)
+    assert reply_model.model == "deepseek-v4-flash"
+    assert reply_model.timeout_seconds == 15
+    assert isinstance(imitation_model, DeepSeekTextClient)
+    assert imitation_model.json_object is False
     assert client.close_calls == 1
 
 
@@ -350,13 +362,13 @@ def test_complete_native_configuration_enters_no_send_shadow_automatically():
     settings = SocialRuntimeSettings.from_mapping(
         {
             "enabled_groups": [" group-1 "],
-            "generation_provider": "provider:text",
+            "cognition_api_key": "sk-test",
             "vision_provider": "provider:vision",
         }
     )
 
     assert settings.enabled_groups == ("group-1",)
-    assert settings.generation_provider == "provider:text"
+    assert settings.generation_model == "deepseek-v4-flash"
     assert settings.vision_provider == "provider:vision"
     assert settings.persona_id == DEFAULT_GROUPMATE_PERSONA_ID
     assert settings.runtime_mode == "SHADOW"

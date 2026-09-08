@@ -274,8 +274,18 @@ def test_direct_cognition_presenter_explains_backend_and_safe_failures():
         "diagnostic_code:'direct_invalid_signal'}),"
         "speakSignal: presenter.cognitionDiagnosticExplanation({"
         "diagnostic_code:'direct_speak_without_signal'}),"
+        "opportunity: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_invalid_opportunity'}),"
+        "speakOpportunity: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_speak_without_opportunity'}),"
+        "anchor: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_unknown_anchor'}),"
+        "anchorEvidence: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_anchor_missing_from_evidence'}),"
         "target: presenter.cognitionDiagnosticExplanation({"
         "diagnostic_code:'direct_unknown_target'}),"
+        "topic: presenter.cognitionDiagnosticExplanation({"
+        "diagnostic_code:'direct_unknown_topic'}),"
         "speakEvidence: presenter.cognitionDiagnosticExplanation({"
         "diagnostic_code:'direct_empty_speak_evidence'}),"
         "evidence: presenter.cognitionDiagnosticExplanation({"
@@ -302,7 +312,12 @@ def test_direct_cognition_presenter_explains_backend_and_safe_failures():
         "decision": "认知模型给出了无效的参与决定，本次未采用。",
         "signal": "认知模型给出了无效的群聊信号，本次未采用。",
         "speakSignal": "认知模型建议参与，但没有给出有效信号，本次未采用。",
+        "opportunity": "认知模型给出了无效的参与机会类型，本次未采用。",
+        "speakOpportunity": "认知模型建议参与，但没有给出有效机会，本次未采用。",
+        "anchor": "认知模型引用了当前窗口之外的锚点消息，本次未采用。",
+        "anchorEvidence": "认知模型的锚点不在证据中，本次未采用。",
         "target": "认知模型引用了当前候选成员之外的对象，本次未采用。",
+        "topic": "无法从锚点消息确定当前话题，本次未采用。",
         "speakEvidence": "认知模型建议参与，但没有提供消息证据，本次未采用。",
         "evidence": "认知模型引用了当前上下文之外的消息，本次未采用。",
         "score": "认知模型返回的评分不在有效范围内，本次未采用。",

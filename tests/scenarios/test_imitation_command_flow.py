@@ -16,6 +16,15 @@ class _Context:
     def __init__(self):
         self.model_calls = []
 
+    async def complete_text(self, *, system_prompt: str, prompt: str) -> str:
+        response = await self.llm_generate(
+            chat_provider_id="direct",
+            system_prompt=system_prompt,
+            prompt=prompt,
+            temperature=0.7,
+        )
+        return str(getattr(response, "completion_text", "") or "")
+
     async def llm_generate(self, **kwargs):
         self.model_calls.append(kwargs)
         raise AssertionError("state transition must not enter a model")
