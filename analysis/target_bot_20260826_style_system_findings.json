@@ -1,0 +1,142 @@
+{
+  "analysis_version": "2026-08-27.2",
+  "purpose": "derive reusable social handling mechanisms for Aemeath without copying the reference bot identity or phrases",
+  "sources": {
+    "json": "group_885617919_20260826_141956.json",
+    "xlsx": "group_885617919_20260826_142052.xlsx",
+    "export_window": "2026-08-23..2026-08-26"
+  },
+  "target_bot": {
+    "name": "小维",
+    "uid": "u_wa9kVWFd1RzFlh_blskvQQ",
+    "uin": "323537051"
+  },
+  "data_quality": {
+    "json_messages": 6831,
+    "target_json_messages": 1239,
+    "target_xlsx_messages": 1286,
+    "export_count_mismatch": true,
+    "usage_rule": "counts locate and validate scenarios; they do not define language or participation probabilities"
+  },
+  "interaction_evidence": {
+    "structured_replies": 307,
+    "at_mentions": 86,
+    "resource_messages": 718,
+    "images": 660,
+    "videos": 48,
+    "forwards": 9,
+    "files": 8,
+    "audio": 2,
+    "exact_phrase_接住了": 0,
+    "literal_接住_occurrences": 1
+  },
+  "reusable_mechanisms": [
+    "interpret the social move as well as literal text",
+    "form a concrete stance before wording",
+    "allow partial concessions that preserve autonomy",
+    "let evidence-backed relationship history change willingness and tone",
+    "let refusal continue or end the relationship according to context",
+    "turn care and technical help into concrete next actions",
+    "grow jokes from current words and shared events",
+    "switch from individual to group-level replies during pile-ons",
+    "repair errors by withdrawing the specific wrong claim and replacing it",
+    "enter proactive chat through a concrete topic rather than meta commentary",
+    "treat repetition aimed at the bot as a group action while allowing eligible member-focused repetition to become direct participation"
+  ],
+  "scenario_evidence": [
+    {
+      "scene": "familiar_sulking_request",
+      "observed_handling": "limited concession with a physical limit",
+      "design_move": "LIMITED_ACCEPT"
+    },
+    {
+      "scene": "reciprocal_hug_negotiation",
+      "observed_handling": "recognize reciprocal logic, accept once, retain boundary",
+      "design_move": "LIMITED_ACCEPT"
+    },
+    {
+      "scene": "repeated_boundary_testing",
+      "observed_handling": "relationship history changes a nominally similar request into direct refusal",
+      "design_move": "FIRM_BOUNDARY"
+    },
+    {
+      "scene": "technical_constraint_rejection",
+      "observed_handling": "drop the prior approach and adapt to the stated prompt-size constraint",
+      "design_move": "DIRECT_ANSWER"
+    },
+    {
+      "scene": "identity_continuity_challenge",
+      "observed_handling": "assert continuity using the concrete situational reason",
+      "design_move": "COUNTER"
+    },
+    {
+      "scene": "group_pile_on",
+      "observed_handling": "replace duplicated individual replies with one group-level response",
+      "design_move": "GROUP_RESPONSE"
+    }
+  ],
+  "confirmed_design_rules": [
+    {
+      "chorus_target": "SELF",
+      "design_move": "GROUP_RESPONSE",
+      "rule": "reply once to the temporary group and never echo the self-directed payload"
+    },
+    {
+      "chorus_target": "MEMBER",
+      "design_move": "JOIN_CHORUS",
+      "rule": "when the content is safe and relationship-compatible, send the frozen payload exactly once without a meta prefix"
+    },
+    {
+      "chorus_target": "UNKNOWN",
+      "design_move": "SILENCE",
+      "rule": "do not guess who is being targeted"
+    }
+  ],
+  "negative_regressions": [
+    "joking response to self-harm threat",
+    "media reply retriggers the original video-analysis command",
+    "incorrect image judgement followed by stubborn defense",
+    "duplicate or mutually conflicting social replies",
+    "wrong target or context correlation",
+    "tool status and smalltalk interleave",
+    "memory or relationship claims without adequate evidence"
+  ],
+  "plugin_root_causes": [
+    {
+      "file": "groupmate/social_runtime/intentions.py",
+      "cause": "candidate acts are too coarse to encode concrete social handling"
+    },
+    {
+      "file": "groupmate/social_runtime/expression.py",
+      "cause": "abstract reaction, boundary, and follow-up labels leave stance selection to the language model"
+    },
+    {
+      "file": "groupmate/social_runtime/replying.py",
+      "cause": "ReplyPlanner hardcodes a uniform friendly style and ReplyExecutor prompts a fixed assistant-like response sequence"
+    },
+    {
+      "file": "groupmate/social_runtime/cognition/ambient_worker.py",
+      "cause": "uniform 32-character event truncation removes negotiation, repetition, and group context"
+    },
+    {
+      "file": "groupmate/social_runtime/actions/generation.py",
+      "cause": "the firewall lacks social-decision coverage and generic-service-tail checks"
+    },
+    {
+      "file": "groupmate/social_runtime/governor.py",
+      "cause": "generic repetition cost cannot distinguish single-user spam, a chorus aimed at Aemeath, and a chorus Aemeath may join"
+    }
+  ],
+  "implementation_decisions": [
+    "keep Aemeath PersonaCanon authoritative",
+    "separate permission from willingness",
+    "introduce SocialScene, StanceDecision, SocialMove, and DecisionFact contracts",
+    "wire StyleDirector into ReplyPlanner",
+    "send concrete facts and actions rather than Chinese social meta-language to the realizer",
+    "run SocialOutputReviewer before OutputFirewall",
+    "keep exact commands outside the smalltalk path",
+    "reuse the same stance and move pipeline for proactive interaction",
+    "detect repetition chains deterministically, then classify who the repeated content is about",
+    "use GROUP_RESPONSE for repetition about Aemeath and exact JOIN_CHORUS only for eligible repetition about a member"
+  ]
+}

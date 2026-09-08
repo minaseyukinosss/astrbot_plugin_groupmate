@@ -28,6 +28,7 @@
     "design_status": "当前是否已经完成产品确认。"
   },
   "source_documents": [
+    "analysis/target_bot_20260826_style_system_analysis.md",
     "docs/superpowers/specs/2026-08-27-aemeath-smalltalk-style-system-design.md",
     "docs/superpowers/plans/2026-08-27-aemeath-smalltalk-style-core.md",
     "docs/superpowers/plans/2026-08-27-aemeath-command-capability-routing.md",

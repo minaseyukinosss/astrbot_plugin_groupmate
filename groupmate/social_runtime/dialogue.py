@@ -15,8 +15,8 @@ from .contracts import SocialEventEnvelope
 from .social_context import MAX_CONTEXT_EVENTS, SceneContextBuilder, SceneEventFact
 
 
-# Session gap used to bound background retrieval, never lease lifetime or
-# reply validity.
+# Session segmentation used by analysis/target_bot_20260824/report.md.
+# This limits background retrieval, never lease lifetime or reply validity.
 DIALOGUE_SESSION_GAP_SECONDS = 300
 
 

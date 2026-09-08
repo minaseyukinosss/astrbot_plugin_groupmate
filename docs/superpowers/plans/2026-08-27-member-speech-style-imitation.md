@@ -507,7 +507,7 @@ Expected: all feature-related tests pass. Any pre-existing environment/socket or
 
 Run: `git status --short` and `git diff --stat`.
 
-Verify user-owned `analysis/shadow_20260824.sql` remains untouched, and no unrelated dirty file is staged.
+Verify user-owned `analysis/shadow_20260824.sql` and `analysis/target_bot_20260824/` remain untouched, and no unrelated dirty file is staged.
 
 - [x] **Step 5: Commit documentation and final integration**
 
