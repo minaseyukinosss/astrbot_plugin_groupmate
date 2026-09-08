@@ -60,8 +60,8 @@ const HIDDEN_FIELDS = new Set([
 
 const VALUE_LABELS = Object.freeze({
   OFF: "未启用",
-  SHADOW: "观察模式（不发送）",
-  SOCIAL_RUNTIME: "社交运行",
+  SHADOW: "仅观察，不发到群",
+  SOCIAL_RUNTIME: "正式运行，会发到群",
   SILENCE: "保持沉默",
   RESPOND: "准备回复",
   SPEAK: "准备回复",
@@ -159,6 +159,22 @@ export function kindLabel(kind) {
   if (value.startsWith("memory.")) return "记忆更新";
   if (value.startsWith("relationship.")) return "关系更新";
   return "运行事件";
+}
+
+export function runtimeModeLabel(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return VALUE_LABELS[normalized] || "运行状态未记录";
+}
+
+export function deliveryOutcomeLabel(delivery = {}) {
+  const label = String(delivery?.label || "").replace(/^SHADOW[：:]/, "").trim();
+  return label || "等待处理";
+}
+
+export function hardBlockReasonLabel(value) {
+  return ({
+    addressed_elsewhere: "这条消息是在对别人说话",
+  })[String(value || "").trim()] || "";
 }
 
 export function fieldLabel(field) {
@@ -467,15 +483,19 @@ export function strategySummary(summary = {}) {
   return `${participationLaneLabel(decision.participation_lane)} · ${replyExpectation(decision, summary.delivery)}`;
 }
 
+export function candidateSourceLabel(value) {
+  return ({
+    deterministic: "策略生成",
+    model: "模型生成",
+    none: "未生成",
+  })[String(value || "").toLowerCase()] || "";
+}
+
 export function candidateSummary(understanding = {}) {
   const count = Math.max(0, Number(understanding.candidate_count) || 0);
   const source = String(understanding.candidate_source || "").toLowerCase();
   if (!count || source === "none") return "未生成参与方案";
-  const sourceLabel = source === "deterministic"
-    ? "策略生成"
-    : source === "model"
-      ? "模型生成"
-      : "来源未记录";
+  const sourceLabel = candidateSourceLabel(source) || "来源未记录";
   return `${sourceLabel} · ${count} 个参与方案`;
 }
 

@@ -47,6 +47,9 @@ export function openCommandDialog(commandSpec, command, options = {}) {
   const confirmation = element("input", {
     attrs: { type: "checkbox", name: "confirmed", value: "true" },
   });
+  if (commandSpec.type === "pause") {
+    reason.value = commandSpec.payload?.paused ? "管理员暂停运行" : "管理员恢复运行";
+  }
   const error = element("p", { className: "form-error", attrs: { role: "alert" } });
   const fieldNodes = new Map();
   const cancel = button("取消", { onClick: () => dialog.close() });
@@ -162,7 +165,7 @@ function labelFor(type) {
     link: "建立身份关联",
     cancel: "取消任务",
     approve_calibration: "批准校准",
-    shadow_review: "复核 SHADOW 决策",
+    shadow_review: "复核观察模式的判断",
     profile_fact_correct: "纠正画像事实",
     profile_fact_invalidate: "使画像事实失效",
     profile_identity_merge: "合并成员身份",
@@ -173,6 +176,6 @@ function labelFor(type) {
     knowledge_claim_dispute: "标记知识事实争议",
     knowledge_job_retry: "重试知识任务",
     knowledge_cache_invalidate: "使知识缓存失效",
-    knowledge_ambient_canary_set: "调整 AMBIENT 试运行",
+    knowledge_ambient_canary_set: "调整闲聊试运行",
   })[type] || "提交受治理命令";
 }

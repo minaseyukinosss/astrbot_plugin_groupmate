@@ -83,6 +83,7 @@ main {
 
 .workspace { padding: 0; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell[data-workspace="/runtime"] .workspace-heading { display: none; }
 
 .inspector {
   position: sticky;

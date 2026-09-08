@@ -48,13 +48,36 @@ def test_projection_presenter_translates_runtime_facts_for_people():
 
     assert result == {
         "label": "群聊现场已更新",
-        "mode": "观察模式（不发送）",
+        "mode": "仅观察，不发到群",
         "facts": [
-            {"key": "runtime_mode", "label": "运行模式", "value": "观察模式（不发送）"},
+            {"key": "runtime_mode", "label": "运行模式", "value": "仅观察，不发到群"},
             {"key": "paused", "label": "运行状态", "value": "运行中"},
             {"key": "disposition", "label": "处理结果", "value": "保持沉默"},
         ],
     }
+
+
+def test_runtime_mode_labels_never_show_internal_enum_names():
+    result = _run_presenter(
+        "console.log(JSON.stringify(["
+        "presenter.runtimeModeLabel('OFF'),"
+        "presenter.runtimeModeLabel('SHADOW'),"
+        "presenter.runtimeModeLabel('SOCIAL_RUNTIME'),"
+        "presenter.deliveryOutcomeLabel({label:'SHADOW：已完成判断，未发送'})"
+        "]));"
+    )
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+    runtime = (PAGE / "workspaces" / "runtime.js").read_text(encoding="utf-8")
+
+    assert result == [
+        "未启用",
+        "仅观察，不发到群",
+        "正式运行，会发到群",
+        "已完成判断，未发送",
+    ]
+    assert "runtimeModeLabel(mode)" in app
+    assert "SHADOW 正在观察" not in runtime
+    assert 'textContent = mode === "SHADOW" ? "SHADOW" : mode' not in app
 
 
 def test_shell_uses_approved_product_hierarchy_instead_of_projection_console():
@@ -99,7 +122,8 @@ def test_runtime_dashboard_prefers_effective_mode_and_resolved_persona():
 
     assert "export function runtimeStatus" in runtime
     assert "bootstrap?.effective_runtime_mode || configured" in runtime
-    assert "配置为 ${status.configured}，实际仍以 ${status.effective} 运行" in runtime
+    assert "runtimeModeLabel(status.configured)" in runtime
+    assert "runtimeModeLabel(status.effective)" in runtime
     assert "当前人格：${persona.preset_label}" in runtime
     assert "bootstrap.resolved_persona?.name" in app
     assert "bootstrap.effective_runtime_mode" in app

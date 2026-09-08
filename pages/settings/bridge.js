@@ -107,6 +107,13 @@ export class ApiBridge {
     if (message.includes("超时")) {
       return { status: 408, code: "timeout", impact: "请求超时，页面已停止等待，请稍后重试" };
     }
+    if (/is not defined|ReferenceError|TypeError/i.test(message)) {
+      return {
+        status: 500,
+        code: "render_failed",
+        impact: "这条消息的详情暂时无法展示，请刷新页面后重试。",
+      };
+    }
     return { status: 500, code: "failed", impact: message };
   }
 }

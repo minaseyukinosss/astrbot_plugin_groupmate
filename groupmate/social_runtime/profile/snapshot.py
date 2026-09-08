@@ -56,6 +56,7 @@ class SnapshotBuilder:
         edges: tuple[SocialEdge, ...],
         source_revision: int,
         generated_at: int,
+        rival_summaries: tuple[str, ...] = (),
     ) -> ProfileSnapshot:
         scoped_facts = tuple(
             fact
@@ -124,15 +125,18 @@ class SnapshotBuilder:
             )[:3]
         )
         categories = {fact.category for fact in ranked_facts}
+        portrait = self._portrait(
+            roles=roles,
+            fingerprints=fingerprints,
+            preferences=preferences,
+            episodes=scoped_episodes,
+            rival_summaries=rival_summaries,
+        )
         maturity = self._maturity(
             categories=categories,
             facts=ranked_facts,
             has_episode=bool(scoped_episodes),
-        )
-        portrait = self._portrait(
-            fingerprints=fingerprints,
-            preferences=preferences,
-            episodes=scoped_episodes,
+            distinct_portrait=portrait != "正在形成画像",
         )
         return ProfileSnapshot(
             persona_id=member.persona_id,
@@ -192,6 +196,7 @@ class SnapshotBuilder:
         categories: set[str],
         facts: tuple[ProfileFact, ...],
         has_episode: bool,
+        distinct_portrait: bool,
     ) -> str:
         if len(categories) < 2:
             return "new"
@@ -199,24 +204,48 @@ class SnapshotBuilder:
             item.category == "behavior_pattern" and item.evidence_count >= 3
             for item in facts
         )
-        if len(categories) >= 5 and (repeated_behavior or has_episode):
+        if (
+            distinct_portrait
+            and len(categories) >= 5
+            and (repeated_behavior or has_episode)
+        ):
             return "stable"
         return "forming"
 
-    @staticmethod
+    @classmethod
     def _portrait(
+        cls,
         *,
+        roles: tuple[str, ...],
         fingerprints: tuple[str, ...],
         preferences: tuple[str, ...],
         episodes: tuple[ProfileEpisode, ...],
+        rival_summaries: tuple[str, ...],
     ) -> str:
-        if fingerprints:
-            return fingerprints[0]
-        if preferences:
-            return preferences[0]
+        rivals = frozenset(rival_summaries)
+        distinct_fingerprints = tuple(
+            item for item in fingerprints if cls._distinct(item, rivals)
+        )
+        distinct_preferences = tuple(
+            item for item in preferences if cls._distinct(item, rivals)
+        )
+        if roles and distinct_fingerprints:
+            combined = f"{roles[0]} · {distinct_fingerprints[0]}"
+            if len(combined) <= 80:
+                return combined
+        if distinct_fingerprints:
+            return distinct_fingerprints[0]
+        if distinct_preferences:
+            return distinct_preferences[0]
         if episodes:
-            return episodes[0].summary
+            summary = episodes[0].summary
+            if cls._distinct(summary, rivals):
+                return summary
         return "正在形成画像"
+
+    @staticmethod
+    def _distinct(summary: str, rivals: frozenset[str]) -> bool:
+        return bool(str(summary).strip()) and str(summary).strip() not in rivals
 
     @staticmethod
     def _relationship_summary(

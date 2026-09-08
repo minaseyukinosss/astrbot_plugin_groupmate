@@ -224,6 +224,60 @@ def test_observed_pattern_accumulates_evidence_across_batches(tmp_path):
     )
 
 
+def test_paraphrased_fact_reinforces_known_id_across_batches(tmp_path):
+    first = {
+        "facts": [
+            {
+                "subject_id": "member-1",
+                "category": "preference",
+                "summary": "喜欢冷饮",
+                "source_kind": "self_statement",
+                "source_actor_id": "member-1",
+                "evidence_event_ids": ["event-1"],
+                "confidence": 0.93,
+            }
+        ],
+        "episodes": [],
+        "edges": [],
+    }
+    service = _service(tmp_path, _Client(first))
+    asyncio.run(service.observe(_event("event-1", text="我喜欢冷饮")))
+    asyncio.run(service.process_due(now=100))
+    stored = service.repository.facts("persona", "group-1", "member-1")[0]
+
+    service.extractor.client = _SequenceClient(
+        [
+            {
+                "facts": [
+                    {
+                        "subject_id": "member-1",
+                        "category": "preference",
+                        "summary": "爱喝冰可乐",
+                        "source_kind": "self_statement",
+                        "source_actor_id": "member-1",
+                        "evidence_event_ids": ["event-2"],
+                        "confidence": 0.91,
+                        "action": "reinforce",
+                        "existing_id": stored.fact_id,
+                    }
+                ],
+                "episodes": [],
+                "edges": [],
+            }
+        ]
+    )
+    asyncio.run(
+        service.observe(_event("event-2", occurred_at=120, text="还是冰可乐"))
+    )
+    asyncio.run(service.process_due(now=120))
+
+    facts = service.repository.facts("persona", "group-1", "member-1")
+    assert len(facts) == 1
+    assert facts[0].fact_id == stored.fact_id
+    assert facts[0].summary == "喜欢冷饮"
+    assert facts[0].source_event_ids == ("event-1", "event-2")
+
+
 def test_social_edge_accumulates_evidence_across_batches(tmp_path):
     payloads = []
     for index in range(1, 4):

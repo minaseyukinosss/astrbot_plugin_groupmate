@@ -240,6 +240,13 @@ class SocialEdgeCandidate:
 
 
 @dataclass(frozen=True)
+class ProfileKnownCognition:
+    facts: tuple[ProfileFact, ...] = ()
+    episodes: tuple[ProfileEpisode, ...] = ()
+    edges: tuple[SocialEdge, ...] = ()
+
+
+@dataclass(frozen=True)
 class ProfileCorrection:
     old: ProfileFact
     new: ProfileFact
@@ -268,6 +275,7 @@ __all__ = (
     "ProfileFact",
     "ProfileFactCandidate",
     "ProfileCorrection",
+    "ProfileKnownCognition",
     "ProfileObservation",
     "ProfileSnapshot",
     "SocialEdge",

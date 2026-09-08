@@ -198,33 +198,81 @@ class ProfileRepository:
         limit: int,
         now: int,
     ) -> tuple[ProfileObservation, ...]:
+        """Claim one member's due messages, then nearby conversation partners."""
+
+        maximum = max(1, int(limit))
+        focus_limit = max(1, min(12, maximum))
         with connect_database(self.path) as db:
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM profile_observations WHERE persona_id=? AND group_id=? "
+            focus_actor = db.execute(
+                "SELECT actor_id FROM profile_observations "
+                "WHERE persona_id=? AND group_id=? "
                 "AND status IN ('pending','retry') AND next_attempt_at<=? "
+                "GROUP BY actor_id ORDER BY MIN(occurred_at),actor_id LIMIT 1",
+                (str(persona_id), str(group_id), int(now)),
+            ).fetchone()
+            if focus_actor is None:
+                return ()
+            actor_id = str(focus_actor["actor_id"])
+            focus_rows = db.execute(
+                "SELECT * FROM profile_observations WHERE persona_id=? AND group_id=? "
+                "AND actor_id=? AND status IN ('pending','retry') AND next_attempt_at<=? "
                 "ORDER BY occurred_at,event_id LIMIT ?",
-                (str(persona_id), str(group_id), int(now), max(1, int(limit))),
+                (str(persona_id), str(group_id), actor_id, int(now), focus_limit),
             ).fetchall()
-            event_ids = tuple(str(row["event_id"]) for row in rows)
-            if event_ids:
-                placeholders = ",".join("?" for _ in event_ids)
-                db.execute(
-                    f"UPDATE profile_observations SET status='processing',attempt=attempt+1 "
-                    f"WHERE event_id IN ({placeholders})",
-                    event_ids,
+            if not focus_rows:
+                return ()
+            claimed = list(focus_rows)
+            remaining = maximum - len(claimed)
+            if remaining > 0:
+                window_start = int(focus_rows[0]["occurred_at"]) - 600
+                window_end = int(focus_rows[-1]["occurred_at"]) + 600
+                claimed_ids = {str(row["event_id"]) for row in claimed}
+                nearby = db.execute(
+                    "SELECT * FROM profile_observations WHERE persona_id=? AND group_id=? "
+                    "AND actor_id!=? AND status IN ('pending','retry') AND next_attempt_at<=? "
+                    "AND occurred_at BETWEEN ? AND ? "
+                    "ORDER BY occurred_at,event_id LIMIT ?",
+                    (
+                        str(persona_id),
+                        str(group_id),
+                        actor_id,
+                        int(now),
+                        window_start,
+                        window_end,
+                        remaining,
+                    ),
+                ).fetchall()
+                claimed.extend(
+                    row
+                    for row in nearby
+                    if str(row["event_id"]) not in claimed_ids
                 )
-        return tuple(self._observation(row, status="processing") for row in rows)
+            event_ids = tuple(str(row["event_id"]) for row in claimed)
+            placeholders = ",".join("?" for _ in event_ids)
+            db.execute(
+                f"UPDATE profile_observations SET status='processing',attempt=attempt+1 "
+                f"WHERE event_id IN ({placeholders})",
+                event_ids,
+            )
+        return tuple(self._observation(row, status="processing") for row in claimed)
 
     def pending_observation_count(
-        self, persona_id: str, group_id: str
+        self,
+        persona_id: str,
+        group_id: str,
+        actor_id: str | None = None,
     ) -> int:
+        query = (
+            "SELECT COUNT(*) FROM profile_observations "
+            "WHERE persona_id=? AND group_id=? AND status IN ('pending','retry')"
+        )
+        parameters: tuple[object, ...] = (str(persona_id), str(group_id))
+        if actor_id is not None:
+            query += " AND actor_id=?"
+            parameters = (*parameters, str(actor_id))
         with connect_database(self.path) as db:
-            row = db.execute(
-                "SELECT COUNT(*) FROM profile_observations "
-                "WHERE persona_id=? AND group_id=? AND status IN ('pending','retry')",
-                (str(persona_id), str(group_id)),
-            ).fetchone()
+            row = db.execute(query, parameters).fetchone()
         return int(row[0]) if row is not None else 0
 
     def observation_diagnostics(
@@ -480,6 +528,14 @@ class ProfileRepository:
                 "SELECT * FROM profile_facts WHERE fact_id=?", (str(fact_id),)
             ).fetchone()
         return self._fact(updated)
+
+    def episode(self, episode_id: str) -> ProfileEpisode | None:
+        with connect_database(self.path) as db:
+            row = db.execute(
+                "SELECT * FROM profile_episodes WHERE episode_id=?",
+                (str(episode_id),),
+            ).fetchone()
+        return None if row is None else self._episode(row)
 
     def put_episode(self, episode: ProfileEpisode) -> ProfileEpisode:
         with connect_database(self.path) as db:

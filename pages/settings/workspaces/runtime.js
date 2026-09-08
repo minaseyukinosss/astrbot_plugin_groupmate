@@ -4,6 +4,8 @@ import {
   cognitionStateLabel,
   formatTimestamp,
   formatTraceDuration,
+  deliveryOutcomeLabel,
+  runtimeModeLabel,
   strategySummary,
   traceHasCognitionFailure,
   traceIsObserved,
@@ -117,28 +119,17 @@ function traceRow(item) {
         ]),
       ]),
     ]),
-    element("td", { attrs: { "data-label": "处理路径" } }, [
-      element("strong", { className: "trace-primary", text: summary.route?.label || "等待路由" }),
-      element("small", { className: "two-line", text: summary.route?.reason || "—" }),
-    ]),
-    element("td", { attrs: { "data-label": "Groupmate 的理解" } }, [
-      element("span", { className: "two-line", text: summary.understanding?.summary || "等待理解" }),
+    element("td", { attrs: { "data-label": "决定" } }, [
+      element("strong", { className: "trace-primary", text: traceResultHeadline(summary) }),
+      element("small", { className: "two-line", text: traceResultReason(summary) }),
       ...(traceHasCognitionFailure(summary)
         ? [element("small", { className: "trace-warning", text: cognitionStateLabel(summary.understanding?.status) })]
         : []),
     ]),
-    element("td", { attrs: { "data-label": "决定" } }, [
-      element("strong", { className: "trace-primary", text: traceResultHeadline(summary) }),
-      element("small", {
-        className: "two-line",
-        text: traceResultState(summary),
-      }),
-      element("small", { className: "two-line", text: traceResultReason(summary) }),
-    ]),
     element("td", { attrs: { "data-label": "最终结果" } }, [
       element("span", {
         className: "trace-result",
-        text: delivery.label || "等待处理",
+        text: deliveryOutcomeLabel(delivery),
         attrs: { "data-tone": deliveryTone(delivery.status) },
       }),
     ]),
@@ -277,8 +268,6 @@ function messageBrowser(items, refreshData, page, loadMoreData) {
           element("tr", {}, [
             "时间",
             "收到的消息",
-            "处理路径",
-            "Groupmate 的理解",
             "决定",
             "最终结果",
           ].map((label) => element("th", { text: label }))),
@@ -317,7 +306,7 @@ function modeCopy(mode, ready, paused, personaName) {
   if (paused) return ["已暂停", `${personaName} 暂停处理新消息；NapCat 与 AstrBot 的到达事实仍会保留。`];
   if (mode === "OFF") return [`${personaName} 当前未运行`, "消息不会进入闲聊判断链路。完成配置并启用后才会开始处理。"];
   if (!ready) return ["尚未就绪", `配置还不完整，${personaName} 暂时不会参与群聊。`];
-  if (mode === "SHADOW") return ["SHADOW 正在观察", "会完成理解和参与判断，但不会向群里发送消息。"];
+  if (mode === "SHADOW") return ["正在观察，不会发到群", "会完成理解和参与判断，但不会向群里发送消息。"];
   return [`${personaName} 正在运行`, "符合条件的回复会经过治理后发送到群里。"];
 }
 
@@ -329,7 +318,6 @@ function modeBanner(bootstrap, runtime, traces, items, expectedVersion, command)
   const persona = bootstrap?.resolved_persona || {};
   const personaName = persona.name || "Groupmate";
   const [title, description] = modeCopy(mode, ready, paused, personaName);
-  const groupmateCount = items.filter((item) => item.summary?.route?.owner === "GROUPMATE").length;
   const sentCount = items.filter((item) => item.summary?.delivery?.status === "SENT").length;
   const wouldReplyCount = items.filter((item) => traceWouldReply(item.summary)).length;
   const cognitionFailureCount = items.filter((item) => traceHasCognitionFailure(item.summary)).length;
@@ -344,7 +332,7 @@ function modeBanner(bootstrap, runtime, traces, items, expectedVersion, command)
       ...(status.mismatch
         ? [element("p", {
           className: "runtime-blockers",
-          text: `配置为 ${status.configured}，实际仍以 ${status.effective} 运行；重载插件后生效。`,
+          text: `配置是「${runtimeModeLabel(status.configured)}」，当前仍按「${runtimeModeLabel(status.effective)}」在跑；重载插件后生效。`,
         })]
         : []),
       ...(bootstrap?.runtime_blockers?.length
@@ -356,7 +344,6 @@ function modeBanner(bootstrap, runtime, traces, items, expectedVersion, command)
         element("dt", { text: "累计收到" }),
         element("dd", { text: String(Math.max(Number(traces?.total_count || 0), items.length)) }),
       ]),
-      element("div", {}, [element("dt", { text: "进入 Groupmate" }), element("dd", { text: String(groupmateCount) })]),
       element("div", {}, [element("dt", { text: "会回复" }), element("dd", { text: String(wouldReplyCount) })]),
       element("div", {}, [element("dt", { text: "已发送" }), element("dd", { text: String(sentCount) })]),
       element("div", {}, [element("dt", { text: "认知异常" }), element("dd", { text: String(cognitionFailureCount) })]),
@@ -384,16 +371,19 @@ function modeBanner(bootstrap, runtime, traces, items, expectedVersion, command)
 
 function chainGuide(health) {
   const degraded = health?.degraded === true;
-  return element("div", { className: "runtime-overview-grid" }, [
-    element("section", { className: "dashboard-panel chain-guide" }, [
-      element("span", { className: "panel-eyebrow", text: "数据链路" }),
-      element("h2", { text: "NapCat → AstrBot → Groupmate → 群聊" }),
-      element("p", { text: "外部命令和视频解析插件由 AstrBot 优先处理；普通闲聊才进入 Groupmate 的理解与判断。" }),
-    ]),
-    element("section", { className: "dashboard-panel sync-guide", attrs: { "data-tone": degraded ? "warning" : "ok" } }, [
-      element("span", { className: "panel-eyebrow", text: "页面数据" }),
-      element("h2", { text: degraded ? "实时连接降级" : "事件流已连接" }),
-      element("p", { text: degraded ? "页面将定时刷新，消息处理本身不受影响。" : "新消息及后续判断会持续更新在同一行。" }),
+  return element("details", { className: "runtime-chain-guide" }, [
+    element("summary", { text: "数据如何流动" }),
+    element("div", { className: "runtime-overview-grid" }, [
+      element("section", { className: "dashboard-panel chain-guide" }, [
+        element("span", { className: "panel-eyebrow", text: "数据链路" }),
+        element("h2", { text: "NapCat → AstrBot → Groupmate → 群聊" }),
+        element("p", { text: "外部命令和视频解析插件由 AstrBot 优先处理；普通闲聊才进入 Groupmate 的理解与判断。" }),
+      ]),
+      element("section", { className: "dashboard-panel sync-guide", attrs: { "data-tone": degraded ? "warning" : "ok" } }, [
+        element("span", { className: "panel-eyebrow", text: "页面数据" }),
+        element("h2", { text: degraded ? "实时连接降级" : "事件流已连接" }),
+        element("p", { text: degraded ? "页面将定时刷新，消息处理本身不受影响。" : "新消息及后续判断会持续更新在同一行。" }),
+      ]),
     ]),
   ]);
 }

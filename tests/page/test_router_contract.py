@@ -32,6 +32,8 @@ def test_router_has_product_routes_with_safe_fallback():
         "console.log(JSON.stringify({"
         "routes: module.ROUTES.map((item) => item.path),"
         "known: module.normalizeHash('#/profiles?subject=x'),"
+        "member: module.hashQuery('#/profiles?member=member:abc').member,"
+        "href: module.profileHref('member:abc'),"
         "unknown: module.normalizeHash('#/not-a-route'),"
         "empty: module.normalizeHash('')"
         "}));",
@@ -40,6 +42,8 @@ def test_router_has_product_routes_with_safe_fallback():
     assert result == {
         "routes": ["/runtime", "/profiles", "/knowledge"],
         "known": "/profiles",
+        "member": "member:abc",
+        "href": "#/profiles?member=member%3Aabc",
         "unknown": "/runtime",
         "empty": "/runtime",
     }

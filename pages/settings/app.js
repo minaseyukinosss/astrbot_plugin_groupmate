@@ -1,6 +1,7 @@
 import { ApiBridge } from "./bridge.js";
 import { renderInspector } from "./components/inspector.js";
 import { workspaceCopy } from "./i18n.js";
+import { runtimeModeLabel } from "./components/presenters.js";
 import { createRouter } from "./router.js";
 import {
   ProjectionStore,
@@ -59,6 +60,7 @@ function scopeParams() {
 }
 
 function renderNavigation(route) {
+  document.getElementById("app-shell")?.setAttribute("data-workspace", route.path);
   document.querySelectorAll("[data-route]").forEach((link) => {
     const selected = link.dataset.route === route.path;
     link.toggleAttribute("aria-current", selected);
@@ -276,9 +278,9 @@ function render(snapshot) {
   const waiting = traceItems.filter((item) =>
     ["RECEIVED", "PLANNING", "READY", "DEFERRED"].includes(String(item.summary?.delivery?.status || "").toUpperCase()),
   ).length;
-  elements.runtimeMode.textContent = mode === "SHADOW" ? "SHADOW" : mode;
+  elements.runtimeMode.textContent = runtimeModeLabel(mode);
   elements.runtimeMode.dataset.mode = mode;
-  elements.sidebarMode.textContent = mode === "SHADOW" ? "仅观察" : mode;
+  elements.sidebarMode.textContent = runtimeModeLabel(mode);
   elements.sidebarGroup.textContent = snapshot.scope.group_id || "—";
   elements.visibleEvents.textContent = String(
     Math.max(Number(traceView.total_count || 0), traceItems.length),
@@ -402,6 +404,11 @@ async function refreshOpenInspector({ timeoutMs } = {}) {
   await openInspector(projection, entityRef, { timeoutMs });
 }
 
+function closeInspector() {
+  elements.inspector.hidden = true;
+  activeInspectorQuery = null;
+}
+
 async function selectGroup(groupId) {
   await bridge.disconnect();
   const currentScope = store.snapshot().scope;
@@ -436,20 +443,25 @@ async function initialize() {
 }
 
 router.start(async (route) => {
+  const leavingRuntime = activeRoute.path === "/runtime" && route.path !== "/runtime";
   activeRoute = route;
   renderNavigation(route);
+  if (leavingRuntime) closeInspector();
   if (store.snapshot().scope.group_id) await loadWorkspace(route);
 });
 
 store.subscribe(render);
 elements.group.addEventListener("change", () => selectGroup(elements.group.value));
 elements.workspace.addEventListener("click", (event) => {
+  if (event.target.closest("a, button, input, select, textarea, label")) return;
   const target = event.target.closest("[data-entity-ref]");
   if (target) openInspector(target.dataset.projection, target.dataset.entityRef);
 });
-elements.closeInspector.addEventListener("click", () => {
-  elements.inspector.hidden = true;
-  activeInspectorQuery = null;
+elements.closeInspector.addEventListener("click", () => closeInspector());
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || elements.inspector.hidden) return;
+  if (document.querySelector("dialog[open]")) return;
+  closeInspector();
 });
 elements.themeToggle.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";

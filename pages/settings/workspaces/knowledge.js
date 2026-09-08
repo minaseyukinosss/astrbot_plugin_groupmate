@@ -15,6 +15,21 @@ const STATUS_LABELS = Object.freeze({
   discarded: "已停止",
 });
 
+const JOB_KIND_LABELS = Object.freeze({
+  instant_enrichment: "立即补充资料",
+  official_daily_probe: "每日核验公开资料",
+  unknown_entity_learning: "学习未知对象",
+});
+
+const ENTITY_TYPE_LABELS = Object.freeze({
+  game: "游戏",
+  character: "角色",
+  term: "术语",
+  item: "道具",
+  location: "地点",
+  skill: "技能",
+});
+
 const OFFICIAL_LABELS = Object.freeze({
   none: "尚未检索到可靠公开资料",
   teaser: "已有官方预告",
@@ -229,7 +244,7 @@ function createKnowledgeDetail(query) {
       const gameOwner = entity.canonical_game_name && entity.canonical_game_name !== entity.canonical_name
         ? ` · 属于 ${entity.canonical_game_name}`
         : "";
-      subtitle.replaceChildren(`${entity.entity_type || "实体"}${gameOwner} · ${STATUS_LABELS[entity.status] || entity.status || "未知状态"}`);
+      subtitle.replaceChildren(`${ENTITY_TYPE_LABELS[entity.entity_type] || "知识条目"}${gameOwner} · ${STATUS_LABELS[entity.status] || entity.status || "未知状态"}`);
       content.replaceChildren(
         element("p", {
           className: "knowledge-detail-privacy",
@@ -276,7 +291,7 @@ function createKnowledgeDetail(query) {
             element("li", {}, [
               element("div", {}, [
                 element("strong", { text: item.canonical_name }),
-                element("span", { text: item.entity_type }),
+                element("span", { text: ENTITY_TYPE_LABELS[item.entity_type] || "知识条目" }),
               ]),
               status(item.status),
               detailButton(item.entity_id, open),
@@ -392,7 +407,7 @@ function groupHealthPanel(overview, submitCommand, refresh) {
   const counts = overview?.counts || {};
   const enabled = overview?.ambient_canary_enabled === true;
   const canary = safeAction(
-    enabled ? "关闭 AMBIENT 试运行" : "开启 AMBIENT 试运行",
+    enabled ? "关闭闲聊试运行" : "开启闲聊试运行",
     {
       type: "knowledge_ambient_canary_set",
       knowledge_scope: "group",
@@ -402,7 +417,7 @@ function groupHealthPanel(overview, submitCommand, refresh) {
     submitCommand,
     refresh,
     {
-      title: enabled ? "关闭本群 AMBIENT 试运行" : "开启本群 AMBIENT 试运行",
+      title: enabled ? "关闭本群闲聊试运行" : "开启本群闲聊试运行",
       submitLabel: enabled ? "确认关闭" : "确认开启",
     },
   );
@@ -424,8 +439,8 @@ function groupHealthPanel(overview, submitCommand, refresh) {
     element("p", {
       className: "knowledge-canary-state",
       text: enabled
-        ? "AMBIENT 试运行：已对本群开启，仍受参与策略和搜索额度约束。"
-        : "AMBIENT 试运行：关闭。DIRECT 与 CONTINUATION 的根据回复不受影响。",
+        ? "闲聊试运行：已对本群开启，仍受参与策略和搜索额度约束。"
+        : "闲聊试运行：关闭。被 @ 或正在对话中的回复不受影响。",
     }),
   ]);
 }
@@ -458,14 +473,14 @@ function operationsPanel(overview) {
   const freshness = operations.freshness || {};
   const safety = operations.safety || {};
   const metrics = [
-    ["本地解析 P95", `${Number(local.p95_ms || 0)} ms`],
+    ["多数请求耗时", `${Number(local.p95_ms || 0)} ms`],
     ["Provider / 缓存命中", `${Number(provider.calls || 0)} / ${Number(provider.cache_hits || 0)}`],
     ["额度拒绝", Number(provider.quota_rejects || 0)],
     ["队列 / 最长滞后", `${Number(queue.depth || 0)} / ${Number(queue.job_lag_seconds || 0)} s`],
     ["过期版本 / 最长滞后", `${Number(freshness.stale_slots || 0)} / ${Number(freshness.max_lag_seconds || 0)} s`],
     ["场景失效拦截", Number(safety.scene_invalidations || 0)],
     ["无根据回复拦截", Number(safety.grounding_rejects || 0)],
-    ["AMBIENT 保守沉默", Number(safety.ambient_silences || 0)],
+    ["闲聊时选择沉默", Number(safety.ambient_silences || 0)],
   ];
   return element("section", { className: "knowledge-panel" }, [
     sectionHeading("运行保障", `最近 ${Math.round(Number(operations.window_seconds || 86400) / 3600)} 小时的全局聚合；不包含群号、成员或查询原文。`),
@@ -547,7 +562,7 @@ function conventionRow(item, submitCommand, refresh) {
     }, submitCommand, refresh, {
       title: `纠正“${item.expression}”的指向`,
       submitLabel: "确认替换",
-      fields: [{ name: "replacement_entity_id", label: "新的实体 ID" }],
+      fields: [{ name: "replacement_entity_id", label: "正确指向的对象编号" }],
     }));
   }
   return element("tr", {}, [
@@ -578,7 +593,7 @@ function aliasRow(item, submitCommand, refresh, controlRevision, openDetail) {
       }, submitCommand, refresh, {
         title: `纠正“${item.expression}”的群内指向`,
         submitLabel: "确认替换",
-        fields: [{ name: "replacement_entity_id", label: "新的实体 ID" }],
+        fields: [{ name: "replacement_entity_id", label: "正确指向的对象编号" }],
       }),
     ]),
   ]);
@@ -588,10 +603,9 @@ function entityRow(item, submitCommand, refresh, openDetail) {
   return element("tr", {}, [
     element("td", {}, [
       element("strong", { text: item.canonical_name }),
-      element("small", { text: item.entity_id }),
     ]),
     element("td", { text: item.canonical_game_name || "待归类" }),
-    element("td", { text: item.entity_type }),
+    element("td", { text: ENTITY_TYPE_LABELS[item.entity_type] || item.entity_type }),
     element("td", {}, status(item.status)),
     element("td", { text: formatDate(item.revision) }),
     element("td", { className: "knowledge-actions" }, [
@@ -631,7 +645,7 @@ function claimRow(item, submitCommand, refresh, controlRevision, openDetail) {
 
 function jobRow(item, submitCommand, refresh, controlRevision, scopeKind) {
   return element("tr", {}, [
-    element("td", {}, [element("strong", { text: item.job_kind }), element("small", { text: item.canonical_name || "通用任务" })]),
+    element("td", {}, [element("strong", { text: JOB_KIND_LABELS[item.job_kind] || "知识任务" }), element("small", { text: item.canonical_name || "通用任务" })]),
     element("td", {}, status(item.status)),
     element("td", { text: item.diagnostic || "暂无诊断" }),
     element("td", { text: formatDate(item.next_attempt_at) }),
@@ -676,6 +690,43 @@ function usagePanel(overview) {
   ]);
 }
 
+function fold(title, children) {
+  return element("details", { className: "knowledge-advanced" }, [
+    element("summary", { text: title }),
+    element("div", { className: "workspace-stack" }, children),
+  ]);
+}
+
+function inboxPanel(conventions, jobs, submitCommand, refresh) {
+  const pendingConventions = (conventions || []).filter(
+    (item) => !["active", "rejected"].includes(String(item.status || "")),
+  );
+  const retryJobs = (jobs || []).filter((item) => item.status === "retry");
+  const rows = [
+    ...pendingConventions.map((item) => conventionRow(item, submitCommand, refresh)),
+    ...retryJobs.map((item) => jobRow(item, submitCommand, refresh, Number(item.control_revision || 0), "group")),
+  ];
+  return element("section", { className: "knowledge-panel knowledge-inbox" }, [
+    sectionHeading(
+      "需要处理",
+      rows.length ? "先处理这些待确认约定和待重试任务，其余记录可以稍后查看。" : "当前没有需要确认的约定或待重试任务。",
+    ),
+    rows.length
+      ? element("div", { className: "knowledge-table-wrap" }, [
+        element("table", { className: "knowledge-table" }, [
+          element("thead", {}, [
+            element("tr", {}, ["事项", "指向", "说明", "状态", "操作"].map((label) => element("th", {
+              text: label,
+              attrs: { scope: "col" },
+            }))),
+          ]),
+          element("tbody", {}, rows),
+        ]),
+      ])
+      : element("p", { className: "knowledge-empty", text: "没有待办。" }),
+  ]);
+}
+
 let activeKnowledgeScope = "group";
 
 export function renderKnowledge(selectView, submitCommand, refresh, query) {
@@ -699,40 +750,43 @@ export function renderKnowledge(selectView, submitCommand, refresh, query) {
     attrs: { id: "knowledge-group-pane", role: "tabpanel", "aria-labelledby": "knowledge-group-tab" },
   }, [
     element("p", { className: "knowledge-scope-note", text: "仅影响本群：热门度、简称、群约定和近期使用不会写入共享公共事实。" }),
+    inboxPanel(conventionView.items, groupJobs.items, submitCommand, refresh),
     groupHealthPanel(groupOverview, submitCommand, refresh),
     popularPanel(groupOverview, submitCommand, refresh, detail.open),
     conflictPanel([], conventions.items),
-    pagedTable({
-      title: "群内别名",
-      description: "这些表达只用于当前群的实体识别，不会成为其他群的默认叫法。",
-      endpoint: "knowledge/group/aliases",
-      initialView: aliases,
-      columns: ["表达", "指向", "最近使用", "状态", "操作"],
-      statusOptions: ["candidate", "active", "disputed", "stale", "rejected"],
-      rowFor: (item) => aliasRow(item, submitCommand, refresh, groupRevision, detail.open),
-      query,
-    }),
-    pagedTable({
-      title: "群内约定",
-      description: "只影响当前群；确认不会创建全局别名。",
-      endpoint: "knowledge/group/conventions",
-      initialView: conventionView,
-      columns: ["表达", "指向", "证据覆盖", "状态", "操作"],
-      statusOptions: ["candidate", "active", "disputed", "stale", "rejected"],
-      rowFor: (item) => conventionRow({ ...item, control_revision: groupRevision }, submitCommand, refresh),
-      query,
-    }),
-    pagedTable({
-      title: "群触发任务",
-      description: "这里只展示由当前群触发的发现与学习任务，不包含共享库的定时刷新。",
-      endpoint: "knowledge/group/jobs",
-      initialView: groupJobs,
-      columns: ["任务", "状态", "诊断", "下次尝试", "操作"],
-      statusOptions: ["pending", "running", "retry", "completed", "discarded"],
-      rowFor: (item) => jobRow(item, submitCommand, refresh, groupRevision, "group"),
-      query,
-    }),
-    usagePanel({ recent_usage: groupUsage.items || groupOverview.recent_usage || [] }),
+    fold("更多本群记录", [
+      pagedTable({
+        title: "群内别名",
+        description: "这些表达只用于当前群的实体识别，不会成为其他群的默认叫法。",
+        endpoint: "knowledge/group/aliases",
+        initialView: aliases,
+        columns: ["表达", "指向", "最近使用", "状态", "操作"],
+        statusOptions: ["candidate", "active", "disputed", "stale", "rejected"],
+        rowFor: (item) => aliasRow(item, submitCommand, refresh, groupRevision, detail.open),
+        query,
+      }),
+      pagedTable({
+        title: "群内约定",
+        description: "只影响当前群；确认不会创建全局别名。",
+        endpoint: "knowledge/group/conventions",
+        initialView: conventionView,
+        columns: ["表达", "指向", "证据覆盖", "状态", "操作"],
+        statusOptions: ["candidate", "active", "disputed", "stale", "rejected"],
+        rowFor: (item) => conventionRow({ ...item, control_revision: groupRevision }, submitCommand, refresh),
+        query,
+      }),
+      pagedTable({
+        title: "群触发任务",
+        description: "这里只展示由当前群触发的发现与学习任务，不包含共享库的定时刷新。",
+        endpoint: "knowledge/group/jobs",
+        initialView: groupJobs,
+        columns: ["任务", "状态", "诊断", "下次尝试", "操作"],
+        statusOptions: ["pending", "running", "retry", "completed", "discarded"],
+        rowFor: (item) => jobRow(item, submitCommand, refresh, groupRevision, "group"),
+        query,
+      }),
+      usagePanel({ recent_usage: groupUsage.items || groupOverview.recent_usage || [] }),
+    ]),
   ]);
   const libraryPane = element("div", {
     className: "knowledge-scope-pane workspace-stack",
@@ -740,39 +794,41 @@ export function renderKnowledge(selectView, submitCommand, refresh, query) {
   }, [
     element("p", { className: "knowledge-scope-note knowledge-scope-note-library", text: "所有群共享：这里的公共事实、版本和来源不受当前群选择影响。" }),
     libraryHealthPanel(libraryOverview),
-    operationsPanel(libraryOverview),
     freshnessPanel(libraryOverview, detail.open),
     conflictPanel(claims.items, []),
-    pagedTable({
-      title: "知识实体",
-      description: "游戏和相关实体是共享目录；群热度只决定检索优先级。",
-      endpoint: "knowledge/library/entities",
-      initialView: entities,
-      columns: ["实体", "所属游戏", "类型", "状态", "更新时间", "操作"],
-      statusOptions: ["candidate", "active", "stale", "superseded", "rejected"],
-      rowFor: (item) => entityRow(item, submitCommand, refresh, detail.open),
-      query,
-    }),
-    pagedTable({
-      title: "公共事实",
-      description: "所有群共享；标记争议后，任何群都不能再把它作为确定事实。",
-      endpoint: "knowledge/library/claims",
-      initialView: claims,
-      columns: ["实体", "安全摘要", "来源", "核验时间", "状态", "操作"],
-      statusOptions: ["active", "pending", "disputed", "stale", "rejected", "superseded"],
-      rowFor: (item) => claimRow(item, submitCommand, refresh, Number(libraryOverview.revision || 0), detail.open),
-      query,
-    }),
-    pagedTable({
-      title: "共享刷新任务",
-      description: "这些任务维护所有群共用的公开知识；重试不会在页面请求内直接访问网络。",
-      endpoint: "knowledge/library/jobs",
-      initialView: libraryJobs,
-      columns: ["任务", "状态", "诊断", "下次尝试", "操作"],
-      statusOptions: ["pending", "running", "retry", "completed", "discarded"],
-      rowFor: (item) => jobRow(item, submitCommand, refresh, Number(libraryOverview.revision || 0), "library"),
-      query,
-    }),
+    fold("运行保障与目录", [
+      operationsPanel(libraryOverview),
+      pagedTable({
+        title: "知识实体",
+        description: "游戏和相关实体是共享目录；群热度只决定检索优先级。",
+        endpoint: "knowledge/library/entities",
+        initialView: entities,
+        columns: ["实体", "所属游戏", "类型", "状态", "更新时间", "操作"],
+        statusOptions: ["candidate", "active", "stale", "superseded", "rejected"],
+        rowFor: (item) => entityRow(item, submitCommand, refresh, detail.open),
+        query,
+      }),
+      pagedTable({
+        title: "公共事实",
+        description: "所有群共享；标记争议后，任何群都不能再把它作为确定事实。",
+        endpoint: "knowledge/library/claims",
+        initialView: claims,
+        columns: ["实体", "安全摘要", "来源", "核验时间", "状态", "操作"],
+        statusOptions: ["active", "pending", "disputed", "stale", "rejected", "superseded"],
+        rowFor: (item) => claimRow(item, submitCommand, refresh, Number(libraryOverview.revision || 0), detail.open),
+        query,
+      }),
+      pagedTable({
+        title: "共享刷新任务",
+        description: "这些任务维护所有群共用的公开知识；重试不会在页面请求内直接访问网络。",
+        endpoint: "knowledge/library/jobs",
+        initialView: libraryJobs,
+        columns: ["任务", "状态", "诊断", "下次尝试", "操作"],
+        statusOptions: ["pending", "running", "retry", "completed", "discarded"],
+        rowFor: (item) => jobRow(item, submitCommand, refresh, Number(libraryOverview.revision || 0), "library"),
+        query,
+      }),
+    ]),
   ]);
   const groupTab = element("button", {
     className: "knowledge-scope-tab",

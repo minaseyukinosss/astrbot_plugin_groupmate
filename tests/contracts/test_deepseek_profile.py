@@ -113,6 +113,9 @@ def test_profile_model_request_declares_the_exact_candidate_vocabulary():
     assert "不要因为尚未达到确认门槛而省略有直接证据的候选" in system_message
     assert '"category":"preference"' in system_message
     assert '"source_kind":"self_statement"' in system_message
+    assert "existing_id" in system_message
+    assert "已有认知" in system_message
+    assert "更新认知" in system_message
 
 
 def test_profile_model_timeout_has_safe_diagnostic_code():

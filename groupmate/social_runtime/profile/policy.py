@@ -7,6 +7,7 @@ from dataclasses import replace
 from ...profile_vocabulary import FACT_CATEGORIES, RELATION_TYPES
 from .contracts import (
     ProfileCorrection,
+    ProfileEpisode,
     ProfileFact,
     ProfileFactCandidate,
     SocialEdge,
@@ -229,6 +230,57 @@ class ProfileEvidencePolicy:
         if old.status == "confirmed" and reinforced.status != "confirmed":
             return replace(reinforced, status="confirmed")
         return reinforced
+
+    def reinforce_episode(
+        self, old: ProfileEpisode, incoming: ProfileEpisode
+    ) -> ProfileEpisode:
+        """Combine later evidence for the same scoped episode."""
+
+        if (
+            old.episode_id,
+            old.persona_id,
+            old.group_id,
+        ) != (
+            incoming.episode_id,
+            incoming.persona_id,
+            incoming.group_id,
+        ):
+            raise ValueError("profile episode reinforcement scope mismatch")
+        evidence, _ = self._merge_evidence(
+            old.source_event_ids, incoming.source_event_ids
+        )
+        confidence = max(old.confidence, incoming.confidence)
+        status = (
+            "confirmed"
+            if (
+                old.status == "confirmed"
+                or (
+                    len(set(evidence)) >= 2
+                    and confidence >= self.PATTERN_CONFIRM_THRESHOLD
+                )
+            )
+            else old.status
+        )
+        if old.status in {"rejected", "stale"}:
+            status = old.status
+        return ProfileEpisode(
+            episode_id=old.episode_id,
+            persona_id=old.persona_id,
+            group_id=old.group_id,
+            title=old.title,
+            summary=old.summary,
+            participants=tuple(dict.fromkeys((*old.participants, *incoming.participants))),
+            source_event_ids=evidence,
+            episode_type=old.episode_type,
+            valence=incoming.valence,
+            importance=max(old.importance, incoming.importance),
+            confidence=confidence,
+            status=status,
+            occurred_at=min(old.occurred_at, incoming.occurred_at),
+            last_reinforced_at=max(
+                old.last_reinforced_at, incoming.last_reinforced_at
+            ),
+        )
 
     def correct(
         self, old: ProfileFact, replacement: ProfileFactCandidate

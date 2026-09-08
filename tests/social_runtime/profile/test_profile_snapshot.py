@@ -144,3 +144,59 @@ def test_snapshot_uses_only_confirmed_injectable_current_facts():
 
     assert "凌晨唱歌" not in result.one_line_portrait
     assert result.preferences_and_boundaries == ()
+
+
+def test_snapshot_composes_role_and_distinct_fingerprint():
+    result = SnapshotBuilder().build(
+        _member(),
+        group_id="group-1",
+        facts=(
+            _fact(
+                fact_id="role",
+                category="group_role",
+                summary="群里爱追问落地的人",
+                evidence_count=2,
+            ),
+            _fact(
+                fact_id="behavior",
+                category="behavior_pattern",
+                summary="会持续追问到问题真正落地",
+                evidence_count=4,
+            ),
+        ),
+        episodes=(),
+        edges=(),
+        source_revision=3,
+        generated_at=200,
+    )
+
+    assert result.one_line_portrait == "群里爱追问落地的人 · 会持续追问到问题真正落地"
+    assert result.group_roles == ("群里爱追问落地的人",)
+
+
+def test_snapshot_skips_portrait_shared_with_another_member():
+    result = SnapshotBuilder().build(
+        _member(),
+        group_id="group-1",
+        facts=(
+            _fact(
+                fact_id="shared",
+                category="behavior_pattern",
+                summary="会持续追问到问题真正落地",
+                evidence_count=4,
+            ),
+            _fact(
+                fact_id="own",
+                category="preference",
+                summary="只喝无糖汽水",
+                evidence_count=2,
+            ),
+        ),
+        episodes=(),
+        edges=(),
+        source_revision=3,
+        generated_at=200,
+        rival_summaries=("会持续追问到问题真正落地",),
+    )
+
+    assert result.one_line_portrait == "只喝无糖汽水"

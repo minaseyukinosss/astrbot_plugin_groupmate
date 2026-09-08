@@ -377,35 +377,49 @@ class DirectAmbientWorker:
                 continue
             aliases = item.get("aliases")
             habits = item.get("addressing_habits")
-            members.append(
-                {
-                    "subject_id": subject_id,
-                    "aliases": [
-                        text
-                        for text in (
-                            cls._text(raw, 48)
-                            for raw in (
-                                aliases
-                                if isinstance(aliases, (list, tuple))
-                                else ()
-                            )
+            boundaries = item.get("boundaries")
+            entry = {
+                "subject_id": subject_id,
+                "aliases": [
+                    text
+                    for text in (
+                        cls._text(raw, 48)
+                        for raw in (
+                            aliases
+                            if isinstance(aliases, (list, tuple))
+                            else ()
                         )
-                        if text
-                    ][:3],
-                    "addressing_habits": [
-                        text
-                        for text in (
-                            cls._text(raw, 100)
-                            for raw in (
-                                habits
-                                if isinstance(habits, (list, tuple))
-                                else ()
-                            )
+                    )
+                    if text
+                ][:3],
+                "addressing_habits": [
+                    text
+                    for text in (
+                        cls._text(raw, 100)
+                        for raw in (
+                            habits
+                            if isinstance(habits, (list, tuple))
+                            else ()
                         )
-                        if text
-                    ][:2],
-                }
-            )
+                    )
+                    if text
+                ][:2],
+            }
+            boundary_values = [
+                text
+                for text in (
+                    cls._text(raw, 100)
+                    for raw in (
+                        boundaries
+                        if isinstance(boundaries, (list, tuple))
+                        else ()
+                    )
+                )
+                if text
+            ][:2]
+            if boundary_values:
+                entry["boundaries"] = boundary_values
+            members.append(entry)
             if len(members) >= 3:
                 break
         relations = []

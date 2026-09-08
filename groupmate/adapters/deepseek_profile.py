@@ -34,6 +34,8 @@ _SYSTEM_MESSAGE = (
     "你是Groupmate的群成员画像候选提取器。只从输入事件提取有明确证据的候选，"
     "不得生成回复，不得推断敏感关系，不得把第三方说法当成被谈论者的事实。"
     "只输出JSON对象，顶层必须同时包含facts、episodes、edges三个数组，哪一类没有候选就输出空数组。"
+    "输入可能包含known_facts、known_episodes、known_edges，那是该成员已有认知。"
+    "你是在更新认知，不是从零发现；与已知是同一件事时必须带existing_id。"
     "所有枚举只能从下列值中选择，不得翻译、缩写或创造近义值。"
     f"fact.category可选：{_choices(FACT_CATEGORIES)}。"
     f"fact.source_kind可选：{_choices(MODEL_FACT_SOURCE_KINDS)}。"
@@ -41,23 +43,26 @@ _SYSTEM_MESSAGE = (
     f"edge.relation_type可选：{_choices(RELATION_TYPES)}。"
     f"edge.direction可选：{_choices(EDGE_DIRECTIONS)}。"
     "facts每项只能包含subject_id、category、summary、source_kind、source_actor_id、"
-    "evidence_event_ids、confidence。本人明确说出的身份、偏好、边界、兴趣或能力，"
-    "使用self_statement；从同一批多条行为中概括的稳定倾向使用observed_pattern。"
+    "evidence_event_ids、confidence，可选action、existing_id。"
+    "action只能是new、reinforce、revise、stale；与已知事实是同一件事时action=reinforce并填写existing_id，"
+    "即使这批只有一条新证据、措辞与已知不同。"
+    "本人明确说出的身份、偏好、边界、兴趣或能力，使用self_statement；"
+    "稳定行为倾向使用observed_pattern，可以续写已知模式，不必要求同批出现多条。"
     "不要因为尚未达到确认门槛而省略有直接证据的候选，本地规则会决定候选是否确认。"
     "第三方对他人的说法只能标记为third_party_claim，不能标记为self_statement或"
     "observed_pattern；它只供审计，不会成为可用于回复的确认事实。"
     "仍可从说话者本人的明确表达提取说话者自己的事实。"
     "episodes每项只能包含title、summary、participants、episode_type、valence、importance、"
-    "confidence、evidence_event_ids；至少引用两条直接相关证据。"
+    "confidence、evidence_event_ids，可选existing_id；同一件事续写时必须填existing_id。"
     "edges每项只能包含source_member_id、target_member_id、relation_type、direction、"
     "strength、confidence、evidence_event_ids；有一条能确定双方互动的直接证据即可输出候选，"
-    "本地规则会跨批累积证据并决定何时确认。"
-    "subject_id、source_actor_id、participants、关系双方ID和全部证据ID必须原样复制输入。"
+    "被回复或被@的成员可以作为关系另一方，本地规则会跨批累积证据并决定何时确认。"
+    "subject_id、source_actor_id、participants、关系双方ID、existing_id和全部证据ID必须原样复制输入。"
     "summary只陈述证据能支持的具体内容，不写人格评判；没有直接证据就不输出该候选。"
     '合法形状示例（示例ID不能照抄）：{"facts":[{"subject_id":"u1",'
     '"category":"preference","summary":"喜欢冷饮","source_kind":"self_statement",'
-    '"source_actor_id":"u1","evidence_event_ids":["e1"],"confidence":0.93}],'
-    '"episodes":[],"edges":[]}。'
+    '"source_actor_id":"u1","evidence_event_ids":["e1"],"confidence":0.93,'
+    '"action":"new"}],"episodes":[],"edges":[]}。'
 )
 
 

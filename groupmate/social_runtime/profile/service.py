@@ -10,8 +10,8 @@ from typing import Callable
 
 from ...adapters.deepseek_profile import ProfileModelError
 from ..contracts import SocialEventEnvelope
-from .contracts import ProfileObservation
-from .extractor import ProfileExtractor
+from .contracts import ProfileKnownCognition, ProfileObservation
+from .extractor import ProfileExtractor, referenced_actor_ids
 from .group_portrait import GroupPortraitBuilder
 from .identity import IdentityService
 from .repository import ProfileRepository
@@ -77,7 +77,13 @@ class ProfileService:
                 occurred_at=event.occurred_at,
             )
         )
-        if inserted and self.pending_count(event.group_id) >= self.batch_size:
+        if inserted and (
+            self.repository.pending_observation_count(
+                event.persona_id, event.group_id, event.actor_id
+            )
+            >= max(1, min(6, self.batch_size))
+            or self.pending_count(event.group_id) >= self.batch_size
+        ):
             self._wake.set()
         if inserted and self.style_service is not None:
             wake = getattr(self.style_service, "wake", None)
@@ -138,7 +144,9 @@ class ProfileService:
     ) -> str | None:
         """Extract and persist one claimed batch as an idempotent unit of work."""
 
-        result = await self.extractor.extract(observations)
+        result = await self.extractor.extract(
+            observations, known=self._known_cognition(observations)
+        )
         event_ids = tuple(item.event_id for item in observations)
         merged_facts = []
         for fact in result.facts:
@@ -150,8 +158,28 @@ class ProfileService:
             )
             self.repository.upsert_fact(merged)
             merged_facts.append(merged)
+        for fact_id in result.stale_fact_ids:
+            current = self.repository.fact(fact_id)
+            if current is None:
+                continue
+            self.repository.change_fact_status(
+                fact_id,
+                persona_id=current.persona_id,
+                group_id=current.group_id,
+                subject_id=current.subject_id,
+                status="stale",
+                audit_id=f"profile-stale:{fact_id}:{decision_now}",
+                actor_id="profile_worker",
+                created_at=decision_now,
+            )
         for episode in result.episodes:
-            self.repository.put_episode(episode)
+            existing = self.repository.episode(episode.episode_id)
+            merged_episode = (
+                episode
+                if existing is None
+                else self.extractor.policy.reinforce_episode(existing, episode)
+            )
+            self.repository.put_episode(merged_episode)
         merged_edges = []
         for edge in result.edges:
             existing = self.repository.edge(edge.edge_id)
@@ -182,7 +210,10 @@ class ProfileService:
             generated_at=decision_now,
         )
         has_candidates = bool(
-            result.facts or result.episodes or result.edges
+            result.facts
+            or result.episodes
+            or result.edges
+            or result.stale_fact_ids
         )
         diagnostic = result.diagnostic_code or (
             None if has_candidates else "profile_no_candidates"
@@ -223,17 +254,45 @@ class ProfileService:
             (item.occurred_at for item in observations),
             default=generated_at,
         )
+        platform = str(
+            next(
+                (
+                    item.payload.get("platform")
+                    for item in observations
+                    if str(item.payload.get("platform") or "").strip()
+                ),
+                "qq",
+            )
+        )
+        group_id = observations[0].group_id
+        rival_summaries = tuple(
+            dict.fromkeys(
+                summary
+                for snapshot in self.repository.snapshots_for_group(
+                    self.persona_id, group_id
+                )
+                if snapshot.subject_id not in subject_ids
+                for summary in (
+                    *snapshot.individual_fingerprints,
+                    *snapshot.preferences_and_boundaries,
+                    *snapshot.group_roles,
+                )
+                if summary
+            )
+        )
         for subject_id in subject_ids:
             observation = observations_by_actor.get(subject_id)
-            if observation is None:
-                continue
-            platform = str(observation.payload.get("platform") or "qq")
             identity = self.identity_service.resolve(
-                self.persona_id, platform, subject_id
+                self.persona_id,
+                str(
+                    observation.payload.get("platform") or platform
+                    if observation is not None
+                    else platform
+                ),
+                subject_id,
             )
             if identity is None:
                 continue
-            group_id = observation.group_id
             snapshot = self.snapshot_builder.build(
                 identity,
                 group_id=group_id,
@@ -248,8 +307,39 @@ class ProfileService:
                 ),
                 source_revision=source_revision,
                 generated_at=generated_at,
+                rival_summaries=rival_summaries,
             )
             self.repository.put_snapshot(snapshot)
+
+    def _known_cognition(
+        self, observations: tuple[ProfileObservation, ...]
+    ) -> ProfileKnownCognition:
+        group_id = observations[0].group_id
+        subjects = {item.actor_id for item in observations}
+        for item in observations:
+            subjects.update(referenced_actor_ids(item.payload))
+        facts = []
+        episodes = []
+        for subject_id in tuple(subjects)[:8]:
+            facts.extend(
+                self.repository.facts(self.persona_id, group_id, subject_id)[:12]
+            )
+            episodes.extend(
+                self.repository.episodes(
+                    self.persona_id, group_id, subject_id
+                )[:6]
+            )
+        edges = tuple(
+            item
+            for item in self.repository.edges(self.persona_id, group_id)
+            if item.source_member_id in subjects
+            or item.target_member_id in subjects
+        )[:8]
+        return ProfileKnownCognition(
+            facts=tuple(facts[:32]),
+            episodes=tuple(dict.fromkeys(episodes))[:12],
+            edges=edges,
+        )
 
     def _refresh_group_portrait(
         self,

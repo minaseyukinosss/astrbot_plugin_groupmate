@@ -185,7 +185,10 @@ class AstrBotStructuredWorker:
                 "保守判断 bot 是否应插话。输出 participation_assessment，proposition "
                 "必须包含 should_participate、decision(speak/silence)、"
                 "target_confidence、topic_confidence、disruption_cost、novelty、"
-                "repetition_cost。不确定时选择 silence。"
+                "repetition_cost。member_context.relations 表示在场成员已确认的互动关系，"
+                "两人正在对话时提高 disruption_cost，避免打断。"
+                "member_context.members.boundaries 是已确认边界，涉及这些内容的玩笑应 silence。"
+                "不确定时选择 silence。"
             ),
             "ambient_social_assessor": (
                 "联合理解普通群聊场景并保守评估 bot 是否应插话。先输出零到多个"
@@ -193,7 +196,10 @@ class AstrBotStructuredWorker:
                 "greeting、boundary_signal），再且仅输出一条 participation_assessment。"
                 "其 proposition 必须包含 should_participate、decision(speak/silence)、"
                 "target_confidence、topic_confidence、disruption_cost、novelty、"
-                "repetition_cost。不确定时选择 silence；不写回复正文。"
+                "repetition_cost。member_context.relations 表示在场成员已确认的互动关系，"
+                "两人正在自然交流时提高 disruption_cost；"
+                "member_context.members.boundaries 是已确认边界，涉及这些内容不要开玩笑。"
+                "不确定时选择 silence；不写回复正文。"
             ),
         }
         return instructions.get(

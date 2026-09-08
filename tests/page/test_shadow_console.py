@@ -73,6 +73,8 @@ def test_manual_refresh_updates_an_open_inspector_with_the_same_timeout():
     assert "refreshOpenInspector" in app
     assert "timeoutMs: 4_000" in app
     assert "activeInspectorQuery !== query" in app
+    assert "closeInspector" in app
+    assert 'event.key !== "Escape"' in app
 
 
 def test_trace_duration_is_explicitly_labeled_in_list_and_detail():
@@ -82,6 +84,20 @@ def test_trace_duration_is_explicitly_labeled_in_list_and_detail():
     assert "链路历时" in runtime
     assert '["链路历时", formatTraceDuration' in inspector
     assert '["总耗时"' not in inspector
+
+
+def test_inspector_can_open_the_member_profile_from_a_trace():
+    inspector = (PAGE / "components" / "inspector.js").read_text(encoding="utf-8")
+    profiles = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
+    app = (PAGE / "app.js").read_text(encoding="utf-8")
+
+    assert "查看画像" in inspector
+    assert "profileHref(actor.member_ref)" in inspector
+    assert 'get("member")' in profiles
+    assert 'impact: "这条消息的详情暂时无法展示，请刷新页面后重试。"' in (
+        PAGE / "bridge.js"
+    ).read_text(encoding="utf-8")
+    assert "closeInspector" in app
 
 
 def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details():
@@ -118,10 +134,17 @@ def test_inspector_leads_with_result_and_moves_diagnostics_to_technical_details(
         "处理阶段",
         "认知模块",
         "策略通道",
-        "原始诊断码",
+        "识别机会",
+        "未参与原因",
+        "候选来源",
     ):
         assert technical_label in technical_content
     assert "cognitionDiagnostics(understanding.diagnostics)" in technical_content
+    assert "const judgement = summary.judgement" in inspector.split(
+        "export function renderInspector", 1
+    )[1]
+    assert "judgement.opportunity_kind" in technical_content
+    assert "judgement.hard_block_reason" in technical_content
     assert "persona_cues" not in inspector
     for diagnostic_label in (
         "认知后端",

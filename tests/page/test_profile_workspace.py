@@ -9,11 +9,22 @@ PAGE = ROOT / "pages" / "settings"
 def test_profile_workspace_leads_with_member_identity_not_model_diagnostics():
     source = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
 
-    for label in ("一句话画像", "个体特征", "偏好与边界", "代表经历", "群友关系", "证据与审计"):
+    for label in ("一句话画像", "偏好与边界", "个体特征", "代表经历", "群友关系", "证据与审计"):
         assert label in source
-    assert source.index("一句话画像") < source.index("代表经历")
-    assert source.index("代表经历") < source.index("证据与审计")
+    detail = source.split("function renderDetail", 1)[1]
+    assert detail.index('section("一句话画像"') < detail.index('section("偏好与边界"')
+    assert detail.index('section("偏好与边界"') < detail.index('section("个体特征"')
+    assert detail.index('section("个体特征"') < detail.index('section("代表经历"')
+    assert detail.index('section("代表经历"') < detail.index('section("群友关系"')
+    assert detail.index('section("群友关系"') < detail.index("speechStyleSection(")
+    assert detail.index("speechStyleSection(") < detail.index("auditDetails(")
     assert "模型诊断" not in source
+    assert "FACT_CATEGORY_LABELS" in source
+    assert 'section("偏好与边界", editableItems(' in source
+    assert 'governedAction("纠正"' in source
+    assert "profileHref" in source
+    assert "history.replaceState" in source
+    assert "重新加载" in source
 
 
 def test_profile_workspace_has_search_member_list_detail_and_teaching_empty_state():
@@ -24,6 +35,8 @@ def test_profile_workspace_has_search_member_list_detail_and_teaching_empty_stat
     assert "画像会在群聊中逐步形成" in source
     assert "profile-member-list" in source
     assert "profile-detail" in source
+    assert 'get("member")' in source
+    assert "没有找到这位成员" in source
 
 
 def test_profile_workspace_scrolls_directory_and_detail_independently():
@@ -47,11 +60,12 @@ def test_profile_workspace_scrolls_directory_and_detail_independently():
 
 def test_profile_workspace_shows_compact_worker_health():
     source = (PAGE / "workspaces" / "profiles.js").read_text(encoding="utf-8")
-    app = (PAGE / "app.js").read_text(encoding="utf-8")
+    store = (PAGE / "store.js").read_text(encoding="utf-8")
 
     assert 'selectView("health")' in source
     assert "画像后台" in source
-    assert '"profiles", "group-portrait", "health"' in app
+    assert "画像运行状态" in source
+    assert '"profiles", "group-portrait", "health"' in store
 
 
 def test_profile_workspace_covers_backend_maturity_and_relation_enums():

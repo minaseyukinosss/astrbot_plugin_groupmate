@@ -59,3 +59,4 @@ def test_command_dialog_keeps_focusable_labels_and_server_side_authority_copy():
     assert "confirmation.focus()" in source
     assert "服务端会再次验证管理员、作用域、版本、原因与确认" in source
     assert 'attrs: { role: "alert" }' in source
+    assert "管理员暂停运行" in source

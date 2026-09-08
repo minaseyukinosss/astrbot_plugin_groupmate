@@ -10,6 +10,18 @@ from .contracts import ProfileEpisode, ProfileFact, ProfileSnapshot, SocialEdge
 from .repository import ProfileRepository
 
 
+_RELATION_LABELS = {
+    "frequent_interaction": "经常互动",
+    "familiar": "熟悉",
+    "supportive": "彼此支持",
+    "technical_peer": "技术同伴",
+    "teasing": "会互相打趣",
+    "conflict": "存在冲突",
+    "avoidance": "倾向回避",
+    "custom": "有稳定互动",
+}
+
+
 @dataclass(frozen=True)
 class RetrievedMember:
     subject_id: str
@@ -49,6 +61,12 @@ class ProfileRetriever:
                 (), (), (), (), "", {"members": [], "relations": []}
             )
         now = int(event.received_at)
+        preference_categories = {
+            "preference",
+            "dislike",
+            "boundary",
+            "interest",
+        }
         facts = tuple(
             sorted(
                 (
@@ -64,6 +82,7 @@ class ProfileRetriever:
                 ),
                 key=lambda item: (
                     subject_ids.index(item.subject_id),
+                    0 if item.category in preference_categories else 1,
                     -item.confidence,
                     -item.evidence_count,
                     -item.valid_from,
@@ -88,6 +107,7 @@ class ProfileRetriever:
                 ),
             )[:2]
         )
+        speaker_id = subject_ids[0]
         edges = tuple(
             sorted(
                 (
@@ -95,10 +115,16 @@ class ProfileRetriever:
                     for item in self.repository.edges(event.persona_id, group_id)
                     if item.status == "confirmed"
                     and (item.valid_until is None or item.valid_until > now)
-                    and item.source_member_id in subject_ids
-                    and item.target_member_id in subject_ids
+                    and (
+                        item.source_member_id == speaker_id
+                        or item.target_member_id == speaker_id
+                    )
                 ),
                 key=lambda item: (
+                    0
+                    if item.source_member_id in subject_ids
+                    and item.target_member_id in subject_ids
+                    else 1,
                     -item.strength,
                     -item.confidence,
                     item.edge_id,
@@ -218,7 +244,7 @@ class ProfileRetriever:
         lines.extend(
             "成员关系："
             f"{labels.get(edge.source_member_id, edge.source_member_id)} "
-            f"{edge.relation_type} "
+            f"{_RELATION_LABELS.get(edge.relation_type, '有稳定互动')} "
             f"{labels.get(edge.target_member_id, edge.target_member_id)}"
             for edge in edges
         )
@@ -250,6 +276,12 @@ class ProfileRetriever:
                         for fact in facts
                         if fact.subject_id == member.subject_id
                         and fact.category in {"identity", "speech_style"}
+                    ][:2],
+                    "boundaries": [
+                        fact.summary
+                        for fact in facts
+                        if fact.subject_id == member.subject_id
+                        and fact.category == "boundary"
                     ][:2],
                 }
                 for member in members

@@ -323,7 +323,7 @@
         entity_ref: "profiles:member:a1", kind: "member.profile", projection_version: 8, as_of: now,
         evidence_refs: [], summary: {
           ...actor("玲151", "a1"), one_line_portrait: "会持续追问到问题真正落地",
-          maturity: "established", group_roles: ["体验把关者"], fact_count: 9,
+          maturity: "stable", group_roles: ["体验把关者"], fact_count: 9,
           episode_count: 3, relation_count: 2, personalization_enabled: true, updated_at: now,
         },
       },
@@ -366,11 +366,12 @@
           individual_fingerprints: ["对模糊结论会继续追问", "能快速发现线上体验与设计预期的差距", "更看重真实可用而不是技术自证"],
           preferences_and_boundaries: ["喜欢直接、清楚、能验证的说明", "不接受只展示过程却没有明确结论"],
           relationship_summary: "长期共同打磨 Groupmate 的开发同伴",
-          maturity: "established", source_revision: 8, generated_at: now,
+          maturity: "stable", source_revision: 8, generated_at: now,
         },
         facts: [
-          { fact_ref: "fact:1", category: "沟通偏好", summary: "喜欢直接、清楚、能验证的说明", status: "confirmed", evidence_count: 4, confidence: 0.96 },
-          { fact_ref: "fact:2", category: "行为模式", summary: "对没有落地的问题会持续跟进", status: "confirmed", evidence_count: 6, confidence: 0.94 },
+          { fact_ref: "fact:1", category: "preference", summary: "喜欢直接、清楚、能验证的说明", status: "confirmed", evidence_count: 4, confidence: 0.96 },
+          { fact_ref: "fact:2", category: "boundary", summary: "不接受只展示过程却没有明确结论", status: "confirmed", evidence_count: 5, confidence: 0.93 },
+          { fact_ref: "fact:3", category: "behavior_pattern", summary: "对模糊结论会继续追问", status: "confirmed", evidence_count: 6, confidence: 0.94 },
         ],
         episodes: [
           { episode_ref: "episode:1", title: "一起修复线上图片错行", summary: "持续对比真实群聊与预览效果，直到字体和间距问题落地。", occurred_at: now - 86400 },
@@ -381,7 +382,7 @@
           relation_type: "technical_peer", direction: "bidirectional", strength: 0.78,
           confidence: 0.91, status: "confirmed", last_observed_at: now,
         }],
-        audit: [{ action_type: "画像快照已更新", created_at: now }],
+        audit: [{ action_type: "profile_fact_corrected", created_at: now }],
       },
     }],
   };
@@ -522,7 +523,51 @@
         };
       }
       if (endpoint === "media") throw new Error("preview unavailable");
-      if (endpoint === "profile") return profileDetail;
+      if (endpoint === "profile") {
+        const ref = String(params.member_ref || "");
+        if (ref === "member:b2") {
+          const item = JSON.parse(JSON.stringify(profileDetail.items[0]));
+          item.entity_ref = "profile:member:b2";
+          item.summary.member = actor("小赛151", "b2");
+          item.summary.snapshot.one_line_portrait = "擅长把复杂技术问题拆成可执行步骤";
+          item.summary.snapshot.group_roles = ["技术同伴"];
+          item.summary.snapshot.maturity = "forming";
+          item.summary.snapshot.relationship_summary = "和玲151一起把线上问题拆成可执行步骤";
+          item.summary.relations = [{
+            other_member_ref: "member:a1",
+            other_display_name: "玲151",
+            other_avatar_ref: "participant:a1",
+            relation_type: "technical_peer",
+            direction: "bidirectional",
+            strength: 0.78,
+            confidence: 0.91,
+            status: "confirmed",
+            last_observed_at: now,
+          }];
+          return { ...profileDetail, items: [item] };
+        }
+        if (ref === "member:c3") {
+          const item = JSON.parse(JSON.stringify(profileDetail.items[0]));
+          item.entity_ref = "profile:member:c3";
+          item.summary.member = actor("青禾", "c3");
+          item.summary.snapshot = {
+            one_line_portrait: "画像正在形成",
+            group_roles: [],
+            individual_fingerprints: [],
+            preferences_and_boundaries: [],
+            relationship_summary: "关系认知正在积累",
+            maturity: "new",
+            source_revision: 1,
+            generated_at: now,
+          };
+          item.summary.facts = [];
+          item.summary.episodes = [];
+          item.summary.relations = [];
+          item.summary.audit = [];
+          return { ...profileDetail, items: [item] };
+        }
+        return profileDetail;
+      }
       if (endpoint.startsWith("knowledge/")) {
         const value = knowledgeViews[endpoint] || { scope: knowledgeScope, revision: 8, next_cursor: null, items: [] };
         if (!params.status || !Array.isArray(value.items)) return value;

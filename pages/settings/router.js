@@ -11,6 +11,17 @@ export function normalizeHash(hash) {
   return ROUTE_PATHS.has(raw) ? raw : "/runtime";
 }
 
+export function hashQuery(hash) {
+  const raw = String(hash || "").replace(/^#/, "");
+  const query = raw.split("?", 2)[1] || "";
+  return Object.fromEntries(new URLSearchParams(query));
+}
+
+export function profileHref(memberRef) {
+  const encoded = encodeURIComponent(String(memberRef || "").trim());
+  return encoded ? `#/profiles?member=${encoded}` : "#/profiles";
+}
+
 export function createRouter(browserWindow = window) {
   const listeners = new Set();
 

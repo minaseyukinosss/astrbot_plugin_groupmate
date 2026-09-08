@@ -83,6 +83,8 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
     assert "anchor_event_id" in system_message
     assert "relationship_events" in system_message
     assert "relationship_memories" in system_message
+    assert "member_context.relations" in system_message
+    assert "member_context.members.boundaries" in system_message
     assert "不得输出amount、delta、score" in system_message
     assert json.loads(body["messages"][1]["content"]) == {
         "events": [{"id": "qq:1"}]

@@ -58,6 +58,9 @@ def test_workspace_exposes_review_states_actions_and_mobile_safe_layout():
     layout = (PAGE / "styles" / "layout.css").read_text(encoding="utf-8")
 
     for label in (
+        "需要处理",
+        "更多本群记录",
+        "运行保障与目录",
         "本群认知",
         "共享知识库",
         "所有群共享",
@@ -117,7 +120,7 @@ def test_workspace_exposes_accessible_entity_detail_with_safe_public_sources():
     assert "所属游戏" in source
     assert "同游戏相关实体" in source
     assert "运行保障" in source
-    assert "本地解析 P95" in source
+    assert "多数请求耗时" in source
     assert "场景失效拦截" in source
     assert "原始群聊不会在这里展示" in source
     assert ".knowledge-detail" in styles

@@ -14,13 +14,17 @@ import {
   participationOpportunityLabel,
   participationDiagnosticLabel,
   participationLaneLabel,
+  hardBlockReasonLabel,
+  candidateSourceLabel,
   traceResultHeadline,
   traceResultReason,
   traceResultState,
   triggerBasisLabel,
   valueLabel,
+  deliveryOutcomeLabel,
 } from "./presenters.js";
 import { renderMessageContent } from "./message.js";
+import { profileHref } from "../router.js";
 
 export const INSPECTOR_FIELDS = Object.freeze([
   ["actor", "参与者"],
@@ -43,6 +47,14 @@ function avatar(actor = {}) {
     text: initials(actor.display_name),
     dataset: { avatarRef: actor.avatar_ref },
     attrs: { "aria-hidden": "true" },
+  });
+}
+
+function profileLink(actor = {}) {
+  return element("a", {
+    className: "inspector-profile-link",
+    text: "查看画像",
+    attrs: { href: profileHref(actor.member_ref) },
   });
 }
 
@@ -162,6 +174,7 @@ export function renderInspector(item) {
   const message = summary.message || {};
   const route = summary.route || {};
   const understanding = summary.understanding || {};
+  const judgement = summary.judgement || {};
   const decision = summary.decision || {};
   const delivery = summary.delivery || {};
   const timing = summary.timing || {};
@@ -174,6 +187,7 @@ export function renderInspector(item) {
         element("span", { text: actor.display_name || "群成员" }),
         element("strong", { text: messageSummary(message) }),
         element("time", { text: formatTimestamp(timing.received_at || item?.as_of) }),
+        ...(actor.member_ref ? [profileLink(actor)] : []),
       ]),
     ]),
     renderResultSummary(summary),
@@ -202,19 +216,16 @@ export function renderInspector(item) {
       definitionRows([
         ["理解状态", cognitionStateLabel(understanding.status)],
         ["理解摘要", understanding.summary],
-      ["策略通道", participationLaneLabel(decision.participation_lane)],
-      ["识别机会", participationOpportunityLabel(judgement.opportunity_kind)],
-      ["方向硬门", judgement.hard_block_reason],
+        ["策略通道", participationLaneLabel(decision.participation_lane)],
+        ["识别机会", participationOpportunityLabel(judgement.opportunity_kind)],
+        ["未参与原因", hardBlockReasonLabel(judgement.hard_block_reason)],
         ["策略依据", (understanding.participation_diagnostics || []).map(participationDiagnosticLabel).join("；")],
         ["原始参与判断", decisionLabel(decision.pre_gate_outcome || decision.outcome)],
         ["运行模式", valueLabel("runtime_mode", delivery.mode)],
-        ["交付状态", delivery.label],
+        ["交付状态", deliveryOutcomeLabel(delivery)],
         ["交付错误", delivery.error],
         ["生成诊断", decision.reply_diagnostic],
-        ["追踪引用", item?.entity_ref],
-        ["原始策略通道", decision.participation_lane],
-        ["原始候选来源", understanding.candidate_source],
-        ["原始诊断码", (understanding.diagnostics || []).map((entry) => entry.diagnostic_code).filter(Boolean).join("、")],
+        ["候选来源", candidateSourceLabel(understanding.candidate_source)],
         ["链路历时", formatTraceDuration(timing.total_ms)],
         ["更新时间", formatTimestamp(timing.updated_at || item?.as_of)],
       ]),

@@ -1,5 +1,6 @@
 import { element } from "../components/dom.js";
 import { governedAction } from "../components/command-dialog.js";
+import { profileHref } from "../router.js";
 
 const MATURITY_LABELS = Object.freeze({
   new: "刚开始了解",
@@ -16,6 +17,26 @@ const RELATION_LABELS = Object.freeze({
   conflict: "存在冲突",
   avoidance: "倾向回避",
   custom: "有稳定互动",
+});
+
+const FACT_CATEGORY_LABELS = Object.freeze({
+  identity: "身份",
+  preference: "偏好",
+  dislike: "不喜欢",
+  boundary: "边界",
+  interest: "兴趣",
+  skill: "能力",
+  speech_style: "说话习惯",
+  behavior_pattern: "行为特点",
+  group_role: "群内角色",
+});
+
+const AUDIT_ACTION_LABELS = Object.freeze({
+  profile_fact_corrected: "已纠正",
+  profile_fact_invalidated: "已标记失效",
+  profile_fact_stale: "已过时",
+  profile_identity_merged: "已合并身份",
+  profile_identity_split: "已拆分身份",
 });
 
 function avatar(member, large = false) {
@@ -54,6 +75,62 @@ function formatDate(value) {
   }).format(new Date(milliseconds));
 }
 
+function confirmedFactMap(facts) {
+  const map = new Map();
+  for (const fact of Array.isArray(facts) ? facts : []) {
+    if (fact?.status === "confirmed" && fact.summary) map.set(fact.summary, fact);
+  }
+  return map;
+}
+
+function factActions(fact, member, summary, submitCommand, refresh) {
+  if (fact?.status !== "confirmed") return [];
+  return [
+    governedAction("纠正", {
+      type: "profile_fact_correct",
+      expected_version: summary.profile_revision,
+      payload: { member_ref: member.member_ref, fact_ref: fact.fact_ref },
+    }, async (spec) => {
+      await submitCommand(spec);
+      await refresh();
+    }, {
+      title: "纠正这条画像事实",
+      submitLabel: "确认纠正",
+      fields: [{
+        name: "new_summary",
+        label: "正确内容",
+        multiline: true,
+        defaultValue: fact.summary,
+      }],
+    }),
+    governedAction("标记失效", {
+      type: "profile_fact_invalidate",
+      expected_version: summary.profile_revision,
+      payload: { member_ref: member.member_ref, fact_ref: fact.fact_ref },
+    }, async (spec) => {
+      await submitCommand(spec);
+      await refresh();
+    }, { danger: true, submitLabel: "确认失效" }),
+  ];
+}
+
+function editableItems(items, emptyText, facts, member, summary, submitCommand, refresh) {
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!values.length) {
+    return element("p", { className: "profile-empty-copy", text: emptyText });
+  }
+  const known = confirmedFactMap(facts);
+  return element("ul", { className: "profile-value-list profile-editable-list" }, values.map((value) => {
+    const fact = known.get(value);
+    return element("li", { className: fact ? "profile-editable-item" : "" }, [
+      element("span", { text: value }),
+      ...(fact ? [element("div", { className: "profile-evidence-meta" }, factActions(
+        fact, member, summary, submitCommand, refresh,
+      ))] : []),
+    ]);
+  }));
+}
+
 function relationRows(relations) {
   if (!relations.length) return element("p", {
     className: "profile-empty-copy",
@@ -64,18 +141,21 @@ function relationRows(relations) {
       display_name: relation.other_display_name,
       avatar_ref: relation.other_avatar_ref,
     };
-    return element("div", { className: "profile-relation-row" }, [
+    const body = [
       avatar(other),
       element("div", {}, [
         element("strong", { text: relation.other_display_name }),
-        element("span", { text: RELATION_LABELS[relation.relation_type] || relation.relation_type }),
+        element("span", { text: RELATION_LABELS[relation.relation_type] || "有稳定互动" }),
       ]),
-      element("span", {
-        className: "profile-strength",
-        text: `${Math.round(Number(relation.strength || 0) * 100)}%`,
-        attrs: { title: "关系强度" },
-      }),
-    ]);
+    ];
+    const href = profileHref(relation.other_member_ref);
+    if (href === "#/profiles") {
+      return element("div", { className: "profile-relation-row" }, body);
+    }
+    return element("a", {
+      className: "profile-relation-row",
+      attrs: { href },
+    }, body);
   }));
 }
 
@@ -103,42 +183,16 @@ function auditDetails(summary, member, submitCommand, refresh) {
       text: `当前有 ${facts.length} 条认知事实，其中 ${facts.filter((fact) => fact.status === "confirmed").length} 条已确认。`,
     }),
     ...facts.map((fact) => element("div", { className: "profile-evidence-row" }, [
-      element("span", { text: fact.category }),
+      element("span", { text: FACT_CATEGORY_LABELS[fact.category] || "认知" }),
       element("p", { text: fact.summary }),
       element("div", { className: "profile-evidence-meta" }, [
-        element("small", { text: `${fact.evidence_count} 条证据 · 置信度 ${Math.round(Number(fact.confidence || 0) * 100)}%` }),
-        ...(fact.status === "confirmed" ? [
-          governedAction("纠正", {
-            type: "profile_fact_correct",
-            expected_version: summary.profile_revision,
-            payload: { member_ref: member.member_ref, fact_ref: fact.fact_ref },
-          }, async (spec) => {
-            await submitCommand(spec);
-            await refresh();
-          }, {
-            title: "纠正这条画像事实",
-            submitLabel: "确认纠正",
-            fields: [{
-              name: "new_summary",
-              label: "正确内容",
-              multiline: true,
-              defaultValue: fact.summary,
-            }],
-          }),
-          governedAction("标记失效", {
-            type: "profile_fact_invalidate",
-            expected_version: summary.profile_revision,
-            payload: { member_ref: member.member_ref, fact_ref: fact.fact_ref },
-          }, async (spec) => {
-            await submitCommand(spec);
-            await refresh();
-          }, { danger: true, submitLabel: "确认失效" }),
-        ] : []),
+        element("small", { text: `${fact.evidence_count} 条证据` }),
+        ...factActions(fact, member, summary, submitCommand, refresh),
       ]),
     ])),
     ...audit.map((item) => element("p", {
       className: "profile-audit-line",
-      text: `${formatDate(item.created_at)} · ${item.action_type}`,
+      text: `${formatDate(item.created_at)} · ${AUDIT_ACTION_LABELS[item.action_type] || "画像已更新"}`,
     })),
   ]);
   return element("details", { className: "profile-audit" }, [
@@ -186,7 +240,7 @@ function speechStyleSection(summary, member, submitCommand, refresh) {
       submitLabel: style.enabled ? "确认关闭" : "确认开启",
     },
   );
-  return section("说话风格蒸馏", element("div", {
+  const body = element("div", {
     className: "profile-style-distillation",
   }, [
     element("div", { className: "profile-style-heading" }, [
@@ -207,13 +261,18 @@ function speechStyleSection(summary, member, submitCommand, refresh) {
       element("div", {}, [element("dt", { text: "风格版本" }), element("dd", { text: style.style_version ?? "—" })]),
     ]),
     list(traits, "还没有形成可用的稳定表达特征。", "profile-style-traits"),
-  ]), "profile-style-section");
+  ]);
+  return element("details", { className: "profile-audit profile-style-section" }, [
+    element("summary", { text: "说话风格蒸馏" }),
+    body,
+  ]);
 }
 
 function renderDetail(item, hydrateAvatars, submitCommand, refresh) {
   const summary = item?.summary || {};
   const member = summary.member || {};
   const snapshot = summary.snapshot || {};
+  const facts = Array.isArray(summary.facts) ? summary.facts : [];
   const episodes = Array.isArray(summary.episodes) ? summary.episodes : [];
   const relations = Array.isArray(summary.relations) ? summary.relations : [];
   const detail = element("article", { className: "profile-detail" }, [
@@ -228,28 +287,26 @@ function renderDetail(item, hydrateAvatars, submitCommand, refresh) {
       ]),
       element("span", {
         className: "profile-maturity",
-        text: MATURITY_LABELS[snapshot.maturity] || "逐步形成",
+        text: MATURITY_LABELS[snapshot.maturity] || MATURITY_LABELS.forming,
       }),
     ]),
     section("一句话画像", element("p", {
       className: "profile-portrait-quote",
       text: snapshot.one_line_portrait || "画像正在形成",
     }), "profile-lead"),
-    speechStyleSection(summary, member, submitCommand, refresh),
-    section("个体特征", list(
-      snapshot.individual_fingerprints,
-      "还没有足够稳定的个体特征。",
-    )),
-    section("偏好与边界", list(
+    section("偏好与边界", editableItems(
       snapshot.preferences_and_boundaries,
       "偏好和边界仍在观察中。",
+      facts, member, summary, submitCommand, refresh,
     )),
-    section("与 Groupmate 的关系", element("p", {
-      className: "profile-relationship-copy",
-      text: snapshot.relationship_summary || "关系认知正在积累",
-    })),
+    section("个体特征", editableItems(
+      snapshot.individual_fingerprints,
+      "还没有足够稳定的个体特征。",
+      facts, member, summary, submitCommand, refresh,
+    )),
     section("代表经历", episodeRows(episodes)),
     section("群友关系", relationRows(relations)),
+    speechStyleSection(summary, member, submitCommand, refresh),
     auditDetails(summary, member, submitCommand, refresh),
   ]);
   queueMicrotask(() => hydrateAvatars?.(detail));
@@ -301,6 +358,13 @@ function profileWorkerHealth(view) {
   });
 }
 
+function rememberMember(memberRef) {
+  const href = profileHref(memberRef);
+  if (href !== "#/profiles" && window.location.hash !== href) {
+    history.replaceState(null, "", href);
+  }
+}
+
 export function renderProfiles(selectView, submitCommand, refresh, query, hydrateAvatars) {
   const view = selectView("profiles");
   const members = Array.isArray(view?.items) ? view.items : [];
@@ -323,11 +387,12 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
         element("small", { text: member.one_line_portrait || "画像正在形成" }),
       ]),
       element("span", { className: "profile-member-meta" }, [
-        element("b", { text: MATURITY_LABELS[member.maturity] || "刚开始了解" }),
+        element("b", { text: MATURITY_LABELS[member.maturity] || MATURITY_LABELS.forming }),
         element("small", { text: `${member.fact_count || 0} 条认知` }),
       ]),
     ]);
     row.addEventListener("click", async () => {
+      rememberMember(member.member_ref);
       detailHost.scrollTop = 0;
       activeButton?.classList.remove("is-active");
       row.classList.add("is-active");
@@ -346,9 +411,16 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
         ));
       } catch (_error) {
         if (!row.isConnected || activeButton !== row) return;
+        const retry = element("button", {
+          className: "button button-secondary",
+          text: "重新加载",
+          attrs: { type: "button" },
+        });
+        retry.addEventListener("click", () => row.click());
         detailHost.replaceChildren(element("div", { className: "profile-detail profile-teaching-state" }, [
           element("h2", { text: "画像暂时无法读取" }),
-          element("p", { text: "当前列表仍可使用，请稍后刷新后重试。" }),
+          element("p", { text: "当前列表仍可使用，请稍后重试。" }),
+          retry,
         ]));
       }
     });
@@ -391,7 +463,6 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
   });
 
   const root = element("div", { className: "profile-workspace workspace-stack" }, [
-    profileWorkerHealth(selectView("health")),
     portraitHeader(selectView("group-portrait")),
     element("section", { className: "profile-browser" }, [
       element("aside", { className: "profile-directory", attrs: { "aria-label": "群成员列表" } }, [
@@ -404,10 +475,25 @@ export function renderProfiles(selectView, submitCommand, refresh, query, hydrat
           search,
         ]),
         memberList,
+        element("details", { className: "profile-ops" }, [
+          element("summary", { text: "画像运行状态" }),
+          profileWorkerHealth(selectView("health")),
+        ]),
       ]),
       detailHost,
     ]),
   ]);
+  const requested = new URLSearchParams(String(window.location.hash).split("?")[1] || "").get("member");
+  if (requested) {
+    const match = memberButtons.find((row) => row.dataset.memberRef === requested);
+    if (match) queueMicrotask(() => match.click());
+    else {
+      detailHost.replaceChildren(element("div", { className: "profile-detail profile-teaching-state" }, [
+        element("h2", { text: "没有找到这位成员" }),
+        element("p", { text: "画像列表里还没有对应记录，群聊积累后会逐步出现。" }),
+      ]));
+    }
+  }
   queueMicrotask(() => hydrateAvatars?.(root));
   return root;
 }

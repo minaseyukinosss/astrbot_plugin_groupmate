@@ -155,7 +155,7 @@ def test_retrieval_includes_bounded_episode_and_relation_for_explicit_members(tm
     )
 
     assert "修好了线上图片错行" in result.prompt_text
-    assert "technical_peer" in result.prompt_text
+    assert "技术同伴" in result.prompt_text
 
 
 def test_profile_context_obeys_hard_character_budget(tmp_path):
@@ -209,3 +209,50 @@ def test_group_member_refs_only_publish_confirmed_group_aliases(tmp_path):
 
     assert refs == {"u1": ("小林",), "u2": ("霞月",)}
     assert "未确认称呼" not in refs["u1"]
+
+
+def test_retrieval_includes_speaker_relation_even_if_other_party_is_not_in_message(
+    tmp_path,
+):
+    repo = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")
+    _remember_alias(repo, "u1", "甲")
+    _remember_alias(repo, "u9", "乙")
+    repo.put_edge(
+        SocialEdge(
+            edge_id="edge-quiet",
+            persona_id="persona",
+            group_id="group-1",
+            source_member_id="u1",
+            target_member_id="u9",
+            relation_type="technical_peer",
+            direction="bidirectional",
+            strength=0.7,
+            confidence=0.92,
+            source_event_ids=("e1", "e2", "e3"),
+            status="confirmed",
+            valid_from=100,
+            valid_until=None,
+            last_observed_at=150,
+        )
+    )
+
+    result = ProfileRetriever(repo).for_message(_message(actor="u1"), max_chars=1200)
+
+    assert "技术同伴" in result.prompt_text
+    assert result.edges[0].target_member_id == "u9"
+    assert result.ambient_context["members"][0]["boundaries"] == []
+
+
+def test_retrieval_exposes_confirmed_boundaries_for_participation(tmp_path):
+    repo = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")
+    _remember_alias(repo, "u1", "甲")
+    repo.put_fact(_fact("u1", "不拿考试成绩开玩笑", category="boundary"))
+    repo.put_fact(_fact("u1", "喜欢冷饮", category="preference", index=2))
+
+    result = ProfileRetriever(repo).for_message(_message(actor="u1"), max_chars=1200)
+
+    assert result.ambient_context["members"][0]["boundaries"] == [
+        "不拿考试成绩开玩笑"
+    ]
+    assert "不拿考试成绩开玩笑" in result.prompt_text
+

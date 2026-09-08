@@ -127,6 +127,34 @@ def test_observation_claim_and_completion_are_group_scoped(tmp_path):
     ] == ["event-group-2"]
 
 
+def test_observation_claim_starts_from_one_member_then_nearby_partners(tmp_path):
+    repo = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")
+    for event_id, actor_id, occurred_at in (
+        ("event-a", "member-1", 100),
+        ("event-b", "member-2", 110),
+        ("event-c", "member-3", 5000),
+    ):
+        repo.enqueue_observation(
+            ProfileObservation(
+                event_id=event_id,
+                persona_id="persona",
+                group_id="group-1",
+                actor_id=actor_id,
+                payload={"text": actor_id},
+                occurred_at=occurred_at,
+            )
+        )
+
+    claimed = repo.claim_observations(
+        "persona", "group-1", limit=20, now=5000
+    )
+
+    assert [item.event_id for item in claimed] == ["event-a", "event-b"]
+    assert repo.pending_observation_count(
+        "persona", "group-1", "member-3"
+    ) == 1
+
+
 def test_profile_episode_round_trips_for_one_member(tmp_path):
     repo = ProfileRepository(tmp_path / "groupmate-social-runtime-v2.db")
     episode = ProfileEpisode(

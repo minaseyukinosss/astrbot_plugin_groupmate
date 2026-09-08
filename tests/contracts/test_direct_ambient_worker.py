@@ -267,6 +267,32 @@ def test_direct_ambient_worker_sends_only_bounded_safe_facts():
     assert result.input_bytes < 10_500
 
 
+def test_direct_ambient_worker_forwards_confirmed_boundaries():
+    context = _context()
+    world = dict(context.world_summary)
+    member_context = dict(world["member_context"])
+    members = [
+        {
+            **member_context["members"][0],
+            "boundaries": ["不拿考试成绩开玩笑"],
+        }
+    ]
+    context = replace(
+        context,
+        world_summary={
+            **world,
+            "member_context": {**member_context, "members": members},
+        },
+    )
+    client = FakeClient(_verdict())
+
+    asyncio.run(DirectAmbientWorker(client).observe_with_result(_frame(), context))
+
+    assert client.facts["member_context"]["members"][0]["boundaries"] == [
+        "不拿考试成绩开玩笑"
+    ]
+
+
 def _owned_reply_context():
     context = _context()
     current = {**context.focus_events[-1], "event_type": "platform.message",

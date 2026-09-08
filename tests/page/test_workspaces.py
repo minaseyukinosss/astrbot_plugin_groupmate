@@ -19,7 +19,7 @@ def test_runtime_is_the_only_product_workspace():
     router = _source(PAGE / "router.js")
     source = _source(WORKSPACES / "runtime.js")
 
-    assert re.search(r"export function renderRuntime\(select, command, refreshData\)", source)
+    assert re.search(r"export function renderRuntime\(select, command, refreshData", source)
     assert './workspaces/runtime.js' in app
     assert 'path: "/runtime"' in router
     for name in ("persona", "people", "activity", "governance"):
