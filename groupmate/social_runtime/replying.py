@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -58,6 +59,50 @@ from .stances import Boundary, PermissionSnapshot, StanceDecision
 
 DELIVERY_GRACE_SECONDS = 20
 MAX_REPLY_AGE_SECONDS = 60
+MAX_DELIVERY_BUBBLES = 2
+_MIN_BUBBLE_CHARS = 6
+
+
+def split_reply_bubbles(text: str, *, max_bubbles: int) -> tuple[str, ...]:
+    """Split a reviewed reply into 1-2 short delivery bubbles.
+
+    Prefer blank-line beats from generation. Otherwise, only split a longer
+    single paragraph at a mid sentence so ordinary chat can feel like two taps
+    without changing participation gates.
+    """
+    cleaned = str(text or "").strip()
+    limit = max(1, min(int(max_bubbles), MAX_DELIVERY_BUBBLES))
+    if not cleaned or limit == 1:
+        return (cleaned,) if cleaned else ()
+    blank = tuple(
+        segment.strip()
+        for segment in re.split(r"\n\s*\n", cleaned)
+        if segment.strip()
+    )
+    if len(blank) >= 2:
+        if len(blank) <= limit:
+            return blank
+        head = blank[: limit - 1]
+        tail = "\n\n".join(blank[limit - 1 :])
+        return (*head, tail)
+    if len(cleaned) < _MIN_BUBBLE_CHARS * 2:
+        return (cleaned,)
+    best: tuple[str, str] | None = None
+    best_score = None
+    midpoint = len(cleaned) / 2
+    for match in re.finditer(r"[。！？!?]", cleaned):
+        cut = match.end()
+        left = cleaned[:cut].strip()
+        right = cleaned[cut:].strip()
+        if len(left) < _MIN_BUBBLE_CHARS or len(right) < _MIN_BUBBLE_CHARS:
+            continue
+        score = abs(cut - midpoint)
+        if best is None or score < best_score:
+            best = (left, right)
+            best_score = score
+    if best is None:
+        return (cleaned,)
+    return best
 
 
 class ReplyPlanIdentityConflict(RuntimeError):
@@ -160,12 +205,15 @@ class ReplyExecutionResult:
     part: OutboxPart | None
     status: str
     diagnostic_code: str | None = None
+    delivered_texts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in {"READY", "MODEL_FAILED", "REJECTED"}:
             raise ValueError("unknown reply execution status")
         if self.status == "READY" and self.part is None:
             raise ValueError("ready reply execution requires an outbox part")
+        if self.delivered_texts and self.part is None:
+            raise ValueError("delivered texts require an outbox part")
 
     @property
     def usable_for_lease(self) -> bool:
@@ -914,9 +962,7 @@ class ReplyExecutor:
                 self.repository.mark(plan.plan_id, "silent")
                 return ReplyExecutionResult(None, "REJECTED", "output_firewall_rejected")
             self.repository.mark(plan.plan_id, "generated")
-            return ReplyExecutionResult(
-                self._enqueue(plan, realized.text), "READY"
-            )
+            return self._ready_result(plan, realized.text)
         if plan.move.knowledge_policy is KnowledgePolicy.STRICT:
             return await self._execute_strict(
                 plan,
@@ -990,7 +1036,7 @@ class ReplyExecutor:
                 "reply_review_rejected",
             )
         self.repository.mark(plan.plan_id, "generated")
-        return ReplyExecutionResult(self._enqueue(plan, realized.text), "READY")
+        return self._ready_result(plan, realized.text)
 
     async def _preview_strict(
         self,
@@ -1048,7 +1094,7 @@ class ReplyExecutor:
                 "knowledge_review_rejected",
             )
         self.repository.mark(plan.plan_id, "generated")
-        return ReplyExecutionResult(self._enqueue(plan, realized.text), "READY")
+        return self._ready_result(plan, realized.text)
 
     async def _strict_generation_cycle(
         self,
@@ -1523,7 +1569,8 @@ class ReplyExecutor:
             self.repository.mark(plan.plan_id, "silent")
             return None
         self.repository.mark(plan.plan_id, "generated")
-        return self._enqueue(plan, fallback.text)
+        part, _texts = self._enqueue(plan, fallback.text)
+        return part
 
     def _knowledge_failed(
         self, plan: ReplyPlan, request: GenerationRequest
@@ -1536,7 +1583,8 @@ class ReplyExecutor:
             self.repository.mark(plan.plan_id, "silent")
             return None
         self.repository.mark(plan.plan_id, "generated")
-        return self._enqueue(plan, text)
+        part, _texts = self._enqueue(plan, text)
+        return part
 
     @staticmethod
     def _knowledge_fallback_text(plan: ReplyPlan) -> str | None:
@@ -1567,20 +1615,31 @@ class ReplyExecutor:
             text = "这次我先不乱说。"
         return RealizedReply(text, covered_ids, (), (), source_ids)
 
-    def _enqueue(self, plan: ReplyPlan, text: str) -> OutboxPart:
-        part_id = f"reply-part:{plan.plan_id}"
-        part = DeliveryPart.create(
-            part_id=part_id,
-            kind=DeliveryPartKind.TEXT,
-            payload={
-                "text": text,
-                "platform_id": plan.platform_id,
-                "session": plan.session,
-                "self_id": plan.bot_id,
-            },
-            order=0,
-            idempotency_key=f"reply-send:{plan.plan_id}",
-            expires_at=plan.expires_at,
+    def _ready_result(self, plan: ReplyPlan, text: str) -> ReplyExecutionResult:
+        part, texts = self._enqueue(plan, text)
+        return ReplyExecutionResult(part, "READY", delivered_texts=texts)
+
+    def _enqueue(self, plan: ReplyPlan, text: str) -> tuple[OutboxPart, tuple[str, ...]]:
+        bubbles = split_reply_bubbles(
+            text, max_bubbles=min(MAX_DELIVERY_BUBBLES, max(1, plan.style.max_segments))
+        )
+        if not bubbles:
+            bubbles = (str(text or "").strip() or "……",)
+        parts = tuple(
+            DeliveryPart.create(
+                part_id=f"reply-part:{plan.plan_id}:{index}",
+                kind=DeliveryPartKind.TEXT,
+                payload={
+                    "text": bubble,
+                    "platform_id": plan.platform_id,
+                    "session": plan.session,
+                    "self_id": plan.bot_id,
+                },
+                order=index,
+                idempotency_key=f"reply-send:{plan.plan_id}:{index}",
+                expires_at=plan.expires_at,
+            )
+            for index, bubble in enumerate(bubbles)
         )
         bundle = DeliveryBundle.create(
             bundle_id=f"reply-bundle:{plan.plan_id}",
@@ -1588,13 +1647,13 @@ class ReplyExecutor:
             persona_id=plan.persona_id,
             group_id=plan.group_id,
             topic_id=plan.topic_id,
-            parts=(part,),
+            parts=parts,
             created_at=plan.created_at,
             expires_at=plan.expires_at,
         )
         self.outbox.commit_bundle(bundle)
         self.repository.mark(plan.plan_id, "enqueued")
-        return self.outbox.outbox(part_id)
+        return self.outbox.outbox(parts[0].part_id), bubbles
 
     @staticmethod
     def _continue_from(
@@ -1699,6 +1758,7 @@ class ReplyExecutor:
             f"{structured_contract}"
             "直接完成指定动作；简单问题一句说完，需要证据时只问缺少的内容。"
             "普通社交回复优先在20到40个中文字符内说完；只有必须覆盖的事实较多时才接近上限。"
+            "若本轮自然有两拍（短反应再补一句），用一个空行分成两段；不要拆成两段以上，也不要为了拆条硬凑。"
             "不要复述问题，不要宣布自己正在回应，也不要在结尾追加通用服务邀请。"
             "拒绝时说清本轮边界；技术回答只使用消息中已有条件和已列事实。"
             "只使用提供的安全 Persona 上下文，不模仿任何参考 Bot 的固定口癖。"
@@ -1808,6 +1868,7 @@ class ReplyExecutor:
 __all__ = (
     "DELIVERY_GRACE_SECONDS",
     "ExpressionPlan",
+    "MAX_DELIVERY_BUBBLES",
     "MAX_REPLY_AGE_SECONDS",
     "ReplyExecutor",
     "ReplyExecutionResult",
@@ -1817,4 +1878,5 @@ __all__ = (
     "ReplyPlanRepository",
     "ReplyPlanner",
     "TextModelPort",
+    "split_reply_bubbles",
 )

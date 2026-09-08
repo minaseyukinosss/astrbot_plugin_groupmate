@@ -114,3 +114,69 @@ def test_continue_from_uses_latest_self_turn_to_current_target_not_later_other()
     assert continue_from_event_id(
         (), target_id="u1", anchor_event_id="user:now", planned_id="bot:owned",
     ) == "bot:owned"
+
+
+def test_dialogue_resolves_indexed_reply_part_to_plan(tmp_path):
+    from groupmate.social_runtime.dialogue import DialogueContextReader
+    from groupmate.social_runtime.replying import ReplyPlanRepository, ReplyPlanner
+    from tests.social_runtime.actions.test_replying import (
+        _evaluation,
+        _persona_profile,
+    )
+
+    path = tmp_path / "runtime.db"
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile(),
+    )
+    ReplyPlanRepository(path).save(plan)
+    outbox = OutboxService(path)
+    part = DeliveryPart.create(
+        part_id=f"reply-part:{plan.plan_id}:0",
+        kind=DeliveryPartKind.TEXT,
+        order=0,
+        payload={"text": "先这样。", "self_id": "bot"},
+        idempotency_key=f"reply-send:{plan.plan_id}:0",
+        expires_at=200,
+    )
+    outbox.commit_bundle(DeliveryBundle.create(
+        bundle_id=f"reply-bundle:{plan.plan_id}",
+        correlation_id=plan.correlation_id,
+        persona_id=plan.persona_id,
+        group_id=plan.group_id,
+        topic_id=plan.topic_id,
+        parts=(part,),
+        created_at=90,
+        expires_at=200,
+    ))
+    outbox.claim_ready(now=100)
+    outbox.record_receipt(DeliveryReceipt.create(
+        receipt_id="r:bubble0",
+        part_id=part.part_id,
+        status=DeliveryReceiptStatus.SUCCESS,
+        occurred_at=101,
+        platform_message_id="platform:bubble0",
+    ))
+    feedback = SocialEventEnvelope.create(**social_event_values(
+        event_id="feedback:bubble0",
+        event_type="delivery.sent",
+        persona_id=plan.persona_id,
+        group_id=plan.group_id,
+        actor_id=None,
+        occurred_at=101,
+        received_at=101,
+        payload={"part_id": part.part_id, "receipt_id": "r:bubble0"},
+    ))
+    current = SocialEventEnvelope.create(**social_event_values(
+        event_id="m1",
+        persona_id=plan.persona_id,
+        group_id=plan.group_id,
+        actor_id="u1",
+        occurred_at=102,
+        received_at=102,
+        payload={"text": "嗯嗯"},
+    ))
+    result = DialogueContextReader(path).read(
+        plan.persona_id, plan.group_id, (feedback, current), ("m1",),
+    )
+    assert result[0].payload["target_id"] == plan.target_id
+    assert result[0].payload["text"] == "先这样。"

@@ -55,7 +55,12 @@ from ..social_runtime.knowledge.sources import (
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
-from ..social_runtime.replying import ReplyExecutor, ReplyPlanner
+from ..social_runtime.replying import (
+    MAX_DELIVERY_BUBBLES,
+    ReplyExecutor,
+    ReplyPlanner,
+    split_reply_bubbles,
+)
 from ..social_runtime.social_context import SceneContextBuilder
 from ..social_runtime.social_moves import (
     KnowledgePolicy,
@@ -2273,7 +2278,14 @@ class AstrBotSocialRuntimeBridge:
                     )
                     self._manager.update_shadow_review_evidence(evaluation)
                     if preview.status == "READY" and preview.text:
-                        self._remember_output(group_id, preview.text)
+                        for bubble in split_reply_bubbles(
+                            preview.text,
+                            max_bubbles=min(
+                                MAX_DELIVERY_BUBBLES,
+                                max(1, plan.style.max_segments),
+                            ),
+                        ):
+                            self._remember_output(group_id, bubble)
                 self._record_trace(
                     self.trace_repository.record_evaluation,
                     evaluation,
@@ -2324,11 +2336,12 @@ class AstrBotSocialRuntimeBridge:
                     )
                     if execution.usable_for_lease:
                         reply_stage = "ENQUEUED"
-                        text = str(
-                            execution.part.part.payload.get("text") or ""
-                        ).strip()
-                        if text:
-                            self._remember_output(group_id, text)
+                        texts = execution.delivered_texts or (
+                            str(execution.part.part.payload.get("text") or "").strip(),
+                        )
+                        for text in texts:
+                            if text:
+                                self._remember_output(group_id, text)
                         await self._manager.record_usable_reply(
                             plan, now=int(self.clock())
                         )

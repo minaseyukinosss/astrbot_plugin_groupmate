@@ -33,6 +33,7 @@ from groupmate.social_runtime.replying import (
     ReplyExecutor,
     ReplyPlanRepository,
     ReplyPlanner,
+    split_reply_bubbles,
 )
 from groupmate.social_runtime.actions.member_style import MemberStyleOverlay
 from groupmate.social_runtime.actions.contracts import (
@@ -1274,3 +1275,126 @@ def test_continue_from_marks_owned_bot_turn_and_grounds_acknowledge_prompt():
     assert "简短寒暄一句足够" not in system
     restored = ReplyPlanRepository._decode(ReplyPlanRepository._encode(plan))
     assert restored.continue_from_event_id == "bot:owned"
+
+def test_split_reply_bubbles_prefers_blank_line_then_sentence_cut():
+    assert split_reply_bubbles("就一句。", max_bubbles=2) == ("就一句。",)
+    assert split_reply_bubbles("先这样。\n\n再说一句。", max_bubbles=2) == (
+        "先这样。",
+        "再说一句。",
+    )
+    assert split_reply_bubbles(
+        "先这样。\n\n中间一句。\n\n尾巴。", max_bubbles=2
+    ) == ("先这样。", "中间一句。\n\n尾巴。")
+    assert split_reply_bubbles(
+        "我先去看看。你等我一下。", max_bubbles=2
+    ) == ("我先去看看。", "你等我一下。")
+    assert split_reply_bubbles(
+        "我先去看看。你等我一下。", max_bubbles=1
+    ) == ("我先去看看。你等我一下。",)
+
+
+def test_reply_executor_enqueues_two_bubbles_for_blank_line_social_reply(tmp_path):
+    scene, stance, move = _social_decisions(move="GROUP_RESPONSE")
+    plan = ReplyPlanner().plan(
+        _evaluation(text="哈哈好好笑"),
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+    )
+    assert plan.style.max_segments >= 2
+
+    class TwoBeatModel:
+        async def complete_text(self, **kwargs):
+            return json.dumps(
+                {
+                    "text": "行我先看着。\n\n你那边有进展再说。",
+                    "covered_fact_ids": [],
+                    "used_knowledge_ids": [],
+                    "used_memory_ids": [],
+                    "used_capability_ids": [],
+                    "source_event_ids": [],
+                },
+                ensure_ascii=False,
+            )
+
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, TwoBeatModel()).execute_with_result(
+            plan,
+            context_events=_evaluation(text="哈哈好好笑").context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.delivered_texts == ("行我先看着。", "你那边有进展再说。")
+    assert result.part.part.payload["text"] == "行我先看着。"
+    second = outbox.outbox(f"reply-part:{plan.plan_id}:1")
+    assert second.part.payload["text"] == "你那边有进展再说。"
+    assert second.part.order == 1
+
+
+def test_chorus_and_max_segments_one_do_not_split_bubbles(tmp_path):
+    scene = SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="小林",
+        user_move="chorus_about_member",
+        continuity_event_ids=("qq:m1", "qq:m2"),
+        repetition_count=2,
+        chorus_target="MEMBER",
+        chorus_target_id="u9",
+        chorus_chain_id="chorus:abc",
+        chorus_payload="小林今天请客。大家记得带钱包。",
+        chorus_event_ids=("qq:m1", "qq:m2"),
+        chorus_participant_ids=("u1", "u2"),
+        chorus_tone="SAFE_BANTER",
+        confidence=0.95,
+    )
+    _, stance, _ = _social_decisions()
+    move = SocialMovePlan.create(
+        primary_move="JOIN_CHORUS",
+        mention_event_ids=("qq:m1", "qq:m2"),
+        realization_mode="EXACT_CHORUS",
+        verbatim_payload="小林今天请客。大家记得带钱包。",
+        chorus_chain_id="chorus:abc",
+    )
+    plan = ReplyPlanner().plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+        member_style_overlay=_member_style_overlay(),
+    )
+    assert plan.style.max_segments == 1
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+
+    class FailIfCalledModel:
+        async def complete_text(self, **kwargs):
+            raise AssertionError("exact chorus must not call the reply model")
+
+    result = asyncio.run(
+        ReplyExecutor(repository, outbox, FailIfCalledModel()).execute_with_result(
+            plan,
+            context_events=_evaluation().context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=("小林今天请客。大家记得带钱包。",),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.delivered_texts == ("小林今天请客。大家记得带钱包。",)
+    with pytest.raises(LookupError):
+        outbox.outbox(f"reply-part:{plan.plan_id}:1")

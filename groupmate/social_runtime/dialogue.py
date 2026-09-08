@@ -6,6 +6,7 @@ Nothing here appends an event, advances a lease or authorizes a reply.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
@@ -117,10 +118,19 @@ class DialogueContextReader:
                 or receipt.get("receipt_id") != event.payload.get("receipt_id")
                 or not receipt.get("platform_message_id")):
             return None
-        plan_id = str(part.get("part_id", "")).removeprefix("reply-part:")
-        plan_row = (db.execute("SELECT plan_json FROM reply_plans WHERE plan_id=?", (plan_id,)).fetchone()
-                    if str(part.get("part_id", "")).startswith("reply-part:") else None)
-        plan = json.loads(plan_row[0]) if plan_row else {}
+        plan = {}
+        raw_part_id = str(part.get("part_id", ""))
+        if raw_part_id.startswith("reply-part:"):
+            body = raw_part_id.removeprefix("reply-part:")
+            # New delivery uses reply-part:{plan_id}:{index}; keep legacy bare plan ids.
+            for candidate in (re.sub(r":\d+$", "", body), body):
+                plan_row = db.execute(
+                    "SELECT plan_json FROM reply_plans WHERE plan_id=?",
+                    (candidate,),
+                ).fetchone()
+                if plan_row is not None:
+                    plan = json.loads(plan_row[0])
+                    break
         evidence = plan.get("evidence_event_ids") or []
         return replace(
             event, actor_id=str(payload.get("self_id") or plan.get("bot_id") or event.persona_id),
