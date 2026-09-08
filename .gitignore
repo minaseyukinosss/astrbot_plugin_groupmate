@@ -9,3 +9,6 @@ __pycache__/
 eval/results/
 eval/private/
 dist/
+# Local evaluation dumps; keep generic plans, never commit live replay exports
+analysis/private/
+analysis/shadow_live_*/

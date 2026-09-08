@@ -592,10 +592,10 @@ def test_reference_trigger_policy_is_explicit_and_does_not_guess_substrings():
     assert ReferenceTriggerPolicy.create().classify("xw帮助") is None
 
     fixed = ReferenceTriggerPolicy.create(
-        command_prefixes={"小维审核$": "reference:moderation"}
+        command_prefixes={"助理审核$": "reference:moderation"}
     )
-    assert fixed.classify("小维审核") is not None
-    assert fixed.classify("小维审核一下") is None
+    assert fixed.classify("助理审核") is not None
+    assert fixed.classify("助理审核一下") is None
 
 
 def test_bootstrap_excludes_external_feature_focus_but_keeps_annotated_context(
