@@ -1267,7 +1267,9 @@ def test_continue_from_marks_owned_bot_turn_and_grounds_acknowledge_prompt():
     system = ReplyExecutor._system_prompt(
         plan, _persona_profile(), evaluation.context_events
     )
-    assert "continue_from_event_id指向你已经发给当前成员" in system
+    assert "continue_from_event_id是你发给当前成员" in system
+    assert "只有锚点句仍在接那一层意思时才点明" in system
+    assert "同一细节提过一两次" in system
     assert "禁止只用「没事没事」" in system
     assert "简短寒暄一句足够" not in system
     restored = ReplyPlanRepository._decode(ReplyPlanRepository._encode(plan))
