@@ -204,7 +204,7 @@ def test_reply_planner_builds_one_short_text_plan():
     assert plan.platform_id == "onebot-main"
     assert plan.required is True
     assert plan.participation_lane == "DIRECT_FAST"
-    assert plan.style.max_chars == 120
+    assert plan.style.max_chars == 72
     assert plan.style.max_segments == 3
     assert plan.expression.persona_cues[0] == "爱弥斯"
 
@@ -776,6 +776,79 @@ def test_structured_social_reply_is_repaired_once_with_specific_violations(tmp_p
     assert repair_request["max_chars"] == plan.style.max_chars
 
 
+def test_current_anchor_uses_one_authorized_source_scope_across_reply_stages(tmp_path):
+    from groupmate.social_runtime.social_review import RealizedReply, SocialOutputReviewer
+
+    evaluation = _evaluation(text="我也想吃")
+    scene, stance, move = _social_decisions()
+    stance = replace(stance, attitude="NEUTRAL")
+    scene = replace(scene, literal_subject="我也想吃", continuity_event_ids=("qq:bot_previous",))
+    plan = ReplyPlanner().plan(
+        evaluation, now=100, persona_profile=_persona_profile(),
+        scene=scene, stance=stance, move=move,
+    )
+    draft = RealizedReply("那下次有机会一起呀，我也想吃～", (), (), (), ("qq:m1",))
+
+    class CapturingModel:
+        def __init__(self):
+            self.prompts = []
+
+        async def complete_text(self, **kwargs):
+            self.prompts.append(json.loads(kwargs["prompt"]))
+            return json.dumps({
+                "text": draft.text, "covered_fact_ids": [], "used_memory_ids": [],
+                "used_capability_ids": [], "source_event_ids": ["qq:m1"],
+                "used_knowledge_ids": [],
+            })
+
+    model = CapturingModel()
+    executor = ReplyExecutor(ReplyPlanRepository(tmp_path / "runtime.db"),
+                             OutboxService(tmp_path / "runtime.db"), model, clock=lambda: 100)
+    preview = asyncio.run(executor.preview(
+        plan, context_events=evaluation.context_events,
+        persona_profile=_persona_profile(), recent_outputs=(),
+    ))
+    assert preview.status == "READY"
+    assert preview.text == draft.text
+    assert len(model.prompts) == 1  # Correct current-source citation needs no repair.
+    assert model.prompts[0]["allowed_source_event_ids"] == ["qq:bot_previous", "qq:m1"]
+    assert executor.outbox.count() == 0
+    asyncio.run(executor._repair_generated_reply(plan, raw="{}", violations=("invalid_reply_json",)))
+    assert model.prompts[-1]["allowed_source_event_ids"] == ["qq:bot_previous", "qq:m1"]
+    reviewer = SocialOutputReviewer()
+    for invalid_plan, source_id in (
+        (plan, "qq:unrelated"),
+        (replace(plan, anchor_event_id="qq:unapproved"), "qq:unapproved"),
+        (replace(plan, evidence_event_ids=("qq:m1", "qq:other_evidence")), "qq:other_evidence"),
+        (replace(plan, anchor_event_id=None), "qq:m1"),
+    ):
+        review = reviewer.review(replace(draft, source_event_ids=(source_id,)), invalid_plan)
+        assert review.violations == ("unknown_source_event_id",)
+    assert reviewer.review(replace(draft, source_event_ids=("qq:bot_previous",)),
+                           replace(plan, anchor_event_id=None)).accepted
+
+
+def test_response_act_survives_reply_plan_restore_and_reaches_generation():
+    scene, stance, move = _social_decisions()
+    scene = replace(scene, scene_kind="成员轻松调侃", response_act="react")
+    move = replace(move, response_act="react")
+    plan = ReplyPlanner().plan(
+        _evaluation(), now=100, persona_profile=_persona_profile(),
+        scene=scene, stance=stance, move=move,
+    )
+    encoded = ReplyPlanRepository._encode(plan)
+    restored = ReplyPlanRepository._decode(encoded)
+    assert restored.scene.response_act == restored.move.response_act == "react"
+    system = ReplyExecutor._system_prompt(restored, _persona_profile())
+    facts = json.loads(system.rsplit("\n", 1)[-1])
+    assert facts["social_decision"]["response_act"] == "react"
+    old = json.loads(encoded)
+    old["scene"].pop("response_act")
+    old["move"].pop("response_act")
+    legacy = ReplyPlanRepository._decode(json.dumps(old))
+    assert legacy.scene.response_act is legacy.move.response_act is None
+
+
 def test_new_social_plan_rejects_plain_text_and_does_not_send_it(tmp_path):
     class PlainTextModel:
         def __init__(self):
@@ -828,6 +901,7 @@ def test_old_serialized_reply_plan_defaults_to_ambient_lane():
     values.pop("stance")
     values.pop("move")
     values.pop("relationship_projection_version")
+    values.pop("continue_from_event_id", None)
 
     restored = ReplyPlanRepository._decode(json.dumps(values))
 
@@ -1082,3 +1156,119 @@ def test_imitation_identity_failure_repairs_then_retries_without_overlay(tmp_pat
     assert "imitation_target_identity_claim" in repair_request["violations"]
     assert repair_request["imitation_identity_boundary"]["persona"] == "aemeath"
     assert "member_style_overlay" not in model.calls[2]["system_prompt"]
+
+
+def test_continue_from_marks_owned_bot_turn_and_grounds_acknowledge_prompt():
+    owned = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="bot:owned",
+            actor_id="bot",
+            occurred_at=90,
+            received_at=90,
+            source_message_id="owned",
+            correlation_id="bot:owned",
+            payload={
+                "text": "我说的是截图里发帖的人啦",
+                "is_self": True,
+                "origin_kind": "BOT_TEXT",
+                "target_id": "u1",
+            },
+        )
+    )
+    later_other = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="bot:other",
+            actor_id="bot",
+            occurred_at=95,
+            received_at=95,
+            source_message_id="other",
+            correlation_id="bot:other",
+            payload={
+                "text": "阿初怎么啦",
+                "is_self": True,
+                "origin_kind": "BOT_TEXT",
+                "target_id": "u2",
+            },
+        )
+    )
+    current = SocialEventEnvelope.create(
+        **social_event_values(
+            event_id="qq:m1",
+            actor_id="u1",
+            occurred_at=100,
+            received_at=100,
+            payload={
+                "text": "是我理解错了",
+                "platform": "qq",
+                "platform_id": "onebot-main",
+                "session": "aiocqhttp:GroupMessage:885617919",
+                "bot_id": "bot-1",
+            },
+        )
+    )
+    candidate = CandidateIntention(
+        intention_id="intention:owned",
+        kind="RESPOND_CONTEXT",
+        target_id="u1",
+        topic_id="m1",
+        evidence_event_ids=("qq:m1",),
+        proposed_act="respond_to_contextual_interaction",
+        obligation=1.0,
+        relevance=1.0,
+        relational_value=0.0,
+        continuity_value=0.0,
+        novelty=0.0,
+        urgency=1.0,
+        persona_fit=1.0,
+        state_fit=1.0,
+        information_gain=1.0,
+        disruption_cost=0.0,
+        uncertainty_cost=0.0,
+        repetition_cost=0.0,
+        resource_cost=0.0,
+        risk=0.0,
+        expires_at=130,
+        continue_from_event_id="bot:owned",
+    )
+    evaluation = SimpleNamespace(
+        accepted=True,
+        runtime_mode=RuntimeMode.SOCIAL_RUNTIME,
+        frame=SimpleNamespace(
+            frame_id="attention:1",
+            trigger_kind="AMBIENT",
+            candidate_audiences=("u1",),
+            focus_topic_ids=("m1",),
+        ),
+        governor_result=GovernorResult(
+            "ACT", (candidate.intention_id,), (), ("selected",), None, ()
+        ),
+        candidates=(candidate,),
+        source_event=current,
+        scene_version=1,
+        config_version=1,
+        persona_id="aemeath",
+        context_events=(owned, later_other, current),
+        participation_lane="AMBIENT",
+    )
+    scene, stance, move = _social_decisions()
+    scene = replace(scene, response_act="acknowledge")
+    move = replace(move, response_act="acknowledge")
+    plan = ReplyPlanner().plan(
+        evaluation,
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+    )
+    assert plan.continue_from_event_id == "bot:owned"
+    prompt = json.loads(ReplyExecutor._prompt(plan, evaluation.context_events))
+    assert prompt["continue_from_event_id"] == "bot:owned"
+    system = ReplyExecutor._system_prompt(
+        plan, _persona_profile(), evaluation.context_events
+    )
+    assert "continue_from_event_id指向你已经发给当前成员" in system
+    assert "禁止只用「没事没事」" in system
+    assert "简短寒暄一句足够" not in system
+    restored = ReplyPlanRepository._decode(ReplyPlanRepository._encode(plan))
+    assert restored.continue_from_event_id == "bot:owned"

@@ -117,6 +117,7 @@ class OutputFirewall:
         re.IGNORECASE,
     )
     _PLAYFUL = re.compile(r"哈哈|嘿嘿|笑死|逗你|开玩笑|[🤣😂😜😏]|[～~]")
+    _LAUGH = re.compile(r"哈哈+|嘿嘿+|呵{2,}")
     _PARTICLE = re.compile(r"啦|呀|嘛|哟|哦|诶|呢|吧|哈|[～~]")
 
     def review(self, draft: GeneratedDraft, request: GenerationRequest) -> FirewallReview:
@@ -269,12 +270,16 @@ class OutputFirewall:
             violations.append("punctuation_budget_exceeded")
         if directive.playfulness == 0 and cls._PLAYFUL.search(text):
             violations.append("playfulness_forbidden")
-        if len(cls._PARTICLE.findall(text)) > directive.particle_budget:
+        if cls._particle_count(text) > directive.particle_budget:
             violations.append("particle_budget_exceeded")
         folded = text.casefold()
         if any(pattern.casefold() in folded for pattern in directive.avoid_patterns if pattern.strip()):
             violations.append("avoid_pattern")
         return tuple(violations)
+
+    @classmethod
+    def _particle_count(cls, text: str) -> int:
+        return len(cls._PARTICLE.findall(cls._LAUGH.sub("", text)))
 
     @staticmethod
     def _repeats_recent_output(text: str, recent_outputs: tuple[str, ...]) -> bool:

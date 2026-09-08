@@ -75,6 +75,42 @@ def test_direct_answer_style_is_limited_to_three_segments():
     assert directive.address == "朋友"
 
 
+def test_ordinary_social_reply_uses_compact_text_length_budget():
+    directive = StyleDirector().direct(
+        _context(
+            scene=SocialScene.create(
+                scene_kind="direct_chat",
+                target_scope="INDIVIDUAL",
+                target_id="user-1",
+                literal_subject="今晚玩什么",
+                user_move="social_bid",
+                continuity_event_ids=("m1",),
+                confidence=0.9,
+            ),
+            move=SocialMovePlan.create(primary_move="ACCEPT"),
+            token_budget=40,
+        )
+    )
+
+    assert directive.max_chars == 72
+    assert directive.max_sentences == 3
+
+
+def test_grounded_answer_keeps_room_for_required_factual_explanation():
+    directive = StyleDirector().direct(
+        _context(
+            move=SocialMovePlan.create(
+                primary_move="DIRECT_ANSWER",
+                knowledge_policy="grounded",
+                may_use_knowledge_ids=("knowledge:1",),
+            ),
+            token_budget=40,
+        )
+    )
+
+    assert directive.max_chars == 120
+
+
 def test_drowsy_mode_shortens_the_direct_answer_budget():
     awake = StyleDirector().direct(_context())
     drowsy = StyleDirector().direct(
@@ -103,6 +139,17 @@ def test_boundary_mode_forbids_playfulness_even_with_a_playful_relationship():
     assert directive.mode == "boundary"
     assert directive.playfulness == 0
     assert directive.posture == "firm"
+
+
+def test_acknowledge_react_and_close_allow_natural_particles():
+    ordinary = StyleDirector().direct(_context())
+    acknowledge = StyleDirector().direct(
+        _context(move=SocialMovePlan.create(
+            primary_move="DIRECT_ANSWER", response_act="acknowledge",
+        ))
+    )
+    assert acknowledge.particle_budget >= 3
+    assert acknowledge.particle_budget > ordinary.particle_budget
 
 
 def test_relationship_changes_tone_without_granting_capability_permission():

@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..persona.modes import PersonaModeState
-from ..social_moves import SocialMove, SocialMovePlan
-from ..social_scenes import SocialScene
+from ..social_moves import KnowledgePolicy, SocialMove, SocialMovePlan
+from ..social_scenes import ResponseAct, SocialScene
 from ..society.relationships import RelationshipProjection
 from ..stances import Attitude, Boundary, StanceDecision
 
@@ -131,8 +131,13 @@ class StyleDirector:
             playfulness = 0
             directness = 95
 
-        max_chars = min(320, max(40, context.token_budget * 3))
-        max_sentences = 6
+        full_budget = min(320, max(40, context.token_budget * 3))
+        needs_factual_room = bool(
+            context.move is not None
+            and context.move.knowledge_policy is not KnowledgePolicy.NONE
+        )
+        max_chars = full_budget if needs_factual_room else min(72, full_budget)
+        max_sentences = 4 if needs_factual_room else 3
         max_segments = self._DIRECT_ANSWER_MAX_SEGMENTS if act == "direct_answer" else 2
         if context.move is not None and context.move.primary_move in {
             SocialMove.FIRM_BOUNDARY,
@@ -144,6 +149,13 @@ class StyleDirector:
             max_sentences = min(max_sentences, 2)
         particle_budget = 2 if playfulness else 1
         punctuation_budget = 3
+        response_act = context.move.response_act if context.move is not None else None
+        if response_act in {
+            ResponseAct.ACKNOWLEDGE,
+            ResponseAct.REACT,
+            ResponseAct.CLOSE,
+        }:
+            particle_budget = max(particle_budget, 3)
         if "drowsy" in context.mode.modifiers:
             max_chars = max(30, max_chars // 2)
             max_sentences = max(1, max_sentences // 2)

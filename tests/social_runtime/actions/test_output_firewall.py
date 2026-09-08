@@ -353,6 +353,17 @@ def test_boundary_and_particle_budgets_reject_playful_variants():
     )
 
 
+def test_laugh_does_not_consume_two_particle_slots():
+    result = SafeTextGeneration().generate(
+        _request(directive=_directive(playfulness=10, particle_budget=1)),
+        lambda _: GeneratedDraft("哈哈没事，误会解开就好啦。"),
+        lambda *_: GeneratedDraft("哈哈没事，误会解开就好啦。"),
+    )
+    assert result.outcome == "accepted"
+    assert result.draft is not None
+    assert "particle_budget_exceeded" not in result.violations
+
+
 def test_required_fallback_never_uses_dynamic_address_or_blocked_profile_text():
     result = SafeTextGeneration().generate(
         _request(
