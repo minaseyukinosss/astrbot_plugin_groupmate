@@ -98,3 +98,89 @@ def test_participation_assessment_can_veto_an_actionable_signal():
     )
 
     assert IntentionEngine().propose(blackboard, now=100) == ()
+
+
+def test_opportunity_kinds_map_to_scoped_social_intentions():
+    expected = {
+        "bot_context": ("RESPOND_CONTEXT", "respond_to_contextual_interaction"),
+        "open_question": ("HELP", "answer_open_question"),
+        "social_bid": ("ACKNOWLEDGE", "respond_to_social_bid"),
+        "topic_opening": ("CONTRIBUTE", "contribute_to_topic"),
+    }
+
+    for observation_kind, (candidate_kind, act) in expected.items():
+        blackboard = BlackboardSnapshot(
+            frame_id="attention:1",
+            scene_version=3,
+            cost_level=1,
+            entries=(
+                _entry(
+                    observation_kind,
+                    {
+                        "subject_id": "u1",
+                        "topic_id": "topic:1",
+                        "anchor_event_id": "qq:m1",
+                    },
+                ),
+                _entry(
+                    "participation_assessment",
+                    {
+                        "decision": "speak",
+                        "should_participate": True,
+                        "target_confidence": 0.9,
+                        "topic_confidence": 0.9,
+                        "disruption_cost": 0.1,
+                        "novelty": 0.8,
+                    },
+                ),
+            ),
+            conflict_count=0,
+            degraded=False,
+            recommended_outcome=None,
+            diagnostics=(),
+        )
+
+        candidate = IntentionEngine().propose(blackboard, now=100)[0]
+
+        assert candidate.kind == candidate_kind
+        assert candidate.proposed_act == act
+        assert candidate.target_id == "u1"
+        assert candidate.topic_id == "topic:1"
+
+
+def test_owned_dialogue_relation_copies_bot_event_as_continue_from():
+    blackboard = BlackboardSnapshot(
+        frame_id="attention:1",
+        scene_version=3,
+        cost_level=1,
+        entries=(
+            _entry(
+                "bot_context",
+                {
+                    "subject_id": "u1",
+                    "topic_id": "topic:1",
+                    "anchor_event_id": "qq:m1",
+                    "dialogue_bot_event_id": "bot:previous",
+                },
+            ),
+            _entry(
+                "participation_assessment",
+                {
+                    "decision": "speak",
+                    "should_participate": True,
+                    "target_confidence": 0.9,
+                    "topic_confidence": 0.9,
+                    "disruption_cost": 0.1,
+                    "novelty": 0.8,
+                },
+            ),
+        ),
+        conflict_count=0,
+        degraded=False,
+        recommended_outcome=None,
+        diagnostics=(),
+    )
+
+    candidate = IntentionEngine().propose(blackboard, now=100)[0]
+
+    assert candidate.continue_from_event_id == "bot:previous"

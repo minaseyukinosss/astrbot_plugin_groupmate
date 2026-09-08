@@ -33,8 +33,8 @@ class FakeTransport:
 def _success(verdict=None):
     value = verdict or {
         "decision": "silence",
-        "signal": "none",
-        "target_id": None,
+        "opportunity_kind": "none",
+        "anchor_event_id": None,
         "evidence_event_ids": ["qq:1"],
         "confidence": 0.8,
         "disruption": 0.2,
@@ -77,7 +77,10 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
     assert '"decision":"silence"' in system_message
     assert '"evidence_event_ids":[]' in system_message
     assert "silence时允许证据为空" in system_message
-    assert "speak时证据不得为空" in system_message
+    assert "speak时锚点和证据不得为空" in system_message
+    assert "不判断是否插话" not in system_message
+    assert "opportunity_kind" in system_message
+    assert "anchor_event_id" in system_message
     assert "relationship_events" in system_message
     assert "relationship_memories" in system_message
     assert "不得输出amount、delta、score" in system_message
@@ -91,6 +94,32 @@ def test_direct_client_sends_bounded_non_thinking_json_request():
         {"events": [{"id": "qq:1"}]}
     )
     assert "sk-sensitive" not in repr(client)
+
+
+def test_owned_candidates_use_relation_only_protocol():
+    transport = FakeTransport(_success({
+        "dialogue_relation": {
+            "kind": "answers_bot",
+            "anchor_event_id": "e1",
+            "bot_event_id": "b1",
+            "confidence": 0.88,
+        }
+    }))
+    client = _client(transport)
+    facts = {
+        "events": [{"id": "e1"}],
+        "dialogue_candidates": [
+            {"anchor_event_id": "e1", "bot_event_id": "b1", "target_id": "u1"}
+        ],
+    }
+    asyncio.run(client.classify(facts))
+    body = transport.calls[0]["payload"]
+    assert body["temperature"] == 0
+    system_message = body["messages"][0]["content"]
+    assert "不判断是否插话" in system_message
+    assert "简短确认" in system_message
+    assert "decision只能是speak或silence" not in system_message
+    assert json.loads(body["messages"][1]["content"]) == facts
 
 
 @pytest.mark.parametrize(

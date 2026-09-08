@@ -30,10 +30,16 @@ _DIRECT_INVALID_OUTPUT_CODES = {
     "direct_invalid_decision",
     "direct_invalid_signal",
     "direct_speak_without_signal",
+    "direct_invalid_opportunity",
+    "direct_speak_without_opportunity",
+    "direct_unknown_anchor",
+    "direct_anchor_missing_from_evidence",
     "direct_unknown_target",
+    "direct_unknown_topic",
     "direct_empty_speak_evidence",
     "direct_unknown_evidence",
     "direct_invalid_score",
+    "direct_invalid_dialogue_relation",
 }
 
 

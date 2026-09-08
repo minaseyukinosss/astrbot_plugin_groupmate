@@ -388,41 +388,23 @@ class AttentionScheduler:
             or lease.remaining_turns <= 0
         ):
             return False
-        if event.payload.get("reply_to_bot"):
-            return True
-        if AttentionScheduler._topic_id(world, event) == lease.topic_id:
-            return True
-        return AttentionScheduler._looks_like_short_followup(
-            str(event.payload.get("text") or "")
-        )
-
-    @staticmethod
-    def _looks_like_short_followup(text: str) -> bool:
-        value = " ".join(str(text or "").strip().split()).strip()
-        if not value or len(value) > 18:
+        # FAST has already taken explicit bot calls. A lease does not own a
+        # member's messages that explicitly address somebody else.
+        bot_id = str(event.payload.get("bot_id") or "").strip()
+        reply_actor = str(event.payload.get("reply_to_actor_id") or "").strip()
+        if reply_actor and reply_actor != bot_id:
             return False
-        exact = {
-            "然后呢",
-            "后来呢",
-            "为什么",
-            "怎么了",
-            "那怎么办",
-            "继续",
-            "还有呢",
-            "嗯",
-            "嗯嗯",
-            "好",
-            "好的",
-            "对",
-            "是的",
-            "不是",
-            "行",
-            "可以",
-            "没了",
-        }
-        if value.rstrip("？?。.!！~～") in exact:
-            return True
-        return value.startswith(("然后", "后来", "为什么", "怎么", "那怎么办"))
+        mentions = event.payload.get("mentions")
+        if isinstance(mentions, (list, tuple)):
+            for mention in mentions:
+                actor_id = str(mention or "").strip()
+                if (
+                    actor_id
+                    and actor_id != bot_id
+                    and actor_id.casefold() not in {"all", "@all", "0"}
+                ):
+                    return False
+        return True
 
     @staticmethod
     def _topic_id(world: GroupWorldState, event: SocialEventEnvelope) -> str:

@@ -18,6 +18,7 @@ from groupmate.social_runtime.cognition.service import (
     CognitionBudget,
     CognitionService,
 )
+from groupmate.social_runtime.cognition.scheduling import WorkerAdmissionQueue
 
 
 def _frame(trigger_kind="AMBIENT", requested_workers=("w1", "w2")):
@@ -174,6 +175,30 @@ def test_level_two_runs_multiple_requested_workers_within_budget():
         "SUCCEEDED",
     ]
     assert all(item.latency_ms >= 0 for item in snapshot.worker_diagnostics)
+
+
+def test_continuation_admission_runs_rules_without_degradation_and_keeps_fast_first():
+    service = CognitionService(workers={}, budget=CognitionBudget(0, 0))
+    snapshot = asyncio.run(service.evaluate(
+        _frame(trigger_kind="CONTINUATION", requested_workers=()), _context(),
+    ))
+
+    assert snapshot.degraded is False
+    assert snapshot.diagnostics == ()
+    assert [entry.observation.kind for entry in snapshot.entries] == ["fact.target"]
+    assert [(item.worker, item.status) for item in snapshot.worker_diagnostics] == [
+        ("level0.rules", "SUCCEEDED"),
+    ]
+    queue = WorkerAdmissionQueue()
+    for lane, payload in (
+        ("AMBIENT", "ambient"), ("TEMPORAL", "temporal"),
+        ("CONTINUATION", "followup-1"), ("FAST", "direct"),
+        ("CONTINUATION", "followup-2"),
+    ):
+        queue.enqueue(lane, payload)
+    assert [queue.dequeue().payload for _ in range(5)] == [
+        "direct", "followup-1", "followup-2", "temporal", "ambient",
+    ]
 
 
 def test_level_three_adds_critic_without_skipping_hard_rules():

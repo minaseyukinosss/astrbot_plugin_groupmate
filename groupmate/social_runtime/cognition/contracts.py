@@ -30,6 +30,7 @@ class CognitiveContext:
     world_summary: Mapping[str, object]
     constraints: tuple[str, ...]
     token_budget: int
+    context_events: tuple[Mapping[str, object], ...] = ()
 
     @classmethod
     def create(cls, **values) -> "CognitiveContext":
@@ -49,6 +50,9 @@ class CognitiveContext:
             normalized[name] = number
         normalized["focus_events"] = tuple(
             _frozen_mapping(item) for item in normalized.get("focus_events", ())
+        )
+        normalized["context_events"] = tuple(
+            _frozen_mapping(item) for item in normalized.get("context_events", ())
         )
         normalized["world_summary"] = _frozen_mapping(
             normalized.get("world_summary", {})

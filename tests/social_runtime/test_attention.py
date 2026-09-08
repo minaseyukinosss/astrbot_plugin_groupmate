@@ -142,6 +142,32 @@ def test_mismatched_or_expired_lease_falls_back_to_ambient_window():
     assert expired_scheduler.pending_window("885617919") is not None
 
 
+def test_live_lease_respects_other_member_address_without_blocking_direct_calls():
+    for direction, expected_lane in (
+        ({"reply_to_actor_id": "u2"}, "AMBIENT"),
+        ({"mentions": ["u2"]}, "AMBIENT"),
+        ({"reply_to_actor_id": "u2", "mentions": ["u2"]}, "AMBIENT"),
+        ({}, "CONTINUATION"),
+        ({"mentions": ["", "all", "@all", "0", "bot"]}, "CONTINUATION"),
+        ({"reply_to_actor_id": "u2", "direct_address": True}, "FAST"),
+        ({"mentions": ["bot", "u2"], "mentions_bot": True}, "FAST"),
+        ({"reply_to_actor_id": "bot", "reply_to_bot": True}, "FAST"),
+    ):
+        event = _event("m2", occurred_at=120, payload={
+            "text": "对", "bot_id": "bot", **direction,
+        })
+        world = GroupWorldProjector().apply(_world_with_lease(), event)
+        scheduler = AttentionScheduler()
+        frames = scheduler.on_event(event, world, _persona(), now=120)
+        if expected_lane == "AMBIENT":
+            assert frames == (), direction
+            frames = scheduler.flush_due(now=122)
+        else:
+            assert scheduler.pending_window(event.group_id) is None
+        assert frames[0].trigger_kind == expected_lane, direction
+        assert world.conversation_lease.remaining_turns == 5
+
+
 def test_boundary_and_capability_results_never_wait_for_ambient_window():
     scheduler = AttentionScheduler()
     boundary = _event("b1", event_type="safety.boundary", payload={"kind": "abuse"})

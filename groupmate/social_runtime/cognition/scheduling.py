@@ -12,8 +12,9 @@ T = TypeVar("T")
 
 _LANE_PRIORITY = {
     "FAST": 0,
-    "TEMPORAL": 1,
-    "AMBIENT": 2,
+    "CONTINUATION": 1,
+    "TEMPORAL": 2,
+    "AMBIENT": 3,
 }
 
 
@@ -35,7 +36,7 @@ class WorkerAdmissionQueue(Generic[T]):
     def enqueue(self, lane: str, payload: T) -> WorkerAdmission[T]:
         normalized = str(lane).upper()
         if normalized not in _LANE_PRIORITY:
-            raise ValueError("worker lane must be FAST, TEMPORAL, or AMBIENT")
+            raise ValueError("worker lane must be FAST, CONTINUATION, TEMPORAL, or AMBIENT")
         admission = WorkerAdmission(
             _LANE_PRIORITY[normalized], self._sequence, normalized, payload
         )

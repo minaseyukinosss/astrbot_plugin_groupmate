@@ -132,6 +132,8 @@ MAX_SCENE_VERSION_DRIFT = 12
 _SAFE_PROPOSITION_KEYS = frozenset(
     {
         "attribute",
+        "anchor_event_id",
+        "opportunity_kind",
         "decision",
         "disruption_cost",
         "novelty",
@@ -144,6 +146,9 @@ _SAFE_PROPOSITION_KEYS = frozenset(
         "topic_confidence",
         "topic_id",
         "value",
+        "dialogue_relation_kind", "dialogue_anchor_event_id", "dialogue_bot_event_id",
+        "dialogue_confidence", "dialogue_relation_applied",
+        "original_decision", "original_opportunity_kind", "original_reason",
     }
 )
 
@@ -155,12 +160,17 @@ def safe_cognitive_observation(
 
     proposition = {}
     for key, value in observation.proposition.items():
+        if key == "context_evidence_event_ids" and isinstance(value, (tuple, list)):
+            proposition[key] = [item[:160] for item in value[:16] if isinstance(item, str)]
+            continue
         if key not in _SAFE_PROPOSITION_KEYS or not (
             value is None or isinstance(value, (bool, int, float, str))
         ):
             continue
-        if key == "reason":
+        if key in {"reason", "original_reason"}:
             value = " ".join(str(value or "").split())[:80]
+        if key in {"dialogue_anchor_event_id", "dialogue_bot_event_id"} and isinstance(value, str):
+            value = value[:160]
         proposition[key] = value
     return {
         "worker": observation.worker,

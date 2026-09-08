@@ -49,6 +49,8 @@ class CandidateIntention:
     resource_cost: float
     risk: float
     expires_at: int
+    anchor_event_id: str | None = None
+    continue_from_event_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.intention_id or not self.kind or not self.proposed_act:
@@ -57,6 +59,8 @@ class CandidateIntention:
             raise ValueError("actionable intention requires evidence")
         if self.expires_at < 0:
             raise ValueError("expires_at must not be negative")
+        if self.anchor_event_id is not None and self.anchor_event_id not in self.evidence_event_ids:
+            raise ValueError("reply anchor must be present in actionable evidence")
 
 
 def create_candidate_intention(
@@ -69,6 +73,8 @@ def create_candidate_intention(
     expires_at: int,
     features: dict[str, float],
     identity_salt: str = "",
+    anchor_event_id: str | None = None,
+    continue_from_event_id: str | None = None,
 ) -> CandidateIntention:
     """Build a deterministic candidate from safe, scoped evidence."""
 
@@ -81,6 +87,8 @@ def create_candidate_intention(
         "proposed_act": proposed_act,
         "expires_at": expires_at,
     }
+    if anchor_event_id is not None:
+        identity["anchor_event_id"] = anchor_event_id
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:24]
@@ -109,14 +117,20 @@ def create_candidate_intention(
         evidence_event_ids=evidence,
         proposed_act=proposed_act,
         expires_at=expires_at,
+        anchor_event_id=anchor_event_id,
+        continue_from_event_id=continue_from_event_id,
         **values,
     )
 
 
 _OBSERVATION_MAP = {
+    "bot_context": ("RESPOND_CONTEXT", "respond_to_contextual_interaction"),
+    "open_question": ("HELP", "answer_open_question"),
     "help_request": ("HELP", "answer_help_request"),
+    "social_bid": ("ACKNOWLEDGE", "respond_to_social_bid"),
     "care_signal": ("CARE", "offer_bounded_care"),
     "humor_signal": ("PLAY", "join_playfully"),
+    "topic_opening": ("CONTRIBUTE", "contribute_to_topic"),
     "greeting": ("ACKNOWLEDGE", "acknowledge_greeting"),
     "boundary_signal": ("BOUNDARY", "maintain_boundary"),
     "task_request": ("ACCEPT_TASK", "consider_task_request"),
@@ -200,6 +214,10 @@ class IntentionEngine:
                     target_id=self._optional_text(proposition.get("subject_id")),
                     topic_id=self._optional_text(proposition.get("topic_id")),
                     evidence=entry.observation.evidence_event_ids,
+                    anchor_event_id=self._optional_text(proposition.get("anchor_event_id")),
+                    continue_from_event_id=self._optional_text(
+                        proposition.get("dialogue_bot_event_id")
+                    ),
                     proposed_act=proposed_act,
                     expires_at=entry.observation.expires_at,
                     features=features,
@@ -217,6 +235,8 @@ class IntentionEngine:
         proposed_act: str,
         expires_at: int,
         features: dict[str, float],
+        anchor_event_id: str | None = None,
+        continue_from_event_id: str | None = None,
     ) -> CandidateIntention:
         return create_candidate_intention(
             kind=kind,
@@ -226,6 +246,8 @@ class IntentionEngine:
             proposed_act=proposed_act,
             expires_at=expires_at,
             features=features,
+            anchor_event_id=anchor_event_id,
+            continue_from_event_id=continue_from_event_id,
         )
 
     @staticmethod
