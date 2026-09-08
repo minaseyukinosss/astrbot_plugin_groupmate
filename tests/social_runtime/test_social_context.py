@@ -58,8 +58,10 @@ def test_scene_context_preserves_source_and_reply_parent_before_background():
     )
 
     assert context.current_text == "Few-Shot 太占提示词了，换个短方案"
-    assert [item.event_id for item in context.events[:2]] == ["m2", "m4"]
-    assert "普通群聊背景" not in context.to_model_facts()["events"][0]["text"]
+    assert {"m2", "m4"} <= {item.event_id for item in context.events}
+    assert [item.occurred_at for item in context.events] == sorted(item.occurred_at for item in context.events)
+    facts = {item["event_id"]: item for item in context.to_model_facts()["events"]}
+    assert facts["m2"]["text"] == "可以放三条 Few-Shot"
 
 
 def test_scene_context_keeps_structured_member_and_evidence_references():
@@ -80,6 +82,23 @@ def test_scene_context_keeps_structured_member_and_evidence_references():
     assert facts["persona"]["aliases"] == ["爱弥斯", "小爱"]
     assert facts["member_refs"] == {"u9": ["小林", "林林"]}
     assert isinstance(context.member_refs, MappingProxyType)
+
+
+def test_scene_context_keeps_frozen_dialogue_without_second_packing():
+    events = tuple(_event(str(i), "字" * 120, occurred_at=100 + i,
+                          actor_id="bot" if i == 0 else "u1",
+                          origin_kind="BOT_TEXT" if i == 0 else "USER_TEXT")
+                   for i in range(16))
+    context = SceneContextBuilder().build(
+        source_event=_event("15", "原始未裁剪消息", occurred_at=115),
+        context_events=events, focus_event_ids=("15",), target_id="u1",
+        topic_id=None, persona_actor_id="bot", persona_aliases=(),
+        member_refs={}, profile=None, relationship_memories=(), frozen_dialogue=True,
+    )
+    assert [item.event_id for item in context.events] == [item.event_id for item in events]
+    assert context.events[0].origin_kind == "BOT_TEXT"
+    assert context.current_text == events[-1].payload["text"]
+    assert all(item.text == "字" * 120 for item in context.events)
 
 
 def test_scene_context_reuses_the_frozen_topic_understanding_frame():

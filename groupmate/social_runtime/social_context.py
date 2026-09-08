@@ -172,9 +172,14 @@ class SceneContextBuilder:
         profile: object | None,
         relationship_memories: Iterable[object],
         topic_understanding: "TopicUnderstandingFrame | None" = None,
+        frozen_dialogue: bool = False,
     ) -> SceneContext:
-        events = self._deduplicate((*tuple(context_events), source_event))
-        source_fact = SceneEventFact.from_event(source_event)
+        context_events = tuple(context_events)
+        frozen_source = (next((event for event in context_events
+                               if event.event_id == source_event.event_id), None)
+                         if frozen_dialogue else None)
+        events = self._deduplicate((*context_events, frozen_source or source_event))
+        source_fact = SceneEventFact.from_event(frozen_source or source_event)
         focus = set(_unique(focus_event_ids, limit=MAX_CONTEXT_EVENTS))
         ranked = sorted(
             (SceneEventFact.from_event(event) for event in events),
@@ -186,7 +191,13 @@ class SceneContextBuilder:
                 topic_id=_text(topic_id) or None,
             ),
         )
-        packed = self._pack(ranked, source_event_id=source_event.event_id)
+        # Runtime dialogue already owns the shared selection/text budget. Packing
+        # again would silently remove facts seen by cognition and generation.
+        packed = (tuple(SceneEventFact.from_event(event) for event in events)
+                  if frozen_dialogue and frozen_source is not None
+                  else self._pack(ranked, source_event_id=source_event.event_id))
+        event_order = {event.event_id: index for index, event in enumerate(events)}
+        packed = tuple(sorted(packed, key=lambda item: (item.occurred_at, event_order[item.event_id])))
         normalized_refs = self._member_refs(member_refs)
         profile_fact_ids, profile_facts = self._profile_facts(profile)
         memory_ids, memory_facts = self._memory_facts(relationship_memories)
@@ -203,10 +214,7 @@ class SceneContextBuilder:
         )
         return SceneContext(
             source_event_id=source_event.event_id,
-            current_text=_message_text(
-                source_event.payload.get("text")
-                or source_event.payload.get("literal_subject")
-            ),
+            current_text=source_fact.text,
             target_id=_text(target_id) or None,
             topic_id=_text(topic_id) or None,
             events=packed,
@@ -352,7 +360,7 @@ class SceneContextBuilder:
                 )
             )
             remaining -= overhead + len(text)
-        return tuple(selected)
+        return tuple(sorted(selected, key=lambda item: item.occurred_at))
 
     @staticmethod
     def _member_refs(

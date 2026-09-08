@@ -67,6 +67,7 @@ from .memory.relationship_memory import RelationshipMemory
 from .replying import ReplyPlan, ReplyPlanRepository
 from .social_context import SceneEventFact
 from .delivery.outbox import OutboxService
+from .dialogue import DialogueContextReader
 from .scene_actor import (
     GroupSceneActor,
     SceneWorkRequest,
@@ -116,6 +117,7 @@ class ShadowEvaluation:
     candidate_response: str | None = None
     reply_diagnostic: str | None = None
     social_scene_summary: Mapping[str, object] | None = None
+    scene_diagnostic: Mapping[str, object] | None = None
     social_stance_summary: Mapping[str, object] | None = None
     social_move_summary: Mapping[str, object] | None = None
     social_would_reply: bool | None = None
@@ -124,6 +126,29 @@ class ShadowEvaluation:
     knowledge_scene_guard: SceneGuard | None = None
     knowledge_snapshot: KnowledgeSnapshot | None = None
     knowledge_reply_valid: bool | None = None
+
+    def resolve_reply_source(self) -> SocialEventEnvelope | None:
+        """Resolve the approved message without changing trace/request identity."""
+        selected = next((candidate for candidate in self.candidates
+                         if candidate.intention_id in self.governor_result.selected_intention_ids), None)
+        if selected is None or self.frame is None:
+            return None
+        events = {event.event_id: event for event in (self.source_event, *self.context_events)}
+        if selected.anchor_event_id is None and (
+            self.frame.trigger_kind != "AMBIENT" or selected.kind == "CHORUS_CHECK"
+        ):
+            return events[self.source_event.event_id]
+        ids = ((selected.anchor_event_id,) if selected.anchor_event_id
+               else tuple(reversed(selected.evidence_event_ids)))
+        for event_id in ids:
+            event = events.get(event_id)
+            if (event is not None and event_id in self.frame.focus_event_ids
+                    and event.event_type == "platform.message"
+                    and event.actor_id == selected.target_id
+                    and event.payload.get("social_eligible") is not False
+                    and not event.payload.get("is_self")):
+                return event
+        return None
 
     def to_capture_evidence(self) -> dict[str, object]:
         frame_id = (
@@ -175,6 +200,7 @@ class ShadowEvaluation:
                 ],
                 "candidate_response": self.candidate_response,
                 "reply_diagnostic": self.reply_diagnostic,
+                "scene_diagnostic": dict(self.scene_diagnostic) if self.scene_diagnostic else None,
                 "social_scene_summary": (
                     dict(self.social_scene_summary)
                     if self.social_scene_summary is not None
@@ -365,6 +391,8 @@ class ShadowEvaluation:
                 if isinstance(values.get("social_scene_summary"), Mapping)
                 else None
             ),
+            scene_diagnostic=(dict(values["scene_diagnostic"])
+                              if isinstance(values.get("scene_diagnostic"), Mapping) else None),
             social_stance_summary=(
                 dict(values["social_stance_summary"])
                 if isinstance(values.get("social_stance_summary"), Mapping)
@@ -1102,12 +1130,17 @@ class SocialRuntimeManager:
         context_events = self.event_store.event_envelopes(
             request.persona_id,
             request.group_id,
-            request.world_snapshot.recent_presence.recent_event_ids[-20:],
+            request.world_snapshot.recent_presence.recent_event_ids,
         )
         chorus_evidence = self._detect_chorus(
             request=request,
-            context_events=context_events,
+            context_events=context_events[-20:],
             now=now,
+        )
+        context_events = DialogueContextReader(self.outbox.path).read(
+            request.persona_id, request.group_id,
+            (*context_events, *focus_events), frame.focus_event_ids,
+            required_context_event_ids=chorus_evidence.event_ids if chorus_evidence else (),
         )
         profile = self._persona_profiles.get(
             (request.group_id, frame.config_version)
@@ -1160,6 +1193,7 @@ class SocialRuntimeManager:
             config_version=frame.config_version,
             now=now,
             focus_events=tuple(event.to_dict() for event in focus_events),
+            context_events=tuple(event.to_dict() for event in context_events),
             world_summary=world_summary,
             constraints=("no_side_effects", "evidence_required"),
             token_budget=1024,
@@ -1223,6 +1257,20 @@ class SocialRuntimeManager:
             ),
             cognition_diagnostics=blackboard.worker_diagnostics,
         )
+        reply_source = evaluation.resolve_reply_source()
+        if (self.knowledge_resolver is not None and reply_source is not None
+                and reply_source.event_id != request.event.event_id):
+            # The local resolver initially saw the window's trigger. Once the
+            # governor selects an earlier anchor, do not send B's knowledge to A.
+            try:
+                topic_understanding = self.knowledge_resolver.resolve(
+                    reply_source, context_events, request.group_id, now,
+                )
+            except Exception:
+                topic_understanding = None
+                knowledge_diagnostics = (*knowledge_diagnostics, "knowledge_anchor_resolution_failed")
+            evaluation = replace(evaluation, topic_understanding=topic_understanding,
+                                 knowledge_diagnostics=knowledge_diagnostics)
         result = SceneWorkResult(
             request_id=request.request_id,
             group_id=request.group_id,
@@ -1513,6 +1561,7 @@ class SocialRuntimeManager:
             "audiences": audiences,
             "group_activity": asdict(world.group_activity),
             "last_bot_event_at": world.recent_presence.last_bot_event_at,
+            "bot_actor_id": str(request.event.payload.get("bot_id") or "")[:80],
             "conversation_lease": (
                 asdict(world.conversation_lease)
                 if world.conversation_lease is not None
