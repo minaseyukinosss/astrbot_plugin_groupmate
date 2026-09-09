@@ -40,7 +40,7 @@ def test_router_has_product_routes_with_safe_fallback():
     )
 
     assert result == {
-        "routes": ["/runtime", "/profiles", "/knowledge"],
+        "routes": ["/runtime", "/profiles", "/knowledge", "/stickers"],
         "known": "/profiles",
         "member": "member:abc",
         "href": "#/profiles?member=member%3Aabc",

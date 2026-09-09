@@ -34,6 +34,10 @@ export class ApiBridge {
     return this.bridge.apiPost(`knowledge/${scope}/actions`, body);
   }
 
+  stickerAction(body) {
+    return this.bridge.apiPost("stickers/actions", body);
+  }
+
   async connect({ params, onEvent, onState, onPoll }) {
     await this.disconnect();
     onState({ state: "connecting", impact: "正在建立实时连接" });

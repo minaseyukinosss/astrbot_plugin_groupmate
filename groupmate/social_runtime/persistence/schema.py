@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class ForeignDatabaseError(RuntimeError):
@@ -39,6 +39,7 @@ _REQUIRED_TABLES = {
     "knowledge_sources", "knowledge_claim_evidence", "group_conventions",
     "group_topic_affinity", "group_topic_mentions", "game_release_states",
     "negative_search_snapshots", "knowledge_jobs", "knowledge_usage",
+    "sticker_assets", "sticker_rejects",
 }
 
 
@@ -94,6 +95,9 @@ def initialize_database(path: Path) -> None:
                 version = 4
             if version == 4:
                 _migrate_v4_to_v5(db)
+                version = 5
+            if version == 5:
+                _migrate_v5_to_v6(db)
             verify_schema(db)
             return
         db.executescript(
@@ -101,6 +105,7 @@ def initialize_database(path: Path) -> None:
             + _PROFILE_SCHEMA_SQL
             + _MEMBER_STYLE_SCHEMA_SQL
             + _KNOWLEDGE_SCHEMA_SQL
+            + _STICKER_SCHEMA_SQL
         )
         db.execute(
             "INSERT INTO social_runtime_schema(singleton, version, created_at) "
@@ -157,6 +162,17 @@ def _migrate_v4_to_v5(db: sqlite3.Connection) -> None:
         )
     db.execute("UPDATE social_runtime_schema SET version=5 WHERE singleton=1")
     db.execute("COMMIT")
+
+
+def _migrate_v5_to_v6(db: sqlite3.Connection) -> None:
+    """Add sticker lexicon tables without rewriting existing runtime rows."""
+
+    db.executescript(
+        "BEGIN IMMEDIATE;\n"
+        + _STICKER_SCHEMA_SQL
+        + "\nUPDATE social_runtime_schema SET version=6 WHERE singleton=1;\n"
+        + "COMMIT;"
+    )
 
 
 def verify_schema(db: sqlite3.Connection) -> None:
@@ -813,4 +829,43 @@ CREATE TABLE knowledge_usage (
 );
 CREATE INDEX idx_knowledge_usage_time
     ON knowledge_usage(recorded_at, result_kind);
+"""
+
+_STICKER_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS sticker_assets (
+    asset_id TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    relative_path TEXT NOT NULL,
+    origin_kind TEXT NOT NULL CHECK(origin_kind IN ('admin_import','group_captured')),
+    license_status TEXT NOT NULL,
+    source_group_id TEXT,
+    source_event_id TEXT,
+    status TEXT NOT NULL CHECK(status IN ('candidate','ready','disabled','rejected')),
+    meaning TEXT NOT NULL DEFAULT '',
+    use_when_json TEXT NOT NULL DEFAULT '[]',
+    do_not_use_json TEXT NOT NULL DEFAULT '[]',
+    attitudes_json TEXT NOT NULL DEFAULT '[]',
+    intensity INTEGER NOT NULL DEFAULT 50 CHECK(intensity >= 0 AND intensity <= 100),
+    min_familiarity INTEGER NOT NULL DEFAULT 0,
+    max_boundary_pressure INTEGER NOT NULL DEFAULT 100,
+    caption_source TEXT NOT NULL DEFAULT '',
+    is_sticker_judgment TEXT NOT NULL DEFAULT '',
+    judgment_reason TEXT NOT NULL DEFAULT '',
+    sighting_count INTEGER NOT NULL DEFAULT 1,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at INTEGER,
+    last_used_group_id TEXT,
+    cooldown_seconds INTEGER NOT NULL DEFAULT 120,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sticker_status ON sticker_assets(status, updated_at);
+CREATE TABLE IF NOT EXISTS sticker_rejects (
+    sha256 TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    rejected_at INTEGER NOT NULL,
+    asset_id TEXT
+);
 """

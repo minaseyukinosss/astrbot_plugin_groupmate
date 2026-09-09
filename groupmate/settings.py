@@ -41,6 +41,8 @@ class SocialRuntimeSettings:
     profile_timeout_seconds: int = 30
     knowledge_enabled: bool = True
     knowledge_web_search_enabled: bool = True
+    sticker_enabled: bool = True
+    sticker_capture_enabled: bool = False
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object] | None) -> "SocialRuntimeSettings":
@@ -171,6 +173,13 @@ class SocialRuntimeSettings:
             knowledge_web_search_enabled=cls._boolean(
                 source.get("knowledge_web_search_enabled", True),
                 "knowledge_web_search_enabled",
+            ),
+            sticker_enabled=cls._boolean(
+                source.get("sticker_enabled", True), "sticker_enabled"
+            ),
+            sticker_capture_enabled=cls._boolean(
+                source.get("sticker_capture_enabled", False),
+                "sticker_capture_enabled",
             ),
         )
 

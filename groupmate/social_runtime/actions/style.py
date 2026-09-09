@@ -176,9 +176,31 @@ class StyleDirector:
             directness=directness,
             particle_budget=particle_budget,
             punctuation_budget=punctuation_budget,
-            media_policy="text_only",
+            media_policy=self._media_policy(context),
             avoid_patterns=self._avoid_patterns(context),
         )
+
+    @staticmethod
+    def _media_policy(context: StyleContext) -> str:
+        if context.mode.primary in {"boundary", "focused"}:
+            return "text_only"
+        stance = context.stance
+        if stance is not None and stance.attitude is Attitude.FOCUSED:
+            return "text_only"
+        move = context.move
+        if move is None:
+            return "text_only"
+        if move.primary_move in {
+            SocialMove.SILENCE,
+            SocialMove.JOIN_CHORUS,
+            SocialMove.SAFETY_MINIMUM,
+            SocialMove.FIRM_BOUNDARY,
+            SocialMove.CORRECT_SELF,
+        }:
+            return "text_only"
+        if move.knowledge_policy is not KnowledgePolicy.NONE:
+            return "text_only"
+        return "registered_only"
 
     @staticmethod
     def _clamp(value: int) -> int:

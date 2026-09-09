@@ -52,6 +52,10 @@ from ..social_runtime.knowledge.sources import (
     OfficialSourceDefinition,
     SafeSourceUrlPolicy,
 )
+from ..social_runtime.chorus_media import (
+    ChorusMediaStore,
+    attach_sticker_chorus_media,
+)
 from ..social_runtime.ownership import ExternalTriggerPolicy
 from ..social_runtime.persona.profile import GroupmatePersonaProfile
 from ..social_runtime.persona.presets import PERSONA_CANON_PRESETS
@@ -61,6 +65,10 @@ from ..social_runtime.replying import (
     ReplyPlanner,
     split_reply_bubbles,
 )
+from ..social_runtime.stickers.capture import StickerCapture
+from ..social_runtime.stickers.lexicon import StickerLexicon
+from ..social_runtime.stickers.select import StickerAccompanist
+from ..social_runtime.stickers.vision import StickerVisionWorker
 from ..social_runtime.social_context import SceneContextBuilder
 from ..social_runtime.social_moves import (
     KnowledgePolicy,
@@ -109,6 +117,8 @@ from .imitation_commands import (
     ImitationSessionController,
 )
 from .onebot_delivery import OneBotDeliveryAdapter
+from .sticker_media import load_sticker_files
+from .astrbot_vision import AstrBotVisionClient, persona_brief_for_stickers
 from ..social_runtime.profile.extractor import ProfileExtractor
 from ..social_runtime.profile.repository import ProfileRepository
 from ..social_runtime.profile.service import ProfileService
@@ -155,11 +165,14 @@ class AstrBotSocialRuntimeBridge:
         | None = None,
         text_client_factory: Callable[[SocialRuntimeSettings, str], object]
         | None = None,
+        vision_client_factory: Callable[[SocialRuntimeSettings], object]
+        | None = None,
         official_source_capability: OfficialSourceHostCapability | None = None,
     ) -> None:
         self.context = context
         self.settings = settings
         self.data_dir = Path(data_dir)
+        self._chorus_media = ChorusMediaStore(self.data_dir)
         self.clock = time.time if clock is None else clock
         self._cognition_client_factory = (
             cognition_client_factory or self._new_cognition_client
@@ -172,6 +185,9 @@ class AstrBotSocialRuntimeBridge:
         )
         self._text_client_factory = (
             text_client_factory or self._new_text_client
+        )
+        self._vision_client_factory = (
+            vision_client_factory or self._new_vision_client
         )
         self._external_trigger_policy = ExternalTriggerPolicy.from_entries(
             command_prefixes=settings.external_command_prefixes,
@@ -235,6 +251,9 @@ class AstrBotSocialRuntimeBridge:
         self._stance_policy = StancePolicy()
         self._move_planner = SocialMovePlanner()
         self._reply_executor: ReplyExecutor | None = None
+        self._sticker_lexicon: StickerLexicon | None = None
+        self._sticker_capture: StickerCapture | None = None
+        self._sticker_vision: StickerVisionWorker | None = None
         self._reply_model: object | None = None
         self._scene_model: object | None = None
         self._imitation_model: object | None = None
@@ -1044,6 +1063,22 @@ class AstrBotSocialRuntimeBridge:
                 self._member_style_service = member_style_service
                 self._imitation_controller = imitation_controller
                 self._scene_interpreter = scene_interpreter
+                sticker_lexicon = StickerLexicon(
+                    self.data_dir, self.data_dir / SOCIAL_RUNTIME_DATABASE_NAME
+                )
+                self._sticker_lexicon = sticker_lexicon
+                self._sticker_capture = StickerCapture(
+                    sticker_lexicon,
+                    enabled=self.settings.sticker_capture_enabled,
+                )
+                vision_client = self._vision_client_factory(self.settings)
+                sticker_vision = StickerVisionWorker(
+                    sticker_lexicon,
+                    vision_client if vision_client is not None else None,
+                    clock=self.clock,
+                )
+                self._sticker_vision = sticker_vision
+                await sticker_vision.start()
                 self._reply_executor = ReplyExecutor(
                     manager.reply_plans,
                     manager.outbox,
@@ -1052,6 +1087,11 @@ class AstrBotSocialRuntimeBridge:
                     knowledge_revision_provider=(
                         self._current_reply_knowledge_revision
                     ),
+                    sticker_accompanist=StickerAccompanist(
+                        sticker_lexicon,
+                        enabled=self.settings.sticker_enabled,
+                    ),
+                    chorus_media=self._chorus_media,
                 )
                 self._reply_model = reply_model
                 self._scene_model = scene_model
@@ -1082,10 +1122,16 @@ class AstrBotSocialRuntimeBridge:
                 self._member_style_service = None
                 self._imitation_controller = None
                 self._scene_interpreter = None
+                self._reply_executor = None
+                self._sticker_lexicon = None
+                self._sticker_capture = None
+                sticker_vision = self._sticker_vision
+                self._sticker_vision = None
                 self._reply_model = None
                 self._scene_model = None
                 self._imitation_model = None
                 await self._close_resources(
+                    sticker_vision,
                     knowledge_job_service,
                     self.official_source_probe,
                     knowledge_service,
@@ -1110,6 +1156,8 @@ class AstrBotSocialRuntimeBridge:
         translated = self._resolve_interaction(self.translator.translate(event))
         if not self._group_is_enabled(translated):
             return None
+        sticker_files = await self._sticker_files(translated)
+        translated = self._bind_sticker_chorus(translated, sticker_files)
         if self._owns_host_response(translated):
             stop_event = getattr(event, "stop_event", None)
             if callable(stop_event):
@@ -1120,6 +1168,7 @@ class AstrBotSocialRuntimeBridge:
             self.settings.runtime_mode,
             int(self.clock()),
         )
+        self._capture_stickers(translated, sticker_files)
         await self._observe_profile(translated)
         if translated.payload.get("social_eligible") is not False:
             self._record_trace(
@@ -1157,16 +1206,58 @@ class AstrBotSocialRuntimeBridge:
         translated = self._resolve_interaction(self.translator.translate(event))
         if not self._group_is_enabled(translated):
             return
+        sticker_files = await self._sticker_files(translated)
+        translated = self._bind_sticker_chorus(translated, sticker_files)
         self._record_trace(
             self.trace_repository.record_received,
             translated,
             self.settings.runtime_mode,
             int(self.clock()),
         )
+        self._capture_stickers(translated, sticker_files)
         await self._observe_profile(translated)
 
     def _group_is_enabled(self, event: SocialEventEnvelope) -> bool:
         return str(event.group_id or "") in self.settings.enabled_groups
+
+    def _bind_sticker_chorus(
+        self, event: SocialEventEnvelope, files: Mapping[str, bytes]
+    ) -> SocialEventEnvelope:
+        store = self._chorus_media
+        if store is None:
+            return event
+        return attach_sticker_chorus_media(event, files=files, store=store)
+
+    async def _sticker_files(self, event: SocialEventEnvelope) -> dict[str, bytes]:
+        payload = event.payload if isinstance(event.payload, Mapping) else {}
+        return await asyncio.to_thread(load_sticker_files, payload)
+
+    def _capture_stickers(
+        self, event: SocialEventEnvelope, files: Mapping[str, bytes]
+    ) -> None:
+        capture = self._sticker_capture
+        if capture is None or not capture.enabled:
+            return
+        outcomes = capture.consider_event(
+            event, now=int(self.clock()), files=files
+        )
+        worker = self._sticker_vision
+        if worker is None:
+            return
+        for outcome in outcomes:
+            if outcome.created and outcome.card is not None:
+                worker.enqueue(outcome.card.asset_id)
+
+    def enqueue_sticker_vision(self, asset_id: str, *, force: bool = False) -> bool:
+        worker = self._sticker_vision
+        if worker is None:
+            return False
+        return worker.enqueue(asset_id, force=force)
+
+    @property
+    def sticker_vision_available(self) -> bool:
+        worker = self._sticker_vision
+        return worker is not None and worker.available
 
     async def _observe_profile(self, event: SocialEventEnvelope) -> None:
         service = self._profile_service
@@ -2735,7 +2826,15 @@ class AstrBotSocialRuntimeBridge:
                 plan = self._manager.reply_plans.by_correlation(
                     part.correlation_id
                 )
-                status = "sent" if part.status is OutboxStatus.SENT else part.status.value
+                if (
+                    part.status is OutboxStatus.SENT
+                    and self._manager.outbox.has_unfinished_parts(part.bundle_id)
+                ):
+                    status = "enqueued"
+                elif part.status is OutboxStatus.SENT:
+                    status = "sent"
+                else:
+                    status = part.status.value
                 self._manager.reply_plans.mark(plan.plan_id, status)
                 if (
                     part.status is OutboxStatus.SENT
@@ -2825,8 +2924,13 @@ class AstrBotSocialRuntimeBridge:
         self._member_style_service = None
         self._imitation_controller = None
         self._profile_client = None
+        self._sticker_lexicon = None
+        self._sticker_capture = None
+        sticker_vision = self._sticker_vision
+        self._sticker_vision = None
         try:
             await self._close_resources(
+                sticker_vision,
                 knowledge_job_service,
                 self.official_source_probe,
                 knowledge_service,
@@ -2920,6 +3024,31 @@ class AstrBotSocialRuntimeBridge:
             max_tokens=1200,
             temperature=0.7,
         )
+
+    def _new_vision_client(self, settings: SocialRuntimeSettings) -> object | None:
+        provider = str(settings.vision_provider or "").strip()
+        if not provider:
+            return None
+        try:
+            return AstrBotVisionClient(
+                self.context,
+                provider,
+                persona_brief_loader=self._sticker_persona_brief,
+            )
+        except ValueError:
+            return None
+
+    def _sticker_persona_brief(self) -> str:
+        groups = self.settings.enabled_groups
+        group_id = groups[0] if groups else ""
+        try:
+            snapshot = self._persona_config_snapshot(group_id)
+            profile = snapshot.config.get("persona_profile")
+        except (ValueError, OSError, KeyError, TypeError):
+            profile = {}
+        if not isinstance(profile, Mapping):
+            profile = {}
+        return persona_brief_for_stickers(profile, name=self.settings.persona_name)
 
     @staticmethod
     def _new_member_style_client(

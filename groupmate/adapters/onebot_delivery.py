@@ -48,7 +48,7 @@ class OneBotDeliveryAdapter:
                 route["self_id"] = self_id
             response = await self._send_group_message(
                 group_id=part.group_id,
-                segments=[self._segment(part)],
+                segments=self._segments(part),
                 idempotency_key=part.idempotency_key,
                 **route,
             )
@@ -96,6 +96,16 @@ class OneBotDeliveryAdapter:
             occurred_at=occurred_at,
             platform_message_id=message_id,
         )
+
+    @classmethod
+    def _segments(cls, part: OutboxPart) -> list[dict[str, object]]:
+        payload = part.part.payload
+        segments = [cls._segment(part)]
+        if part.part.kind is DeliveryPartKind.TEXT:
+            media_ref = str(payload.get("media_ref") or "").strip()
+            if media_ref:
+                segments.append({"type": "image", "data": {"file": media_ref}})
+        return segments
 
     @staticmethod
     def _segment(part: OutboxPart) -> dict[str, object]:

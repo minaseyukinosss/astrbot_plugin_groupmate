@@ -11,6 +11,7 @@ import {
 import { renderRuntime } from "./workspaces/runtime.js";
 import { renderProfiles } from "./workspaces/profiles.js";
 import { renderKnowledge } from "./workspaces/knowledge.js";
+import { renderStickers } from "./workspaces/stickers.js";
 import { safeMediaPreview } from "./components/security.js";
 
 const bridge = new ApiBridge();
@@ -29,6 +30,7 @@ const WORKSPACE_RENDERERS = Object.freeze({
   "/runtime": renderRuntime,
   "/profiles": renderProfiles,
   "/knowledge": renderKnowledge,
+  "/stickers": renderStickers,
 });
 
 const elements = {
@@ -71,6 +73,7 @@ function renderNavigation(route) {
   elements.context.textContent = ({
     "/profiles": "持续认知 · 当前群组成员与关系",
     "/knowledge": "可审查知识 · 当前群组热度与公共事实",
+    "/stickers": "表情图鉴 · 含义、待认知与配图资格",
   })[route.path] || "此刻 · 当前群组实时消息链路";
 }
 
@@ -158,7 +161,30 @@ async function mediaSource(mediaRef, mediaKind, { force = false } = {}) {
   const ref = String(mediaRef || "");
   const kind = String(mediaKind || "").toLowerCase();
   const key = mediaCacheKey(ref, kind);
-  if (!ref.startsWith("media:") || !["image", "audio", "video"].includes(kind)) return null;
+  if (!["image", "audio", "video"].includes(kind)) return null;
+  if (ref.startsWith("sticker:")) {
+    if (kind !== "image") return null;
+    if (force) mediaCache.delete(key);
+    if (mediaCache.has(key)) return mediaCache.get(key);
+    if (mediaRequests.has(key)) return mediaRequests.get(key);
+    const pending = bridge.query("stickers/preview", { ...scopeParams(), asset_id: ref, media_ref: ref })
+      .then((result) => {
+        const source = safeMediaPreview(result, kind);
+        if (!source) throw new Error("表情预览格式不受支持");
+        mediaCache.set(key, source);
+        return source;
+      })
+      .catch((error) => {
+        mediaCache.delete(key);
+        throw error;
+      })
+      .finally(() => {
+        mediaRequests.delete(key);
+      });
+    mediaRequests.set(key, pending);
+    return pending;
+  }
+  if (!ref.startsWith("media:")) return null;
   if (force) mediaCache.delete(key);
   if (mediaCache.has(key)) return mediaCache.get(key);
   if (mediaRequests.has(key)) return mediaRequests.get(key);
@@ -286,7 +312,12 @@ function render(snapshot) {
     Math.max(Number(traceView.total_count || 0), traceItems.length),
   );
   elements.pendingTasks.textContent = String(waiting);
-  renderWorkspace(activeRoute);
+  try {
+    renderWorkspace(activeRoute);
+  } catch (error) {
+    elements.workspace.replaceChildren();
+    elements.workspace.textContent = ApiBridge.describeError(error).impact;
+  }
 }
 
 async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
@@ -298,6 +329,9 @@ async function loadWorkspace(route = activeRoute, { timeoutMs } = {}) {
       if (projection === "traces") store.mergeTracePage(view);
       else if (projection.startsWith("knowledge/")) {
         store.mergeKnowledge(projection, view);
+      }
+      else if (projection === "stickers") {
+        store.mergeStickers(view);
       }
       else store.merge(view);
       return { projection, error: null };
@@ -364,9 +398,12 @@ async function submitWorkspaceCommand(spec) {
     const knowledgeScope = spec.knowledge_scope === "library" ? "library" : "group";
     const { knowledge_scope: _knowledgeScope, ...command } = spec;
     const body = { ...command, command_id: commandId, ...scopeParams() };
-    const result = String(spec.type || "").startsWith("knowledge_")
+    const commandType = String(spec.type || "");
+    const result = commandType.startsWith("knowledge_")
       ? await bridge.knowledgeAction(knowledgeScope, body)
-      : await bridge.command(body);
+      : commandType.startsWith("sticker_")
+        ? await bridge.stickerAction(body)
+        : await bridge.command(body);
     store.setConnection({ state: "connected", impact: "命令已接受，等待运行状态更新" });
     return result;
   } catch (error) {

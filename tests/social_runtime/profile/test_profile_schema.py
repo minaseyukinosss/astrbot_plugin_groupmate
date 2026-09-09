@@ -91,7 +91,7 @@ def test_v1_database_upgrades_in_place_without_losing_runtime_rows(tmp_path):
             ).fetchall()
         }
         marker = db.execute("SELECT marker FROM culture").fetchone()[0]
-    assert SCHEMA_VERSION == version == 5
+    assert SCHEMA_VERSION == version == 6
     assert _PROFILE_TABLES <= names
     assert _MEMBER_STYLE_TABLES <= names
     assert marker == "preserve-me"

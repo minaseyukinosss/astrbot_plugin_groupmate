@@ -19,6 +19,7 @@ from .groupmate.social_runtime.control.commands import CommandService
 from .groupmate.social_runtime.control.knowledge import KnowledgeControlQueries
 from .groupmate.social_runtime.control.projections import ProjectionConsumer
 from .groupmate.social_runtime.control.queries import ProjectionQueries
+from .groupmate.social_runtime.control.stickers import StickerControlService
 from .groupmate.social_runtime.control.stream import ProjectionStream
 from .eval.shadow import ShadowReviewRepository
 
@@ -56,6 +57,11 @@ class GroupmatePlugin(Star):
                 queries=ProjectionQueries(path),
                 knowledge_queries=KnowledgeControlQueries(
                     path, persona_id=self.settings.persona_id
+                ),
+                sticker_queries=StickerControlService(
+                    path, self.data_dir, persona_id=self.settings.persona_id,
+                    vision_enqueue=self.bridge.enqueue_sticker_vision,
+                    vision_enabled=lambda: self.bridge.sticker_vision_available,
                 ),
                 stream=ProjectionStream(path),
                 command_service_for=lambda username: CommandService(

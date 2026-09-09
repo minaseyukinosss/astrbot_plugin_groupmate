@@ -278,6 +278,15 @@ class SocialSceneInterpreter:
                 "chorus_already_joined": evidence.already_joined,
             }
         )
+        if evidence.kind == "STICKER":
+            frozen["scene_kind"] = "group_chorus"
+            frozen["target_scope"] = "GROUP"
+            frozen["target_id"] = None
+            frozen["literal_subject"] = str(frozen.get("literal_subject") or "").strip() or "表情包"
+            frozen["chorus_target"] = "OTHER"
+            frozen["chorus_target_id"] = None
+            frozen["chorus_tone"] = "SAFE_BANTER"
+            frozen["user_move"] = str(frozen.get("user_move") or "").strip() or "chorus_sticker"
         continuity = [
             str(item)
             for item in tuple(frozen.get("continuity_event_ids") or ())

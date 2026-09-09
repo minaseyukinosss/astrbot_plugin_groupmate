@@ -33,7 +33,7 @@ def test_knowledge_workspace_is_reachable_and_loads_scoped_views():
     html = (PAGE / "index.html").read_text(encoding="utf-8")
 
     assert router == {
-        "routes": ["/runtime", "/profiles", "/knowledge"],
+        "routes": ["/runtime", "/profiles", "/knowledge", "/stickers"],
         "known": "/knowledge",
     }
     assert '"/knowledge": [' in store

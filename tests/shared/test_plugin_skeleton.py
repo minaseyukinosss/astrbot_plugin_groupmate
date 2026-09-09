@@ -40,6 +40,11 @@ def test_default_settings_are_off_and_database_is_plugin_owned():
     assert settings.profile_batch_interval_seconds == 600
     assert settings.profile_timeout_seconds == 30
     assert settings.knowledge_enabled is True
+    assert settings.sticker_enabled is True
+    assert settings.sticker_capture_enabled is False
+    assert not hasattr(settings, "sticker_capture_groups")
+    assert not hasattr(settings, "sticker_auto_admit")
+    assert not hasattr(settings, "sticker_optional_skip_percent")
     assert settings.knowledge_web_search_enabled is True
 
 
@@ -105,6 +110,8 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
         "profile_timeout_seconds",
         "knowledge_enabled",
         "knowledge_web_search_enabled",
+        "sticker_enabled",
+        "sticker_capture_enabled",
     }
     assert schema["runtime_mode"]["options"] == ["SHADOW", "SOCIAL_RUNTIME"]
     assert schema["runtime_mode"]["labels"] == [
@@ -141,11 +148,21 @@ def test_astrbot_config_only_exposes_groupmate_deployment_choices():
     assert schema["profile_timeout_seconds"]["default"] == 30
     assert schema["knowledge_enabled"]["default"] is True
     assert schema["knowledge_web_search_enabled"]["default"] is True
+    assert schema["sticker_enabled"]["default"] is True
+    assert schema["sticker_capture_enabled"]["default"] is False
+    assert "sticker_capture_groups" not in schema
+    assert "sticker_auto_admit" not in schema
+    assert "sticker_optional_skip_percent" not in schema
 
 
 @pytest.mark.parametrize(
     "field",
-    ("knowledge_enabled", "knowledge_web_search_enabled"),
+    (
+        "knowledge_enabled",
+        "knowledge_web_search_enabled",
+        "sticker_enabled",
+        "sticker_capture_enabled",
+    ),
 )
 def test_knowledge_settings_reject_string_booleans(field):
     with pytest.raises(ValueError, match=field):

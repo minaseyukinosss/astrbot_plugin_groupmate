@@ -264,3 +264,35 @@ def test_translator_marks_only_configured_deployment_triggers_as_external():
     assert command.payload["ownership_source"] == "configured_trigger"
     assert ordinary.payload["interaction_owner"] == "UNKNOWN"
     assert ordinary.payload["social_eligible"] is True
+
+
+def test_translator_keeps_image_file_path_and_url():
+    event = AstrBotEventTranslator("aemeath").translate(
+        {
+            "message_id": "52",
+            "self_id": "323537051",
+            "group_id": "885617919",
+            "user_id": "42",
+            "time": 1700000000,
+            "message": [
+                {
+                    "type": "image",
+                    "data": {
+                        "file": "custom.gif",
+                        "path": "/tmp/custom.gif",
+                        "url": "http://127.0.0.1:3000/custom.gif",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert event.payload["media"] == [
+        {
+            "type": "image",
+            "url": "http://127.0.0.1:3000/custom.gif",
+            "file": "custom.gif",
+            "path": "/tmp/custom.gif",
+        }
+    ]
+    assert event.payload["segments"][0]["data"]["url"] == "http://127.0.0.1:3000/custom.gif"

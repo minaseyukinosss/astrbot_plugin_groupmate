@@ -118,6 +118,39 @@ def test_onebot_adapter_translates_structured_part_without_free_text_parsing():
     ]
 
 
+def test_onebot_adapter_sends_text_and_sticker_in_one_message():
+    calls = []
+
+    async def send_group_message(*, group_id, segments, idempotency_key):
+        calls.append((group_id, segments, idempotency_key))
+        return {"message_id": "qq-message-9"}
+
+    adapter = OneBotDeliveryAdapter(send_group_message)
+    bundle = _bundle(
+        kind=DeliveryPartKind.TEXT,
+        payload={
+            "text": "哦，肉蛋葱鸡啊",
+            "media_ref": "/tmp/sticker.gif",
+            "sticker_id": "sticker:f62b45847c1f30450eb58316",
+        },
+    )
+    outbox_part = OutboxService.in_memory_part(bundle, bundle.parts[0], OutboxStatus.SENDING)
+
+    receipt = asyncio.run(adapter.send(outbox_part))
+
+    assert receipt.status is DeliveryReceiptStatus.SUCCESS
+    assert calls == [
+        (
+            "group-1",
+            [
+                {"type": "text", "data": {"text": "哦，肉蛋葱鸡啊"}},
+                {"type": "image", "data": {"file": "/tmp/sticker.gif"}},
+            ],
+            "delivery-key-1",
+        )
+    ]
+
+
 def test_astrbot_sender_uses_the_selected_platform_instance():
     class Client:
         def __init__(self):

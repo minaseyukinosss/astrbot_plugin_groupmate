@@ -320,3 +320,73 @@ def test_member_chorus_target_must_resolve_to_current_group_member():
 
     assert result.diagnostic_code == "chorus_member_invalid"
     assert result.scene.chorus_target is ChorusTarget.UNKNOWN
+
+
+def test_sticker_chorus_is_frozen_as_other_safe_banter():
+    digest = "e" * 64
+    payload = f"sticker:{digest}"
+
+    def _sticker_event(event_id, actor_id, occurred_at):
+        return SocialEventEnvelope.create(
+            event_id=event_id,
+            event_type="platform.message",
+            occurred_at=occurred_at,
+            received_at=occurred_at,
+            persona_id="aemeath",
+            group_id="g1",
+            actor_id=actor_id,
+            source_message_id=event_id,
+            correlation_id=f"c:{event_id}",
+            causation_id=None,
+            payload={
+                "text": "",
+                "origin_kind": "USER_TEXT",
+                "media": [{"type": "image", "file": "/tmp/one.gif"}],
+                "segments": [{"type": "image", "data": {"file": "/tmp/one.gif"}}],
+                "chorus_media": {"sha256": digest, "mime_type": "image/gif"},
+            },
+        )
+
+    context = SceneContextBuilder(max_chars=800).build(
+        source_event=_sticker_event("m2", "u2", 110),
+        context_events=(_sticker_event("m1", "u1", 100),),
+        focus_event_ids=("m1", "m2"),
+        target_id="u2",
+        topic_id="m1",
+        persona_actor_id="aemeath",
+        persona_aliases=("爱弥斯",),
+        member_refs={"u9": ("小林",)},
+        profile=None,
+        relationship_memories=(),
+    ).with_chorus(
+        ChorusEvidence(
+            chain_id="chorus:sticker",
+            payload=payload,
+            normalized_key=payload,
+            event_ids=("m1", "m2"),
+            participant_ids=("u1", "u2"),
+            already_joined=False,
+            kind="STICKER",
+        )
+    )
+    model = FixedSceneModel(
+        {
+            "scene_kind": "group_chorus",
+            "target_scope": "INDIVIDUAL",
+            "target_id": "u2",
+            "literal_subject": "爱弥斯",
+            "user_move": "chorus_about_aemeath",
+            "continuity_event_ids": ["m1", "m2"],
+            "chorus_target": "SELF",
+            "chorus_tone": "ATTACK",
+            "confidence": 0.9,
+        }
+    )
+
+    result = asyncio.run(SocialSceneInterpreter(model).interpret(context))
+
+    assert result.diagnostic_code is None
+    assert result.scene.chorus_target is ChorusTarget.OTHER
+    assert result.scene.chorus_tone is ChorusTone.SAFE_BANTER
+    assert result.scene.target_scope is TargetScope.GROUP
+    assert result.scene.chorus_payload == payload

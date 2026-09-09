@@ -1,4 +1,4 @@
-"""Durable, text-only reply planning and generation for the chat mainline."""
+"""Durable reply planning and generation for the chat mainline."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from .actions.style import (
     StyleDirective,
     StyleDirector,
 )
-from .contracts import SocialEventEnvelope
+from .chorus_media import ChorusMediaStore, sticker_chorus_digest
 from .delivery.outbox import OutboxService
 from .dialogue import continue_from_event_id, dialogue_messages
 from .expression import ExpressionPlan, ExpressionPlanner
@@ -55,6 +55,10 @@ from .society.relationships import (
     RelationshipStage,
 )
 from .stances import Boundary, PermissionSnapshot, StanceDecision
+from .stickers.contracts import StickerGift
+from .stickers.lexicon import InvalidStickerAsset
+from .stickers.request import parse_sticker_ask
+from .stickers.select import StickerAccompanist
 
 
 DELIVERY_GRACE_SECONDS = 20
@@ -105,6 +109,25 @@ def split_reply_bubbles(text: str, *, max_bubbles: int) -> tuple[str, ...]:
     return best
 
 
+def strip_trailing_stops(text: str) -> str:
+    """Drop terminal Chinese/ASCII periods so chat replies don't sound like essays."""
+
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return cleaned
+    pieces: list[str] = []
+    for index, segment in enumerate(re.split(r"(\n\s*\n)", cleaned)):
+        if index % 2 == 1:
+            pieces.append(segment)
+            continue
+        body = segment.strip()
+        if body.endswith(("……", "…", "...")):
+            pieces.append(body)
+            continue
+        pieces.append(re.sub(r"[。.]+\s*$", "", body).rstrip())
+    return "".join(pieces)
+
+
 class ReplyPlanIdentityConflict(RuntimeError):
     """Raised when a durable reply identity is reused for different content."""
 
@@ -147,6 +170,9 @@ class ReplyPlan:
     knowledge_snapshot: KnowledgeSnapshot | None = None
     anchor_event_id: str | None = None
     continue_from_event_id: str | None = None
+    familiarity: int = 0
+    affection: float = 0.0
+    boundary_pressure: int = 0
 
     def __post_init__(self) -> None:
         snapshot = self.knowledge_snapshot
@@ -320,7 +346,7 @@ class ReplyPlanRepository:
             and plan.created_at <= bundle.created_at
             and bundle.expires_at <= plan.expires_at
             and knowledge_current
-            and plan.status in {"planned", "generated", "enqueued"}
+            and plan.status in {"planned", "generated", "enqueued", "sent"}
         )
 
     @staticmethod
@@ -365,6 +391,9 @@ class ReplyPlanRepository:
             values["move"] = legacy_move
         values.setdefault("relationship_projection_version", 0)
         values.setdefault("continue_from_event_id", None)
+        values.setdefault("familiarity", 0)
+        values.setdefault("affection", 0.0)
+        values.setdefault("boundary_pressure", 0)
         return ReplyPlan(**values)
 
     @staticmethod
@@ -504,6 +533,21 @@ class ReplyPlanner:
             ),
             member_context=str(member_context)[:1200],
             member_style_overlay=member_style_overlay,
+            familiarity=(
+                relationship_projection.familiarity
+                if relationship_projection is not None
+                else 0
+            ),
+            affection=(
+                PublicAffection.from_projection(relationship_projection).value
+                if relationship_projection is not None
+                else 0.0
+            ),
+            boundary_pressure=(
+                relationship_projection.boundary_pressure
+                if relationship_projection is not None
+                else 0
+            ),
             now=int(now),
         )
 
@@ -524,6 +568,9 @@ class ReplyPlanner:
         member_context: str,
         member_style_overlay: MemberStyleOverlay | None,
         now: int,
+        familiarity: int = 0,
+        affection: float = 0.0,
+        boundary_pressure: int = 0,
     ) -> ReplyPlan:
         resolver = getattr(evaluation, "resolve_reply_source", None)
         source = resolver() if callable(resolver) else evaluation.source_event
@@ -585,6 +632,9 @@ class ReplyPlanner:
                 anchor_event_id=source.event_id,
                 planned_id=getattr(selected, "continue_from_event_id", None),
             ),
+            familiarity=int(familiarity),
+            affection=float(affection),
+            boundary_pressure=int(boundary_pressure),
         )
 
     @staticmethod
@@ -805,6 +855,8 @@ class ReplyExecutor:
         clock: Callable[[], float] | None = None,
         knowledge_revision_provider: Callable[[ReplyPlan], int] | None = None,
         knowledge_renderer: KnowledgeFactRenderer | None = None,
+        sticker_accompanist: StickerAccompanist | None = None,
+        chorus_media: ChorusMediaStore | None = None,
     ) -> None:
         self.repository = repository
         self.outbox = outbox
@@ -818,6 +870,8 @@ class ReplyExecutor:
         self.knowledge_reviewer = GroundedReplyReviewer()
         self.social_reviewer = SocialOutputReviewer()
         self.identity_imitation_guard = IdentityImitationGuard()
+        self.sticker_accompanist = sticker_accompanist
+        self.chorus_media = chorus_media
 
     async def preview(
         self,
@@ -833,7 +887,7 @@ class ReplyExecutor:
             )
         if self._knowledge_authority_violations(plan):
             return ReplyPreview(
-                self._knowledge_fallback_text(plan),
+                self._spoken_text(plan, self._knowledge_fallback_text(plan)),
                 "REJECTED",
                 "knowledge_review_rejected",
             )
@@ -845,7 +899,14 @@ class ReplyExecutor:
             review = self.firewall.review(GeneratedDraft(realized.text), request)
             if not review.accepted:
                 return ReplyPreview(None, "REJECTED", "output_firewall_rejected")
-            return ReplyPreview(realized.text, "READY")
+            if self._chorus_sticker_missing(plan):
+                return ReplyPreview(None, "REJECTED", "chorus_media_missing")
+            preview_text = (
+                "[表情包]"
+                if sticker_chorus_digest(realized.text)
+                else realized.text
+            )
+            return ReplyPreview(preview_text, "READY")
         if plan.move.knowledge_policy is KnowledgePolicy.STRICT:
             return await self._preview_strict(
                 plan,
@@ -853,6 +914,7 @@ class ReplyExecutor:
                 persona_profile=persona_profile,
                 recent_outputs=recent_outputs,
             )
+        gift = self._sticker_gift(plan, context_events)
         request = GenerationRequest(
             directive=plan.style,
             required=plan.required,
@@ -863,7 +925,10 @@ class ReplyExecutor:
         try:
             raw = await self.model.complete_text(
                 system_prompt=self._system_prompt(
-                    plan, persona_profile, context_events
+                    plan,
+                    persona_profile,
+                    context_events,
+                    sticker_gift=gift,
                 ),
                 prompt=self._prompt(plan, context_events),
             )
@@ -891,6 +956,7 @@ class ReplyExecutor:
                     context_events=context_events,
                     persona_profile=persona_profile,
                     request=request,
+                    sticker_gift=gift,
                 )
             except Exception:
                 return ReplyPreview(
@@ -899,12 +965,12 @@ class ReplyExecutor:
         if violations or realized is None:
             if plan.move.knowledge_policy is KnowledgePolicy.GROUNDED:
                 return ReplyPreview(
-                    self._knowledge_fallback_text(plan),
+                    self._spoken_text(plan, self._knowledge_fallback_text(plan)),
                     "REJECTED",
                     "knowledge_review_rejected",
                 )
             return ReplyPreview(None, "REJECTED", "reply_review_rejected")
-        return ReplyPreview(realized.text, "READY")
+        return ReplyPreview(self._spoken_text(plan, realized.text), "READY")
 
     async def execute(
         self,
@@ -961,6 +1027,9 @@ class ReplyExecutor:
             if not self.firewall.review(GeneratedDraft(realized.text), request).accepted:
                 self.repository.mark(plan.plan_id, "silent")
                 return ReplyExecutionResult(None, "REJECTED", "output_firewall_rejected")
+            if self._chorus_sticker_missing(plan):
+                self.repository.mark(plan.plan_id, "silent")
+                return ReplyExecutionResult(None, "REJECTED", "chorus_media_missing")
             self.repository.mark(plan.plan_id, "generated")
             return self._ready_result(plan, realized.text)
         if plan.move.knowledge_policy is KnowledgePolicy.STRICT:
@@ -970,6 +1039,7 @@ class ReplyExecutor:
                 persona_profile=persona_profile,
                 recent_outputs=recent_outputs,
             )
+        gift = self._sticker_gift(plan, context_events)
         request = GenerationRequest(
             directive=plan.style,
             required=plan.required,
@@ -980,7 +1050,10 @@ class ReplyExecutor:
         try:
             raw = await self.model.complete_text(
                 system_prompt=self._system_prompt(
-                    plan, persona_profile, context_events
+                    plan,
+                    persona_profile,
+                    context_events,
+                    sticker_gift=gift,
                 ),
                 prompt=self._prompt(plan, context_events),
             )
@@ -1016,6 +1089,7 @@ class ReplyExecutor:
                     context_events=context_events,
                     persona_profile=persona_profile,
                     request=request,
+                    sticker_gift=gift,
                 )
             except Exception:
                 return ReplyExecutionResult(
@@ -1036,7 +1110,13 @@ class ReplyExecutor:
                 "reply_review_rejected",
             )
         self.repository.mark(plan.plan_id, "generated")
-        return self._ready_result(plan, realized.text)
+        return self._ready_result(
+            plan,
+            realized.text,
+            context_events=context_events,
+            persona_profile=persona_profile,
+            sticker_gift=gift,
+        )
 
     async def _preview_strict(
         self,
@@ -1059,11 +1139,11 @@ class ReplyExecutor:
         if violations or realized is None:
             fallback = self._knowledge_fallback_text(plan)
             return ReplyPreview(
-                fallback,
+                self._spoken_text(plan, fallback),
                 "REJECTED",
                 "knowledge_review_rejected",
             )
-        return ReplyPreview(realized.text, "READY")
+        return ReplyPreview(self._spoken_text(plan, realized.text), "READY")
 
     async def _execute_strict(
         self,
@@ -1094,7 +1174,12 @@ class ReplyExecutor:
                 "knowledge_review_rejected",
             )
         self.repository.mark(plan.plan_id, "generated")
-        return self._ready_result(plan, realized.text)
+        return self._ready_result(
+            plan,
+            realized.text,
+            context_events=context_events,
+            persona_profile=persona_profile,
+        )
 
     async def _strict_generation_cycle(
         self,
@@ -1383,6 +1468,7 @@ class ReplyExecutor:
         context_events: tuple[SocialEventEnvelope, ...],
         persona_profile: Mapping[str, object],
         request: GenerationRequest,
+        sticker_gift: StickerGift | None = None,
     ) -> tuple[RealizedReply | None, tuple[str, ...]]:
         """Make one ordinary-Persona attempt after an unsafe imitation draft.
 
@@ -1393,7 +1479,10 @@ class ReplyExecutor:
         ordinary_plan = replace(plan, member_style_overlay=None)
         raw = await self.model.complete_text(
             system_prompt=self._system_prompt(
-                ordinary_plan, persona_profile, context_events
+                ordinary_plan,
+                persona_profile,
+                context_events,
+                sticker_gift=sticker_gift,
             ),
             prompt=self._prompt(ordinary_plan, context_events),
         )
@@ -1615,32 +1704,99 @@ class ReplyExecutor:
             text = "这次我先不乱说。"
         return RealizedReply(text, covered_ids, (), (), source_ids)
 
-    def _ready_result(self, plan: ReplyPlan, text: str) -> ReplyExecutionResult:
-        part, texts = self._enqueue(plan, text)
+    def _ready_result(
+        self,
+        plan: ReplyPlan,
+        text: str,
+        *,
+        context_events: tuple[SocialEventEnvelope, ...] = (),
+        persona_profile: Mapping[str, object] | None = None,
+        sticker_gift: StickerGift | None = None,
+    ) -> ReplyExecutionResult:
+        gift = (
+            sticker_gift
+            if sticker_gift is not None
+            else self._sticker_gift(plan, context_events)
+        )
+        part, texts = self._enqueue(
+            plan,
+            text,
+            gift=gift,
+            speaker_name=self._speaker_name(persona_profile),
+        )
         return ReplyExecutionResult(part, "READY", delivered_texts=texts)
 
-    def _enqueue(self, plan: ReplyPlan, text: str) -> tuple[OutboxPart, tuple[str, ...]]:
-        bubbles = split_reply_bubbles(
-            text, max_bubbles=min(MAX_DELIVERY_BUBBLES, max(1, plan.style.max_segments))
-        )
-        if not bubbles:
-            bubbles = (str(text or "").strip() or "……",)
-        parts = tuple(
-            DeliveryPart.create(
-                part_id=f"reply-part:{plan.plan_id}:{index}",
-                kind=DeliveryPartKind.TEXT,
-                payload={
-                    "text": bubble,
-                    "platform_id": plan.platform_id,
-                    "session": plan.session,
-                    "self_id": plan.bot_id,
-                },
-                order=index,
-                idempotency_key=f"reply-send:{plan.plan_id}:{index}",
-                expires_at=plan.expires_at,
+    def _spoken_text(self, plan: ReplyPlan, text: str | None) -> str | None:
+        if text is None:
+            return None
+        if plan.move.primary_move is SocialMove.JOIN_CHORUS:
+            return text
+        return strip_trailing_stops(text)
+
+    def _chorus_sticker_path(self, plan: ReplyPlan) -> Path | None:
+        digest = sticker_chorus_digest(str(plan.move.verbatim_payload or ""))
+        if digest is None or self.chorus_media is None:
+            return None
+        return self.chorus_media.resolve(digest)
+
+    def _chorus_sticker_missing(self, plan: ReplyPlan) -> bool:
+        digest = sticker_chorus_digest(str(plan.move.verbatim_payload or ""))
+        if digest is None:
+            return False
+        return self._chorus_sticker_path(plan) is None
+
+    def _enqueue(
+        self,
+        plan: ReplyPlan,
+        text: str,
+        *,
+        gift: StickerGift | None = None,
+        speaker_name: str = "",
+    ) -> tuple[OutboxPart, tuple[str, ...]]:
+        chorus_image = self._chorus_sticker_part(plan, order=0)
+        if chorus_image is not None:
+            parts = (chorus_image,)
+            bubbles: tuple[str, ...] = ()
+        else:
+            bubbles = split_reply_bubbles(
+                text, max_bubbles=min(MAX_DELIVERY_BUBBLES, max(1, plan.style.max_segments))
             )
-            for index, bubble in enumerate(bubbles)
-        )
+            if plan.move.primary_move is not SocialMove.JOIN_CHORUS:
+                bubbles = tuple(
+                    spoken
+                    for bubble in bubbles
+                    if (spoken := strip_trailing_stops(bubble))
+                )
+            if not bubbles:
+                fallback = str(text or "").strip() or "……"
+                if plan.move.primary_move is SocialMove.JOIN_CHORUS:
+                    bubbles = (fallback,)
+                else:
+                    bubbles = (strip_trailing_stops(fallback) or "……",)
+            parts = tuple(
+                DeliveryPart.create(
+                    part_id=f"reply-part:{plan.plan_id}:{index}",
+                    kind=DeliveryPartKind.TEXT,
+                    payload={
+                        "text": bubble,
+                        "platform_id": plan.platform_id,
+                        "session": plan.session,
+                        "self_id": plan.bot_id,
+                    },
+                    order=index,
+                    idempotency_key=f"reply-send:{plan.plan_id}:{index}",
+                    expires_at=plan.expires_at,
+                )
+                for index, bubble in enumerate(bubbles)
+            )
+            if gift is not None and gift.asked:
+                parts = self._attach_sticker_gift(
+                    plan, parts, gift, speaker_name=speaker_name
+                )
+            else:
+                sticker = self._sticker_media(plan, text)
+                if sticker is not None:
+                    parts = self._with_text_sticker(parts, sticker[0], sticker[1])
         bundle = DeliveryBundle.create(
             bundle_id=f"reply-bundle:{plan.plan_id}",
             correlation_id=plan.correlation_id,
@@ -1654,6 +1810,211 @@ class ReplyExecutor:
         self.outbox.commit_bundle(bundle)
         self.repository.mark(plan.plan_id, "enqueued")
         return self.outbox.outbox(parts[0].part_id), bubbles
+
+    def _chorus_sticker_part(self, plan: ReplyPlan, *, order: int) -> DeliveryPart | None:
+        path = self._chorus_sticker_path(plan)
+        if path is None or plan.move.primary_move is not SocialMove.JOIN_CHORUS:
+            return None
+        return DeliveryPart.create(
+            part_id=f"reply-part:{plan.plan_id}:{order}",
+            kind=DeliveryPartKind.IMAGE,
+            payload={
+                "media_ref": str(path),
+                "platform_id": plan.platform_id,
+                "session": plan.session,
+                "self_id": plan.bot_id,
+            },
+            order=order,
+            idempotency_key=f"reply-send:{plan.plan_id}:{order}",
+            expires_at=plan.expires_at,
+        )
+
+    def _sticker_media(self, plan: ReplyPlan, text: str) -> tuple[str, str] | None:
+        accompanist = self.sticker_accompanist
+        if accompanist is None:
+            return None
+        decision = accompanist.decide(
+            text=text,
+            move=plan.move,
+            stance=plan.stance,
+            media_policy=plan.style.media_policy,
+            now=int(self.clock()),
+            affection=float(plan.affection),
+            boundary_pressure=plan.boundary_pressure,
+        )
+        if decision.asset_id is None or not decision.media_path:
+            return None
+        accompanist.mark_used(
+            decision.asset_id,
+            used_at=int(self.clock()),
+            group_id=plan.group_id,
+            plan_id=plan.plan_id,
+        )
+        return decision.asset_id, str(decision.media_path)
+
+    def _sticker_gift(
+        self,
+        plan: ReplyPlan,
+        context_events: tuple[SocialEventEnvelope, ...] = (),
+    ) -> StickerGift:
+        empty = StickerGift(items=(), pack=False, reason="", asked=False)
+        if plan.move.knowledge_policy in {
+            KnowledgePolicy.GROUNDED,
+            KnowledgePolicy.STRICT,
+        }:
+            return empty
+        if plan.move.primary_move in {
+            SocialMove.SILENCE,
+            SocialMove.JOIN_CHORUS,
+            SocialMove.SAFETY_MINIMUM,
+            SocialMove.CORRECT_SELF,
+        }:
+            return empty
+        text = ""
+        addressed = bool(plan.target_id)
+        for event in context_events:
+            if event.event_id != plan.anchor_event_id:
+                continue
+            payload = event.payload if isinstance(event.payload, Mapping) else {}
+            text = str(payload.get("address_remainder") or payload.get("text") or "")
+            addressed = bool(payload.get("addressed_to_bot")) or bool(
+                payload.get("direct_address")
+            ) or bool(plan.target_id)
+            break
+        ask = parse_sticker_ask(text, addressed=addressed)
+        if ask is None:
+            return empty
+        accompanist = self.sticker_accompanist
+        fulfill = getattr(accompanist, "fulfill", None) if accompanist is not None else None
+        if not callable(fulfill):
+            return StickerGift(items=(), pack=ask.pack, reason="no_lexicon", asked=True)
+        cards, reason = fulfill(
+            ask=ask,
+            move=plan.move,
+            stance=plan.stance,
+            media_policy=plan.style.media_policy,
+            now=int(self.clock()),
+            affection=float(plan.affection),
+            boundary_pressure=plan.boundary_pressure,
+        )
+        items: list[tuple[str, str]] = []
+        lexicon = getattr(accompanist, "lexicon", None)
+        for card in cards:
+            if lexicon is None:
+                break
+            try:
+                path = lexicon.validate_file(card)
+            except InvalidStickerAsset:
+                continue
+            items.append((card.asset_id, str(path)))
+        return StickerGift(
+            items=tuple(items),
+            pack=ask.pack,
+            reason=reason,
+            asked=True,
+        )
+
+    def _attach_sticker_gift(
+        self,
+        plan: ReplyPlan,
+        parts: tuple[DeliveryPart, ...],
+        gift: StickerGift,
+        *,
+        speaker_name: str,
+    ) -> tuple[DeliveryPart, ...]:
+        if not gift.items or not parts:
+            return parts
+        if gift.pack and len(gift.items) >= 2:
+            nodes = [
+                {
+                    "type": "node",
+                    "data": {
+                        "name": (speaker_name or "Groupmate")[:24],
+                        "uin": str(plan.bot_id or "10000"),
+                        "content": [{"type": "image", "data": {"file": path}}],
+                    },
+                }
+                for _asset_id, path in gift.items
+            ]
+            sticker_ids = [asset_id for asset_id, _path in gift.items]
+            self._mark_gift_used(plan, sticker_ids)
+            extra = DeliveryPart.create(
+                part_id=f"reply-part:{plan.plan_id}:{len(parts)}",
+                kind=DeliveryPartKind.FORWARD,
+                payload={
+                    "nodes": nodes,
+                    "sticker_ids": sticker_ids,
+                    "platform_id": plan.platform_id,
+                    "session": plan.session,
+                    "self_id": plan.bot_id,
+                },
+                order=len(parts),
+                idempotency_key=f"reply-send:{plan.plan_id}:{len(parts)}",
+                expires_at=plan.expires_at,
+            )
+            return (*parts, extra)
+        asset_id, path = gift.items[0]
+        self._mark_gift_used(plan, (asset_id,))
+        extra = DeliveryPart.create(
+            part_id=f"reply-part:{plan.plan_id}:{len(parts)}",
+            kind=DeliveryPartKind.IMAGE,
+            payload={
+                "media_ref": path,
+                "sticker_id": asset_id,
+                "platform_id": plan.platform_id,
+                "session": plan.session,
+                "self_id": plan.bot_id,
+            },
+            order=len(parts),
+            idempotency_key=f"reply-send:{plan.plan_id}:{len(parts)}",
+            expires_at=plan.expires_at,
+        )
+        return (*parts, extra)
+
+    def _mark_gift_used(self, plan: ReplyPlan, asset_ids: tuple[str, ...] | list[str]) -> None:
+        accompanist = self.sticker_accompanist
+        if accompanist is None:
+            return
+        used_at = int(self.clock())
+        for asset_id in asset_ids:
+            accompanist.mark_used(
+                asset_id,
+                used_at=used_at,
+                group_id=plan.group_id,
+                plan_id=plan.plan_id,
+            )
+
+    @staticmethod
+    def _with_text_sticker(
+        parts: tuple[DeliveryPart, ...],
+        asset_id: str,
+        path: str,
+    ) -> tuple[DeliveryPart, ...]:
+        last = parts[-1]
+        return (
+            *parts[:-1],
+            DeliveryPart.create(
+                part_id=last.part_id,
+                kind=DeliveryPartKind.TEXT,
+                payload={
+                    **dict(last.payload),
+                    "media_ref": path,
+                    "sticker_id": asset_id,
+                },
+                order=last.order,
+                idempotency_key=last.idempotency_key,
+                expires_at=last.expires_at,
+            ),
+        )
+
+    @staticmethod
+    def _speaker_name(persona_profile: Mapping[str, object] | None) -> str:
+        if not isinstance(persona_profile, Mapping):
+            return ""
+        identity = persona_profile.get("identity")
+        if not isinstance(identity, Mapping):
+            return ""
+        return str(identity.get("name") or "")[:24]
 
     @staticmethod
     def _continue_from(
@@ -1672,6 +2033,7 @@ class ReplyExecutor:
         plan: ReplyPlan,
         persona_profile: Mapping[str, object],
         context_events: tuple[SocialEventEnvelope, ...] = (),
+        sticker_gift: StickerGift | None = None,
     ) -> str:
         identity = persona_profile.get("identity")
         expression = persona_profile.get("expression")
@@ -1739,6 +2101,7 @@ class ReplyExecutor:
             "不要把你最近说过的具体事物反复塞进后续回复；"
             "同一细节提过一两次、对方没有继续提，就放下换接当前话。"
         )
+        sticker_guidance = ReplyExecutor._sticker_gift_guidance(sticker_gift)
         if overlay is not None:
             # 这里只放已发布的定性特征，不放原话、证据 ID 或目标画像。
             imitation_guidance = (
@@ -1760,6 +2123,7 @@ class ReplyExecutor:
             "普通社交回复优先在20到40个中文字符内说完；只有必须覆盖的事实较多时才接近上限。"
             "若本轮自然有两拍（短反应再补一句），用一个空行分成两段；不要拆成两段以上，也不要为了拆条硬凑。"
             "不要复述问题，不要宣布自己正在回应，也不要在结尾追加通用服务邀请。"
+            "句末不要用句号；问句仍用问号，感叹仍用感叹号。"
             "拒绝时说清本轮边界；技术回答只使用消息中已有条件和已列事实。"
             "只使用提供的安全 Persona 上下文，不模仿任何参考 Bot 的固定口癖。"
             "当前现实只用于保证事实正确，不要求在回复中复述。"
@@ -1770,6 +2134,7 @@ class ReplyExecutor:
             "成员画像只用于调整理解、称呼和表达，不要复述画像标签，不要逐条报告；"
             "仅在当前消息确实相关时自然使用，证据不足时以当前消息为准。\n"
             + response_guidance
+            + sticker_guidance
             + imitation_guidance
             + json.dumps(
                 {
@@ -1821,6 +2186,20 @@ class ReplyExecutor:
                 ensure_ascii=False,
                 sort_keys=True,
             )
+        )
+
+    @staticmethod
+    def _sticker_gift_guidance(gift: StickerGift | None) -> str:
+        if gift is None or not gift.asked:
+            return ""
+        if gift.items:
+            return (
+                "对方在向你要表情，图会在这句话之后另发一条，不要和图发在同一条里。"
+                "接话要短，不要描述图，不要报数量或库存。\n"
+            )
+        return (
+            "对方在向你要表情，但这回发不出去。"
+            "用你自己的口气说给不了；不要解释原因，不要提库存、开关、路径，不要套固定台词。\n"
         )
 
     @staticmethod

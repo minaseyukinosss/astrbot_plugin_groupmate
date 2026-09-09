@@ -181,3 +181,35 @@ def test_firm_social_move_overrides_friendly_relationship_surface():
     assert directive.act == "firm_boundary"
     assert directive.posture == "firm"
     assert directive.playfulness == 0
+
+
+def test_ordinary_social_allows_registered_stickers_but_focus_stays_text_only():
+    social = StyleDirector().direct(
+        _context(
+            stance=StanceDecision.create(
+                attitude="AMUSED",
+                willingness="WILLING",
+                boundary="NONE",
+                concession="NONE",
+                effort="NORMAL",
+                initiative="ALLOW",
+                reason_event_ids=("m1",),
+                permission=PermissionSnapshot(True, "social_reply"),
+            ),
+            move=SocialMovePlan.create(primary_move="GROUP_RESPONSE"),
+        )
+    )
+    focused = StyleDirector().direct(_context())
+    chorus = StyleDirector().direct(
+        _context(
+            move=SocialMovePlan.create(
+                primary_move="JOIN_CHORUS",
+                realization_mode="EXACT_CHORUS",
+                verbatim_payload="小林今天请客",
+                chorus_chain_id="chorus:1",
+            )
+        )
+    )
+    assert social.media_policy == "registered_only"
+    assert focused.media_policy == "text_only"
+    assert chorus.media_policy == "text_only"

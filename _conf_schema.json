@@ -119,12 +119,24 @@
     "default": true,
     "hint": "为后续版本事实检索预留。本阶段只记录配置，不会发起任何网络请求。"
   },
+  "sticker_enabled": {
+    "description": "闲聊配表情图",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，爱弥斯在写出闲聊回复后，会从图鉴里抽一张含义对得上的图配上。没有合适的图时仍然只发文字。"
+  },
+  "sticker_capture_enabled": {
+    "description": "从群友消息里收表情",
+    "type": "bool",
+    "default": false,
+    "hint": "默认关闭。打开后，已启用 Groupmate 的群里，群友发的自定义 GIF/PNG/WebP 会进「待认知」，不会直接出现在图鉴。商城表情和系统黄豆不会收。"
+  },
   "vision_provider": {
     "description": "Groupmate 视觉模型（可选）",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "不需要理解图片时可以留空。"
+    "hint": "选一个能看图的模型。配上后，待认知里的图会在后台先判定是不是表情，再写含义；不配则只能手写。闲聊发送时不会再调它。"
   },
   "external_command_prefixes": {
     "description": "外部插件指令归属",

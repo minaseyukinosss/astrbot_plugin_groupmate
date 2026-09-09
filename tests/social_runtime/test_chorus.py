@@ -13,6 +13,7 @@ def _fact(
     occurred_at,
     origin_kind="USER_TEXT",
     parts=("TEXT",),
+    sticker_sha256=None,
 ):
     return SceneEventFact(
         event_id=event_id,
@@ -22,6 +23,7 @@ def _fact(
         parts=parts,
         occurred_at=occurred_at,
         origin_kind=origin_kind,
+        sticker_sha256=sticker_sha256,
     )
 
 
@@ -160,3 +162,124 @@ def test_detector_marks_persisted_chain_as_already_joined():
     )
     assert repeated is not None
     assert repeated.already_joined is True
+
+
+def test_same_sticker_hash_from_two_humans_forms_a_chorus():
+    digest = "a" * 64
+    evidence = ChorusDetector().detect(
+        events=(
+            _fact(
+                "m1",
+                "u1",
+                "",
+                occurred_at=100,
+                parts=("IMAGE", "MEDIA"),
+                sticker_sha256=digest,
+            ),
+            _fact(
+                "m2",
+                "u2",
+                "",
+                occurred_at=105,
+                parts=("IMAGE", "MEDIA"),
+                sticker_sha256=digest,
+            ),
+        ),
+        source_event_id="m2",
+        group_id="g1",
+        persona_actor_id="aemeath",
+        joined_chain_ids=(),
+    )
+
+    assert evidence is not None
+    assert evidence.kind == "STICKER"
+    assert evidence.payload == f"sticker:{digest}"
+    assert evidence.participant_ids == ("u1", "u2")
+
+
+def test_photos_mall_faces_and_captioned_images_do_not_form_sticker_chorus():
+    digest = "b" * 64
+    detector = ChorusDetector()
+    assert detector.detect(
+        events=(
+            _fact("m1", "u1", "", occurred_at=100, parts=("IMAGE", "MEDIA")),
+            _fact("m2", "u2", "", occurred_at=101, parts=("IMAGE", "MEDIA")),
+        ),
+        source_event_id="m2",
+        group_id="g1",
+        persona_actor_id="aemeath",
+        joined_chain_ids=(),
+    ) is None
+    assert detector.detect(
+        events=(
+            _fact(
+                "m1",
+                "u1",
+                "",
+                occurred_at=100,
+                parts=("MFACE",),
+                sticker_sha256=digest,
+            ),
+            _fact(
+                "m2",
+                "u2",
+                "",
+                occurred_at=101,
+                parts=("MFACE",),
+                sticker_sha256=digest,
+            ),
+        ),
+        source_event_id="m2",
+        group_id="g1",
+        persona_actor_id="aemeath",
+        joined_chain_ids=(),
+    ) is None
+    assert detector.detect(
+        events=(
+            _fact(
+                "m1",
+                "u1",
+                "笑死",
+                occurred_at=100,
+                parts=("TEXT", "IMAGE"),
+                sticker_sha256=digest,
+            ),
+            _fact(
+                "m2",
+                "u2",
+                "笑死",
+                occurred_at=101,
+                parts=("TEXT", "IMAGE"),
+                sticker_sha256=digest,
+            ),
+        ),
+        source_event_id="m2",
+        group_id="g1",
+        persona_actor_id="aemeath",
+        joined_chain_ids=(),
+    ) is None
+    different = detector.detect(
+        events=(
+            _fact(
+                "m1",
+                "u1",
+                "",
+                occurred_at=100,
+                parts=("IMAGE", "MEDIA"),
+                sticker_sha256="c" * 64,
+            ),
+            _fact(
+                "m2",
+                "u2",
+                "",
+                occurred_at=101,
+                parts=("IMAGE", "MEDIA"),
+                sticker_sha256="d" * 64,
+            ),
+        ),
+        source_event_id="m2",
+        group_id="g1",
+        persona_actor_id="aemeath",
+        joined_chain_ids=(),
+    )
+    assert different is None

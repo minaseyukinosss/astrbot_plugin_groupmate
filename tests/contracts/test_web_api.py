@@ -449,6 +449,10 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
                 "knowledge/group/usage",
                 "knowledge/group/jobs",
                 "knowledge/group/actions",
+                "stickers",
+                "stickers/detail",
+                "stickers/preview",
+                "stickers/actions",
                 "avatar",
             "media",
             "commands",
@@ -459,12 +463,20 @@ def test_astrbot_routes_use_official_plugin_web_api_registration_contract():
     assert methods["commands"] == ["POST"]
     assert methods["actions"] == ["POST"]
     assert methods["events"] == ["GET"]
+    assert methods["stickers"] == ["GET"]
+    assert methods["preview"] == ["GET"]
+    assert {
+        call[0]: call[2]
+        for call in context.calls
+        if call[0].endswith("/stickers/actions")
+    } == {"/astrbot_plugin_groupmate/stickers/actions": ["POST"]}
 
 
 def test_astrbot_route_forwards_scoped_inspector_entity_reference():
     source = inspect.getsource(AstrBotControlPlaneRoutes._handler)
 
     assert '"entity_ref": request.query.get("entity_ref")' in source
+    assert '"asset_id": request.query.get("asset_id")' in source
 
 
 def test_web_api_parses_primary_shadow_review_semantics_without_send_command():

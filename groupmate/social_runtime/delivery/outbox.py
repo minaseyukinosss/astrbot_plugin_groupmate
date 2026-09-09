@@ -389,6 +389,15 @@ class OutboxService:
         with closing(connect_database(self.path)) as db:
             return int(db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0])
 
+    def has_unfinished_parts(self, bundle_id: str) -> bool:
+        with closing(connect_database(self.path)) as db:
+            row = db.execute(
+                "SELECT 1 FROM outbox WHERE bundle_id=? "
+                "AND status IN ('planned','ready','sending') LIMIT 1",
+                (str(bundle_id),),
+            ).fetchone()
+        return row is not None
+
     def _require_authorized(self, bundle: DeliveryBundle) -> None:
         if self._group_authorizer is not None and not self._group_authorizer(
             bundle.group_id

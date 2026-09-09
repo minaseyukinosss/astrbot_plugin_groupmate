@@ -18,6 +18,16 @@ MAX_MEMBER_REFS = 24
 MAX_ALIASES_PER_MEMBER = 4
 
 
+def _sticker_sha256(payload: Mapping[str, object]) -> str | None:
+    media = payload.get("chorus_media")
+    if not isinstance(media, Mapping):
+        return None
+    digest = str(media.get("sha256") or "").strip().casefold()
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        return None
+    return digest
+
+
 def _text(value: object) -> str:
     return " ".join(str(value or "").split())
 
@@ -41,6 +51,7 @@ class SceneEventFact:
     parts: tuple[str, ...]
     occurred_at: int
     origin_kind: str
+    sticker_sha256: str | None = None
 
     @classmethod
     def from_event(cls, event: SocialEventEnvelope) -> "SceneEventFact":
@@ -61,6 +72,7 @@ class SceneEventFact:
             parts=cls._parts(payload),
             occurred_at=int(event.occurred_at),
             origin_kind=_text(payload.get("origin_kind")) or "USER_TEXT",
+            sticker_sha256=_sticker_sha256(payload),
         )
 
     @staticmethod
@@ -145,6 +157,7 @@ class SceneContext:
                     "event_ids": list(chorus.event_ids),
                     "participant_ids": list(chorus.participant_ids),
                     "already_joined": chorus.already_joined,
+                    "kind": chorus.kind,
                 }
             ),
         }
@@ -335,7 +348,11 @@ class SceneContextBuilder:
         selected: list[SceneEventFact] = []
         remaining = self.max_chars
         for event in tuple(ranked)[:MAX_CONTEXT_EVENTS]:
-            if not event.text and event.event_id != source_event_id:
+            if (
+                not event.text
+                and event.event_id != source_event_id
+                and not event.sticker_sha256
+            ):
                 continue
             overhead = 32 + len(event.event_id) + len(event.actor_id or "")
             available = remaining - overhead
@@ -357,6 +374,7 @@ class SceneContextBuilder:
                     parts=event.parts,
                     occurred_at=event.occurred_at,
                     origin_kind=event.origin_kind,
+                    sticker_sha256=event.sticker_sha256,
                 )
             )
             remaining -= overhead + len(text)

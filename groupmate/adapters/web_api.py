@@ -47,8 +47,11 @@ from ..social_runtime.control.commands import (
 )
 from ..social_runtime.control.knowledge import KnowledgeControlQueries
 from ..social_runtime.control.queries import ProjectionQueries
+from ..social_runtime.control.stickers import StickerControlService
 from ..social_runtime.control.stream import ProjectionStream
 from ..social_runtime.contracts import SocialEventEnvelope
+from ..social_runtime.stickers.cognition import InvalidStickerMeaning
+from ..social_runtime.stickers.lexicon import InvalidStickerAsset, UnsafeStickerPath
 
 
 @dataclass(frozen=True)
@@ -104,12 +107,14 @@ class ControlPlaneWebAPI:
         "profile",
         "group-portrait",
     )
+    STICKER_QUERY_ENDPOINTS = ("stickers", "stickers/detail")
 
     def __init__(
         self,
         *,
         queries: ProjectionQueries,
         knowledge_queries: KnowledgeControlQueries | None = None,
+        sticker_queries: StickerControlService | None = None,
         stream: ProjectionStream,
         command_service_for: Callable[[str], CommandService],
         event_publisher: Callable[
@@ -130,6 +135,7 @@ class ControlPlaneWebAPI:
     ) -> None:
         self.queries = queries
         self.knowledge_queries = knowledge_queries
+        self.sticker_queries = sticker_queries
         self.stream = stream
         self._command_service_for = command_service_for
         self._event_publisher = event_publisher
@@ -302,6 +308,11 @@ class ControlPlaneWebAPI:
                 request,
                 scope_kind="library" if "/library/" in endpoint else "group",
             )
+        if endpoint in self.STICKER_QUERY_ENDPOINTS or endpoint in {
+            "stickers/preview",
+            "stickers/actions",
+        }:
+            return await self._sticker_request(endpoint, request)
         if endpoint in self.QUERY_ENDPOINTS:
             if str(request.method).upper() != "GET":
                 return self._error(405, "method_not_allowed")
@@ -471,6 +482,82 @@ class ControlPlaneWebAPI:
             )
 
         return self._error(404, "endpoint_not_found")
+
+    async def _sticker_request(self, endpoint: str, request: WebRequest) -> WebResponse:
+        if self.sticker_queries is None:
+            return self._error(503, "sticker_query_unavailable")
+        try:
+            self._scope(request, allow_default=True)
+        except LookupError:
+            return self._error(404, "scope_not_found")
+        if endpoint == "stickers/actions":
+            return await self._sticker_action(request)
+        if str(request.method).upper() != "GET":
+            return self._error(405, "method_not_allowed")
+        try:
+            if endpoint == "stickers":
+                body = self.sticker_queries.overview()
+            elif endpoint == "stickers/detail":
+                body = self.sticker_queries.detail(
+                    str(request.query.get("asset_id") or "")
+                )
+            else:
+                body = self.sticker_queries.preview(
+                    str(
+                        request.query.get("asset_id")
+                        or request.query.get("media_ref")
+                        or ""
+                    )
+                )
+        except LookupError:
+            return self._error(404, "sticker_not_found")
+        except (InvalidStickerAsset, UnsafeStickerPath) as exc:
+            return self._error(400, "invalid_sticker", detail=str(exc))
+        except Exception as exc:
+            return self._error(503, "sticker_query_unavailable", detail=str(exc))
+        return WebResponse(
+            200,
+            body,
+            {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    async def _sticker_action(self, request: WebRequest) -> WebResponse:
+        if str(request.method).upper() != "POST":
+            return self._error(405, "method_not_allowed")
+        content_type = str(self._header(request.headers, "content-type") or "")
+        if content_type.split(";", 1)[0].strip().casefold() != "application/json":
+            return self._error(415, "json_content_type_required")
+        body = dict(request.json_body or {})
+        try:
+            encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        except (TypeError, ValueError):
+            return self._error(400, "invalid_command")
+        limit = 2_800_000 if str(body.get("type") or "") == "sticker_upload" else 16_384
+        if len(encoded) > limit:
+            return self._error(413, "command_payload_too_large")
+        try:
+            result = self.sticker_queries.apply(body, now=int(time.time()))
+        except LookupError:
+            return self._error(404, "sticker_not_found")
+        except (InvalidStickerAsset, InvalidStickerMeaning, ValueError) as exc:
+            return self._error(400, "invalid_sticker", detail=str(exc))
+        except Exception as exc:
+            return self._error(503, "sticker_action_unavailable", detail=str(exc))
+        return WebResponse(
+            200,
+            result,
+            {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     def _knowledge_query(
         self, endpoint: str, request: WebRequest
@@ -891,9 +978,12 @@ class AstrBotControlPlaneRoutes:
     ENDPOINTS = (
         ControlPlaneWebAPI.QUERY_ENDPOINTS
         + ControlPlaneWebAPI.KNOWLEDGE_QUERY_ENDPOINTS
+        + ControlPlaneWebAPI.STICKER_QUERY_ENDPOINTS
         + (
             "knowledge/library/actions",
             "knowledge/group/actions",
+            "stickers/preview",
+            "stickers/actions",
             "avatar",
             "media",
             "commands",
@@ -916,6 +1006,7 @@ class AstrBotControlPlaneRoutes:
                     "commands",
                     "knowledge/library/actions",
                     "knowledge/group/actions",
+                    "stickers/actions",
                 }
                 else ["GET"]
             )
@@ -956,6 +1047,7 @@ class AstrBotControlPlaneRoutes:
                 "claim_kind": request.query.get("claim_kind"),
                 "entity_id": request.query.get("entity_id"),
                 "job_kind": request.query.get("job_kind"),
+                "asset_id": request.query.get("asset_id"),
             }
             response = await api.handle(
                 WebRequest(

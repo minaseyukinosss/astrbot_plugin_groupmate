@@ -67,8 +67,11 @@ def test_commit_and_claim_preserve_order_and_persist_sending_before_return(tmp_p
     assert [part.part_id for part in claimed] == ["part-1"]
     assert service.outbox("part-1").status is OutboxStatus.SENDING
     assert service.outbox("part-2").status is OutboxStatus.READY
+    assert service.has_unfinished_parts("bundle-1") is True
     service.record_receipt(_success("part-1"))
     assert [part.part_id for part in service.claim_ready(now=111)] == ["part-2"]
+    service.record_receipt(_success("part-2", event_id="receipt-2"))
+    assert service.has_unfinished_parts("bundle-1") is False
 
 
 def test_bundle_commit_is_idempotent_but_rejects_reused_identity(tmp_path):

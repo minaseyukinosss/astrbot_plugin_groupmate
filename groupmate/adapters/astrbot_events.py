@@ -102,7 +102,7 @@ class AstrBotEventTranslator:
                     mentions.append(mention)
             elif kind in {"image", "video", "record", "file"}:
                 fact = {"type": kind}
-                for key in ("url", "file", "id"):
+                for key in ("url", "file", "path", "id"):
                     if data.get(key) not in (None, ""):
                         fact[key] = _json_value(data[key])
                 media.append(fact)

@@ -127,6 +127,8 @@ class OutputFirewall:
         consistency = self._consistency_violations(draft, request)
         if consistency:
             return FirewallReview(False, "consistency", consistency)
+        if self._exact_chorus_allowed(draft, request):
+            return FirewallReview(True, None, ())
         style = self._style_violations(draft.text, request.directive)
         if style:
             return FirewallReview(False, "style", style)

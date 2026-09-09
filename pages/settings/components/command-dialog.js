@@ -18,6 +18,8 @@ const HIGH_IMPACT = new Set([
   "knowledge_alias_supersede",
   "knowledge_claim_dispute",
   "knowledge_cache_invalidate",
+  "sticker_reject",
+  "sticker_delete",
 ]);
 
 export function requiresConfirmation(type) {

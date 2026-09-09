@@ -70,6 +70,8 @@ REQUIRED_TABLES = {
     "negative_search_snapshots",
     "knowledge_jobs",
     "knowledge_usage",
+    "sticker_assets",
+    "sticker_rejects",
 }
 
 KNOWLEDGE_TABLES = {
@@ -91,7 +93,7 @@ KNOWLEDGE_TABLES = {
 }
 
 
-def test_new_database_bootstraps_complete_v5_schema(tmp_path):
+def test_new_database_bootstraps_complete_v6_schema(tmp_path):
     path = tmp_path / "groupmate-social-runtime-v2.db"
 
     initialize_database(path)
@@ -107,7 +109,7 @@ def test_new_database_bootstraps_complete_v5_schema(tmp_path):
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
         ).fetchone()[0]
         assert REQUIRED_TABLES <= names
-        assert SCHEMA_VERSION == version == 5
+        assert SCHEMA_VERSION == version == 6
         assert db.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
@@ -141,7 +143,7 @@ def test_owned_v3_database_migrates_without_losing_runtime_profile_or_style_rows
     with connect_database(path) as db:
         assert db.execute(
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == 6
         assert db.execute(
             "SELECT event_id FROM inbox WHERE event_id='evt-v3'"
         ).fetchone()[0] == "evt-v3"
@@ -156,6 +158,7 @@ def test_owned_v3_database_migrates_without_losing_runtime_profile_or_style_rows
             )
         }
         assert KNOWLEDGE_TABLES <= names
+        assert {"sticker_assets", "sticker_rejects"} <= names
         assert "release_checked_at" in {
             row[1]
             for row in db.execute("PRAGMA table_info(game_release_states)")
@@ -183,7 +186,7 @@ def test_owned_v3_database_migrates_without_losing_runtime_profile_or_style_rows
     with connect_database(path) as db:
         assert db.execute(
             "SELECT version FROM social_runtime_schema WHERE singleton=1"
-        ).fetchone()[0] == 5
+        ).fetchone()[0] == 6
         assert "release_checked_at" in {
             row[1]
             for row in db.execute("PRAGMA table_info(game_release_states)")

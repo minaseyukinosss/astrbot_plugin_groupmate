@@ -34,6 +34,7 @@ from groupmate.social_runtime.replying import (
     ReplyPlanRepository,
     ReplyPlanner,
     split_reply_bubbles,
+    strip_trailing_stops,
 )
 from groupmate.social_runtime.actions.member_style import MemberStyleOverlay
 from groupmate.social_runtime.actions.contracts import (
@@ -472,7 +473,7 @@ def test_missing_high_risk_evidence_fails_closed_without_calling_model(tmp_path)
     assert result.status == "REJECTED"
     assert result.diagnostic_code == "knowledge_evidence_unavailable"
     assert result.part is not None
-    assert result.part.part.payload["text"] == "这次我先不乱说。"
+    assert result.part.part.payload["text"] == "这次我先不乱说"
 
 
 def test_strict_reply_uses_frozen_fragment_instead_of_model_fact_text(tmp_path):
@@ -528,7 +529,7 @@ def test_strict_reply_uses_frozen_fragment_instead_of_model_fact_text(tmp_path):
 
     assert result.status == "READY"
     assert result.part.part.payload["text"] == (
-        "那目前只能说：官方前瞻已公布：下一版本官方前瞻已经公布。"
+        "那目前只能说：官方前瞻已公布：下一版本官方前瞻已经公布"
     )
     assert len(model.calls) == 1
     assert "parts" in model.calls[0]["system_prompt"]
@@ -581,7 +582,7 @@ def test_strict_reply_repairs_once_then_uses_fact_free_fallback(tmp_path):
 
     assert result.status == "REJECTED"
     assert result.diagnostic_code == "knowledge_review_rejected"
-    assert result.part.part.payload["text"] == "我现在没核实到可靠信息，先不乱说。"
+    assert result.part.part.payload["text"] == "我现在没核实到可靠信息，先不乱说"
     assert len(model.calls) == 2
     assert "下一版本官方前瞻已经公布" not in model.calls[1]["prompt"]
 
@@ -632,7 +633,7 @@ def test_grounded_reply_declares_the_stable_knowledge_it_used(tmp_path):
     )
 
     assert result.status == "READY"
-    assert result.part.part.payload["text"] == "树脂就是游戏里的体力资源。"
+    assert result.part.part.payload["text"] == "树脂就是游戏里的体力资源"
 
 
 def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_path):
@@ -692,6 +693,76 @@ def test_exact_chorus_bypasses_reply_model_but_still_enqueues_frozen_text(tmp_pa
     assert result.status == "READY"
     assert result.part.part.payload["text"] == "小林今天请客"
     assert model.calls == 0
+
+
+def test_sticker_chorus_enqueues_the_on_scene_image_not_text(tmp_path):
+    from groupmate.social_runtime.chorus_media import (
+        ChorusMediaStore,
+        sticker_chorus_payload,
+    )
+    from tests.social_runtime.stickers.test_lexicon import gif_bytes
+
+    store = ChorusMediaStore(tmp_path)
+    digest, path = store.ingest(gif_bytes(), "image/gif")
+    payload = sticker_chorus_payload(digest)
+
+    class FailIfCalledModel:
+        async def complete_text(self, **kwargs):
+            raise AssertionError("sticker chorus must not call the reply model")
+
+    scene = SocialScene.create(
+        scene_kind="group_chorus",
+        target_scope="GROUP",
+        target_id=None,
+        literal_subject="表情包",
+        user_move="chorus_sticker",
+        continuity_event_ids=("qq:m1", "qq:m2"),
+        repetition_count=2,
+        chorus_target="OTHER",
+        chorus_chain_id="chorus:sticker",
+        chorus_payload=payload,
+        chorus_event_ids=("qq:m1", "qq:m2"),
+        chorus_participant_ids=("u1", "u2"),
+        chorus_tone="SAFE_BANTER",
+        confidence=0.95,
+    )
+    _, stance, _ = _social_decisions()
+    move = SocialMovePlan.create(
+        primary_move="JOIN_CHORUS",
+        mention_event_ids=("qq:m1", "qq:m2"),
+        realization_mode="EXACT_CHORUS",
+        verbatim_payload=payload,
+        chorus_chain_id="chorus:sticker",
+    )
+    plan = ReplyPlanner().plan(
+        _evaluation(),
+        now=100,
+        persona_profile=_persona_profile(),
+        scene=scene,
+        stance=stance,
+        move=move,
+    )
+    repository = ReplyPlanRepository(tmp_path / "runtime.db")
+    outbox = OutboxService(
+        tmp_path / "runtime.db", bundle_authorizer=repository.authorizes_bundle
+    )
+    result = asyncio.run(
+        ReplyExecutor(
+            repository, outbox, FailIfCalledModel(), chorus_media=store
+        ).execute_with_result(
+            plan,
+            context_events=_evaluation().context_events,
+            persona_profile=_persona_profile(),
+            recent_outputs=(),
+        )
+    )
+
+    assert result.status == "READY"
+    assert result.part.part.kind is DeliveryPartKind.IMAGE
+    assert result.part.part.payload["media_ref"] == str(path)
+    assert result.delivered_texts == ()
+    with pytest.raises(LookupError):
+        outbox.outbox(f"reply-part:{plan.plan_id}:1")
 
 
 def test_structured_social_reply_is_repaired_once_with_specific_violations(tmp_path):
@@ -1002,7 +1073,7 @@ def test_shadow_preview_generates_reviewed_text_without_outbox(tmp_path):
     )
 
     assert preview.status == "READY"
-    assert preview.text == "这个报错先看最上面一行原因。"
+    assert preview.text == "这个报错先看最上面一行原因"
     assert preview.diagnostic_code is None
     assert outbox.count() == 0
 
@@ -1021,6 +1092,7 @@ def test_expression_uses_persona_cues_without_reference_bot_phrases():
     assert "人格化补充" not in prompt
     assert "续聊接口" not in prompt
     assert "接住了" not in prompt
+    assert "句末不要用句号" in prompt
 
 
 def test_prompt_does_not_dump_the_full_persona_material_pool():
@@ -1151,7 +1223,7 @@ def test_imitation_identity_failure_repairs_then_retries_without_overlay(tmp_pat
     )
 
     assert result.status == "READY"
-    assert result.part.part.payload["text"] == "说话像了一点而已，我还是爱弥斯。"
+    assert result.part.part.payload["text"] == "说话像了一点而已，我还是爱弥斯"
     assert len(model.calls) == 3
     repair_request = json.loads(model.calls[1]["prompt"])
     assert "imitation_target_identity_claim" in repair_request["violations"]
@@ -1293,6 +1365,17 @@ def test_split_reply_bubbles_prefers_blank_line_then_sentence_cut():
     ) == ("我先去看看。你等我一下。",)
 
 
+def test_strip_trailing_stops_keeps_questions_exclamations_and_ellipsis():
+    assert strip_trailing_stops("这次我先不乱说。") == "这次我先不乱说"
+    assert strip_trailing_stops("行我先看着。\n\n你那边有进展再说。") == (
+        "行我先看着\n\n你那边有进展再说"
+    )
+    assert strip_trailing_stops("把报错贴出来？") == "把报错贴出来？"
+    assert strip_trailing_stops("太好了！") == "太好了！"
+    assert strip_trailing_stops("先这样……") == "先这样……"
+    assert strip_trailing_stops("OK.") == "OK"
+
+
 def test_reply_executor_enqueues_two_bubbles_for_blank_line_social_reply(tmp_path):
     scene, stance, move = _social_decisions(move="GROUP_RESPONSE")
     plan = ReplyPlanner().plan(
@@ -1333,10 +1416,10 @@ def test_reply_executor_enqueues_two_bubbles_for_blank_line_social_reply(tmp_pat
     )
 
     assert result.status == "READY"
-    assert result.delivered_texts == ("行我先看着。", "你那边有进展再说。")
-    assert result.part.part.payload["text"] == "行我先看着。"
+    assert result.delivered_texts == ("行我先看着", "你那边有进展再说")
+    assert result.part.part.payload["text"] == "行我先看着"
     second = outbox.outbox(f"reply-part:{plan.plan_id}:1")
-    assert second.part.payload["text"] == "你那边有进展再说。"
+    assert second.part.payload["text"] == "你那边有进展再说"
     assert second.part.order == 1
 
 

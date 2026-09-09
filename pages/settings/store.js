@@ -17,6 +17,7 @@ const WORKSPACE_PROJECTIONS = Object.freeze({
     "knowledge/group/usage",
     "knowledge/group/jobs",
   ],
+  "/stickers": ["stickers"],
 });
 
 export function workspaceProjectionNames(path, fallbackEndpoint) {
@@ -174,6 +175,13 @@ export class ProjectionStore {
     return true;
   }
 
+  mergeStickers(view) {
+    if (!view || typeof view !== "object") return false;
+    this.views.set("stickers", clone(view));
+    this.emit();
+    return true;
+  }
+
   mergeEntity(item) {
     if (!item || !item.entity_ref) return false;
     const key = String(item.entity_ref);
@@ -300,7 +308,13 @@ export class ProjectionStore {
 
   emit() {
     const snapshot = this.snapshot();
-    this.listeners.forEach((listener) => listener(snapshot));
+    this.listeners.forEach((listener) => {
+      try {
+        listener(snapshot);
+      } catch (_error) {
+        // A workspace renderer must not poison projection merges or refreshes.
+      }
+    });
   }
 
   snapshot() {

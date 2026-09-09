@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .chorus_media import sticker_chorus_payload
 from .persistence.schema import connect_database, initialize_database
 from .social_context import SceneEventFact
 
@@ -32,10 +33,15 @@ class ChorusEvidence:
     event_ids: tuple[str, ...]
     participant_ids: tuple[str, ...]
     already_joined: bool
+    kind: str = "TEXT"
 
     def __post_init__(self) -> None:
         for field in ("chain_id", "payload", "normalized_key"):
             object.__setattr__(self, field, _required(getattr(self, field), field))
+        kind = str(self.kind or "TEXT").strip().upper() or "TEXT"
+        if kind not in {"TEXT", "STICKER"}:
+            raise ValueError("chorus kind must be TEXT or STICKER")
+        object.__setattr__(self, "kind", kind)
         event_ids = tuple(dict.fromkeys(_required(value, "event_id") for value in self.event_ids))
         participant_ids = tuple(
             dict.fromkeys(_required(value, "participant_id") for value in self.participant_ids)
@@ -75,7 +81,7 @@ class ChorusDetector:
         )
         if source is None or not self._eligible(source, persona_actor_id):
             return None
-        normalized_key = self._normalize_key(source.text)
+        normalized_key = self._content_key(source)
         if not normalized_key:
             return None
         matching = tuple(
@@ -85,7 +91,7 @@ class ChorusDetector:
                     for item in event_list
                     if self._eligible(item, persona_actor_id)
                     and 0 <= source.occurred_at - item.occurred_at <= self._window_seconds
-                    and self._normalize_key(item.text) == normalized_key
+                    and self._content_key(item) == normalized_key
                 ),
                 key=lambda item: (item.occurred_at, item.event_id),
             )
@@ -98,26 +104,51 @@ class ChorusDetector:
         if len(participants) < 2:
             return None
         chain_id = self._chain_id(group_id, normalized_key, matching[0].event_id)
+        sticker = bool(source.sticker_sha256)
         return ChorusEvidence(
             chain_id=chain_id,
             # 匹配时折叠空白，发送时保留当前成员实际输入的内部空白。
-            payload=source.text.strip(),
+            payload=(
+                sticker_chorus_payload(source.sticker_sha256)
+                if sticker
+                else source.text.strip()
+            ),
             normalized_key=normalized_key,
             event_ids=tuple(item.event_id for item in matching),
             participant_ids=participants,
             already_joined=chain_id in set(joined_chain_ids),
+            kind="STICKER" if sticker else "TEXT",
         )
 
     def _eligible(self, event: SceneEventFact, persona_actor_id: str) -> bool:
-        text = event.text.strip()
-        return bool(
+        if not (
             event.actor_id
             and event.actor_id != persona_actor_id
             and event.origin_kind == self.ALLOWED_ORIGIN
-            and event.parts == ("TEXT",)
+        ):
+            return False
+        if event.sticker_sha256:
+            return self._sticker_parts(event.parts)
+        text = event.text.strip()
+        return bool(
+            event.parts == ("TEXT",)
             and 1 <= len(text) <= self._max_chars
             and not _URL.search(text)
         )
+
+    @staticmethod
+    def _sticker_parts(parts: tuple[str, ...]) -> bool:
+        kinds = frozenset(parts)
+        if "IMAGE" not in kinds:
+            return False
+        blocked = {"FACE", "MFACE", "VIDEO", "FILE", "RECORD", "FORWARD", "AT", "MENTION", "TEXT"}
+        return not (kinds & blocked)
+
+    @staticmethod
+    def _content_key(event: SceneEventFact) -> str:
+        if event.sticker_sha256:
+            return sticker_chorus_payload(event.sticker_sha256)
+        return ChorusDetector._normalize_key(event.text)
 
     @staticmethod
     def _normalize_key(value: str) -> str:
